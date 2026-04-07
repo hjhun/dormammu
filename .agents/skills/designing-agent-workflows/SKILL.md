@@ -1,0 +1,40 @@
+---
+name: designing-agent-workflows
+description: Produces implementation-ready designs, interfaces, schemas, and technical decisions for this project. Use when the user asks for architecture, component design, state models, file layout, or design artifacts before coding.
+---
+
+# Designing Agent Workflows
+
+Use this skill after planning and before broad implementation, or when the current phase is blocked on technical decisions.
+
+## Inputs
+
+- The approved plan and active tasks
+- [PROJECT.md](../../../PROJECT.md)
+- Existing source files and `.dev/` state
+
+## Workflow
+
+1. Read the active tasks and identify the design decisions that unblock them.
+2. Define boundaries: modules, interfaces, data contracts, state files, and failure handling.
+3. Prefer designs that support resumability, idempotent reruns, and supervisor verification.
+4. Capture the chosen design in concise project documentation or artifact files.
+5. Reflect design progress in `.dev/DASHBOARD.md` and mark finished design tasks in `.dev/TASKS.md`.
+
+## Design Rules
+
+- Optimize for operational clarity over novelty.
+- Keep abstractions minimal for the current milestone.
+- Document only the decisions that affect implementation, recovery, testing, or deployment.
+- Call out assumptions, open questions, and explicit tradeoffs.
+- If a design choice changes an earlier plan, update the dashboard and tasks together.
+
+## Expected Outputs
+
+- Implementation-ready architecture notes
+- Clear contracts for modules, files, or APIs
+- Updated `.dev` status showing what is now unblocked
+
+## Done Criteria
+
+This skill is complete when a development agent can implement the active work without inventing missing architecture.

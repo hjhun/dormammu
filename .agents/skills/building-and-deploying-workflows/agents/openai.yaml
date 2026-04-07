@@ -1,0 +1,4 @@
+interface:
+  display_name: "Building and Deploying"
+  short_description: "Produces installers, release artifacts, and deployment-ready outputs."
+  default_prompt: "Build the active deliverables, capture artifact details, and update the .dev workflow status."

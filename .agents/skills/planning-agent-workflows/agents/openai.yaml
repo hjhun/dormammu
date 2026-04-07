@@ -1,0 +1,4 @@
+interface:
+  display_name: "Planning Workflows"
+  short_description: "Turns prompts into phases, tasks, and resumable execution state."
+  default_prompt: "Plan this project, initialize the .dev workflow files, and define the next actionable tasks."

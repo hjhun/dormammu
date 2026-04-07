@@ -1,0 +1,4 @@
+interface:
+  display_name: "Developing Workflows"
+  short_description: "Implements the active task slice and keeps resumable state in sync."
+  default_prompt: "Implement the current tasks, update the .dev workflow files, and leave clean continuation state if work remains."
