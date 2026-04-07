@@ -40,6 +40,38 @@ class AgentRunRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentRunStarted:
+    run_id: str
+    cli_path: Path
+    workdir: Path
+    prompt_mode: str
+    command: Sequence[str]
+    started_at: str
+    prompt_path: Path
+    stdout_path: Path
+    stderr_path: Path
+    metadata_path: Path
+    capabilities: CliCapabilities
+
+    def to_dict(self, *, include_help_text: bool = False) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "cli_path": str(self.cli_path),
+            "workdir": str(self.workdir),
+            "prompt_mode": self.prompt_mode,
+            "command": list(self.command),
+            "started_at": self.started_at,
+            "artifacts": {
+                "prompt": str(self.prompt_path),
+                "stdout": str(self.stdout_path),
+                "stderr": str(self.stderr_path),
+                "metadata": str(self.metadata_path),
+            },
+            "capabilities": self.capabilities.to_dict(include_help_text=include_help_text),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class CommandPlan:
     argv: Sequence[str]
     prompt_mode: str

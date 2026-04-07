@@ -231,7 +231,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
     )
 
     try:
-        result = CliAdapter(config).run_once(request)
+        result = CliAdapter(config).run_once(request, on_started=repository.record_current_run)
     except (RuntimeError, ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 2

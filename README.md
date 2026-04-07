@@ -11,7 +11,7 @@ This repository currently bootstraps:
 - a Python package under `backend/`
 - a CLI entrypoint for config inspection, state initialization, and local serve
 - `.dev` bootstrap helpers and Markdown templates
-- placeholder frontend and development scripts
+- a lightweight local UI served from `frontend/`
 
 ## Quick Start
 
@@ -22,13 +22,14 @@ pip install -e .
 python -m dormammu show-config
 python -m dormammu init-state
 python -m dormammu serve
+# then open http://127.0.0.1:8000/
 ```
 
 ## Project Layout
 
 ```text
 backend/     Python package and runtime services
-frontend/    Future local UI
+frontend/    Lightweight local UI assets
 templates/   Bootstrap templates for .dev state
 scripts/     Developer convenience scripts
 tests/       Bootstrap validation tests

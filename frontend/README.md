@@ -1,6 +1,7 @@
-# Frontend Placeholder
+# Frontend
 
-The local web UI is intentionally deferred until ROADMAP Phase 5.
+This directory now holds the lightweight local UI shell used in ROADMAP
+Phase 5.
 
-This directory exists in Phase 1 so the repository structure is stable early,
-while the Python core and CLI remain usable on their own.
+The backend serves these static assets directly so the Python core and CLI stay
+usable even when the browser is not open.

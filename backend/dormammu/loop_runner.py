@@ -149,7 +149,27 @@ class LoopRunner:
                 next_action=f"Run supervised loop attempt {attempt_number} for the active request.",
             )
 
-            result = self.adapter.run_once(request.as_agent_run_request(current_prompt))
+            def _handle_started(started: Any) -> None:
+                self.repository.record_current_run(started)
+                self._persist_loop_state(
+                    status="running",
+                    request=request,
+                    attempts_completed=attempt_number - 1,
+                    retries_used=retries_used,
+                    latest_run_id=started.run_id,
+                    report=None,
+                    report_path=report_path,
+                    continuation_prompt_path=continuation_prompt_path,
+                    next_action=(
+                        f"Supervised loop attempt {attempt_number} is running and "
+                        "streaming logs to .dev/logs."
+                    ),
+                )
+
+            result = self.adapter.run_once(
+                request.as_agent_run_request(current_prompt),
+                on_started=_handle_started,
+            )
             self.repository.record_latest_run(result)
 
             report = self.supervisor.validate(

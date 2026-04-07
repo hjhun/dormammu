@@ -7,7 +7,7 @@ from pathlib import Path
 from string import Template
 from typing import Any, Mapping, Sequence
 
-from dormammu.agent.models import AgentRunResult
+from dormammu.agent.models import AgentRunResult, AgentRunStarted
 from dormammu.config import AppConfig
 from dormammu.state.models import (
     default_dashboard_context,
@@ -174,12 +174,30 @@ class StateRepository:
 
         session_state = self._read_json(session_path)
         session_state["updated_at"] = result.completed_at
+        session_state["current_run"] = None
         session_state["latest_run"] = latest_run
         self._write_json(session_path, session_state)
 
         workflow_state = self._read_json(workflow_path)
         workflow_state["updated_at"] = result.completed_at
+        workflow_state["current_run"] = None
         workflow_state["latest_run"] = latest_run
+        self._write_json(workflow_path, workflow_state)
+
+    def record_current_run(self, started: AgentRunStarted) -> None:
+        session_path = self.dev_dir / "session.json"
+        workflow_path = self.dev_dir / "workflow_state.json"
+
+        current_run = started.to_dict()
+
+        session_state = self._read_json(session_path)
+        session_state["updated_at"] = started.started_at
+        session_state["current_run"] = current_run
+        self._write_json(session_path, session_state)
+
+        workflow_state = self._read_json(workflow_path)
+        workflow_state["updated_at"] = started.started_at
+        workflow_state["current_run"] = current_run
         self._write_json(workflow_path, workflow_state)
 
     def read_session_state(self) -> dict[str, Any]:

@@ -5,10 +5,16 @@ import json
 from pathlib import Path
 import re
 import subprocess
+from typing import Callable
 
 from dormammu.agent.command_builder import build_command_plan
 from dormammu.agent.help_parser import parse_help_text
-from dormammu.agent.models import AgentRunRequest, AgentRunResult, CliCapabilities
+from dormammu.agent.models import (
+    AgentRunRequest,
+    AgentRunResult,
+    AgentRunStarted,
+    CliCapabilities,
+)
 from dormammu.config import AppConfig
 
 
@@ -47,7 +53,12 @@ class CliAdapter:
         help_text = completed.stdout or completed.stderr
         return parse_help_text(help_text, help_exit_code=completed.returncode)
 
-    def run_once(self, request: AgentRunRequest) -> AgentRunResult:
+    def run_once(
+        self,
+        request: AgentRunRequest,
+        *,
+        on_started: Callable[[AgentRunStarted], None] | None = None,
+    ) -> AgentRunResult:
         self.config.logs_dir.mkdir(parents=True, exist_ok=True)
 
         run_id = _run_id(request.run_label)
@@ -63,18 +74,36 @@ class CliAdapter:
         command_plan = build_command_plan(request, capabilities, prompt_path=prompt_path)
 
         started_at = _iso_now()
-        completed = subprocess.run(
-            list(command_plan.argv),
-            cwd=run_cwd,
-            input=command_plan.stdin_input,
-            capture_output=True,
-            text=True,
-            check=False,
+        started = AgentRunStarted(
+            run_id=run_id,
+            cli_path=request.cli_path.resolve(),
+            workdir=run_cwd,
+            prompt_mode=command_plan.prompt_mode,
+            command=tuple(command_plan.argv),
+            started_at=started_at,
+            prompt_path=prompt_path,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            metadata_path=metadata_path,
+            capabilities=capabilities,
         )
-        completed_at = _iso_now()
+        if on_started is not None:
+            on_started(started)
 
-        stdout_path.write_text(completed.stdout, encoding="utf-8")
-        stderr_path.write_text(completed.stderr, encoding="utf-8")
+        with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
+            "w",
+            encoding="utf-8",
+        ) as stderr_file:
+            completed = subprocess.run(
+                list(command_plan.argv),
+                cwd=run_cwd,
+                input=command_plan.stdin_input,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                text=True,
+                check=False,
+            )
+        completed_at = _iso_now()
 
         result = AgentRunResult(
             run_id=run_id,
