@@ -138,12 +138,11 @@ class StateRepository:
     def _ensure_json_file(self, path: Path, defaults: dict[str, Any]) -> None:
         current: dict[str, Any]
         if path.exists():
-            current = json.loads(path.read_text(encoding="utf-8"))
+            current = self._read_json(path)
             merged = _deep_merge(defaults, current)
         else:
             merged = defaults
-        text = json.dumps(merged, indent=2, ensure_ascii=True) + "\n"
-        path.write_text(text, encoding="utf-8")
+        self._write_json(path, merged)
 
     def _sync_operator_state(
         self,
@@ -156,22 +155,16 @@ class StateRepository:
         parsed_tasks = parse_tasks_document(tasks_path.read_text(encoding="utf-8"))
         task_sync = parsed_tasks.current_workflow.to_dict(synced_at=timestamp)
 
-        session_state = json.loads(session_path.read_text(encoding="utf-8"))
+        session_state = self._read_json(session_path)
         session_state["updated_at"] = timestamp
         session_state["task_sync"] = task_sync
-        session_path.write_text(
-            json.dumps(session_state, indent=2, ensure_ascii=True) + "\n",
-            encoding="utf-8",
-        )
+        self._write_json(session_path, session_state)
 
-        workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+        workflow_state = self._read_json(workflow_path)
         workflow_state["updated_at"] = timestamp
         workflow_state.setdefault("operator_sync", {})
         workflow_state["operator_sync"]["tasks"] = task_sync
-        workflow_path.write_text(
-            json.dumps(workflow_state, indent=2, ensure_ascii=True) + "\n",
-            encoding="utf-8",
-        )
+        self._write_json(workflow_path, workflow_state)
 
     def record_latest_run(self, result: AgentRunResult) -> None:
         session_path = self.dev_dir / "session.json"
@@ -179,18 +172,52 @@ class StateRepository:
 
         latest_run = result.to_dict()
 
-        session_state = json.loads(session_path.read_text(encoding="utf-8"))
+        session_state = self._read_json(session_path)
         session_state["updated_at"] = result.completed_at
         session_state["latest_run"] = latest_run
-        session_path.write_text(
-            json.dumps(session_state, indent=2, ensure_ascii=True) + "\n",
-            encoding="utf-8",
-        )
+        self._write_json(session_path, session_state)
 
-        workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+        workflow_state = self._read_json(workflow_path)
         workflow_state["updated_at"] = result.completed_at
         workflow_state["latest_run"] = latest_run
-        workflow_path.write_text(
-            json.dumps(workflow_state, indent=2, ensure_ascii=True) + "\n",
+        self._write_json(workflow_path, workflow_state)
+
+    def read_session_state(self) -> dict[str, Any]:
+        return self._read_json(self.dev_dir / "session.json")
+
+    def write_session_state(self, payload: Mapping[str, Any]) -> None:
+        self._write_json(self.dev_dir / "session.json", dict(payload))
+
+    def read_workflow_state(self) -> dict[str, Any]:
+        return self._read_json(self.dev_dir / "workflow_state.json")
+
+    def write_workflow_state(self, payload: Mapping[str, Any]) -> None:
+        self._write_json(self.dev_dir / "workflow_state.json", dict(payload))
+
+    def sync_operator_state(self, *, timestamp: str | None = None) -> None:
+        sync_time = timestamp or _iso_now()
+        self._sync_operator_state(
+            session_path=self.dev_dir / "session.json",
+            workflow_path=self.dev_dir / "workflow_state.json",
+            tasks_path=self.dev_dir / "TASKS.md",
+            timestamp=sync_time,
+        )
+
+    def write_supervisor_report(self, markdown: str) -> Path:
+        report_path = self.dev_dir / "supervisor_report.md"
+        report_path.write_text(markdown, encoding="utf-8")
+        return report_path
+
+    def write_continuation_prompt(self, text: str) -> Path:
+        prompt_path = self.dev_dir / "continuation_prompt.txt"
+        prompt_path.write_text(text, encoding="utf-8")
+        return prompt_path
+
+    def _read_json(self, path: Path) -> dict[str, Any]:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _write_json(self, path: Path, payload: Mapping[str, Any]) -> None:
+        path.write_text(
+            json.dumps(dict(payload), indent=2, ensure_ascii=True) + "\n",
             encoding="utf-8",
         )

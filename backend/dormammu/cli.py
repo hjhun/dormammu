@@ -10,6 +10,8 @@ from typing import Sequence
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.app import create_app
 from dormammu.config import AppConfig
+from dormammu.loop_runner import LoopRunRequest, LoopRunner
+from dormammu.recovery import RecoveryManager
 from dormammu.state import StateRepository
 
 
@@ -83,6 +85,85 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_once.set_defaults(handler=_handle_run_once)
+
+    run_loop = subparsers.add_parser(
+        "run-loop",
+        help="Run an external coding-agent CLI under the supervised retry loop.",
+    )
+    run_loop.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    run_loop.add_argument("--agent-cli", type=Path, required=True, help="Path to the external CLI.")
+    loop_prompt_group = run_loop.add_mutually_exclusive_group(required=True)
+    loop_prompt_group.add_argument("--prompt", default=None, help="Prompt text to execute.")
+    loop_prompt_group.add_argument(
+        "--prompt-file",
+        type=Path,
+        default=None,
+        help="Read prompt text from a file.",
+    )
+    run_loop.add_argument(
+        "--input-mode",
+        choices=("auto", "file", "arg", "stdin"),
+        default="auto",
+        help="How to send the prompt to the external CLI.",
+    )
+    run_loop.add_argument(
+        "--prompt-flag",
+        default=None,
+        help="Override the prompt flag used in file or arg mode.",
+    )
+    run_loop.add_argument(
+        "--workdir",
+        type=Path,
+        default=None,
+        help="Working directory for the external CLI run.",
+    )
+    run_loop.add_argument(
+        "--run-label",
+        default=None,
+        help="Optional label for the generated log artifact names.",
+    )
+    run_loop.add_argument(
+        "--extra-arg",
+        dest="extra_args",
+        action="append",
+        default=None,
+        help=(
+            "Repeatable extra argument passed through to the external CLI. "
+            "Use --extra-arg=VALUE when the value starts with '-'."
+        ),
+    )
+    run_loop.add_argument(
+        "--max-retries",
+        type=int,
+        default=0,
+        help="Additional retries after the first attempt. Use -1 for infinite retries.",
+    )
+    run_loop.add_argument(
+        "--required-path",
+        dest="required_paths",
+        action="append",
+        default=None,
+        help="Repeatable path that must exist before the supervisor approves the run.",
+    )
+    run_loop.add_argument(
+        "--require-worktree-changes",
+        action="store_true",
+        help="Require git worktree changes before the supervisor approves the run.",
+    )
+    run_loop.set_defaults(handler=_handle_run_loop)
+
+    resume_loop = subparsers.add_parser(
+        "resume-loop",
+        help="Resume the most recent supervised loop run from saved .dev state.",
+    )
+    resume_loop.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    resume_loop.add_argument(
+        "--max-retries",
+        type=int,
+        default=None,
+        help="Override the saved retry configuration before resuming.",
+    )
+    resume_loop.set_defaults(handler=_handle_resume_loop)
 
     serve = subparsers.add_parser("serve", help="Start the local backend app.")
     serve.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
@@ -158,6 +239,52 @@ def _handle_run_once(args: argparse.Namespace) -> int:
     repository.record_latest_run(result)
     print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
     return 0 if result.exit_code == 0 else result.exit_code
+
+
+def _handle_run_loop(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    repository = StateRepository(config)
+    repository.ensure_bootstrap_state(active_roadmap_phase_ids=["phase_4"])
+
+    request = LoopRunRequest(
+        cli_path=args.agent_cli,
+        prompt_text=_read_prompt_text(args),
+        repo_root=config.repo_root,
+        workdir=args.workdir,
+        input_mode=args.input_mode,
+        prompt_flag=args.prompt_flag,
+        extra_args=tuple(args.extra_args or ()),
+        run_label=args.run_label,
+        max_retries=args.max_retries,
+        required_paths=tuple(args.required_paths or ()),
+        require_worktree_changes=args.require_worktree_changes,
+        expected_roadmap_phase_id="phase_4",
+    )
+
+    try:
+        result = LoopRunner(config, repository=repository).run(request)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
+    return 0 if result.status == "completed" else 1
+
+
+def _handle_resume_loop(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    repository = StateRepository(config)
+
+    try:
+        result = RecoveryManager(config, repository=repository).resume(
+            max_retries_override=args.max_retries
+        )
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
+    return 0 if result.status == "completed" else 1
 
 
 def _handle_serve(args: argparse.Namespace) -> int:

@@ -1,0 +1,219 @@
+from __future__ import annotations
+
+from pathlib import Path
+import subprocess
+import stat
+import sys
+import tempfile
+import textwrap
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND = ROOT / "backend"
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
+
+from dormammu.config import AppConfig
+from dormammu.loop_runner import LoopRunRequest, LoopRunner
+from dormammu.recovery import RecoveryManager
+from dormammu.state import StateRepository
+
+
+class LoopRunnerTests(unittest.TestCase):
+    def test_run_completes_after_retry_and_writes_continuation_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="loop-test",
+                    max_retries=1,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.attempts_completed, 2)
+            self.assertEqual(result.retries_used, 1)
+            self.assertTrue((root / "done.txt").exists())
+            self.assertTrue((root / ".dev" / "continuation_prompt.txt").exists())
+
+    def test_resume_continues_failed_loop_from_saved_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            runner = LoopRunner(config, repository=repository)
+            first_result = runner.run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="resume-test",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(first_result.status, "failed")
+            self.assertTrue((root / ".dev" / "continuation_prompt.txt").exists())
+
+            resumed = RecoveryManager(
+                config,
+                repository=repository,
+                loop_runner=runner,
+            ).resume(max_retries_override=1)
+
+            self.assertEqual(resumed.status, "completed")
+            self.assertTrue((root / "done.txt").exists())
+
+    def test_infinite_retry_setting_allows_eventual_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=3)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="infinite-retry-test",
+                    max_retries=-1,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.attempts_completed, 3)
+            self.assertEqual(result.retries_used, 2)
+
+    def _seed_repo(self, root: Path) -> None:
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
+        templates = root / "templates" / "dev"
+        templates.mkdir(parents=True, exist_ok=True)
+        (templates / "dashboard.md.tmpl").write_text(
+            "\n".join(
+                [
+                    "# DASHBOARD",
+                    "",
+                    "## Workflow Summary",
+                    "",
+                    "- Goal: ${goal}",
+                    "- Active delivery slice: ${active_delivery_slice}",
+                    "- Current workflow phase: ${active_phase}",
+                    "- Last completed workflow phase: ${last_completed_phase}",
+                    "- Supervisor verdict: `${supervisor_verdict}`",
+                    "- Escalation status: `${escalation_status}`",
+                    "- Resume point: ${resume_point}",
+                    "",
+                    "## Next Action",
+                    "",
+                    "${next_action}",
+                    "",
+                    "## Notes",
+                    "",
+                    "${notes}",
+                    "",
+                    "## Active Roadmap Focus",
+                    "",
+                    "${active_roadmap_focus}",
+                    "",
+                    "## Risks And Watchpoints",
+                    "",
+                    "${risks_and_watchpoints}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (templates / "tasks.md.tmpl").write_text(
+            "\n".join(
+                [
+                    "# TASKS",
+                    "",
+                    "## Current Workflow",
+                    "",
+                    "${task_items}",
+                    "",
+                    "## Resume Checkpoint",
+                    "",
+                    "${resume_checkpoint}",
+                    "",
+                    "## Completion Rule",
+                    "",
+                    "${completion_rule}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_loop_cli(self, root: Path, *, success_attempt: int) -> Path:
+        script = root / "fake-loop-agent"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                from pathlib import Path
+                import sys
+
+                ROOT = Path({str(root)!r})
+                SUCCESS_ATTEMPT = {success_attempt}
+                COUNTER_PATH = ROOT / ".attempt-count"
+                TARGET_PATH = ROOT / "done.txt"
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: fake-loop-agent [--prompt-file PATH]")
+                        return 0
+
+                    if COUNTER_PATH.exists():
+                        attempt = int(COUNTER_PATH.read_text(encoding="utf-8").strip()) + 1
+                    else:
+                        attempt = 1
+                    COUNTER_PATH.write_text(str(attempt), encoding="utf-8")
+
+                    prompt = ""
+                    if "--prompt-file" in args:
+                        index = args.index("--prompt-file")
+                        prompt = Path(args[index + 1]).read_text(encoding="utf-8")
+                    else:
+                        prompt = sys.stdin.read()
+
+                    print(f"ATTEMPT::{{attempt}}")
+                    print(f"PROMPT::{{prompt.strip()}}")
+
+                    if attempt >= SUCCESS_ATTEMPT:
+                        TARGET_PATH.write_text("done\\n", encoding="utf-8")
+
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+
+if __name__ == "__main__":
+    unittest.main()

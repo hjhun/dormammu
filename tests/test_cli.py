@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import subprocess
 import stat
 import sys
 import tempfile
@@ -91,7 +92,56 @@ class CliTests(unittest.TestCase):
                 Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8"),
             )
 
+    def test_run_loop_and_resume_loop_cover_phase_4_cli_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            first_stdout = io.StringIO()
+            with contextlib.redirect_stdout(first_stdout):
+                first_exit = main(
+                    [
+                        "run-loop",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                        "--run-label",
+                        "phase4-cli",
+                        "--max-retries",
+                        "0",
+                        "--required-path",
+                        "done.txt",
+                    ]
+                )
+
+            self.assertEqual(first_exit, 1)
+            first_payload = json.loads(first_stdout.getvalue())
+            self.assertEqual(first_payload["status"], "failed")
+            self.assertTrue((root / ".dev" / "continuation_prompt.txt").exists())
+
+            resume_stdout = io.StringIO()
+            with contextlib.redirect_stdout(resume_stdout):
+                resume_exit = main(
+                    [
+                        "resume-loop",
+                        "--repo-root",
+                        str(root),
+                        "--max-retries",
+                        "1",
+                    ]
+                )
+
+            self.assertEqual(resume_exit, 0)
+            resume_payload = json.loads(resume_stdout.getvalue())
+            self.assertEqual(resume_payload["status"], "completed")
+            self.assertTrue((root / "done.txt").exists())
+
     def _seed_repo(self, root: Path) -> None:
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
         templates = root / "templates" / "dev"
         templates.mkdir(parents=True, exist_ok=True)
@@ -133,6 +183,55 @@ class CliTests(unittest.TestCase):
 
                     print(f"PROMPT::{{prompt.strip()}}")
                     print(f"TAG::{{tag}}")
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_loop_cli(self, root: Path, *, success_attempt: int) -> Path:
+        script = root / "fake-loop-agent"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                from pathlib import Path
+                import sys
+
+                ROOT = Path({str(root)!r})
+                SUCCESS_ATTEMPT = {success_attempt}
+                COUNTER_PATH = ROOT / ".attempt-count"
+                TARGET_PATH = ROOT / "done.txt"
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: fake-loop-agent [--prompt-file PATH]")
+                        return 0
+
+                    if COUNTER_PATH.exists():
+                        attempt = int(COUNTER_PATH.read_text(encoding="utf-8").strip()) + 1
+                    else:
+                        attempt = 1
+                    COUNTER_PATH.write_text(str(attempt), encoding="utf-8")
+
+                    prompt = ""
+                    if "--prompt-file" in args:
+                        index = args.index("--prompt-file")
+                        prompt = Path(args[index + 1]).read_text(encoding="utf-8")
+                    else:
+                        prompt = sys.stdin.read()
+
+                    print(f"ATTEMPT::{{attempt}}")
+                    print(f"PROMPT::{{prompt.strip()}}")
+
+                    if attempt >= SUCCESS_ATTEMPT:
+                        TARGET_PATH.write_text("done\\n", encoding="utf-8")
+
                     return 0
 
                 raise SystemExit(main())

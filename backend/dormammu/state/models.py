@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 
-STATE_SCHEMA_VERSION = 2
+STATE_SCHEMA_VERSION = 3
 
 PHASE_LABELS = {
     "phase_1": "Phase 1. Core Foundation and Repository Bootstrap",
@@ -207,6 +207,14 @@ def default_session_state(
             "Resume from planning unless supervisor evidence requires an earlier phase.",
             "Interpret a retry limit of -1 as infinite repetition once loop support exists.",
         ],
+        "loop": {
+            "status": "idle",
+        },
+        "supervisor_report": {
+            "path": ".dev/supervisor_report.md",
+            "status": "not_run",
+        },
+        "latest_continuation_prompt": None,
     }
 
 
@@ -296,4 +304,12 @@ def default_workflow_state(
             "Treat this file as machine truth and keep Markdown synchronized.",
             "A failed-work retry limit must be user-configurable, and -1 must mean infinite repetition.",
         ],
+        "loop": {
+            "status": "idle",
+        },
+        "supervisor_report": {
+            "path": ".dev/supervisor_report.md",
+            "status": "not_run",
+        },
+        "latest_continuation_prompt": None,
     }

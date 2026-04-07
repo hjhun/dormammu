@@ -35,7 +35,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertIn("Bootstrap test goal", dashboard)
 
             workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
-            self.assertEqual(workflow_state["state_schema_version"], 2)
+            self.assertEqual(workflow_state["state_schema_version"], 3)
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["pending_tasks"],
                 3,
