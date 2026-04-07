@@ -4,8 +4,10 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import stat
 import sys
 import tempfile
+import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,6 +56,41 @@ class CliTests(unittest.TestCase):
             self.assertTrue((root / ".dev" / "DASHBOARD.md").exists())
             self.assertEqual(payload["logs_dir"], str(root / ".dev" / "logs"))
 
+    def test_run_once_executes_external_cli_and_prints_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Phase 3 test prompt",
+                        "--run-label",
+                        "cli-test",
+                        "--extra-arg=--echo-tag",
+                        "--extra-arg",
+                        "cli",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["exit_code"], 0)
+            self.assertEqual(payload["prompt_mode"], "file")
+            self.assertTrue(Path(payload["artifacts"]["stdout"]).exists())
+            self.assertIn(
+                "PROMPT::Phase 3 test prompt",
+                Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8"),
+            )
+
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
         templates = root / "templates" / "dev"
@@ -66,6 +103,45 @@ class CliTests(unittest.TestCase):
             "# TASKS\n\n${task_items}\n",
             encoding="utf-8",
         )
+
+    def _write_fake_cli(self, root: Path) -> Path:
+        script = root / "fake-agent"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                from pathlib import Path
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: fake-agent [--prompt-file PATH] [--echo-tag TAG]")
+                        return 0
+
+                    prompt = ""
+                    if "--prompt-file" in args:
+                        index = args.index("--prompt-file")
+                        prompt = Path(args[index + 1]).read_text(encoding="utf-8")
+                    else:
+                        prompt = sys.stdin.read()
+
+                    tag = ""
+                    if "--echo-tag" in args:
+                        index = args.index("--echo-tag")
+                        tag = args[index + 1]
+
+                    print(f"PROMPT::{{prompt.strip()}}")
+                    print(f"TAG::{{tag}}")
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from pathlib import Path
 from string import Template
 from typing import Any, Mapping, Sequence
 
+from dormammu.agent.models import AgentRunResult
 from dormammu.config import AppConfig
 from dormammu.state.models import (
     default_dashboard_context,
@@ -167,6 +168,28 @@ class StateRepository:
         workflow_state["updated_at"] = timestamp
         workflow_state.setdefault("operator_sync", {})
         workflow_state["operator_sync"]["tasks"] = task_sync
+        workflow_path.write_text(
+            json.dumps(workflow_state, indent=2, ensure_ascii=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def record_latest_run(self, result: AgentRunResult) -> None:
+        session_path = self.dev_dir / "session.json"
+        workflow_path = self.dev_dir / "workflow_state.json"
+
+        latest_run = result.to_dict()
+
+        session_state = json.loads(session_path.read_text(encoding="utf-8"))
+        session_state["updated_at"] = result.completed_at
+        session_state["latest_run"] = latest_run
+        session_path.write_text(
+            json.dumps(session_state, indent=2, ensure_ascii=True) + "\n",
+            encoding="utf-8",
+        )
+
+        workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+        workflow_state["updated_at"] = result.completed_at
+        workflow_state["latest_run"] = latest_run
         workflow_path.write_text(
             json.dumps(workflow_state, indent=2, ensure_ascii=True) + "\n",
             encoding="utf-8",

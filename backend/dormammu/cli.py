@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 from typing import Sequence
 
+from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.app import create_app
 from dormammu.config import AppConfig
 from dormammu.state import StateRepository
@@ -34,6 +35,54 @@ def build_parser() -> argparse.ArgumentParser:
         help="Active roadmap phase id to record. Repeat for multiple values.",
     )
     init_state.set_defaults(handler=_handle_init_state)
+
+    run_once = subparsers.add_parser(
+        "run-once",
+        help="Run an external coding-agent CLI once and persist the artifacts.",
+    )
+    run_once.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    run_once.add_argument("--agent-cli", type=Path, required=True, help="Path to the external CLI.")
+    prompt_group = run_once.add_mutually_exclusive_group(required=True)
+    prompt_group.add_argument("--prompt", default=None, help="Prompt text to execute.")
+    prompt_group.add_argument(
+        "--prompt-file",
+        type=Path,
+        default=None,
+        help="Read prompt text from a file.",
+    )
+    run_once.add_argument(
+        "--input-mode",
+        choices=("auto", "file", "arg", "stdin"),
+        default="auto",
+        help="How to send the prompt to the external CLI.",
+    )
+    run_once.add_argument(
+        "--prompt-flag",
+        default=None,
+        help="Override the prompt flag used in file or arg mode.",
+    )
+    run_once.add_argument(
+        "--workdir",
+        type=Path,
+        default=None,
+        help="Working directory for the external CLI run.",
+    )
+    run_once.add_argument(
+        "--run-label",
+        default=None,
+        help="Optional label for the generated log artifact names.",
+    )
+    run_once.add_argument(
+        "--extra-arg",
+        dest="extra_args",
+        action="append",
+        default=None,
+        help=(
+            "Repeatable extra argument passed through to the external CLI. "
+            "Use --extra-arg=VALUE when the value starts with '-'."
+        ),
+    )
+    run_once.set_defaults(handler=_handle_run_once)
 
     serve = subparsers.add_parser("serve", help="Start the local backend app.")
     serve.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
@@ -74,6 +123,41 @@ def _handle_init_state(args: argparse.Namespace) -> int:
     )
     print(json.dumps(artifacts.to_dict(), indent=2, ensure_ascii=True))
     return 0
+
+
+def _read_prompt_text(args: argparse.Namespace) -> str:
+    if args.prompt is not None:
+        return args.prompt
+    if args.prompt_file is not None:
+        return args.prompt_file.read_text(encoding="utf-8")
+    raise ValueError("Either --prompt or --prompt-file is required.")
+
+
+def _handle_run_once(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    repository = StateRepository(config)
+    repository.ensure_bootstrap_state(active_roadmap_phase_ids=["phase_3"])
+
+    request = AgentRunRequest(
+        cli_path=args.agent_cli,
+        prompt_text=_read_prompt_text(args),
+        repo_root=config.repo_root,
+        workdir=args.workdir,
+        input_mode=args.input_mode,
+        prompt_flag=args.prompt_flag,
+        extra_args=tuple(args.extra_args or ()),
+        run_label=args.run_label,
+    )
+
+    try:
+        result = CliAdapter(config).run_once(request)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    repository.record_latest_run(result)
+    print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
+    return 0 if result.exit_code == 0 else result.exit_code
 
 
 def _handle_serve(args: argparse.Namespace) -> int:
