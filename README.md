@@ -9,7 +9,8 @@ optional local web UI.
 This repository currently bootstraps:
 
 - a Python package under `backend/`
-- a CLI entrypoint for config inspection, state initialization, and local serve
+- a CLI entrypoint for config inspection, state initialization, run/resume/ui,
+  and environment diagnostics
 - `.dev` bootstrap helpers and Markdown templates
 - a lightweight local UI served from `frontend/`
 
@@ -19,11 +20,32 @@ This repository currently bootstraps:
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .
-python -m dormammu show-config
-python -m dormammu init-state
-python -m dormammu serve
+dormammu doctor --repo-root . --agent-cli /path/to/agent-cli
+dormammu init-state
+dormammu ui
 # then open http://127.0.0.1:8000/
 ```
+
+## Install Script
+
+```bash
+./scripts/install.sh
+```
+
+That script creates or reuses `.venv`, upgrades `pip`, installs the package in
+editable mode, and prints the next `doctor` and `ui` commands.
+
+## Primary Commands
+
+```bash
+dormammu run --agent-cli /path/to/agent-cli --prompt "Do the work"
+dormammu resume
+dormammu ui
+dormammu doctor --agent-cli /path/to/agent-cli
+```
+
+Low-level compatibility commands such as `run-loop`, `resume-loop`, and
+`serve` remain available.
 
 ## Project Layout
 

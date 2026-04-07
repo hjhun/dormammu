@@ -16,7 +16,7 @@ BACKEND = ROOT / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-from dormammu.cli import main
+from dormammu.cli import build_parser, main
 
 
 class CliTests(unittest.TestCase):
@@ -102,7 +102,7 @@ class CliTests(unittest.TestCase):
             with contextlib.redirect_stdout(first_stdout):
                 first_exit = main(
                     [
-                        "run-loop",
+                        "run",
                         "--repo-root",
                         str(root),
                         "--agent-cli",
@@ -127,7 +127,7 @@ class CliTests(unittest.TestCase):
             with contextlib.redirect_stdout(resume_stdout):
                 resume_exit = main(
                     [
-                        "resume-loop",
+                        "resume",
                         "--repo-root",
                         str(root),
                         "--max-retries",
@@ -139,6 +139,70 @@ class CliTests(unittest.TestCase):
             resume_payload = json.loads(resume_stdout.getvalue())
             self.assertEqual(resume_payload["status"], "completed")
             self.assertTrue((root / "done.txt").exists())
+
+    def test_phase_6_aliases_parse_with_existing_handlers(self) -> None:
+        parser = build_parser()
+
+        run_args = parser.parse_args(["run-loop", "--agent-cli", "tool", "--prompt", "hi"])
+        resume_args = parser.parse_args(["resume-loop"])
+        ui_args = parser.parse_args(["serve"])
+
+        self.assertEqual(run_args.command, "run-loop")
+        self.assertEqual(resume_args.command, "resume-loop")
+        self.assertEqual(ui_args.command, "serve")
+        self.assertIsNotNone(run_args.handler)
+        self.assertIsNotNone(resume_args.handler)
+        self.assertIsNotNone(ui_args.handler)
+
+    def test_doctor_reports_ready_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            (root / ".agents").mkdir()
+            fake_cli = self._write_fake_cli(root)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "doctor",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["status"], "ok")
+            checks = {item["name"]: item for item in payload["checks"]}
+            self.assertTrue(checks["python_version"]["ok"])
+            self.assertTrue(checks["agent_cli"]["ok"])
+            self.assertTrue(checks["agent_directory"]["ok"])
+            self.assertTrue(checks["repo_writable"]["ok"])
+
+    def test_doctor_reports_missing_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "doctor",
+                        "--repo-root",
+                        str(root),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["status"], "issues_found")
+            checks = {item["name"]: item for item in payload["checks"]}
+            self.assertFalse(checks["agent_cli"]["ok"])
+            self.assertFalse(checks["agent_directory"]["ok"])
 
     def _seed_repo(self, root: Path) -> None:
         subprocess.run(["git", "init", "-q", str(root)], check=True)

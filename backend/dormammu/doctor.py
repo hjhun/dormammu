@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import os
+from pathlib import Path
+import sys
+from typing import Any
+
+
+MINIMUM_PYTHON = (3, 11)
+
+
+@dataclass(frozen=True, slots=True)
+class DoctorCheck:
+    name: str
+    ok: bool
+    summary: str
+    details: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "ok": self.ok,
+            "summary": self.summary,
+            "details": self.details,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DoctorReport:
+    status: str
+    repo_root: Path
+    checks: tuple[DoctorCheck, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "repo_root": str(self.repo_root),
+            "checks": [check.to_dict() for check in self.checks],
+        }
+
+
+def run_doctor(*, repo_root: Path, agent_cli: Path | None = None) -> DoctorReport:
+    checks = (
+        _check_python_version(),
+        _check_agent_cli(agent_cli),
+        _check_agent_directory(repo_root),
+        _check_repo_writable(repo_root),
+    )
+    status = "ok" if all(check.ok for check in checks) else "issues_found"
+    return DoctorReport(status=status, repo_root=repo_root, checks=checks)
+
+
+def _check_python_version() -> DoctorCheck:
+    current = sys.version_info[:3]
+    ok = current >= MINIMUM_PYTHON
+    summary = (
+        f"Python {current[0]}.{current[1]}.{current[2]} meets the minimum requirement."
+        if ok
+        else (
+            f"Python {current[0]}.{current[1]}.{current[2]} is too old; "
+            f"{MINIMUM_PYTHON[0]}.{MINIMUM_PYTHON[1]}+ is required."
+        )
+    )
+    return DoctorCheck(
+        name="python_version",
+        ok=ok,
+        summary=summary,
+        details={
+            "current": ".".join(str(value) for value in current),
+            "required_minimum": ".".join(str(value) for value in MINIMUM_PYTHON),
+            "executable": sys.executable,
+        },
+    )
+
+
+def _check_agent_cli(agent_cli: Path | None) -> DoctorCheck:
+    if agent_cli is None:
+        return DoctorCheck(
+            name="agent_cli",
+            ok=False,
+            summary="No agent CLI path was provided. Pass --agent-cli to validate one.",
+            details={
+                "path": None,
+                "exists": False,
+                "executable": False,
+            },
+        )
+
+    resolved = agent_cli.expanduser()
+    if not resolved.is_absolute():
+        resolved = (Path.cwd() / resolved).resolve()
+
+    exists = resolved.exists()
+    executable = exists and os.access(resolved, os.X_OK)
+    ok = exists and executable
+    if ok:
+        summary = f"Agent CLI is available at {resolved}."
+    elif not exists:
+        summary = f"Agent CLI path does not exist: {resolved}."
+    else:
+        summary = f"Agent CLI is not executable: {resolved}."
+
+    return DoctorCheck(
+        name="agent_cli",
+        ok=ok,
+        summary=summary,
+        details={
+            "path": str(resolved),
+            "exists": exists,
+            "executable": executable,
+        },
+    )
+
+
+def _check_agent_directory(repo_root: Path) -> DoctorCheck:
+    candidates = (repo_root / ".agent", repo_root / ".agents")
+    found = next((path for path in candidates if path.exists()), None)
+    ok = found is not None
+    summary = (
+        f"Found agent workspace directory at {found}."
+        if found is not None
+        else "Neither .agent nor .agents exists under the repository root."
+    )
+    return DoctorCheck(
+        name="agent_directory",
+        ok=ok,
+        summary=summary,
+        details={
+            "checked_paths": [str(path) for path in candidates],
+            "found_path": str(found) if found else None,
+        },
+    )
+
+
+def _check_repo_writable(repo_root: Path) -> DoctorCheck:
+    probe_path = repo_root / ".dormammu-doctor-write-check"
+    try:
+        probe_path.write_text("ok\n", encoding="utf-8")
+        probe_path.unlink()
+    except OSError as exc:
+        return DoctorCheck(
+            name="repo_writable",
+            ok=False,
+            summary=f"Repository root is not writable: {exc}",
+            details={
+                "path": str(repo_root),
+            },
+        )
+
+    return DoctorCheck(
+        name="repo_writable",
+        ok=True,
+        summary=f"Repository root is writable: {repo_root}.",
+        details={
+            "path": str(repo_root),
+        },
+    )

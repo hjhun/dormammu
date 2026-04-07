@@ -10,6 +10,7 @@ from typing import Sequence
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.app import create_app
 from dormammu.config import AppConfig
+from dormammu.doctor import run_doctor
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
 from dormammu.recovery import RecoveryManager
 from dormammu.state import StateRepository
@@ -87,7 +88,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_once.set_defaults(handler=_handle_run_once)
 
     run_loop = subparsers.add_parser(
-        "run-loop",
+        "run",
+        aliases=["run-loop"],
         help="Run an external coding-agent CLI under the supervised retry loop.",
     )
     run_loop.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
@@ -153,7 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.set_defaults(handler=_handle_run_loop)
 
     resume_loop = subparsers.add_parser(
-        "resume-loop",
+        "resume",
+        aliases=["resume-loop"],
         help="Resume the most recent supervised loop run from saved .dev state.",
     )
     resume_loop.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
@@ -165,7 +168,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     resume_loop.set_defaults(handler=_handle_resume_loop)
 
-    serve = subparsers.add_parser("serve", help="Start the local backend app.")
+    serve = subparsers.add_parser(
+        "ui",
+        aliases=["serve"],
+        help="Start the local backend app and UI.",
+    )
     serve.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
     serve.add_argument("--host", default=None, help="Host interface to bind.")
     serve.add_argument("--port", type=int, default=None, help="Port to bind.")
@@ -175,6 +182,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the startup bootstrap state initialization.",
     )
     serve.set_defaults(handler=_handle_serve)
+
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Check whether the local environment is ready to run dormammu.",
+    )
+    doctor.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    doctor.add_argument(
+        "--agent-cli",
+        type=Path,
+        default=None,
+        help="Path to the external coding-agent CLI to validate.",
+    )
+    doctor.set_defaults(handler=_handle_doctor)
 
     return parser
 
@@ -315,3 +335,10 @@ def _handle_serve(args: argparse.Namespace) -> int:
 
     uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)
     return 0
+
+
+def _handle_doctor(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    report = run_doctor(repo_root=config.repo_root, agent_cli=args.agent_cli)
+    print(json.dumps(report.to_dict(), indent=2, ensure_ascii=True))
+    return 0 if report.status == "ok" else 1
