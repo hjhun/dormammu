@@ -26,14 +26,35 @@ dormammu ui
 # then open http://127.0.0.1:8000/
 ```
 
-## Install Script
+## Curl Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
+```
+
+The repository-root `install.sh` is the distribution bootstrapper for
+user-local installs. By default it installs into `~/.local/share/dormammu`,
+links `dormammu` into `~/.local/bin`, and installs from the latest GitHub
+release when one exists or falls back to the `main` branch archive.
+
+Useful overrides:
+
+```bash
+DORMAMMU_INSTALL_ROOT=/opt/dormammu \
+DORMAMMU_BIN_DIR=/usr/local/bin \
+PYTHON=python3.12 \
+curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
+```
+
+## Local Dev Install
 
 ```bash
 ./scripts/install.sh
 ```
 
-That script creates or reuses `.venv`, upgrades `pip`, installs the package in
-editable mode, and prints the next `doctor` and `ui` commands.
+That script is for a checked-out repository. It creates or reuses `.venv`,
+upgrades `pip`, installs the package in editable mode, and prints the next
+`doctor` and `ui` commands.
 
 ## Primary Commands
 
@@ -46,6 +67,13 @@ dormammu doctor --agent-cli /path/to/agent-cli
 
 Low-level compatibility commands such as `run-loop`, `resume-loop`, and
 `serve` remain available.
+
+## Release Packaging
+
+`.github/workflows/release.yml` packages the project on `v*` tag pushes and on
+manual workflow dispatch. The workflow builds wheel and sdist artifacts, uploads
+them as workflow artifacts, and attaches `dist/*` plus `install.sh` to the
+GitHub release when the run is triggered by a version tag.
 
 ## Project Layout
 
