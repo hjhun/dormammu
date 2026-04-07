@@ -17,12 +17,29 @@ FILE_TARGETS = {
     "continuation": ".dev/continuation_prompt.txt",
     "supervisor_report": ".dev/supervisor_report.md",
 }
+RUN_ARTIFACT_TARGETS = {
+    "prompt_artifact": "prompt",
+    "stdout_artifact": "stdout",
+    "stderr_artifact": "stderr",
+    "metadata_artifact": "metadata",
+}
 
 
 router = APIRouter(prefix="/api/state", tags=["state"])
 
 
-def _resolve_file_target(repository: StateRepository, workflow_state: dict[str, Any], name: str) -> Path:
+def _resolve_file_target(
+    repository: StateRepository,
+    session_state: dict[str, Any],
+    workflow_state: dict[str, Any],
+    name: str,
+) -> Path | None:
+    if name in RUN_ARTIFACT_TARGETS:
+        active_run = _active_run_payload(session_state, workflow_state)
+        artifact_value = None
+        if active_run is not None:
+            artifact_value = active_run.get("artifacts", {}).get(RUN_ARTIFACT_TARGETS[name])
+        return Path(str(artifact_value)) if artifact_value else None
     if name == "continuation":
         configured = workflow_state.get("latest_continuation_prompt")
         if configured:
@@ -36,8 +53,8 @@ def _resolve_file_target(repository: StateRepository, workflow_state: dict[str, 
     return repository.config.repo_root / FILE_TARGETS[name]
 
 
-def _read_text(path: Path) -> str:
-    if not path.exists():
+def _read_text(path: Path | None) -> str:
+    if path is None or not path.exists():
         return ""
     return path.read_text(encoding="utf-8")
 
@@ -88,12 +105,12 @@ def get_state_summary(request: Request) -> dict[str, Any]:
     session_state = repository.read_session_state()
     workflow_state = repository.read_workflow_state()
     file_status = {}
-    for name in FILE_TARGETS:
-        target = _resolve_file_target(repository, workflow_state, name)
+    for name in [*FILE_TARGETS, *RUN_ARTIFACT_TARGETS]:
+        target = _resolve_file_target(repository, session_state, workflow_state, name)
         file_status[name] = {
-            "path": str(target),
-            "exists": target.exists(),
-            "size": target.stat().st_size if target.exists() else 0,
+            "path": str(target) if target else None,
+            "exists": bool(target and target.exists()),
+            "size": target.stat().st_size if target and target.exists() else 0,
         }
     return {
         "app": request.app.state.config.to_dict(),
@@ -122,12 +139,13 @@ def get_state_summary(request: Request) -> dict[str, Any]:
 @router.get("/files/{name}")
 def get_state_file(name: str, request: Request) -> dict[str, Any]:
     repository: StateRepository = request.app.state.state_repository
+    session_state = repository.read_session_state()
     workflow_state = repository.read_workflow_state()
-    target = _resolve_file_target(repository, workflow_state, name)
+    target = _resolve_file_target(repository, session_state, workflow_state, name)
     return {
         "name": name,
-        "path": str(target),
-        "exists": target.exists(),
+        "path": str(target) if target else None,
+        "exists": bool(target and target.exists()),
         "content": _read_text(target),
     }
 

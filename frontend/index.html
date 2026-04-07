@@ -143,6 +143,36 @@
             </article>
 
             <article class="detail-card">
+              <h3>Run details</h3>
+              <dl class="detail-list">
+                <div>
+                  <dt>Source</dt>
+                  <dd id="run-source">-</dd>
+                </div>
+                <div>
+                  <dt>Run ID</dt>
+                  <dd id="run-id">-</dd>
+                </div>
+                <div>
+                  <dt>Prompt mode</dt>
+                  <dd id="run-prompt-mode">-</dd>
+                </div>
+                <div>
+                  <dt>Started at</dt>
+                  <dd id="run-started-at">-</dd>
+                </div>
+                <div>
+                  <dt>Completed at</dt>
+                  <dd id="run-completed-at">-</dd>
+                </div>
+                <div>
+                  <dt>Attempts / retries</dt>
+                  <dd id="run-attempts">-</dd>
+                </div>
+              </dl>
+            </article>
+
+            <article class="detail-card">
               <h3>Recent stdout</h3>
               <pre id="stdout-log" class="log-view">Waiting for logs...</pre>
             </article>
@@ -167,6 +197,10 @@
             <button class="file-button" data-file="tasks" type="button">TASKS.md</button>
             <button class="file-button" data-file="continuation" type="button">continuation_prompt.txt</button>
             <button class="file-button" data-file="supervisor_report" type="button">supervisor_report.md</button>
+            <button class="file-button" data-file="prompt_artifact" type="button">latest prompt</button>
+            <button class="file-button" data-file="stdout_artifact" type="button">latest stdout</button>
+            <button class="file-button" data-file="stderr_artifact" type="button">latest stderr</button>
+            <button class="file-button" data-file="metadata_artifact" type="button">latest metadata</button>
           </div>
 
           <div class="file-meta">

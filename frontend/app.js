@@ -43,6 +43,22 @@ function setText(id, value) {
   }
 }
 
+function isActivePanel(panelName) {
+  return document.querySelector(`#panel-${panelName}`)?.classList.contains("is-active");
+}
+
+function runSnapshot(payload) {
+  const currentRun = payload.workflow.current_run;
+  const latestRun = payload.workflow.latest_run;
+  if (currentRun) {
+    return { source: "current run", run: currentRun };
+  }
+  if (latestRun) {
+    return { source: "latest run", run: latestRun };
+  }
+  return { source: "no saved run", run: null };
+}
+
 async function loadRunSetup() {
   const payload = await fetchJson("/api/runs/setup");
   document.querySelector("#workdir").value = payload.workdir || "";
@@ -58,6 +74,14 @@ function renderSummary(payload) {
   const supervisor = payload.workflow.supervisor || {};
   const loop = payload.session.loop || {};
   const uiRun = payload.ui_run || {};
+  const snapshot = runSnapshot(payload);
+  const run = snapshot.run;
+  const attemptsCompleted = loop.attempts_completed;
+  const retriesUsed = loop.retries_used;
+  const attemptText =
+    attemptsCompleted === undefined && retriesUsed === undefined
+      ? "-"
+      : `${attemptsCompleted ?? 0} / ${retriesUsed ?? 0}`;
 
   setText("#hero-roadmap", roadmapFocus);
   setText("#hero-action", payload.workflow.next_action || payload.session.next_action);
@@ -69,17 +93,26 @@ function renderSummary(payload) {
   setText("#next-action", payload.workflow.next_action || payload.session.next_action);
   setText("#next-task", taskSync.next_pending_task || "No pending task");
   setText("#ui-job-status", uiRun.status || "idle");
+  setText("#run-source", snapshot.source);
+  setText("#run-id", run?.run_id || "No run yet");
+  setText("#run-prompt-mode", run?.prompt_mode || "-");
+  setText("#run-started-at", run?.started_at || "-");
+  setText("#run-completed-at", run?.completed_at || (run ? "Running" : "-"));
+  setText("#run-attempts", attemptText);
 }
 
 async function refreshSummary() {
   const payload = await fetchJson("/api/state/summary");
   renderSummary(payload);
+  if (isActivePanel("files")) {
+    await loadFile(activeFile);
+  }
   return payload;
 }
 
 async function loadFile(name) {
   const payload = await fetchJson(`/api/state/files/${name}`);
-  filePath.textContent = payload.path;
+  filePath.textContent = payload.path || "No saved file for this target yet.";
   fileContent.textContent = payload.exists ? payload.content : "File is not available yet.";
 }
 

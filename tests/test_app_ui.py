@@ -45,6 +45,8 @@ class LocalUiTests(unittest.TestCase):
                 payload = summary.json()
                 self.assertEqual(payload["workflow"]["roadmap"]["active_phase_ids"], ["phase_5"])
                 self.assertTrue(payload["files"]["dashboard"]["exists"])
+                self.assertFalse(payload["files"]["prompt_artifact"]["exists"])
+                self.assertIsNone(payload["files"]["prompt_artifact"]["path"])
 
                 dashboard = client.get("/api/state/files/dashboard")
                 self.assertEqual(dashboard.status_code, 200)
@@ -57,6 +59,7 @@ class LocalUiTests(unittest.TestCase):
                 ui = client.get("/")
                 self.assertEqual(ui.status_code, 200)
                 self.assertIn("Run setup", ui.text)
+                self.assertIn("Run details", ui.text)
 
     def test_start_run_endpoint_executes_loop_and_exposes_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -95,6 +98,12 @@ class LocalUiTests(unittest.TestCase):
                 summary = client.get("/api/state/summary").json()
                 self.assertEqual(summary["workflow"]["latest_run"]["exit_code"], 0)
                 self.assertIsNone(summary["workflow"]["current_run"])
+                self.assertTrue(summary["files"]["prompt_artifact"]["exists"])
+                self.assertTrue(summary["files"]["metadata_artifact"]["exists"])
+
+                prompt_file = client.get("/api/state/files/prompt_artifact").json()
+                self.assertTrue(prompt_file["exists"])
+                self.assertIn("Render the latest progress snapshot.", prompt_file["content"])
 
     def _load_config(self, root: Path) -> AppConfig:
         return AppConfig.load(repo_root=root).with_overrides(
