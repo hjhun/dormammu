@@ -11,6 +11,8 @@ lets a supervisor validate outcomes, and resumes safely after interruption.
 If you want something more durable than "run an agent and hope for the best,"
 this project is built for that gap.
 
+Start with the full project guide at [docs/GUIDE.md](docs/GUIDE.md).
+
 ## Why DORMAMMU
 
 - Terminal-first core: the essential workflow works from Python modules and CLI
