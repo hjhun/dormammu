@@ -64,6 +64,34 @@ class CommandBuilderTests(unittest.TestCase):
             self.assertEqual(list(plan.argv), ["/tmp/fake-agent"])
             self.assertEqual(plan.stdin_input, "hello from stdin")
 
+    def test_auto_mode_supports_positional_prompt_with_command_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / "prompt.txt"
+            request = AgentRunRequest(
+                cli_path=Path("/tmp/codex"),
+                prompt_text="inspect the repository",
+                repo_root=Path(tmpdir),
+            )
+            capabilities = CliCapabilities(
+                help_flag="--help",
+                prompt_file_flag=None,
+                prompt_arg_flag=None,
+                workdir_flag=None,
+                help_text="",
+                help_exit_code=0,
+                command_prefix=("exec",),
+                prompt_positional=True,
+            )
+
+            plan = build_command_plan(request, capabilities, prompt_path=prompt_path)
+
+            self.assertEqual(plan.prompt_mode, "positional")
+            self.assertEqual(
+                list(plan.argv),
+                ["/tmp/codex", "exec", "inspect the repository"],
+            )
+            self.assertIsNone(plan.stdin_input)
+
 
 if __name__ == "__main__":
     unittest.main()

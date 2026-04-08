@@ -12,6 +12,8 @@ def _resolve_prompt_mode(request: AgentRunRequest, capabilities: CliCapabilities
         return "file"
     if capabilities.prompt_arg_flag:
         return "arg"
+    if capabilities.prompt_positional:
+        return "positional"
     return "stdin"
 
 
@@ -22,7 +24,7 @@ def build_command_plan(
     prompt_path: Path,
 ) -> CommandPlan:
     prompt_mode = _resolve_prompt_mode(request, capabilities)
-    argv = [str(request.cli_path)]
+    argv = [str(request.cli_path), *capabilities.command_prefix]
     stdin_input: str | None = None
 
     if prompt_mode == "file":
@@ -37,6 +39,8 @@ def build_command_plan(
         argv.extend([prompt_flag, request.prompt_text])
     elif prompt_mode == "stdin":
         stdin_input = request.prompt_text
+    elif prompt_mode == "positional":
+        argv.append(request.prompt_text)
     else:
         raise ValueError(f"Unsupported prompt mode: {prompt_mode}")
 

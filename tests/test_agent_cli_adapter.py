@@ -49,6 +49,33 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(workflow_state["latest_run"]["run_id"], result.run_id)
             self.assertEqual(workflow_state["latest_run"]["prompt_mode"], "file")
 
+    def test_run_once_uses_codex_exec_preset_for_positional_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_codex_cli(root)
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    run_label="phase-7-codex",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.prompt_mode, "positional")
+            self.assertEqual(list(result.command[:2]), [str(fake_cli), "exec"])
+            self.assertIn(
+                "PROMPT::Summarize the repository.",
+                result.stdout_path.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(result.capabilities.preset_key, "codex")
+            self.assertIsNotNone(result.capabilities.auto_approve)
+            self.assertEqual(result.capabilities.auto_approve.candidates[0].value, "--full-auto")
+
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
         templates = root / "templates" / "dev"
@@ -87,6 +114,38 @@ class CliAdapterTests(unittest.TestCase):
                     print(f"TAG::{{tag}}")
                     print("TRACE::stderr", file=sys.stderr)
                     return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_fake_codex_cli(self, root: Path) -> Path:
+        script = root / "codex"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("Usage: codex [OPTIONS] [PROMPT]")
+                        print("  codex exec [OPTIONS] [PROMPT]")
+                        print("  --full-auto")
+                        return 0
+
+                    if args and args[0] == "exec":
+                        prompt = " ".join(args[1:]).strip()
+                        print(f"PROMPT::{{prompt}}")
+                        return 0
+
+                    print("unexpected invocation", file=sys.stderr)
+                    return 1
 
                 raise SystemExit(main())
                 """

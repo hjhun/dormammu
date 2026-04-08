@@ -51,7 +51,11 @@ class CliAdapter:
             raise RuntimeError(f"CLI executable was not found: {cli_path}") from exc
 
         help_text = completed.stdout or completed.stderr
-        return parse_help_text(help_text, help_exit_code=completed.returncode)
+        return parse_help_text(
+            help_text,
+            executable_name=cli_path.name,
+            help_exit_code=completed.returncode,
+        )
 
     def run_once(
         self,

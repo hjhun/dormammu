@@ -6,6 +6,38 @@ from typing import Any, Sequence
 
 
 @dataclass(frozen=True, slots=True)
+class AutoApproveCandidate:
+    value: str
+    risk: str
+    source: str
+    summary: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "value": self.value,
+            "risk": self.risk,
+            "source": self.source,
+            "summary": self.summary,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AutoApproveInfo:
+    supported: bool
+    requires_confirmation: bool
+    candidates: Sequence[AutoApproveCandidate] = ()
+    notes: Sequence[str] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "supported": self.supported,
+            "requires_confirmation": self.requires_confirmation,
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class CliCapabilities:
     help_flag: str
     prompt_file_flag: str | None
@@ -13,6 +45,12 @@ class CliCapabilities:
     workdir_flag: str | None
     help_text: str
     help_exit_code: int
+    command_prefix: Sequence[str] = ()
+    prompt_positional: bool = False
+    preset_key: str | None = None
+    preset_label: str | None = None
+    preset_source: str | None = None
+    auto_approve: AutoApproveInfo | None = None
 
     def to_dict(self, *, include_help_text: bool = False) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -21,6 +59,27 @@ class CliCapabilities:
             "prompt_arg_flag": self.prompt_arg_flag,
             "workdir_flag": self.workdir_flag,
             "help_exit_code": self.help_exit_code,
+            "command_prefix": list(self.command_prefix),
+            "prompt_positional": self.prompt_positional,
+            "preset": (
+                {
+                    "key": self.preset_key,
+                    "label": self.preset_label,
+                    "source": self.preset_source,
+                }
+                if self.preset_key is not None
+                else None
+            ),
+            "auto_approve": (
+                self.auto_approve.to_dict()
+                if self.auto_approve is not None
+                else {
+                    "supported": False,
+                    "requires_confirmation": False,
+                    "candidates": [],
+                    "notes": [],
+                }
+            ),
         }
         if include_help_text:
             payload["help_text"] = self.help_text

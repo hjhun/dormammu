@@ -55,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_once.add_argument(
         "--input-mode",
-        choices=("auto", "file", "arg", "stdin"),
+        choices=("auto", "file", "arg", "stdin", "positional"),
         default="auto",
         help="How to send the prompt to the external CLI.",
     )
@@ -104,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_loop.add_argument(
         "--input-mode",
-        choices=("auto", "file", "arg", "stdin"),
+        choices=("auto", "file", "arg", "stdin", "positional"),
         default="auto",
         help="How to send the prompt to the external CLI.",
     )
@@ -167,6 +167,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the saved retry configuration before resuming.",
     )
     resume_loop.set_defaults(handler=_handle_resume_loop)
+
+    inspect_cli = subparsers.add_parser(
+        "inspect-cli",
+        help="Inspect an external coding-agent CLI for prompt handling and approval hints.",
+    )
+    inspect_cli.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    inspect_cli.add_argument("--agent-cli", type=Path, required=True, help="Path to the external CLI.")
+    inspect_cli.add_argument(
+        "--workdir",
+        type=Path,
+        default=None,
+        help="Working directory to use while invoking the CLI help command.",
+    )
+    inspect_cli.add_argument(
+        "--include-help-text",
+        action="store_true",
+        help="Include the raw CLI help text in the JSON output.",
+    )
+    inspect_cli.set_defaults(handler=_handle_inspect_cli)
 
     serve = subparsers.add_parser(
         "ui",
@@ -305,6 +324,25 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
 
     print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
     return 0 if result.status == "completed" else 1
+
+
+def _handle_inspect_cli(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    workdir = (args.workdir or config.repo_root).resolve()
+
+    try:
+        capabilities = CliAdapter(config).inspect_capabilities(args.agent_cli, cwd=workdir)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    payload = {
+        "cli_path": str(args.agent_cli.resolve()),
+        "workdir": str(workdir),
+        "capabilities": capabilities.to_dict(include_help_text=args.include_help_text),
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=True))
+    return 0
 
 
 def _handle_serve(args: argparse.Namespace) -> int:

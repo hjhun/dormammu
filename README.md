@@ -61,12 +61,17 @@ upgrades `pip`, installs the package in editable mode, and prints the next
 ```bash
 dormammu run --agent-cli /path/to/agent-cli --prompt "Do the work"
 dormammu resume
+dormammu inspect-cli --agent-cli /path/to/agent-cli
 dormammu ui
 dormammu doctor --agent-cli /path/to/agent-cli
 ```
 
 Low-level compatibility commands such as `run-loop`, `resume-loop`, and
 `serve` remain available.
+
+`inspect-cli` prints the detected prompt handling mode, matched known preset,
+and any approval-skipping candidates so operators can review risky flags before
+running a real workflow.
 
 ## Release Packaging
 

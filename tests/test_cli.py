@@ -140,6 +140,32 @@ class CliTests(unittest.TestCase):
             self.assertEqual(resume_payload["status"], "completed")
             self.assertTrue((root / "done.txt").exists())
 
+    def test_inspect_cli_reports_preset_and_auto_approve_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_aider_cli(root)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "inspect-cli",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            capabilities = payload["capabilities"]
+            self.assertEqual(capabilities["preset"]["key"], "aider")
+            self.assertEqual(capabilities["prompt_file_flag"], "--message-file")
+            self.assertTrue(capabilities["auto_approve"]["supported"])
+            self.assertEqual(capabilities["auto_approve"]["candidates"][0]["value"], "--yes")
+
     def test_phase_6_aliases_parse_with_existing_handlers(self) -> None:
         parser = build_parser()
 
@@ -296,6 +322,29 @@ class CliTests(unittest.TestCase):
                     if attempt >= SUCCESS_ATTEMPT:
                         TARGET_PATH.write_text("done\\n", encoding="utf-8")
 
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_aider_cli(self, root: Path) -> Path:
+        script = root / "aider"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: aider [--message-file PATH] [--message TEXT] [--yes]")
+                        return 0
                     return 0
 
                 raise SystemExit(main())
