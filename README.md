@@ -1,41 +1,51 @@
-# dormammu
+<p align="center">
+  <img src="docs/svg/dormammu.svg" alt="DORMAMMU logo" width="180">
+</p>
 
-`dormammu` is a Python-based coding agent loop orchestrator with a terminal
-first core, resumable `.dev/` state, supervisor-driven validation, and an
-optional local web UI.
+# DORMAMMU: Workflow Loop Engine
 
-## Phase 1 Bootstrap
+`dormammu` is a terminal-first workflow loop engine for coding agents. It runs
+an external agent CLI, records machine and human-readable state under `.dev/`,
+lets a supervisor validate outcomes, and resumes safely after interruption.
 
-This repository currently bootstraps:
+If you want something more durable than "run an agent and hope for the best,"
+this project is built for that gap.
 
-- a Python package under `backend/`
-- a CLI entrypoint for config inspection, state initialization, run/resume/ui,
-  and environment diagnostics
-- `.dev` bootstrap helpers and Markdown templates
-- a lightweight local UI served from `frontend/`
+## Why DORMAMMU
 
-## Quick Start
+- Terminal-first core: the essential workflow works from Python modules and CLI
+  entrypoints without depending on the web UI.
+- Resumable by default: execution state, operator notes, prompts, and logs are
+  written to `.dev/` so interrupted runs can continue instead of restarting.
+- Supervisor-driven validation: required paths, worktree changes, and follow-up
+  continuation prompts are handled as part of the loop.
+- Operator-visible state: Markdown files remain readable for humans while JSON
+  state stays available for tooling and automation.
+- Optional local UI: run `dormammu ui` for a browser view of progress, logs,
+  and key state files.
+- Fallback agent CLIs: configure failover when the primary coding agent hits a
+  token or quota wall.
 
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e .
-dormammu doctor --repo-root . --agent-cli /path/to/agent-cli
-dormammu init-state
-dormammu ui
-# then open http://127.0.0.1:8000/
-```
+## What It Looks Like In Practice
 
-## Curl Install
+1. Start a supervised run against your preferred coding-agent CLI.
+2. Persist prompts, logs, and workflow state into `.dev/`.
+3. Let the supervisor check whether the run actually produced the expected
+   outcome.
+4. Resume from saved state when the process is interrupted or additional work
+   is needed.
+
+## Install
+
+### User Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
 ```
 
-The repository-root `install.sh` is the distribution bootstrapper for
-user-local installs. By default it installs into `~/.local/share/dormammu`,
-links `dormammu` into `~/.local/bin`, and installs from the latest GitHub
-release when one exists or falls back to the `main` branch archive.
+The repository-root `install.sh` installs into `~/.local/share/dormammu` by
+default, links `dormammu` into `~/.local/bin`, and prefers the latest GitHub
+release when one exists.
 
 Useful overrides:
 
@@ -46,17 +56,39 @@ PYTHON=python3.12 \
 curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
 ```
 
-## Local Dev Install
+### Local Repository Install
 
 ```bash
 ./scripts/install.sh
 ```
 
-That script is for a checked-out repository. It creates or reuses `.venv`,
-upgrades `pip`, installs the package in editable mode, and prints the next
-`doctor` and `ui` commands.
+That script creates or reuses `.venv`, upgrades `pip`, installs the project in
+editable mode, and prints the next `doctor` and `ui` commands.
 
-## Primary Commands
+### Editable Development Install
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+```
+
+## Quick Start
+
+```bash
+dormammu doctor --repo-root . --agent-cli /path/to/agent-cli
+dormammu init-state
+dormammu run \
+  --repo-root . \
+  --agent-cli /path/to/agent-cli \
+  --prompt "Inspect the repo and implement the requested change." \
+  --required-path README.md
+dormammu ui
+```
+
+Then open `http://127.0.0.1:8000/` to watch progress in the local UI.
+
+## Core Commands
 
 ```bash
 dormammu run --agent-cli /path/to/agent-cli --prompt "Do the work"
@@ -69,25 +101,23 @@ dormammu ui
 dormammu doctor --agent-cli /path/to/agent-cli
 ```
 
-Low-level compatibility commands such as `run-loop`, `resume-loop`, and
-`serve` remain available.
+Command notes:
 
-`inspect-cli` prints the detected prompt handling mode, matched known preset,
-and any approval-skipping candidates so operators can review risky flags before
-running a real workflow.
+- `run` executes a supervised retry loop. Use `--max-retries -1` for infinite
+  repetition.
+- `resume` restores the saved session when `--session-id` is provided, then
+  continues the standard recovery flow.
+- `inspect-cli` reports prompt handling mode, matched presets, and risky
+  approval-skipping candidates before you run real work.
+- `ui` starts the optional local web app without changing the terminal-first
+  architecture.
+- Low-level compatibility commands such as `run-once`, `run-loop`,
+  `resume-loop`, and `serve` remain available.
 
-`start-session` archives the current active `.dev` state into
-`.dev/sessions/<session_id>/` and resets the root `.dev` files for a fresh
-active session. `sessions` lists the saved session snapshots as JSON.
+## Fallback CLI Config
 
-`restore-session` loads a saved snapshot back into the active root `.dev`
-files, and `resume --session-id <id>` restores that saved session first and
-then continues with the normal supervised recovery flow.
-
-## Config File
-
-If the primary coding-agent CLI hits a token or quota limit, `dormammu` can
-fail over to configured fallback CLIs from `dormammu.json` in the repo root.
+When the primary coding-agent CLI hits token or quota exhaustion, `dormammu`
+can fail over to additional CLIs from `dormammu.json` in the repo root.
 
 ```json
 {
@@ -110,28 +140,28 @@ fail over to configured fallback CLIs from `dormammu.json` in the repo root.
 Behavior notes:
 
 - the CLI passed to `dormammu run --agent-cli ...` is always tried first
-- configured fallback CLIs are tried in order when a run exits with a matching
-  token exhaustion message
-- fallback attempts do not consume the supervised loop retry budget
+- fallback CLIs are tried in order only when output matches a configured token
+  exhaustion pattern
+- fallback attempts do not consume supervised loop retry budget
 - if every configured CLI is exhausted, the loop stops in a `blocked` state so
-  you can wait for quota recovery or update `dormammu.json` before `resume`
+  you can wait for quota recovery or update the config before `resume`
+
+## Architecture At A Glance
+
+```text
+backend/     Python package, loop engine, adapters, supervisor, API
+frontend/    Lightweight local UI assets
+templates/   Bootstrap templates for .dev state
+docs/svg/    Brand assets, including the project logo
+scripts/     Install and developer convenience scripts
+tests/       Runtime and workflow validation
+```
 
 ## Release Packaging
 
-`.github/workflows/release.yml` packages the project on `v*` tag pushes and on
-manual workflow dispatch. The workflow builds wheel and sdist artifacts, uploads
-them as workflow artifacts, and attaches `dist/*` plus `install.sh` to the
-GitHub release when the run is triggered by a version tag.
-
-## Project Layout
-
-```text
-backend/     Python package and runtime services
-frontend/    Lightweight local UI assets
-templates/   Bootstrap templates for .dev state
-scripts/     Developer convenience scripts
-tests/       Bootstrap validation tests
-```
+`.github/workflows/release.yml` builds wheel and sdist artifacts on `v*` tag
+pushes and on manual workflow dispatch. Release runs attach `dist/*` plus the
+root `install.sh` to the GitHub release.
 
 ## License
 
