@@ -118,6 +118,48 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(result.fallback_trigger, "quota exceeded")
             self.assertIn("PROMPT::Write a tiny test plan.", result.stdout_path.read_text(encoding="utf-8"))
 
+    def test_run_once_applies_cli_overrides_for_cline_style_invocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cline_cli(root)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "cli_overrides": {
+                            "cline": {
+                                "input_mode": "arg",
+                                "prompt_flag": "--prompt",
+                                "extra_args": ["-y"],
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    run_label="phase-7-cline",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.prompt_mode, "arg")
+            self.assertEqual(
+                list(result.command),
+                [str(fake_cli), "--prompt", "Summarize the repository.", "-y"],
+            )
+            self.assertIn(
+                "PROMPT::Summarize the repository.",
+                result.stdout_path.read_text(encoding="utf-8"),
+            )
+            self.assertIn("YOLO::yes", result.stdout_path.read_text(encoding="utf-8"))
+
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
         templates = root / "templates" / "dev"
@@ -213,6 +255,37 @@ class CliAdapterTests(unittest.TestCase):
 
                     print({message!r}, file=sys.stderr)
                     return 2
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_fake_cline_cli(self, root: Path) -> Path:
+        script = root / "cline"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("Usage: cline [--prompt TEXT] [-y]")
+                        return 0
+
+                    if "--prompt" not in args:
+                        print("interactive mode requires explicit prompt flag", file=sys.stderr)
+                        return 2
+
+                    prompt = args[args.index("--prompt") + 1]
+                    print(f"PROMPT::{{prompt}}")
+                    print(f"YOLO::{{'yes' if '-y' in args else 'no'}}")
+                    return 0
 
                 raise SystemExit(main())
                 """

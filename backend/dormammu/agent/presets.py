@@ -29,7 +29,7 @@ KNOWN_CLI_PRESETS: tuple[KnownCliPreset, ...] = (
         key="codex",
         label="OpenAI Codex",
         executable_names=("codex",),
-        help_hints=("codex exec", "--full-auto", "approval"),
+        help_hints=("codex exec", "--full-auto", "--dangerously-bypass-approvals-and-sandbox"),
         command_prefix=("exec",),
         prompt_positional=True,
         auto_approve_candidates=(
@@ -37,6 +37,25 @@ KNOWN_CLI_PRESETS: tuple[KnownCliPreset, ...] = (
                 value="--full-auto",
                 risk="medium",
                 summary="Allows Codex to apply changes automatically in exec mode.",
+            ),
+        ),
+    ),
+    KnownCliPreset(
+        key="gemini",
+        label="Gemini CLI",
+        executable_names=("gemini",),
+        help_hints=("--approval-mode", "--prompt-interactive", "gemini cli"),
+        prompt_arg_flag="--prompt",
+        auto_approve_candidates=(
+            PresetAutoApproveCandidate(
+                value="--yolo",
+                risk="high",
+                summary="Auto-accepts all actions and should remain opt-in.",
+            ),
+            PresetAutoApproveCandidate(
+                value="--approval-mode yolo",
+                risk="high",
+                summary="Enables yolo approval mode and should remain opt-in.",
             ),
         ),
     ),
@@ -56,6 +75,19 @@ KNOWN_CLI_PRESETS: tuple[KnownCliPreset, ...] = (
                 value="--permission-mode bypassPermissions",
                 risk="high",
                 summary="Bypasses permission prompts and should remain opt-in.",
+            ),
+        ),
+    ),
+    KnownCliPreset(
+        key="cline",
+        label="Cline",
+        executable_names=("cline",),
+        help_hints=("-y", "cline"),
+        auto_approve_candidates=(
+            PresetAutoApproveCandidate(
+                value="-y",
+                risk="high",
+                summary="Enables non-interactive plain-text mode and should remain opt-in.",
             ),
         ),
     ),

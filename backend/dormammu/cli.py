@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Sequence
@@ -83,7 +84,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run an external coding-agent CLI once and persist the artifacts.",
     )
     run_once.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
-    run_once.add_argument("--agent-cli", type=Path, required=True, help="Path to the external CLI.")
+    run_once.add_argument(
+        "--agent-cli",
+        type=Path,
+        default=None,
+        help="Path to the external CLI. Optional when active_agent_cli is configured.",
+    )
     prompt_group = run_once.add_mutually_exclusive_group(required=True)
     prompt_group.add_argument("--prompt", default=None, help="Prompt text to execute.")
     prompt_group.add_argument(
@@ -132,7 +138,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run an external coding-agent CLI under the supervised retry loop.",
     )
     run_loop.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
-    run_loop.add_argument("--agent-cli", type=Path, required=True, help="Path to the external CLI.")
+    run_loop.add_argument(
+        "--agent-cli",
+        type=Path,
+        default=None,
+        help="Path to the external CLI. Optional when active_agent_cli is configured.",
+    )
     loop_prompt_group = run_loop.add_mutually_exclusive_group(required=True)
     loop_prompt_group.add_argument("--prompt", default=None, help="Prompt text to execute.")
     loop_prompt_group.add_argument(
@@ -217,7 +228,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inspect an external coding-agent CLI for prompt handling and approval hints.",
     )
     inspect_cli.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
-    inspect_cli.add_argument("--agent-cli", type=Path, required=True, help="Path to the external CLI.")
+    inspect_cli.add_argument(
+        "--agent-cli",
+        type=Path,
+        default=None,
+        help="Path to the external CLI. Optional when active_agent_cli is configured.",
+    )
     inspect_cli.add_argument(
         "--workdir",
         type=Path,
@@ -342,13 +358,36 @@ def _read_prompt_text(args: argparse.Namespace) -> str:
     raise ValueError("Either --prompt or --prompt-file is required.")
 
 
+def _display_cli_path(cli_path: Path) -> str:
+    candidate = cli_path.expanduser()
+    if candidate.is_absolute() or "/" in str(cli_path):
+        return os.path.abspath(str(candidate))
+    return str(candidate)
+
+
+def _resolve_agent_cli(config: AppConfig, cli_path: Path | None) -> Path:
+    if cli_path is not None:
+        return cli_path
+    if config.active_agent_cli is not None:
+        return config.active_agent_cli
+    raise ValueError(
+        "No agent CLI was provided and no active_agent_cli is configured. "
+        "Set ~/.dormammu/config or pass --agent-cli."
+    )
+
+
 def _handle_run_once(args: argparse.Namespace) -> int:
     config = _load_config(args.repo_root)
     repository = StateRepository(config)
     repository.ensure_bootstrap_state(active_roadmap_phase_ids=["phase_3"])
+    try:
+        agent_cli = _resolve_agent_cli(config, args.agent_cli)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     request = AgentRunRequest(
-        cli_path=args.agent_cli,
+        cli_path=agent_cli,
         prompt_text=_read_prompt_text(args),
         repo_root=config.repo_root,
         workdir=args.workdir,
@@ -373,9 +412,14 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
     config = _load_config(args.repo_root)
     repository = StateRepository(config)
     repository.ensure_bootstrap_state(active_roadmap_phase_ids=["phase_4"])
+    try:
+        agent_cli = _resolve_agent_cli(config, args.agent_cli)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     request = LoopRunRequest(
-        cli_path=args.agent_cli,
+        cli_path=agent_cli,
         prompt_text=_read_prompt_text(args),
         repo_root=config.repo_root,
         workdir=args.workdir,
@@ -419,15 +463,20 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
 def _handle_inspect_cli(args: argparse.Namespace) -> int:
     config = _load_config(args.repo_root)
     workdir = (args.workdir or config.repo_root).resolve()
+    try:
+        agent_cli = _resolve_agent_cli(config, args.agent_cli)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     try:
-        capabilities = CliAdapter(config).inspect_capabilities(args.agent_cli, cwd=workdir)
+        capabilities = CliAdapter(config).inspect_capabilities(agent_cli, cwd=workdir)
     except (RuntimeError, ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
     payload = {
-        "cli_path": str(args.agent_cli.resolve()),
+        "cli_path": _display_cli_path(agent_cli),
         "workdir": str(workdir),
         "capabilities": capabilities.to_dict(include_help_text=args.include_help_text),
     }
@@ -467,6 +516,9 @@ def _handle_serve(args: argparse.Namespace) -> int:
 
 def _handle_doctor(args: argparse.Namespace) -> int:
     config = _load_config(args.repo_root)
-    report = run_doctor(repo_root=config.repo_root, agent_cli=args.agent_cli)
+    report = run_doctor(
+        repo_root=config.repo_root,
+        agent_cli=args.agent_cli or config.active_agent_cli,
+    )
     print(json.dumps(report.to_dict(), indent=2, ensure_ascii=True))
     return 0 if report.status == "ok" else 1

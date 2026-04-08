@@ -24,7 +24,7 @@ KNOWN_WORKDIR_FLAGS = (
 
 
 AUTO_APPROVE_FLAG_PATTERN = re.compile(
-    r"--[a-z0-9][a-z0-9-]*(?:approve|approval|permission|permissions|yes|auto)[a-z0-9-]*",
+    r"--[a-z0-9][a-z0-9-]*(?:approve|approval|permission|permissions|yes|auto|yolo)[a-z0-9-]*",
     re.IGNORECASE,
 )
 
@@ -45,7 +45,7 @@ def _first_matching_flag(help_text: str, candidates: tuple[str, ...]) -> str | N
 
 def _risk_for_candidate(value: str) -> str:
     normalized = value.lower()
-    if any(token in normalized for token in ("danger", "bypass", "skip-permissions")):
+    if any(token in normalized for token in ("danger", "bypass", "skip-permissions", "yolo")):
         return "high"
     if any(token in normalized for token in ("full-auto", "auto", "yes", "permission-mode")):
         return "medium"

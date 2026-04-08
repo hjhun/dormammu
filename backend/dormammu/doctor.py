@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import shutil
 import sys
 from typing import Any
 
@@ -88,11 +89,21 @@ def _check_agent_cli(agent_cli: Path | None) -> DoctorCheck:
         )
 
     resolved = agent_cli.expanduser()
-    if not resolved.is_absolute():
-        resolved = (Path.cwd() / resolved).resolve()
-
-    exists = resolved.exists()
-    executable = exists and os.access(resolved, os.X_OK)
+    raw_text = str(agent_cli)
+    if resolved.is_absolute() or "/" in raw_text:
+        if not resolved.is_absolute():
+            resolved = Path(os.path.abspath(str(Path.cwd() / resolved)))
+        exists = resolved.exists()
+        executable = exists and os.access(resolved, os.X_OK)
+    else:
+        located = shutil.which(raw_text)
+        if located is not None:
+            resolved = Path(located)
+            exists = True
+            executable = os.access(resolved, os.X_OK)
+        else:
+            exists = False
+            executable = False
     ok = exists and executable
     if ok:
         summary = f"Agent CLI is available at {resolved}."

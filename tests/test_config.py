@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -64,6 +65,13 @@ class ConfigTests(unittest.TestCase):
                             "usage limit exceeded",
                             "quota exhausted",
                         ],
+                        "cli_overrides": {
+                            "cline": {
+                                "input_mode": "arg",
+                                "prompt_flag": "--prompt",
+                                "extra_args": ["-y"],
+                            }
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -77,10 +85,65 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.fallback_agent_clis[1].extra_args, ("--yes",))
             self.assertEqual(config.fallback_agent_clis[1].input_mode, "arg")
             self.assertEqual(config.fallback_agent_clis[1].prompt_flag, "--message")
+            self.assertIsNotNone(config.cli_overrides)
+            self.assertEqual(config.cli_overrides["cline"].extra_args, ("-y",))
+            self.assertEqual(config.cli_overrides["cline"].input_mode, "arg")
+            self.assertEqual(config.cli_overrides["cline"].prompt_flag, "--prompt")
             self.assertEqual(
                 config.token_exhaustion_patterns,
                 ("usage limit exceeded", "quota exhausted"),
             )
+
+    def test_load_reads_global_config_from_home_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            config_path = home_dir / ".dormammu" / "config"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "active_agent_cli": "/opt/tools/codex",
+                        "cli_overrides": {"cline": {"extra_args": ["-y"]}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            self.assertEqual(config.config_file, config_path.resolve())
+            self.assertEqual(config.active_agent_cli, Path("/opt/tools/codex"))
+            self.assertEqual(config.cli_overrides["cline"].extra_args, ("-y",))
+
+    def test_load_uses_default_fallback_cli_order_when_not_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            config = AppConfig.load(repo_root=root)
+
+            self.assertEqual(
+                [str(item.path) for item in config.fallback_agent_clis],
+                ["codex", "claude", "gemini"],
+            )
+
+    def test_load_falls_back_to_packaged_asset_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "AGENTS.md").write_text("marker\n", encoding="utf-8")
+
+            config = AppConfig.load(repo_root=root)
+
+            self.assertTrue(config.templates_dir.exists())
+            self.assertTrue(config.frontend_dir.exists())
+            self.assertNotEqual(config.templates_dir, root / "templates")
 
 
 if __name__ == "__main__":

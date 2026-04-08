@@ -200,7 +200,7 @@ def get_run_setup(request: Request) -> dict[str, Any]:
     return {
         "repo_root": str(request.app.state.config.repo_root),
         "workdir": str(request.app.state.config.repo_root),
-        "input_modes": ["auto", "file", "arg", "stdin"],
+        "input_modes": ["auto", "file", "arg", "stdin", "positional"],
         "default_input_mode": "auto",
         "default_max_retries": 0,
         "default_expected_roadmap_phase_id": active_phase_ids[0] if active_phase_ids else None,

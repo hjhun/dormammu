@@ -62,6 +62,36 @@ class CliTests(unittest.TestCase):
                 str((root / "bin" / "aider").resolve()),
             )
 
+    def test_show_config_uses_default_fallback_order_without_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(["show-config", "--repo-root", str(root)])
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(
+                [item["path"] for item in payload["fallback_agent_clis"]],
+                ["codex", "claude", "gemini"],
+            )
+
+    def test_init_state_uses_packaged_templates_when_repo_has_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(["init-state", "--repo-root", str(root)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue((root / ".dev" / "DASHBOARD.md").exists())
+            self.assertTrue((root / ".dev" / "TASKS.md").exists())
+
     def test_init_state_creates_bootstrap_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -299,6 +329,36 @@ class CliTests(unittest.TestCase):
                 Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8"),
             )
 
+    def test_run_once_uses_configured_active_agent_cli_when_flag_is_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            (root / "dormammu.json").write_text(
+                json.dumps({"active_agent_cli": str(fake_cli)}),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--prompt",
+                        "Configured CLI prompt",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["cli_path"], str(fake_cli))
+            self.assertIn(
+                "PROMPT::Configured CLI prompt",
+                Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8"),
+            )
+
     def test_run_loop_and_resume_loop_cover_phase_4_cli_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -436,6 +496,26 @@ class CliTests(unittest.TestCase):
             checks = {item["name"]: item for item in payload["checks"]}
             self.assertFalse(checks["agent_cli"]["ok"])
             self.assertFalse(checks["agent_directory"]["ok"])
+
+    def test_doctor_uses_configured_active_agent_cli_when_flag_is_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            (root / ".agents").mkdir()
+            fake_cli = self._write_fake_cli(root)
+            (root / "dormammu.json").write_text(
+                json.dumps({"active_agent_cli": str(fake_cli)}),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(["doctor", "--repo-root", str(root)])
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            checks = {item["name"]: item for item in payload["checks"]}
+            self.assertTrue(checks["agent_cli"]["ok"])
 
     def _seed_repo(self, root: Path) -> None:
         subprocess.run(["git", "init", "-q", str(root)], check=True)

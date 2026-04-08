@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from typing import Callable
 
@@ -16,7 +18,7 @@ from dormammu.agent.models import (
     AgentRunStarted,
     CliCapabilities,
 )
-from dormammu.config import AppConfig, FallbackCliConfig
+from dormammu.config import AppConfig, CliInvocationConfig, FallbackCliConfig
 
 
 def _iso_now() -> str:
@@ -38,7 +40,7 @@ def _run_id(label: str | None) -> str:
 def _recorded_cli_path(cli_path: Path) -> Path:
     text = str(cli_path)
     if cli_path.is_absolute() or "/" in text:
-        return cli_path.expanduser().resolve()
+        return Path(os.path.abspath(str(cli_path.expanduser())))
     return cli_path
 
 
@@ -71,6 +73,7 @@ class CliAdapter:
         *,
         on_started: Callable[[AgentRunStarted], None] | None = None,
     ) -> AgentRunResult:
+        request = self._apply_cli_override(request, cli_path=request.cli_path)
         candidates = self._build_candidate_requests(request)
         attempted_cli_paths: list[Path] = []
         requested_cli_path = _recorded_cli_path(request.cli_path)
@@ -178,7 +181,7 @@ class CliAdapter:
         for fallback in self.config.fallback_agent_clis:
             candidate = self._apply_fallback_config(request, fallback)
             key = str(candidate.cli_path)
-            if key in seen_paths:
+            if key in seen_paths or not self._cli_candidate_available(candidate.cli_path):
                 continue
             seen_paths.add(key)
             candidates.append(candidate)
@@ -189,13 +192,64 @@ class CliAdapter:
         request: AgentRunRequest,
         fallback: FallbackCliConfig,
     ) -> AgentRunRequest:
-        return replace(
+        fallback_request = replace(
             request,
             cli_path=fallback.path,
             input_mode=fallback.input_mode or "auto",
             prompt_flag=fallback.prompt_flag,
             extra_args=fallback.extra_args,
         )
+        return self._apply_cli_override(
+            fallback_request,
+            cli_path=fallback.path,
+        )
+
+    def _apply_cli_override(
+        self,
+        request: AgentRunRequest,
+        *,
+        cli_path: Path,
+    ) -> AgentRunRequest:
+        override = self._resolve_cli_override(cli_path)
+        if override is None:
+            return request
+
+        input_mode = request.input_mode
+        if input_mode == "auto" and override.input_mode is not None:
+            input_mode = override.input_mode
+
+        prompt_flag = request.prompt_flag or override.prompt_flag
+        extra_args = tuple(override.extra_args) + tuple(request.extra_args)
+        return replace(
+            request,
+            cli_path=cli_path,
+            input_mode=input_mode,
+            prompt_flag=prompt_flag,
+            extra_args=extra_args,
+        )
+
+    def _resolve_cli_override(self, cli_path: Path) -> CliInvocationConfig | None:
+        overrides = self.config.cli_overrides or {}
+        keys = self._cli_override_keys(cli_path)
+        for key in keys:
+            override = overrides.get(key)
+            if override is not None:
+                return override
+        return None
+
+    def _cli_override_keys(self, cli_path: Path) -> tuple[str, ...]:
+        raw_text = str(cli_path).strip()
+        keys = [raw_text.lower(), cli_path.name.lower()]
+        if cli_path.is_absolute() or "/" in raw_text:
+            keys.append(os.path.abspath(str(cli_path.expanduser())).lower())
+        return tuple(dict.fromkeys(key for key in keys if key))
+
+    def _cli_candidate_available(self, cli_path: Path) -> bool:
+        raw_text = str(cli_path)
+        if cli_path.is_absolute() or "/" in raw_text:
+            candidate = cli_path.expanduser()
+            return candidate.exists() and os.access(candidate, os.X_OK)
+        return shutil.which(raw_text) is not None
 
     def _detect_token_exhaustion(self, result: AgentRunResult) -> str | None:
         if result.exit_code == 0:

@@ -45,6 +45,32 @@ class HelpParserTests(unittest.TestCase):
         self.assertEqual(list(capabilities.command_prefix), ["exec"])
         self.assertTrue(capabilities.prompt_positional)
 
+    def test_parse_help_text_applies_gemini_preset_without_codex_false_positive(self) -> None:
+        capabilities = parse_help_text(
+            "Usage: gemini [options] [command]\n"
+            "Gemini CLI - Use -p/--prompt for non-interactive mode.\n"
+            "--approval-mode\n"
+            "--yolo",
+            executable_name="gemini",
+        )
+
+        self.assertEqual(capabilities.preset_key, "gemini")
+        self.assertEqual(capabilities.prompt_arg_flag, "--prompt")
+        self.assertEqual(list(capabilities.command_prefix), [])
+        self.assertFalse(capabilities.prompt_positional)
+        self.assertIsNotNone(capabilities.auto_approve)
+        self.assertEqual(capabilities.auto_approve.candidates[0].value, "--yolo")
+
+    def test_parse_help_text_detects_cline_preset(self) -> None:
+        capabilities = parse_help_text(
+            "Usage: cline [options]\n-y\n--print",
+            executable_name="cline",
+        )
+
+        self.assertEqual(capabilities.preset_key, "cline")
+        self.assertIsNotNone(capabilities.auto_approve)
+        self.assertEqual(capabilities.auto_approve.candidates[0].value, "-y")
+
 
 if __name__ == "__main__":
     unittest.main()

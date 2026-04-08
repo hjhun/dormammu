@@ -43,15 +43,28 @@ this project is built for that gap.
 curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
 ```
 
-The repository-root `install.sh` installs into `~/.local/share/dormammu` by
-default, links `dormammu` into `~/.local/bin`, and prefers the latest GitHub
-release when one exists.
+The repository-root `install.sh` installs the runtime under `~/.dormammu`,
+links `dormammu` into
+`~/.dormammu/bin`, writes runtime config to `~/.dormammu/config`, updates
+`~/.bashrc` idempotently, and prefers the latest GitHub release when one
+exists.
+
+During install, the script tries to detect an active agent CLI with `whereis`
+in this order:
+
+- `codex`
+- `claude`
+- `gemini`
+- `cline`
+
+If one is found, it is stored as `active_agent_cli` in `~/.dormammu/config`.
+You can edit that file later at any time.
 
 Useful overrides:
 
 ```bash
 DORMAMMU_INSTALL_ROOT=/opt/dormammu \
-DORMAMMU_BIN_DIR=/usr/local/bin \
+DORMAMMU_BIN_DIR=/opt/dormammu/bin \
 PYTHON=python3.12 \
 curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
 ```
@@ -76,11 +89,10 @@ pip install -e .
 ## Quick Start
 
 ```bash
-dormammu doctor --repo-root . --agent-cli /path/to/agent-cli
+dormammu doctor --repo-root .
 dormammu init-state
 dormammu run \
   --repo-root . \
-  --agent-cli /path/to/agent-cli \
   --prompt "Inspect the repo and implement the requested change." \
   --required-path README.md
 dormammu ui
@@ -91,14 +103,14 @@ Then open `http://127.0.0.1:8000/` to watch progress in the local UI.
 ## Core Commands
 
 ```bash
-dormammu run --agent-cli /path/to/agent-cli --prompt "Do the work"
+dormammu run --prompt "Do the work"
 dormammu resume --session-id saved-session-id
 dormammu start-session --goal "New workflow scope"
 dormammu sessions
 dormammu restore-session --session-id saved-session-id
-dormammu inspect-cli --agent-cli /path/to/agent-cli
+dormammu inspect-cli
 dormammu ui
-dormammu doctor --agent-cli /path/to/agent-cli
+dormammu doctor
 ```
 
 Command notes:
@@ -117,10 +129,18 @@ Command notes:
 ## Fallback CLI Config
 
 When the primary coding-agent CLI hits token or quota exhaustion, `dormammu`
-can fail over to additional CLIs from `dormammu.json` in the repo root.
+can fail over to additional CLIs from `~/.dormammu/config` or a repo-local
+`dormammu.json`.
+
+Without an explicit config, the built-in fallback order is:
+
+- `codex`
+- `claude`
+- `gemini`
 
 ```json
 {
+  "active_agent_cli": "/home/you/.local/bin/codex",
   "fallback_agent_clis": [
     "claude",
     {
@@ -128,6 +148,11 @@ can fail over to additional CLIs from `dormammu.json` in the repo root.
       "extra_args": ["--yes"]
     }
   ],
+  "cli_overrides": {
+    "cline": {
+      "extra_args": ["-y"]
+    }
+  },
   "token_exhaustion_patterns": [
     "usage limit",
     "quota exceeded",
@@ -145,6 +170,10 @@ Behavior notes:
 - fallback attempts do not consume supervised loop retry budget
 - if every configured CLI is exhausted, the loop stops in a `blocked` state so
   you can wait for quota recovery or update the config before `resume`
+- `active_agent_cli` provides the default backend for `run`, `run-once`,
+  `inspect-cli`, and `doctor` when `--agent-cli` is omitted
+- `cli_overrides` lets you attach CLI-family defaults such as the `cline`
+  `-y` flag, while still allowing later manual edits
 
 ## Architecture At A Glance
 
