@@ -169,6 +169,31 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(len(active_sessions), 1)
             self.assertEqual(active_sessions[0]["session_id"], "phase7-second")
 
+    def test_restore_session_replaces_active_root_with_archived_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Original goal")
+            original_session = repository.read_session_state()["session_id"]
+            (root / ".dev" / "DASHBOARD.md").write_text("# DASHBOARD\n\nOriginal session\n", encoding="utf-8")
+            repository.write_supervisor_report("# Original report\n")
+
+            repository.start_new_session(
+                goal="Second goal",
+                active_roadmap_phase_ids=["phase_7"],
+                session_id="phase7-second",
+            )
+
+            repository.restore_session(original_session)
+
+            restored_session = repository.read_session_state()
+            self.assertEqual(restored_session["session_id"], original_session)
+            self.assertIn("Original session", (root / ".dev" / "DASHBOARD.md").read_text(encoding="utf-8"))
+            self.assertTrue((root / ".dev" / "supervisor_report.md").exists())
+
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
         templates = root / "templates" / "dev"

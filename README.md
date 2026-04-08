@@ -60,9 +60,10 @@ upgrades `pip`, installs the package in editable mode, and prints the next
 
 ```bash
 dormammu run --agent-cli /path/to/agent-cli --prompt "Do the work"
-dormammu resume
+dormammu resume --session-id saved-session-id
 dormammu start-session --goal "New workflow scope"
 dormammu sessions
+dormammu restore-session --session-id saved-session-id
 dormammu inspect-cli --agent-cli /path/to/agent-cli
 dormammu ui
 dormammu doctor --agent-cli /path/to/agent-cli
@@ -78,6 +79,10 @@ running a real workflow.
 `start-session` archives the current active `.dev` state into
 `.dev/sessions/<session_id>/` and resets the root `.dev` files for a fresh
 active session. `sessions` lists the saved session snapshots as JSON.
+
+`restore-session` loads a saved snapshot back into the active root `.dev`
+files, and `resume --session-id <id>` restores that saved session first and
+then continues with the normal supervised recovery flow.
 
 ## Release Packaging
 

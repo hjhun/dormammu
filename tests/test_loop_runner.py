@@ -79,6 +79,49 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertEqual(resumed.status, "completed")
             self.assertTrue((root / "done.txt").exists())
 
+    def test_resume_can_restore_an_archived_session_before_continuing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.start_new_session(
+                goal="Session A",
+                active_roadmap_phase_ids=["phase_4"],
+                session_id="session-a",
+            )
+            runner = LoopRunner(config, repository=repository)
+            first_result = runner.run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="archived-resume-test",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(first_result.status, "failed")
+            repository.start_new_session(
+                goal="Session B",
+                active_roadmap_phase_ids=["phase_7"],
+                session_id="session-b",
+            )
+
+            resumed = RecoveryManager(
+                config,
+                repository=repository,
+                loop_runner=runner,
+            ).resume(session_id="session-a", max_retries_override=1)
+
+            self.assertEqual(resumed.status, "completed")
+            self.assertEqual(repository.read_session_state()["session_id"], "session-a")
+            self.assertTrue((root / "done.txt").exists())
+
     def test_infinite_retry_setting_allows_eventual_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

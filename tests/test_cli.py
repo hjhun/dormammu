@@ -110,6 +110,131 @@ class CliTests(unittest.TestCase):
             active = [item for item in payload["sessions"] if item["is_active"]]
             self.assertEqual(active[0]["session_id"], "session-two")
 
+    def test_restore_session_switches_the_active_root_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(
+                    [
+                        "start-session",
+                        "--repo-root",
+                        str(root),
+                        "--goal",
+                        "Session one goal",
+                        "--session-id",
+                        "session-one",
+                        "--roadmap-phase",
+                        "phase_7",
+                    ]
+                )
+                main(
+                    [
+                        "start-session",
+                        "--repo-root",
+                        str(root),
+                        "--goal",
+                        "Session two goal",
+                        "--session-id",
+                        "session-two",
+                        "--roadmap-phase",
+                        "phase_7",
+                    ]
+                )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "restore-session",
+                        "--repo-root",
+                        str(root),
+                        "--session-id",
+                        "session-one",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["session"]["session_id"], "session-one")
+
+    def test_resume_can_target_a_saved_session_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(
+                    [
+                        "start-session",
+                        "--repo-root",
+                        str(root),
+                        "--goal",
+                        "Session A",
+                        "--session-id",
+                        "session-a",
+                        "--roadmap-phase",
+                        "phase_4",
+                    ]
+                )
+
+            first_stdout = io.StringIO()
+            with contextlib.redirect_stdout(first_stdout):
+                first_exit = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                        "--run-label",
+                        "phase7-resume-session",
+                        "--max-retries",
+                        "0",
+                        "--required-path",
+                        "done.txt",
+                    ]
+                )
+
+            self.assertEqual(first_exit, 1)
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(
+                    [
+                        "start-session",
+                        "--repo-root",
+                        str(root),
+                        "--goal",
+                        "Session B",
+                        "--session-id",
+                        "session-b",
+                        "--roadmap-phase",
+                        "phase_7",
+                    ]
+                )
+
+            resume_stdout = io.StringIO()
+            with contextlib.redirect_stdout(resume_stdout):
+                resume_exit = main(
+                    [
+                        "resume",
+                        "--repo-root",
+                        str(root),
+                        "--session-id",
+                        "session-a",
+                        "--max-retries",
+                        "1",
+                    ]
+                )
+
+            self.assertEqual(resume_exit, 0)
+            resume_payload = json.loads(resume_stdout.getvalue())
+            self.assertEqual(resume_payload["status"], "completed")
+            self.assertTrue((root / "done.txt").exists())
+
     def test_run_once_executes_external_cli_and_prints_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

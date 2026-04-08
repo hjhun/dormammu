@@ -25,8 +25,16 @@ class RecoveryManager:
             supervisor=self.supervisor,
         )
 
-    def resume(self, *, max_retries_override: int | None = None) -> LoopRunResult:
-        self.repository.ensure_bootstrap_state()
+    def resume(
+        self,
+        *,
+        max_retries_override: int | None = None,
+        session_id: str | None = None,
+    ) -> LoopRunResult:
+        if session_id is not None:
+            self.repository.restore_session(session_id)
+        else:
+            self.repository.ensure_bootstrap_state()
         workflow_state = self.repository.read_workflow_state()
         loop_state = workflow_state.get("loop")
         if not isinstance(loop_state, dict) or "request" not in loop_state:

@@ -58,6 +58,17 @@ class BootstrapArtifacts:
 class StateRepository:
     """Create and maintain the bootstrap `.dev/` state files."""
 
+    CORE_STATE_FILENAMES = (
+        "DASHBOARD.md",
+        "TASKS.md",
+        "session.json",
+        "workflow_state.json",
+    )
+    OPTIONAL_STATE_FILENAMES = (
+        "supervisor_report.md",
+        "continuation_prompt.txt",
+    )
+
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.dev_dir = config.dev_dir
@@ -198,6 +209,39 @@ class StateRepository:
             tasks=tasks_path,
             session=session_path,
             workflow_state=workflow_path,
+            logs_dir=self.logs_dir,
+        )
+
+    def restore_session(self, session_id: str) -> BootstrapArtifacts:
+        normalized_session_id = self._normalize_session_id(session_id)
+        target_dir = self.sessions_dir / normalized_session_id
+        if not target_dir.exists():
+            raise RuntimeError(f"Saved session was not found: {normalized_session_id}")
+        for filename in self.CORE_STATE_FILENAMES:
+            if not (target_dir / filename).exists():
+                raise RuntimeError(
+                    f"Saved session {normalized_session_id} is missing required file: {filename}"
+                )
+
+        self.dev_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._mirror_active_session_snapshot()
+
+        for filename in (*self.CORE_STATE_FILENAMES, *self.OPTIONAL_STATE_FILENAMES):
+            source = target_dir / filename
+            target = self.dev_dir / filename
+            if source.exists():
+                target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            elif target.exists():
+                target.unlink()
+
+        self._mirror_active_session_snapshot()
+        return BootstrapArtifacts(
+            dashboard=self.dev_dir / "DASHBOARD.md",
+            tasks=self.dev_dir / "TASKS.md",
+            session=self.dev_dir / "session.json",
+            workflow_state=self.dev_dir / "workflow_state.json",
             logs_dir=self.logs_dir,
         )
 
@@ -397,14 +441,7 @@ class StateRepository:
 
         target_dir = self.sessions_dir / session_id
         target_dir.mkdir(parents=True, exist_ok=True)
-        for filename in (
-            "DASHBOARD.md",
-            "TASKS.md",
-            "session.json",
-            "workflow_state.json",
-            "supervisor_report.md",
-            "continuation_prompt.txt",
-        ):
+        for filename in (*self.CORE_STATE_FILENAMES, *self.OPTIONAL_STATE_FILENAMES):
             source = self.dev_dir / filename
             target = target_dir / filename
             if source.exists():

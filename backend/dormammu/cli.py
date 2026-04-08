@@ -66,6 +66,18 @@ def build_parser() -> argparse.ArgumentParser:
     sessions.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
     sessions.set_defaults(handler=_handle_sessions)
 
+    restore_session = subparsers.add_parser(
+        "restore-session",
+        help="Restore a saved session snapshot into the active root `.dev` state.",
+    )
+    restore_session.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    restore_session.add_argument(
+        "--session-id",
+        required=True,
+        help="Saved session id to restore into the active root `.dev` view.",
+    )
+    restore_session.set_defaults(handler=_handle_restore_session)
+
     run_once = subparsers.add_parser(
         "run-once",
         help="Run an external coding-agent CLI once and persist the artifacts.",
@@ -193,6 +205,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the saved retry configuration before resuming.",
     )
+    resume_loop.add_argument(
+        "--session-id",
+        default=None,
+        help="Restore this saved session id before running the resume flow.",
+    )
     resume_loop.set_defaults(handler=_handle_resume_loop)
 
     inspect_cli = subparsers.add_parser(
@@ -302,6 +319,21 @@ def _handle_sessions(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_restore_session(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    repository = StateRepository(config)
+    try:
+        artifacts = repository.restore_session(args.session_id)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    payload = artifacts.to_dict()
+    payload["session"] = repository.read_session_state()
+    print(json.dumps(payload, indent=2, ensure_ascii=True))
+    return 0
+
+
 def _read_prompt_text(args: argparse.Namespace) -> str:
     if args.prompt is not None:
         return args.prompt
@@ -373,7 +405,8 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
 
     try:
         result = RecoveryManager(config, repository=repository).resume(
-            max_retries_override=args.max_retries
+            max_retries_override=args.max_retries,
+            session_id=args.session_id,
         )
     except (RuntimeError, ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
