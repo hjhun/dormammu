@@ -100,3 +100,7 @@ templates/   Bootstrap templates for .dev state
 scripts/     Developer convenience scripts
 tests/       Bootstrap validation tests
 ```
+
+## License
+
+`dormammu` is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
