@@ -10,6 +10,8 @@ interruption.
 If you want a coding-agent workflow that is more structured than "run the tool
 and hope for the best," this project is designed for that job.
 
+`dormammu` supports Python `3.10+`.
+
 ## Who This Guide Is For
 
 This guide is for you if:
@@ -111,6 +113,9 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .
 ```
+
+If your machine has multiple Python versions installed, pick any
+`python3.10+` interpreter explicitly, such as `python3.10 -m venv .venv`.
 
 ## How To Run The CLI From Source
 

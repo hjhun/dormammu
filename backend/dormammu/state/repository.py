@@ -123,6 +123,12 @@ class StateRepository:
 
         self._ensure_json_file(session_path, session_defaults)
         self._ensure_json_file(workflow_path, workflow_defaults)
+        self._refresh_active_roadmap_phase_ids(
+            session_path=session_path,
+            workflow_path=workflow_path,
+            roadmap_phase_ids=roadmap_phase_ids,
+            timestamp=timestamp,
+        )
         self._sync_operator_state(
             session_path=session_path,
             workflow_path=workflow_path,
@@ -273,6 +279,25 @@ class StateRepository:
         else:
             merged = defaults
         self._write_json(path, merged)
+
+    def _refresh_active_roadmap_phase_ids(
+        self,
+        *,
+        session_path: Path,
+        workflow_path: Path,
+        roadmap_phase_ids: Sequence[str],
+        timestamp: str,
+    ) -> None:
+        session_state = self._read_json(session_path)
+        session_state["updated_at"] = timestamp
+        session_state["active_roadmap_phase_ids"] = list(roadmap_phase_ids)
+        self._write_json(session_path, session_state)
+
+        workflow_state = self._read_json(workflow_path)
+        workflow_state["updated_at"] = timestamp
+        workflow_state.setdefault("roadmap", {})
+        workflow_state["roadmap"]["active_phase_ids"] = list(roadmap_phase_ids)
+        self._write_json(workflow_path, workflow_state)
 
     def _sync_operator_state(
         self,

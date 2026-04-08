@@ -407,6 +407,58 @@ class CliTests(unittest.TestCase):
             self.assertEqual(resume_payload["status"], "completed")
             self.assertTrue((root / "done.txt").exists())
 
+    def test_run_loop_after_init_state_retargets_active_roadmap_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                init_exit = main(["init-state", "--repo-root", str(root)])
+
+            self.assertEqual(init_exit, 0)
+
+            first_stdout = io.StringIO()
+            with contextlib.redirect_stdout(first_stdout):
+                first_exit = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                        "--run-label",
+                        "phase4-after-init",
+                        "--max-retries",
+                        "0",
+                        "--required-path",
+                        "done.txt",
+                    ]
+                )
+
+            self.assertEqual(first_exit, 1)
+            first_payload = json.loads(first_stdout.getvalue())
+            self.assertEqual(first_payload["status"], "failed")
+
+            resume_stdout = io.StringIO()
+            with contextlib.redirect_stdout(resume_stdout):
+                resume_exit = main(
+                    [
+                        "resume",
+                        "--repo-root",
+                        str(root),
+                        "--max-retries",
+                        "1",
+                    ]
+                )
+
+            self.assertEqual(resume_exit, 0)
+            resume_payload = json.loads(resume_stdout.getvalue())
+            self.assertEqual(resume_payload["status"], "completed")
+            self.assertTrue((root / "done.txt").exists())
+
     def test_inspect_cli_reports_preset_and_auto_approve_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

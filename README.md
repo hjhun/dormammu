@@ -7,6 +7,7 @@
 `dormammu` is a terminal-first workflow loop engine for coding agents. It runs
 an external agent CLI, records machine and human-readable state under `.dev/`,
 lets a supervisor validate outcomes, and resumes safely after interruption.
+The supported runtime target is Python `3.10+`.
 
 If you want something more durable than "run an agent and hope for the best,"
 this project is built for that gap.
@@ -87,6 +88,9 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .
 ```
+
+If your system has multiple Python interpreters, use any `python3.10+`
+interpreter explicitly, for example `python3.10 -m venv .venv`.
 
 ## Quick Start
 

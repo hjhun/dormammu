@@ -8,7 +8,7 @@ import sys
 from typing import Any
 
 
-MINIMUM_PYTHON = (3, 11)
+MINIMUM_PYTHON = (3, 10)
 
 
 @dataclass(frozen=True, slots=True)

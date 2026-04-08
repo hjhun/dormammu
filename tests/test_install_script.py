@@ -78,6 +78,117 @@ class InstallScriptTests(unittest.TestCase):
             )
             self.assertIn("usage: dormammu", help_result.stdout)
 
+            packaged_repo = temp_root / "packaged-repo"
+            packaged_repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(packaged_repo)], check=True)
+            (packaged_repo / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
+            (packaged_repo / ".agents").mkdir()
+
+            init_state_result = subprocess.run(
+                [str(binary), "init-state", "--repo-root", str(packaged_repo)],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            init_payload = json.loads(init_state_result.stdout)
+            self.assertTrue(Path(init_payload["dashboard"]).exists())
+            self.assertTrue(Path(init_payload["tasks"]).exists())
+
+            doctor_result = subprocess.run(
+                [
+                    str(binary),
+                    "doctor",
+                    "--repo-root",
+                    str(packaged_repo),
+                    "--agent-cli",
+                    str(codex_path),
+                ],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            doctor_payload = json.loads(doctor_result.stdout)
+            self.assertEqual(doctor_payload["status"], "ok")
+
+            fake_agent = self._write_fake_python_cli(packaged_repo, "fake-agent")
+            run_once_result = subprocess.run(
+                [
+                    str(binary),
+                    "run-once",
+                    "--repo-root",
+                    str(packaged_repo),
+                    "--agent-cli",
+                    str(fake_agent),
+                    "--prompt",
+                    "Installed binary prompt",
+                    "--run-label",
+                    "installed-e2e",
+                    "--extra-arg=--echo-tag",
+                    "--extra-arg",
+                    "install",
+                ],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            run_once_payload = json.loads(run_once_result.stdout)
+            stdout_text = Path(run_once_payload["artifacts"]["stdout"]).read_text(encoding="utf-8")
+            self.assertIn("PROMPT::Installed binary prompt", stdout_text)
+            self.assertIn("TAG::install", stdout_text)
+
+            fake_loop = self._write_fake_loop_cli(packaged_repo, success_attempt=2)
+            first_loop = subprocess.run(
+                [
+                    str(binary),
+                    "run",
+                    "--repo-root",
+                    str(packaged_repo),
+                    "--agent-cli",
+                    str(fake_loop),
+                    "--prompt",
+                    "Create done.txt",
+                    "--run-label",
+                    "installed-loop",
+                    "--max-retries",
+                    "0",
+                    "--required-path",
+                    "done.txt",
+                ],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(first_loop.returncode, 1)
+            first_loop_payload = json.loads(first_loop.stdout)
+            self.assertEqual(first_loop_payload["status"], "failed")
+            self.assertTrue((packaged_repo / ".dev" / "continuation_prompt.txt").exists())
+
+            resume_result = subprocess.run(
+                [
+                    str(binary),
+                    "resume",
+                    "--repo-root",
+                    str(packaged_repo),
+                    "--max-retries",
+                    "1",
+                ],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            resume_payload = json.loads(resume_result.stdout)
+            self.assertEqual(resume_payload["status"], "completed")
+            self.assertTrue((packaged_repo / "done.txt").exists())
+
             config_payload = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(config_payload["active_agent_cli"], str(codex_path))
             self.assertEqual(config_payload["cli_overrides"]["cline"]["extra_args"], ["-y"])
@@ -113,6 +224,91 @@ class InstallScriptTests(unittest.TestCase):
                     printf '%s:\\n' "$name"
                     ;;
                 esac
+                """
+            ),
+            encoding="utf-8",
+        )
+        path.chmod(0o755)
+        return path
+
+    def _write_fake_python_cli(self, root: Path, name: str) -> Path:
+        path = root / name
+        path.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                from pathlib import Path
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: fake-agent [--prompt-file PATH] [--echo-tag TAG]")
+                        return 0
+
+                    if "--prompt-file" in args:
+                        index = args.index("--prompt-file")
+                        prompt = Path(args[index + 1]).read_text(encoding="utf-8")
+                    else:
+                        prompt = sys.stdin.read()
+
+                    tag = ""
+                    if "--echo-tag" in args:
+                        index = args.index("--echo-tag")
+                        tag = args[index + 1]
+
+                    print(f"PROMPT::{{prompt.strip()}}")
+                    if tag:
+                        print(f"TAG::{{tag}}")
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        path.chmod(0o755)
+        return path
+
+    def _write_fake_loop_cli(self, root: Path, *, success_attempt: int) -> Path:
+        path = root / "fake-loop-agent"
+        path.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                from pathlib import Path
+                import sys
+
+                ROOT = Path({str(root)!r})
+                SUCCESS_ATTEMPT = {success_attempt}
+                COUNTER_PATH = ROOT / ".attempt-count"
+                TARGET_PATH = ROOT / "done.txt"
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: fake-loop-agent [--prompt-file PATH]")
+                        return 0
+
+                    if COUNTER_PATH.exists():
+                        attempt = int(COUNTER_PATH.read_text(encoding="utf-8").strip()) + 1
+                    else:
+                        attempt = 1
+                    COUNTER_PATH.write_text(str(attempt), encoding="utf-8")
+
+                    if "--prompt-file" in args:
+                        index = args.index("--prompt-file")
+                        prompt = Path(args[index + 1]).read_text(encoding="utf-8")
+                    else:
+                        prompt = sys.stdin.read()
+
+                    print(f"ATTEMPT::{{attempt}}")
+                    print(f"PROMPT::{{prompt.strip()}}")
+                    if attempt >= SUCCESS_ATTEMPT:
+                        TARGET_PATH.write_text("done\\n", encoding="utf-8")
+                    return 0
+
+                raise SystemExit(main())
                 """
             ),
             encoding="utf-8",

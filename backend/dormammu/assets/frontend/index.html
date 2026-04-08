@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>dormammu</title>
+    <link rel="stylesheet" href="/assets/app.css">
+    <script type="module" src="/assets/app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Dormammu Local UI</p>
+          <h1>Run, inspect, and recover supervised agent loops from one place.</h1>
+          <p class="lede">
+            The browser stays optional. The same Python core and CLI keep running
+            underneath the UI.
+          </p>
+        </div>
+        <div class="hero-card">
+          <p class="card-label">Current focus</p>
+          <p id="hero-roadmap" class="hero-value">Loading roadmap focus...</p>
+          <p id="hero-action" class="hero-subvalue">Loading next action...</p>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Primary panels">
+        <button class="tab is-active" data-panel="setup">Run setup</button>
+        <button class="tab" data-panel="progress">Progress</button>
+        <button class="tab" data-panel="files">File view</button>
+      </nav>
+
+      <main class="panels">
+        <section class="panel is-active" id="panel-setup">
+          <div class="panel-head">
+            <div>
+              <h2>Run setup</h2>
+              <p>Start a supervised loop with the same backend used by the CLI.</p>
+            </div>
+            <button id="resume-button" class="secondary-button" type="button">
+              Resume latest loop
+            </button>
+          </div>
+
+          <form id="run-form" class="setup-grid">
+            <label>
+              <span>Agent CLI path</span>
+              <input id="agent-cli" name="agent_cli" type="text" required>
+            </label>
+            <label>
+              <span>Workdir</span>
+              <input id="workdir" name="workdir" type="text">
+            </label>
+            <label>
+              <span>Input mode</span>
+              <select id="input-mode" name="input_mode">
+                <option value="auto">auto</option>
+                <option value="file">file</option>
+                <option value="arg">arg</option>
+                <option value="stdin">stdin</option>
+              </select>
+            </label>
+            <label>
+              <span>Run label</span>
+              <input id="run-label" name="run_label" type="text" placeholder="ui-run">
+            </label>
+            <label>
+              <span>Max retries</span>
+              <input id="max-retries" name="max_retries" type="number" value="0">
+            </label>
+            <label class="checkbox-row">
+              <input id="require-worktree-changes" name="require_worktree_changes" type="checkbox">
+              <span>Require worktree changes before approval</span>
+            </label>
+            <label class="full-span">
+              <span>Prompt</span>
+              <textarea id="prompt" name="prompt" rows="8" required></textarea>
+            </label>
+            <label class="full-span">
+              <span>Extra args, one per line</span>
+              <textarea id="extra-args" name="extra_args" rows="4" placeholder="--auto-approve"></textarea>
+            </label>
+            <label class="full-span">
+              <span>Required paths, one per line</span>
+              <textarea id="required-paths" name="required_paths" rows="3" placeholder="done.txt"></textarea>
+            </label>
+            <div class="form-actions full-span">
+              <button class="primary-button" type="submit">Start supervised run</button>
+              <p id="form-status" class="status-text">Waiting for input.</p>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel" id="panel-progress">
+          <div class="panel-head">
+            <div>
+              <h2>Progress</h2>
+              <p>Track workflow state, supervisor verdicts, and recent logs.</p>
+            </div>
+          </div>
+
+          <div class="stats-grid">
+            <article class="stat-card">
+              <p class="card-label">Workflow phase</p>
+              <p id="workflow-phase" class="stat-value">-</p>
+            </article>
+            <article class="stat-card">
+              <p class="card-label">Loop status</p>
+              <p id="loop-status" class="stat-value">-</p>
+            </article>
+            <article class="stat-card">
+              <p class="card-label">Supervisor verdict</p>
+              <p id="supervisor-verdict" class="stat-value">-</p>
+            </article>
+            <article class="stat-card">
+              <p class="card-label">Latest run exit code</p>
+              <p id="latest-exit-code" class="stat-value">-</p>
+            </article>
+          </div>
+
+          <div class="progress-layout">
+            <article class="detail-card">
+              <h3>Current status</h3>
+              <dl class="detail-list">
+                <div>
+                  <dt>Roadmap focus</dt>
+                  <dd id="roadmap-focus">-</dd>
+                </div>
+                <div>
+                  <dt>Next action</dt>
+                  <dd id="next-action">-</dd>
+                </div>
+                <div>
+                  <dt>Next task</dt>
+                  <dd id="next-task">-</dd>
+                </div>
+                <div>
+                  <dt>UI job</dt>
+                  <dd id="ui-job-status">-</dd>
+                </div>
+              </dl>
+            </article>
+
+            <article class="detail-card">
+              <h3>Run details</h3>
+              <dl class="detail-list">
+                <div>
+                  <dt>Source</dt>
+                  <dd id="run-source">-</dd>
+                </div>
+                <div>
+                  <dt>Run ID</dt>
+                  <dd id="run-id">-</dd>
+                </div>
+                <div>
+                  <dt>Prompt mode</dt>
+                  <dd id="run-prompt-mode">-</dd>
+                </div>
+                <div>
+                  <dt>Started at</dt>
+                  <dd id="run-started-at">-</dd>
+                </div>
+                <div>
+                  <dt>Completed at</dt>
+                  <dd id="run-completed-at">-</dd>
+                </div>
+                <div>
+                  <dt>Attempts / retries</dt>
+                  <dd id="run-attempts">-</dd>
+                </div>
+              </dl>
+            </article>
+
+            <article class="detail-card">
+              <h3>Recent stdout</h3>
+              <pre id="stdout-log" class="log-view">Waiting for logs...</pre>
+            </article>
+
+            <article class="detail-card">
+              <h3>Recent stderr</h3>
+              <pre id="stderr-log" class="log-view">Waiting for logs...</pre>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-files">
+          <div class="panel-head">
+            <div>
+              <h2>File view</h2>
+              <p>Inspect the operator-facing files without leaving the browser.</p>
+            </div>
+          </div>
+
+          <div class="file-toolbar">
+            <button class="file-button is-active" data-file="dashboard" type="button">DASHBOARD.md</button>
+            <button class="file-button" data-file="tasks" type="button">TASKS.md</button>
+            <button class="file-button" data-file="continuation" type="button">continuation_prompt.txt</button>
+            <button class="file-button" data-file="supervisor_report" type="button">supervisor_report.md</button>
+            <button class="file-button" data-file="prompt_artifact" type="button">latest prompt</button>
+            <button class="file-button" data-file="stdout_artifact" type="button">latest stdout</button>
+            <button class="file-button" data-file="stderr_artifact" type="button">latest stderr</button>
+            <button class="file-button" data-file="metadata_artifact" type="button">latest metadata</button>
+          </div>
+
+          <div class="file-meta">
+            <span id="file-path">-</span>
+          </div>
+          <pre id="file-content" class="file-viewer">Loading file...</pre>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

@@ -123,6 +123,10 @@ def _discover_asset_root(root: Path, env: Mapping[str, str]) -> Path:
     source_root = Path(__file__).resolve().parents[2]
     if (source_root / "templates").exists() and (source_root / "frontend").exists():
         return source_root
+
+    packaged_asset_root = Path(__file__).resolve().parent / "assets"
+    if (packaged_asset_root / "templates").exists() and (packaged_asset_root / "frontend").exists():
+        return packaged_asset_root
     return root
 
 

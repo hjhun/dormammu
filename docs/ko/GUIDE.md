@@ -75,8 +75,8 @@ tests/       런타임 및 워크플로우 검증
 
 사용 목적에 맞는 경로를 선택하면 됩니다.
 
-Ubuntu 환경에서 시스템 Python이 `3.11` 미만이라면 설치를 진행하기 전에
-[Ubuntu에서 Python 3.11+ 설치하기](UBUNTU_PYTHON_311_PLUS.md)를 먼저
+Ubuntu 환경에서 시스템 Python이 `3.10` 미만이라면 설치를 진행하기 전에
+[Ubuntu에서 Python 3.10+ 설치하기](UBUNTU_PYTHON_310_PLUS.md)를 먼저
 확인하세요.
 
 ### 옵션 1: 저장소 설치 스크립트로 사용자 설치
@@ -115,6 +115,9 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .
 ```
+
+여러 Python 버전이 함께 설치된 환경이라면 `python3.10 -m venv .venv`
+처럼 `python3.10+` 인터프리터를 명시적으로 사용해도 됩니다.
 
 ## 소스 트리에서 직접 CLI 실행하기
 
