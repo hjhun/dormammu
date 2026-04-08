@@ -119,6 +119,56 @@ class StateRepositoryTests(unittest.TestCase):
                 1,
             )
 
+    def test_start_new_session_archives_previous_active_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Original goal")
+            original_session = repository.read_session_state()["session_id"]
+            repository.write_supervisor_report("# Report\n")
+            repository.write_continuation_prompt("continue here")
+
+            repository.start_new_session(
+                goal="Fresh goal",
+                active_roadmap_phase_ids=["phase_7"],
+                session_id="phase7-multi-session",
+            )
+
+            current_session = repository.read_session_state()
+            self.assertEqual(current_session["session_id"], "phase7-multi-session")
+            self.assertEqual(current_session["run_type"], "session")
+            self.assertIn("Fresh goal", (root / ".dev" / "DASHBOARD.md").read_text(encoding="utf-8"))
+
+            archived_dir = root / ".dev" / "sessions" / original_session
+            self.assertTrue((archived_dir / "session.json").exists())
+            self.assertTrue((archived_dir / "workflow_state.json").exists())
+            self.assertTrue((archived_dir / "supervisor_report.md").exists())
+            self.assertTrue((archived_dir / "continuation_prompt.txt").exists())
+
+    def test_list_sessions_marks_active_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Original goal")
+            repository.start_new_session(
+                goal="Second goal",
+                active_roadmap_phase_ids=["phase_7"],
+                session_id="phase7-second",
+            )
+
+            sessions = repository.list_sessions()
+
+            self.assertEqual(len(sessions), 2)
+            active_sessions = [item for item in sessions if item["is_active"]]
+            self.assertEqual(len(active_sessions), 1)
+            self.assertEqual(active_sessions[0]["session_id"], "phase7-second")
+
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
         templates = root / "templates" / "dev"

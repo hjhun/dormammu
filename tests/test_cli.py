@@ -57,6 +57,59 @@ class CliTests(unittest.TestCase):
             self.assertTrue((root / ".dev" / "DASHBOARD.md").exists())
             self.assertEqual(payload["logs_dir"], str(root / ".dev" / "logs"))
 
+    def test_start_session_and_sessions_list_manage_archived_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            start_one_stdout = io.StringIO()
+            with contextlib.redirect_stdout(start_one_stdout):
+                first_exit = main(
+                    [
+                        "start-session",
+                        "--repo-root",
+                        str(root),
+                        "--goal",
+                        "First multi-session workflow",
+                        "--session-id",
+                        "session-one",
+                        "--roadmap-phase",
+                        "phase_7",
+                    ]
+                )
+
+            self.assertEqual(first_exit, 0)
+            first_payload = json.loads(start_one_stdout.getvalue())
+            self.assertEqual(first_payload["session"]["session_id"], "session-one")
+
+            start_two_stdout = io.StringIO()
+            with contextlib.redirect_stdout(start_two_stdout):
+                second_exit = main(
+                    [
+                        "start-session",
+                        "--repo-root",
+                        str(root),
+                        "--goal",
+                        "Second multi-session workflow",
+                        "--session-id",
+                        "session-two",
+                        "--roadmap-phase",
+                        "phase_7",
+                    ]
+                )
+
+            self.assertEqual(second_exit, 0)
+
+            sessions_stdout = io.StringIO()
+            with contextlib.redirect_stdout(sessions_stdout):
+                sessions_exit = main(["sessions", "--repo-root", str(root)])
+
+            self.assertEqual(sessions_exit, 0)
+            payload = json.loads(sessions_stdout.getvalue())
+            self.assertEqual(len(payload["sessions"]), 2)
+            active = [item for item in payload["sessions"] if item["is_active"]]
+            self.assertEqual(active[0]["session_id"], "session-two")
+
     def test_run_once_executes_external_cli_and_prints_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

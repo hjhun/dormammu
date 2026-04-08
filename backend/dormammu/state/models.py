@@ -181,12 +181,14 @@ def default_session_state(
     timestamp: str,
     app_name: str,
     roadmap_phase_ids: Sequence[str],
+    session_id: str | None = None,
+    run_type: str = "bootstrap",
 ) -> dict[str, Any]:
     return {
-        "session_id": f"{app_name}-bootstrap",
+        "session_id": session_id or f"{app_name}-bootstrap",
         "created_at": timestamp,
         "updated_at": timestamp,
-        "run_type": "bootstrap",
+        "run_type": run_type,
         "status": "active",
         "state_schema_version": STATE_SCHEMA_VERSION,
         "active_phase": "plan",

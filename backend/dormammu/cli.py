@@ -39,6 +39,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init_state.set_defaults(handler=_handle_init_state)
 
+    start_session = subparsers.add_parser(
+        "start-session",
+        help="Archive the current active session and start a fresh active `.dev` session.",
+    )
+    start_session.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    start_session.add_argument("--goal", default=None, help="Goal text to include in the generated dashboard.")
+    start_session.add_argument(
+        "--roadmap-phase",
+        dest="roadmap_phases",
+        action="append",
+        default=None,
+        help="Active roadmap phase id to record. Repeat for multiple values.",
+    )
+    start_session.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional explicit session id for the new active session.",
+    )
+    start_session.set_defaults(handler=_handle_start_session)
+
+    sessions = subparsers.add_parser(
+        "sessions",
+        help="List archived and active session snapshots.",
+    )
+    sessions.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    sessions.set_defaults(handler=_handle_sessions)
+
     run_once = subparsers.add_parser(
         "run-once",
         help="Run an external coding-agent CLI once and persist the artifacts.",
@@ -242,6 +269,36 @@ def _handle_init_state(args: argparse.Namespace) -> int:
         active_roadmap_phase_ids=args.roadmap_phases,
     )
     print(json.dumps(artifacts.to_dict(), indent=2, ensure_ascii=True))
+    return 0
+
+
+def _handle_start_session(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    repository = StateRepository(config)
+    try:
+        artifacts = repository.start_new_session(
+            goal=args.goal,
+            active_roadmap_phase_ids=args.roadmap_phases,
+            session_id=args.session_id,
+        )
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    payload = artifacts.to_dict()
+    payload["session"] = repository.read_session_state()
+    print(json.dumps(payload, indent=2, ensure_ascii=True))
+    return 0
+
+
+def _handle_sessions(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    repository = StateRepository(config)
+    repository.ensure_bootstrap_state()
+    payload = {
+        "sessions": repository.list_sessions(),
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=True))
     return 0
 
 

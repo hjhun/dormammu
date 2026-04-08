@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from string import Template
 from typing import Any, Mapping, Sequence
 
@@ -61,6 +62,7 @@ class StateRepository:
         self.config = config
         self.dev_dir = config.dev_dir
         self.logs_dir = config.logs_dir
+        self.sessions_dir = self.dev_dir / "sessions"
         self.templates_dir = config.templates_dir / "dev"
 
     def ensure_bootstrap_state(
@@ -74,6 +76,7 @@ class StateRepository:
 
         self.dev_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
 
         dashboard_path = self.dev_dir / "DASHBOARD.md"
         tasks_path = self.dev_dir / "TASKS.md"
@@ -115,7 +118,81 @@ class StateRepository:
             tasks_path=tasks_path,
             timestamp=timestamp,
         )
+        self._mirror_active_session_snapshot()
 
+        return BootstrapArtifacts(
+            dashboard=dashboard_path,
+            tasks=tasks_path,
+            session=session_path,
+            workflow_state=workflow_path,
+            logs_dir=self.logs_dir,
+        )
+
+    def start_new_session(
+        self,
+        *,
+        goal: str | None = None,
+        active_roadmap_phase_ids: Sequence[str] | None = None,
+        session_id: str | None = None,
+    ) -> BootstrapArtifacts:
+        timestamp = _iso_now()
+        roadmap_phase_ids = list(active_roadmap_phase_ids or ["phase_1"])
+
+        self.dev_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._mirror_active_session_snapshot()
+
+        dashboard_path = self.dev_dir / "DASHBOARD.md"
+        tasks_path = self.dev_dir / "TASKS.md"
+        session_path = self.dev_dir / "session.json"
+        workflow_path = self.dev_dir / "workflow_state.json"
+
+        next_session_id = self._normalize_session_id(
+            session_id or self._generated_session_id(timestamp)
+        )
+        dashboard_context = default_dashboard_context(
+            goal=goal or "Bootstrap dormammu in the current repository.",
+            roadmap_phase_ids=roadmap_phase_ids,
+        )
+        tasks_context = default_tasks_context()
+        self._write_template_file(
+            dashboard_path,
+            "dashboard.md.tmpl",
+            dashboard_context.render_values(),
+        )
+        self._write_template_file(
+            tasks_path,
+            "tasks.md.tmpl",
+            tasks_context.render_values(),
+        )
+
+        session_defaults = default_session_state(
+            timestamp=timestamp,
+            app_name=self.config.app_name,
+            roadmap_phase_ids=roadmap_phase_ids,
+            session_id=next_session_id,
+            run_type="session",
+        )
+        workflow_defaults = default_workflow_state(
+            timestamp=timestamp,
+            roadmap_phase_ids=roadmap_phase_ids,
+        )
+        self._write_json(session_path, session_defaults)
+        self._write_json(workflow_path, workflow_defaults)
+
+        for extra_name in ("supervisor_report.md", "continuation_prompt.txt"):
+            extra_path = self.dev_dir / extra_name
+            if extra_path.exists():
+                extra_path.unlink()
+
+        self._sync_operator_state(
+            session_path=session_path,
+            workflow_path=workflow_path,
+            tasks_path=tasks_path,
+            timestamp=timestamp,
+        )
+        self._mirror_active_session_snapshot()
         return BootstrapArtifacts(
             dashboard=dashboard_path,
             tasks=tasks_path,
@@ -132,6 +209,15 @@ class StateRepository:
     ) -> None:
         if path.exists():
             return
+        template = Template((self.templates_dir / template_name).read_text(encoding="utf-8"))
+        path.write_text(template.safe_substitute(values), encoding="utf-8")
+
+    def _write_template_file(
+        self,
+        path: Path,
+        template_name: str,
+        values: Mapping[str, str],
+    ) -> None:
         template = Template((self.templates_dir / template_name).read_text(encoding="utf-8"))
         path.write_text(template.safe_substitute(values), encoding="utf-8")
 
@@ -165,6 +251,7 @@ class StateRepository:
         workflow_state.setdefault("operator_sync", {})
         workflow_state["operator_sync"]["tasks"] = task_sync
         self._write_json(workflow_path, workflow_state)
+        self._mirror_active_session_snapshot()
 
     def record_latest_run(self, result: AgentRunResult) -> None:
         session_path = self.dev_dir / "session.json"
@@ -183,6 +270,7 @@ class StateRepository:
         workflow_state["current_run"] = None
         workflow_state["latest_run"] = latest_run
         self._write_json(workflow_path, workflow_state)
+        self._mirror_active_session_snapshot()
 
     def record_current_run(self, started: AgentRunStarted) -> None:
         session_path = self.dev_dir / "session.json"
@@ -199,18 +287,21 @@ class StateRepository:
         workflow_state["updated_at"] = started.started_at
         workflow_state["current_run"] = current_run
         self._write_json(workflow_path, workflow_state)
+        self._mirror_active_session_snapshot()
 
     def read_session_state(self) -> dict[str, Any]:
         return self._read_json(self.dev_dir / "session.json")
 
     def write_session_state(self, payload: Mapping[str, Any]) -> None:
         self._write_json(self.dev_dir / "session.json", dict(payload))
+        self._mirror_active_session_snapshot()
 
     def read_workflow_state(self) -> dict[str, Any]:
         return self._read_json(self.dev_dir / "workflow_state.json")
 
     def write_workflow_state(self, payload: Mapping[str, Any]) -> None:
         self._write_json(self.dev_dir / "workflow_state.json", dict(payload))
+        self._mirror_active_session_snapshot()
 
     def sync_operator_state(self, *, timestamp: str | None = None) -> None:
         sync_time = timestamp or _iso_now()
@@ -224,12 +315,102 @@ class StateRepository:
     def write_supervisor_report(self, markdown: str) -> Path:
         report_path = self.dev_dir / "supervisor_report.md"
         report_path.write_text(markdown, encoding="utf-8")
+        self._mirror_active_session_snapshot()
         return report_path
 
     def write_continuation_prompt(self, text: str) -> Path:
         prompt_path = self.dev_dir / "continuation_prompt.txt"
         prompt_path.write_text(text, encoding="utf-8")
+        self._mirror_active_session_snapshot()
         return prompt_path
+
+    def list_sessions(self) -> list[dict[str, Any]]:
+        active_session_id = self._current_session_id()
+        if not self.sessions_dir.exists():
+            return []
+
+        sessions: list[dict[str, Any]] = []
+        for session_dir in sorted(self.sessions_dir.iterdir()):
+            if not session_dir.is_dir():
+                continue
+            session_path = session_dir / "session.json"
+            if not session_path.exists():
+                continue
+
+            session_state = self._read_json(session_path)
+            workflow_path = session_dir / "workflow_state.json"
+            workflow_state = self._read_json(workflow_path) if workflow_path.exists() else {}
+            sessions.append(
+                {
+                    "session_id": session_state.get("session_id"),
+                    "snapshot_dir": str(session_dir),
+                    "created_at": session_state.get("created_at"),
+                    "updated_at": session_state.get("updated_at"),
+                    "status": session_state.get("status"),
+                    "run_type": session_state.get("run_type"),
+                    "active_phase": session_state.get("active_phase"),
+                    "active_roadmap_phase_ids": session_state.get(
+                        "active_roadmap_phase_ids",
+                        [],
+                    ),
+                    "next_action": session_state.get("next_action"),
+                    "is_active": session_state.get("session_id") == active_session_id,
+                    "workflow_last_completed_phase": workflow_state.get("workflow", {}).get(
+                        "last_completed_phase"
+                    ),
+                }
+            )
+        sessions.sort(
+            key=lambda item: (
+                str(item.get("updated_at") or ""),
+                str(item.get("created_at") or ""),
+            ),
+            reverse=True,
+        )
+        return sessions
+
+    def _generated_session_id(self, timestamp: str) -> str:
+        compact = timestamp.replace("-", "").replace(":", "").replace("+", "-").replace("T", "-")
+        return f"{self.config.app_name}-{compact}"
+
+    def _normalize_session_id(self, value: str) -> str:
+        normalized = re.sub(r"[^a-zA-Z0-9._-]+", "-", value.strip()).strip("-._")
+        if not normalized:
+            raise ValueError("session_id must contain at least one safe filename character.")
+        return normalized
+
+    def _current_session_id(self) -> str | None:
+        session_path = self.dev_dir / "session.json"
+        if not session_path.exists():
+            return None
+        try:
+            payload = self._read_json(session_path)
+        except json.JSONDecodeError:
+            return None
+        session_id = payload.get("session_id")
+        return str(session_id) if session_id else None
+
+    def _mirror_active_session_snapshot(self) -> None:
+        session_id = self._current_session_id()
+        if session_id is None:
+            return
+
+        target_dir = self.sessions_dir / session_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for filename in (
+            "DASHBOARD.md",
+            "TASKS.md",
+            "session.json",
+            "workflow_state.json",
+            "supervisor_report.md",
+            "continuation_prompt.txt",
+        ):
+            source = self.dev_dir / filename
+            target = target_dir / filename
+            if source.exists():
+                target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            elif target.exists():
+                target.unlink()
 
     def _read_json(self, path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))

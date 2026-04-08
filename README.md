@@ -61,6 +61,8 @@ upgrades `pip`, installs the package in editable mode, and prints the next
 ```bash
 dormammu run --agent-cli /path/to/agent-cli --prompt "Do the work"
 dormammu resume
+dormammu start-session --goal "New workflow scope"
+dormammu sessions
 dormammu inspect-cli --agent-cli /path/to/agent-cli
 dormammu ui
 dormammu doctor --agent-cli /path/to/agent-cli
@@ -72,6 +74,10 @@ Low-level compatibility commands such as `run-loop`, `resume-loop`, and
 `inspect-cli` prints the detected prompt handling mode, matched known preset,
 and any approval-skipping candidates so operators can review risky flags before
 running a real workflow.
+
+`start-session` archives the current active `.dev` state into
+`.dev/sessions/<session_id>/` and resets the root `.dev` files for a fresh
+active session. `sessions` lists the saved session snapshots as JSON.
 
 ## Release Packaging
 
