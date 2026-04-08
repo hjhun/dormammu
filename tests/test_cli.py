@@ -33,6 +33,35 @@ class CliTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["repo_root"], str(root))
 
+    def test_show_config_includes_configured_fallback_clis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "fallback_agent_clis": [
+                            "claude",
+                            {"path": "./bin/aider", "extra_args": ["--yes"]},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(["show-config", "--repo-root", str(root)])
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["config_file"], str((root / "dormammu.json").resolve()))
+            self.assertEqual(payload["fallback_agent_clis"][0]["path"], "claude")
+            self.assertEqual(
+                payload["fallback_agent_clis"][1]["path"],
+                str((root / "bin" / "aider").resolve()),
+            )
+
     def test_init_state_creates_bootstrap_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

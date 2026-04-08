@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -15,7 +16,7 @@ from dormammu.agent.models import (
     AgentRunStarted,
     CliCapabilities,
 )
-from dormammu.config import AppConfig
+from dormammu.config import AppConfig, FallbackCliConfig
 
 
 def _iso_now() -> str:
@@ -30,8 +31,15 @@ def _safe_label(text: str | None) -> str:
 
 
 def _run_id(label: str | None) -> str:
-    timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S-%f")
     return f"{timestamp}-{_safe_label(label)}"
+
+
+def _recorded_cli_path(cli_path: Path) -> Path:
+    text = str(cli_path)
+    if cli_path.is_absolute() or "/" in text:
+        return cli_path.expanduser().resolve()
+    return cli_path
 
 
 class CliAdapter:
@@ -63,6 +71,39 @@ class CliAdapter:
         *,
         on_started: Callable[[AgentRunStarted], None] | None = None,
     ) -> AgentRunResult:
+        candidates = self._build_candidate_requests(request)
+        attempted_cli_paths: list[Path] = []
+        requested_cli_path = _recorded_cli_path(request.cli_path)
+        fallback_trigger: str | None = None
+
+        for index, candidate_request in enumerate(candidates):
+            result = self._run_single(candidate_request, on_started=on_started)
+            attempted_cli_paths.append(result.cli_path)
+            enriched = replace(
+                result,
+                requested_cli_path=requested_cli_path,
+                attempted_cli_paths=tuple(attempted_cli_paths),
+                fallback_trigger=fallback_trigger,
+            )
+            fallback_reason = self._detect_token_exhaustion(enriched)
+            if fallback_reason is None or index == len(candidates) - 1:
+                return replace(
+                    enriched,
+                    fallback_trigger=fallback_reason or fallback_trigger,
+                )
+            fallback_trigger = fallback_reason
+
+        return replace(
+            enriched,
+            fallback_trigger=fallback_trigger,
+        )
+
+    def _run_single(
+        self,
+        request: AgentRunRequest,
+        *,
+        on_started: Callable[[AgentRunStarted], None] | None = None,
+    ) -> AgentRunResult:
         self.config.logs_dir.mkdir(parents=True, exist_ok=True)
 
         run_id = _run_id(request.run_label)
@@ -80,7 +121,7 @@ class CliAdapter:
         started_at = _iso_now()
         started = AgentRunStarted(
             run_id=run_id,
-            cli_path=request.cli_path.resolve(),
+            cli_path=_recorded_cli_path(request.cli_path),
             workdir=run_cwd,
             prompt_mode=command_plan.prompt_mode,
             command=tuple(command_plan.argv),
@@ -111,7 +152,7 @@ class CliAdapter:
 
         result = AgentRunResult(
             run_id=run_id,
-            cli_path=request.cli_path.resolve(),
+            cli_path=_recorded_cli_path(request.cli_path),
             workdir=run_cwd,
             prompt_mode=command_plan.prompt_mode,
             command=tuple(command_plan.argv),
@@ -130,3 +171,44 @@ class CliAdapter:
             encoding="utf-8",
         )
         return result
+
+    def _build_candidate_requests(self, request: AgentRunRequest) -> tuple[AgentRunRequest, ...]:
+        candidates = [request]
+        seen_paths = {str(request.cli_path)}
+        for fallback in self.config.fallback_agent_clis:
+            candidate = self._apply_fallback_config(request, fallback)
+            key = str(candidate.cli_path)
+            if key in seen_paths:
+                continue
+            seen_paths.add(key)
+            candidates.append(candidate)
+        return tuple(candidates)
+
+    def _apply_fallback_config(
+        self,
+        request: AgentRunRequest,
+        fallback: FallbackCliConfig,
+    ) -> AgentRunRequest:
+        return replace(
+            request,
+            cli_path=fallback.path,
+            input_mode=fallback.input_mode or "auto",
+            prompt_flag=fallback.prompt_flag,
+            extra_args=fallback.extra_args,
+        )
+
+    def _detect_token_exhaustion(self, result: AgentRunResult) -> str | None:
+        if result.exit_code == 0:
+            return None
+
+        combined_output = "\n".join(
+            [
+                result.stdout_path.read_text(encoding="utf-8"),
+                result.stderr_path.read_text(encoding="utf-8"),
+            ]
+        ).lower()
+        for pattern in self.config.token_exhaustion_patterns:
+            normalized_pattern = pattern.strip().lower()
+            if normalized_pattern and normalized_pattern in combined_output:
+                return normalized_pattern
+        return None

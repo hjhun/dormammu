@@ -172,6 +172,32 @@ class LoopRunner:
             )
             self.repository.record_latest_run(result)
 
+            if result.exit_code != 0 and result.fallback_trigger is not None:
+                self._persist_loop_state(
+                    status="blocked",
+                    request=request,
+                    attempts_completed=attempt_number,
+                    retries_used=retries_used,
+                    latest_run_id=result.run_id,
+                    report=None,
+                    report_path=report_path,
+                    continuation_prompt_path=continuation_prompt_path,
+                    next_action=(
+                        "All configured coding-agent CLIs reported token exhaustion. "
+                        "Update dormammu.json or wait for quota recovery before resuming."
+                    ),
+                )
+                return LoopRunResult(
+                    status="blocked",
+                    attempts_completed=attempt_number,
+                    retries_used=retries_used,
+                    max_retries=request.max_retries,
+                    latest_run_id=result.run_id,
+                    supervisor_verdict="blocked",
+                    report_path=report_path,
+                    continuation_prompt_path=continuation_prompt_path,
+                )
+
             report = self.supervisor.validate(
                 SupervisorRequest(
                     required_paths=request.required_paths,

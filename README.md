@@ -84,6 +84,38 @@ active session. `sessions` lists the saved session snapshots as JSON.
 files, and `resume --session-id <id>` restores that saved session first and
 then continues with the normal supervised recovery flow.
 
+## Config File
+
+If the primary coding-agent CLI hits a token or quota limit, `dormammu` can
+fail over to configured fallback CLIs from `dormammu.json` in the repo root.
+
+```json
+{
+  "fallback_agent_clis": [
+    "claude",
+    {
+      "path": "aider",
+      "extra_args": ["--yes"]
+    }
+  ],
+  "token_exhaustion_patterns": [
+    "usage limit",
+    "quota exceeded",
+    "rate limit exceeded",
+    "token limit"
+  ]
+}
+```
+
+Behavior notes:
+
+- the CLI passed to `dormammu run --agent-cli ...` is always tried first
+- configured fallback CLIs are tried in order when a run exits with a matching
+  token exhaustion message
+- fallback attempts do not consume the supervised loop retry budget
+- if every configured CLI is exhausted, the loop stops in a `blocked` state so
+  you can wait for quota recovery or update `dormammu.json` before `resume`
+
 ## Release Packaging
 
 `.github/workflows/release.yml` packages the project on `v*` tag pushes and on

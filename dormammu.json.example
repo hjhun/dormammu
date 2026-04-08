@@ -1,0 +1,16 @@
+{
+  "fallback_agent_clis": [
+    "claude",
+    {
+      "path": "aider",
+      "extra_args": ["--yes"]
+    }
+  ],
+  "token_exhaustion_patterns": [
+    "usage limit",
+    "quota exceeded",
+    "rate limit exceeded",
+    "token limit",
+    "insufficient credits"
+  ]
+}

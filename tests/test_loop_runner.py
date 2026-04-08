@@ -146,6 +146,86 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertEqual(result.attempts_completed, 3)
             self.assertEqual(result.retries_used, 2)
 
+    def test_run_uses_fallback_cli_without_consuming_retry_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            primary_cli = self._write_exhausted_cli(root, name="primary-agent", message="usage limit exceeded")
+            fallback_cli = self._write_loop_cli(root, success_attempt=1, name="fallback-loop-agent")
+            (root / "dormammu.json").write_text(
+                textwrap.dedent(
+                    f"""\
+                    {{
+                      "fallback_agent_clis": [
+                        "{fallback_cli}"
+                      ]
+                    }}
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=primary_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="fallback-loop-test",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.attempts_completed, 1)
+            self.assertEqual(result.retries_used, 0)
+            latest_run = repository.read_workflow_state()["latest_run"]
+            self.assertEqual(latest_run["requested_cli_path"], str(primary_cli.resolve()))
+            self.assertEqual(latest_run["cli_path"], str(fallback_cli.resolve()))
+            self.assertTrue((root / "done.txt").exists())
+
+    def test_run_blocks_when_all_configured_clis_report_token_exhaustion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            primary_cli = self._write_exhausted_cli(root, name="primary-agent", message="usage limit exceeded")
+            fallback_cli = self._write_exhausted_cli(root, name="fallback-agent", message="quota exceeded")
+            (root / "dormammu.json").write_text(
+                textwrap.dedent(
+                    f"""\
+                    {{
+                      "fallback_agent_clis": [
+                        "{fallback_cli}"
+                      ]
+                    }}
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=primary_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="blocked-fallback-loop-test",
+                    max_retries=-1,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "blocked")
+            self.assertEqual(result.attempts_completed, 1)
+            self.assertEqual(result.retries_used, 0)
+            workflow_state = repository.read_workflow_state()
+            self.assertEqual(workflow_state["loop"]["status"], "blocked")
+
     def _seed_repo(self, root: Path) -> None:
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
@@ -208,8 +288,8 @@ class LoopRunnerTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _write_loop_cli(self, root: Path, *, success_attempt: int) -> Path:
-        script = root / "fake-loop-agent"
+    def _write_loop_cli(self, root: Path, *, success_attempt: int, name: str = "fake-loop-agent") -> Path:
+        script = root / name
         script.write_text(
             textwrap.dedent(
                 f"""\
@@ -248,6 +328,31 @@ class LoopRunnerTests(unittest.TestCase):
                         TARGET_PATH.write_text("done\\n", encoding="utf-8")
 
                     return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_exhausted_cli(self, root: Path, *, name: str, message: str) -> Path:
+        script = root / name
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: {name} [--prompt-file PATH]")
+                        return 0
+
+                    print({message!r}, file=sys.stderr)
+                    return 2
 
                 raise SystemExit(main())
                 """

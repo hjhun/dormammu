@@ -159,11 +159,21 @@ class AgentRunResult:
     stderr_path: Path
     metadata_path: Path
     capabilities: CliCapabilities
+    requested_cli_path: Path | None = None
+    attempted_cli_paths: Sequence[Path] = ()
+    fallback_trigger: str | None = None
 
     def to_dict(self, *, include_help_text: bool = False) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "cli_path": str(self.cli_path),
+            "requested_cli_path": (
+                str(self.requested_cli_path) if self.requested_cli_path else str(self.cli_path)
+            ),
+            "attempted_cli_paths": [
+                str(path) for path in (self.attempted_cli_paths or (self.cli_path,))
+            ],
+            "fallback_trigger": self.fallback_trigger,
             "workdir": str(self.workdir),
             "prompt_mode": self.prompt_mode,
             "command": list(self.command),

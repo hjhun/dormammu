@@ -76,6 +76,48 @@ class CliAdapterTests(unittest.TestCase):
             self.assertIsNotNone(result.capabilities.auto_approve)
             self.assertEqual(result.capabilities.auto_approve.candidates[0].value, "--full-auto")
 
+    def test_run_once_falls_back_across_configured_clis_when_token_limit_is_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            primary_cli = self._write_exhausted_cli(root, name="primary-agent", message="usage limit exceeded")
+            fallback_one = self._write_exhausted_cli(root, name="fallback-one", message="quota exceeded")
+            fallback_two = self._write_fake_cli(root)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "fallback_agent_clis": [
+                            str(fallback_one),
+                            str(fallback_two),
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=primary_cli,
+                    prompt_text="Write a tiny test plan.",
+                    repo_root=root,
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.requested_cli_path, primary_cli.resolve())
+            self.assertEqual(result.cli_path, fallback_two.resolve())
+            self.assertEqual(
+                list(result.attempted_cli_paths),
+                [
+                    primary_cli.resolve(),
+                    fallback_one.resolve(),
+                    fallback_two.resolve(),
+                ],
+            )
+            self.assertEqual(result.fallback_trigger, "quota exceeded")
+            self.assertIn("PROMPT::Write a tiny test plan.", result.stdout_path.read_text(encoding="utf-8"))
+
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
         templates = root / "templates" / "dev"
@@ -146,6 +188,31 @@ class CliAdapterTests(unittest.TestCase):
 
                     print("unexpected invocation", file=sys.stderr)
                     return 1
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_exhausted_cli(self, root: Path, *, name: str, message: str) -> Path:
+        script = root / name
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: {name} [--prompt-file PATH]")
+                        return 0
+
+                    print({message!r}, file=sys.stderr)
+                    return 2
 
                 raise SystemExit(main())
                 """
