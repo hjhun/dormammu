@@ -169,16 +169,26 @@
                   <dt>Attempts / retries</dt>
                   <dd id="run-attempts">-</dd>
                 </div>
+                <div>
+                  <dt>Command</dt>
+                  <dd id="run-command">-</dd>
+                </div>
+                <div>
+                  <dt>Stdout artifact</dt>
+                  <dd id="run-stdout-path">-</dd>
+                </div>
               </dl>
             </article>
 
             <article class="detail-card">
-              <h3>Recent stdout</h3>
+              <h3>Live stdout</h3>
+              <p class="card-label">Streams the current run when active, otherwise the latest saved run.</p>
               <pre id="stdout-log" class="log-view">Waiting for logs...</pre>
             </article>
 
             <article class="detail-card">
-              <h3>Recent stderr</h3>
+              <h3>Live stderr</h3>
+              <p class="card-label">CLI output is mirrored here while artifacts are still written to `.dev`.</p>
               <pre id="stderr-log" class="log-view">Waiting for logs...</pre>
             </article>
           </div>

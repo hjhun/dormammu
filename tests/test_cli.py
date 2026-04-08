@@ -10,6 +10,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -116,6 +117,27 @@ class CliTests(unittest.TestCase):
             self.assertTrue((root / ".dev" / "DASHBOARD.md").exists())
             self.assertEqual(payload["logs_dir"], str(root / ".dev" / "logs"))
 
+    def test_init_state_prompts_for_bootstrap_inputs_on_first_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            stdout = io.StringIO()
+            with (
+                mock.patch("sys.stdin.isatty", return_value=True),
+                mock.patch(
+                    "builtins.input",
+                    side_effect=["Interactive bootstrap goal", "phase_7"],
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                exit_code = main(["init-state", "--repo-root", str(root)])
+
+            self.assertEqual(exit_code, 0)
+            workflow_state = json.loads((root / ".dev" / "workflow_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(workflow_state["bootstrap"]["goal"], "Interactive bootstrap goal")
+            self.assertEqual(workflow_state["roadmap"]["active_phase_ids"], ["phase_7"])
+
     def test_start_session_and_sessions_list_manage_archived_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -217,6 +239,60 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["session"]["session_id"], "session-one")
+
+    def test_run_without_explicit_session_id_uses_active_session_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(
+                    [
+                        "start-session",
+                        "--repo-root",
+                        str(root),
+                        "--goal",
+                        "Session A",
+                        "--session-id",
+                        "session-a",
+                        "--roadmap-phase",
+                        "phase_4",
+                    ]
+                )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                        "--run-label",
+                        "active-session-run",
+                        "--max-retries",
+                        "0",
+                        "--required-path",
+                        "done.txt",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertIn(".dev/sessions/session-a", payload["report_path"])
+            workflow_state = json.loads(
+                (root / ".dev" / "sessions" / "session-a" / "workflow_state.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertIn(
+                ".dev/sessions/session-a/logs",
+                workflow_state["latest_run"]["artifacts"]["stdout"],
+            )
 
     def test_resume_can_target_a_saved_session_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

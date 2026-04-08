@@ -285,6 +285,7 @@ class AppConfig:
     port: int
     log_level: str
     repo_root: Path
+    base_dev_dir: Path
     dev_dir: Path
     logs_dir: Path
     templates_dir: Path
@@ -305,7 +306,8 @@ class AppConfig:
         values = env or os.environ
         root = discover_repo_root(repo_root)
         asset_root = _discover_asset_root(root, values)
-        dev_dir = root / ".dev"
+        base_dev_dir = root / ".dev"
+        dev_dir = base_dev_dir
         config_file = _resolve_config_file(root, values)
         config_payload = _load_config_payload(config_file)
         fallback_agent_clis = (
@@ -322,6 +324,7 @@ class AppConfig:
             port=_read_int(values, "DORMAMMU_PORT", int(_config_value(config_payload, "port", 8000))),
             log_level=str(values.get("DORMAMMU_LOG_LEVEL", _config_value(config_payload, "log_level", "info"))),
             repo_root=root,
+            base_dev_dir=base_dev_dir,
             dev_dir=dev_dir,
             logs_dir=dev_dir / "logs",
             templates_dir=asset_root / "templates",
@@ -354,6 +357,7 @@ class AppConfig:
             "port": self.port,
             "log_level": self.log_level,
             "repo_root": str(self.repo_root),
+            "base_dev_dir": str(self.base_dev_dir),
             "dev_dir": str(self.dev_dir),
             "logs_dir": str(self.logs_dir),
             "templates_dir": str(self.templates_dir),

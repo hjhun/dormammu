@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from pathlib import Path
 import stat
@@ -159,6 +161,29 @@ class CliAdapterTests(unittest.TestCase):
                 result.stdout_path.read_text(encoding="utf-8"),
             )
             self.assertIn("YOLO::yes", result.stdout_path.read_text(encoding="utf-8"))
+
+    def test_run_once_mirrors_live_output_to_parent_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+
+            config = AppConfig.load(repo_root=root)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                result = CliAdapter(config).run_once(
+                    AgentRunRequest(
+                        cli_path=fake_cli,
+                        prompt_text="Watch the live terminal output.",
+                        repo_root=root,
+                        run_label="live-stream-test",
+                    )
+                )
+
+            self.assertEqual(result.exit_code, 0)
+            mirrored = stderr.getvalue()
+            self.assertIn("PROMPT::Watch the live terminal output.", mirrored)
+            self.assertIn("TRACE::stderr", mirrored)
 
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")

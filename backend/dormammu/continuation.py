@@ -39,6 +39,7 @@ def build_continuation_prompt(
     latest_run: Mapping[str, Any],
     report: SupervisorReport,
     next_task: str | None,
+    repo_guidance: Mapping[str, Any] | None = None,
 ) -> ContinuationPrompt:
     prior_prompt = load_prompt_text(latest_run).strip()
     artifacts = latest_run.get("artifacts", {})
@@ -51,6 +52,17 @@ def build_continuation_prompt(
 
     if not findings:
         findings.append("- No failing checks were recorded, but another supervised attempt was requested.")
+
+    guidance_lines: list[str] = []
+    if isinstance(repo_guidance, Mapping):
+        rule_files = repo_guidance.get("rule_files")
+        workflow_files = repo_guidance.get("workflow_files")
+        if isinstance(rule_files, list) and rule_files:
+            guidance_lines.append("Repository rules: " + ", ".join(str(item) for item in rule_files))
+        if isinstance(workflow_files, list) and workflow_files:
+            guidance_lines.append(
+                "Repository workflows: " + ", ".join(str(item) for item in workflow_files)
+            )
 
     task_line = next_task or "Review the latest supervisor report and continue from the saved state."
     lines = [
@@ -66,6 +78,8 @@ def build_continuation_prompt(
         f"Supervisor verdict: {report.verdict}",
         f"Supervisor summary: {report.summary}",
         "",
+        *guidance_lines,
+        *([""] if guidance_lines else []),
         "Address these findings before you finish:",
         *findings,
         "",

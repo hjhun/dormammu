@@ -76,6 +76,8 @@ function renderSummary(payload) {
   const uiRun = payload.ui_run || {};
   const snapshot = runSnapshot(payload);
   const run = snapshot.run;
+  const commandText = run?.command?.join(" ") || "-";
+  const stdoutPath = run?.artifacts?.stdout || "-";
   const attemptsCompleted = loop.attempts_completed;
   const retriesUsed = loop.retries_used;
   const attemptText =
@@ -99,6 +101,8 @@ function renderSummary(payload) {
   setText("#run-started-at", run?.started_at || "-");
   setText("#run-completed-at", run?.completed_at || (run ? "Running" : "-"));
   setText("#run-attempts", attemptText);
+  setText("#run-command", commandText);
+  setText("#run-stdout-path", stdoutPath);
 }
 
 async function refreshSummary() {
@@ -121,7 +125,10 @@ function connectLogStream(stream, selector) {
   const source = new EventSource(`/api/state/logs/${stream}/stream?lines=160`);
   source.onmessage = (event) => {
     const payload = JSON.parse(event.data);
-    target.textContent = payload.content || "No log output yet.";
+    const status = payload.running ? "Live stream" : "Saved output";
+    target.textContent = payload.content
+      ? `${status}\n\n${payload.content}`
+      : "No log output yet.";
   };
   source.onerror = () => {
     target.textContent = "Log stream disconnected. Retrying on the next refresh.";

@@ -85,6 +85,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_once.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
     run_once.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional saved session id to use for isolated `.dev` state.",
+    )
+    run_once.add_argument(
+        "--goal",
+        default=None,
+        help="Bootstrap goal used when the target session has no saved state yet.",
+    )
+    run_once.add_argument(
+        "--roadmap-phase",
+        dest="roadmap_phases",
+        action="append",
+        default=None,
+        help="Bootstrap roadmap phase id when the target session has no saved state yet.",
+    )
+    run_once.add_argument(
         "--agent-cli",
         type=Path,
         default=None,
@@ -138,6 +155,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run an external coding-agent CLI under the supervised retry loop.",
     )
     run_loop.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    run_loop.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional saved session id to use for isolated `.dev` state.",
+    )
+    run_loop.add_argument(
+        "--goal",
+        default=None,
+        help="Bootstrap goal used when the target session has no saved state yet.",
+    )
+    run_loop.add_argument(
+        "--roadmap-phase",
+        dest="roadmap_phases",
+        action="append",
+        default=None,
+        help="Bootstrap roadmap phase id when the target session has no saved state yet.",
+    )
     run_loop.add_argument(
         "--agent-cli",
         type=Path,
@@ -219,7 +253,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_loop.add_argument(
         "--session-id",
         default=None,
-        help="Restore this saved session id before running the resume flow.",
+        help="Resume this saved session id without switching the active root `.dev` view.",
     )
     resume_loop.set_defaults(handler=_handle_resume_loop)
 
@@ -253,6 +287,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start the local backend app and UI.",
     )
     serve.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    serve.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional saved session id to serve instead of the active root `.dev` view.",
+    )
+    serve.add_argument(
+        "--goal",
+        default=None,
+        help="Bootstrap goal used when the target session has no saved state yet.",
+    )
+    serve.add_argument(
+        "--roadmap-phase",
+        dest="roadmap_phases",
+        action="append",
+        default=None,
+        help="Bootstrap roadmap phase id when the target session has no saved state yet.",
+    )
     serve.add_argument("--host", default=None, help="Host interface to bind.")
     serve.add_argument("--port", type=int, default=None, help="Port to bind.")
     serve.add_argument(
@@ -288,6 +339,68 @@ def _load_config(repo_root: Path | None) -> AppConfig:
     return AppConfig.load(repo_root=repo_root)
 
 
+def _load_state_scope(
+    repo_root: Path | None,
+    *,
+    session_id: str | None = None,
+    prefer_active_session: bool = False,
+) -> tuple[AppConfig, StateRepository]:
+    config = _load_config(repo_root)
+    resolved_session_id = session_id
+    if resolved_session_id is None and prefer_active_session:
+        session_path = config.base_dev_dir / "session.json"
+        if session_path.exists():
+            try:
+                payload = json.loads(session_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                payload = {}
+            candidate = payload.get("session_id")
+            if isinstance(candidate, str) and candidate.strip():
+                resolved_session_id = candidate
+    repository = StateRepository(config, session_id=session_id)
+    if resolved_session_id is not None:
+        repository = StateRepository(config, session_id=resolved_session_id)
+        config = config.with_overrides(dev_dir=repository.dev_dir, logs_dir=repository.logs_dir)
+        repository = StateRepository(config, session_id=resolved_session_id)
+    return config, repository
+
+
+def _prompt_with_default(prompt: str, default: str) -> str:
+    value = input(f"{prompt} [{default}]: ").strip()
+    return value or default
+
+
+def _resolve_bootstrap_inputs(
+    *,
+    repository: StateRepository,
+    goal: str | None,
+    roadmap_phases: Sequence[str] | None,
+    default_phase: str,
+) -> tuple[str | None, Sequence[str] | None]:
+    session_exists = repository.state_file("workflow_state.json").exists()
+    resolved_goal = goal
+    resolved_roadmap_phases = list(roadmap_phases) if roadmap_phases else None
+
+    if not session_exists and sys.stdin.isatty():
+        if resolved_goal is None:
+            resolved_goal = _prompt_with_default(
+                "Initial workflow goal",
+                "Bootstrap dormammu in the current repository.",
+            )
+        if resolved_roadmap_phases is None:
+            roadmap_input = _prompt_with_default(
+                "Active roadmap phase ids (comma separated)",
+                default_phase,
+            )
+            resolved_roadmap_phases = [
+                item.strip()
+                for item in roadmap_input.split(",")
+                if item.strip()
+            ]
+
+    return resolved_goal, resolved_roadmap_phases
+
+
 def _handle_show_config(args: argparse.Namespace) -> int:
     config = _load_config(args.repo_root)
     print(json.dumps(config.to_dict(), indent=2, ensure_ascii=True))
@@ -295,23 +408,34 @@ def _handle_show_config(args: argparse.Namespace) -> int:
 
 
 def _handle_init_state(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
-    repository = StateRepository(config)
-    artifacts = repository.ensure_bootstrap_state(
+    config, repository = _load_state_scope(args.repo_root)
+    goal, roadmap_phases = _resolve_bootstrap_inputs(
+        repository=repository,
         goal=args.goal,
-        active_roadmap_phase_ids=args.roadmap_phases,
+        roadmap_phases=args.roadmap_phases,
+        default_phase="phase_1",
+    )
+    artifacts = repository.ensure_bootstrap_state(
+        goal=goal,
+        active_roadmap_phase_ids=roadmap_phases,
     )
     print(json.dumps(artifacts.to_dict(), indent=2, ensure_ascii=True))
     return 0
 
 
 def _handle_start_session(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
-    repository = StateRepository(config)
+    config, repository = _load_state_scope(args.repo_root)
+    bootstrap_repository = repository.for_session(args.session_id) if args.session_id else repository
+    goal, roadmap_phases = _resolve_bootstrap_inputs(
+        repository=bootstrap_repository,
+        goal=args.goal,
+        roadmap_phases=args.roadmap_phases,
+        default_phase="phase_7",
+    )
     try:
         artifacts = repository.start_new_session(
-            goal=args.goal,
-            active_roadmap_phase_ids=args.roadmap_phases,
+            goal=goal,
+            active_roadmap_phase_ids=roadmap_phases,
             session_id=args.session_id,
         )
     except (RuntimeError, ValueError, OSError) as exc:
@@ -325,8 +449,7 @@ def _handle_start_session(args: argparse.Namespace) -> int:
 
 
 def _handle_sessions(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
-    repository = StateRepository(config)
+    config, repository = _load_state_scope(args.repo_root)
     repository.ensure_bootstrap_state()
     payload = {
         "sessions": repository.list_sessions(),
@@ -336,8 +459,7 @@ def _handle_sessions(args: argparse.Namespace) -> int:
 
 
 def _handle_restore_session(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
-    repository = StateRepository(config)
+    config, repository = _load_state_scope(args.repo_root)
     try:
         artifacts = repository.restore_session(args.session_id)
     except (RuntimeError, ValueError, OSError) as exc:
@@ -377,9 +499,21 @@ def _resolve_agent_cli(config: AppConfig, cli_path: Path | None) -> Path:
 
 
 def _handle_run_once(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
-    repository = StateRepository(config)
-    repository.ensure_bootstrap_state(active_roadmap_phase_ids=["phase_3"])
+    config, repository = _load_state_scope(
+        args.repo_root,
+        session_id=args.session_id,
+        prefer_active_session=True,
+    )
+    goal, roadmap_phases = _resolve_bootstrap_inputs(
+        repository=repository,
+        goal=args.goal,
+        roadmap_phases=args.roadmap_phases,
+        default_phase="phase_3",
+    )
+    repository.ensure_bootstrap_state(
+        goal=goal,
+        active_roadmap_phase_ids=roadmap_phases or ["phase_3"],
+    )
     try:
         agent_cli = _resolve_agent_cli(config, args.agent_cli)
     except ValueError as exc:
@@ -409,9 +543,21 @@ def _handle_run_once(args: argparse.Namespace) -> int:
 
 
 def _handle_run_loop(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
-    repository = StateRepository(config)
-    repository.ensure_bootstrap_state(active_roadmap_phase_ids=["phase_4"])
+    config, repository = _load_state_scope(
+        args.repo_root,
+        session_id=args.session_id,
+        prefer_active_session=True,
+    )
+    goal, roadmap_phases = _resolve_bootstrap_inputs(
+        repository=repository,
+        goal=args.goal,
+        roadmap_phases=args.roadmap_phases,
+        default_phase="phase_4",
+    )
+    repository.ensure_bootstrap_state(
+        goal=goal,
+        active_roadmap_phase_ids=roadmap_phases or ["phase_4"],
+    )
     try:
         agent_cli = _resolve_agent_cli(config, args.agent_cli)
     except ValueError as exc:
@@ -430,7 +576,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
         max_retries=args.max_retries,
         required_paths=tuple(args.required_paths or ()),
         require_worktree_changes=args.require_worktree_changes,
-        expected_roadmap_phase_id="phase_4",
+        expected_roadmap_phase_id=(roadmap_phases[0] if roadmap_phases else "phase_4"),
     )
 
     try:
@@ -444,13 +590,16 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
 
 
 def _handle_resume_loop(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
-    repository = StateRepository(config)
+    config, repository = _load_state_scope(
+        args.repo_root,
+        session_id=args.session_id,
+        prefer_active_session=True,
+    )
 
     try:
         result = RecoveryManager(config, repository=repository).resume(
             max_retries_override=args.max_retries,
-            session_id=args.session_id,
+            session_id=None,
         )
     except (RuntimeError, ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
@@ -461,7 +610,7 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
 
 
 def _handle_inspect_cli(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
+    config, _ = _load_state_scope(args.repo_root)
     workdir = (args.workdir or config.repo_root).resolve()
     try:
         agent_cli = _resolve_agent_cli(config, args.agent_cli)
@@ -495,14 +644,27 @@ def _handle_serve(args: argparse.Namespace) -> int:
         )
         return 2
 
-    config = _load_config(args.repo_root)
+    config, repository = _load_state_scope(
+        args.repo_root,
+        session_id=args.session_id,
+        prefer_active_session=True,
+    )
     if args.host is not None:
         config = replace(config, host=args.host)
     if args.port is not None:
         config = replace(config, port=args.port)
 
     if not args.skip_init_state:
-        StateRepository(config).ensure_bootstrap_state()
+        goal, roadmap_phases = _resolve_bootstrap_inputs(
+            repository=repository,
+            goal=args.goal,
+            roadmap_phases=args.roadmap_phases,
+            default_phase="phase_5",
+        )
+        repository.ensure_bootstrap_state(
+            goal=goal,
+            active_roadmap_phase_ids=roadmap_phases,
+        )
 
     try:
         app = create_app(config)
@@ -515,7 +677,7 @@ def _handle_serve(args: argparse.Namespace) -> int:
 
 
 def _handle_doctor(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
+    config, _ = _load_state_scope(args.repo_root)
     report = run_doctor(
         repo_root=config.repo_root,
         agent_cli=args.agent_cli or config.active_agent_cli,

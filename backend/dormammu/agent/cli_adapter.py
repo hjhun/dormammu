@@ -8,7 +8,9 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-from typing import Callable
+import sys
+from threading import Thread
+from typing import Callable, TextIO
 
 from dormammu.agent.command_builder import build_command_plan
 from dormammu.agent.help_parser import parse_help_text
@@ -44,9 +46,29 @@ def _recorded_cli_path(cli_path: Path) -> Path:
     return cli_path
 
 
+def _mirror_pipe(
+    source: TextIO | None,
+    sink: TextIO,
+    *,
+    mirror: TextIO | None,
+) -> None:
+    if source is None:
+        return
+    try:
+        for chunk in source:
+            sink.write(chunk)
+            sink.flush()
+            if mirror is not None:
+                mirror.write(chunk)
+                mirror.flush()
+    finally:
+        source.close()
+
+
 class CliAdapter:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
+        self.live_output_stream = sys.stderr
 
     def inspect_capabilities(self, cli_path: Path, *, cwd: Path) -> CliCapabilities:
         try:
@@ -142,15 +164,37 @@ class CliAdapter:
             "w",
             encoding="utf-8",
         ) as stderr_file:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 list(command_plan.argv),
                 cwd=run_cwd,
-                input=command_plan.stdin_input,
-                stdout=stdout_file,
-                stderr=stderr_file,
+                stdin=subprocess.PIPE if command_plan.stdin_input is not None else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                check=False,
+                bufsize=1,
             )
+            stdout_thread = Thread(
+                target=_mirror_pipe,
+                args=(process.stdout, stdout_file),
+                kwargs={"mirror": self.live_output_stream},
+                daemon=True,
+            )
+            stderr_thread = Thread(
+                target=_mirror_pipe,
+                args=(process.stderr, stderr_file),
+                kwargs={"mirror": self.live_output_stream},
+                daemon=True,
+            )
+            stdout_thread.start()
+            stderr_thread.start()
+
+            if process.stdin is not None:
+                process.stdin.write(command_plan.stdin_input or "")
+                process.stdin.close()
+
+            return_code = process.wait()
+            stdout_thread.join()
+            stderr_thread.join()
         completed_at = _iso_now()
 
         result = AgentRunResult(
@@ -159,7 +203,7 @@ class CliAdapter:
             workdir=run_cwd,
             prompt_mode=command_plan.prompt_mode,
             command=tuple(command_plan.argv),
-            exit_code=completed.returncode,
+            exit_code=return_code,
             started_at=started_at,
             completed_at=completed_at,
             prompt_path=prompt_path,

@@ -38,12 +38,14 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(workflow_state["state_schema_version"], 3)
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["pending_tasks"],
-                3,
+                4,
             )
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["next_pending_task"],
-                "Confirm the current user goal",
+                "Confirm the goal and success criteria for Bootstrap test goal",
             )
+            self.assertEqual(workflow_state["bootstrap"]["goal"], "Bootstrap test goal")
+            self.assertIn("AGENTS.md", workflow_state["bootstrap"]["repo_guidance"]["rule_files"])
 
     def test_ensure_bootstrap_state_merges_existing_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -193,6 +195,39 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(restored_session["session_id"], original_session)
             self.assertIn("Original session", (root / ".dev" / "DASHBOARD.md").read_text(encoding="utf-8"))
             self.assertTrue((root / ".dev" / "supervisor_report.md").exists())
+
+    def test_session_scoped_bootstrap_keeps_active_root_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.start_new_session(
+                goal="Active session goal",
+                active_roadmap_phase_ids=["phase_7"],
+                session_id="active-session",
+            )
+            active_dashboard = (root / ".dev" / "DASHBOARD.md").read_text(encoding="utf-8")
+
+            session_repository = StateRepository(config, session_id="parallel-session")
+            session_repository.ensure_bootstrap_state(
+                goal="Parallel session goal",
+                active_roadmap_phase_ids=["phase_7"],
+            )
+
+            self.assertEqual(
+                active_dashboard,
+                (root / ".dev" / "DASHBOARD.md").read_text(encoding="utf-8"),
+            )
+            parallel_dashboard = (
+                root / ".dev" / "sessions" / "parallel-session" / "DASHBOARD.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("Parallel session goal", parallel_dashboard)
+            self.assertEqual(
+                session_repository.read_session_state()["session_id"],
+                "parallel-session",
+            )
 
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")

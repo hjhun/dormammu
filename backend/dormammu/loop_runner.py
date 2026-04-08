@@ -256,10 +256,12 @@ class LoopRunner:
                 )
 
             next_task = self.repository.read_session_state().get("task_sync", {}).get("next_pending_task")
+            workflow_state = self.repository.read_workflow_state()
             continuation = build_continuation_prompt(
-                latest_run=self.repository.read_workflow_state()["latest_run"],
+                latest_run=workflow_state["latest_run"],
                 report=report,
                 next_task=next_task,
+                repo_guidance=workflow_state.get("bootstrap", {}).get("repo_guidance"),
             )
             continuation_prompt_path = self.repository.write_continuation_prompt(continuation.text)
 

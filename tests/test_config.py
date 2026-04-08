@@ -43,6 +43,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.port, 9000)
             self.assertEqual(config.log_level, "debug")
             self.assertEqual(config.repo_root, root)
+            self.assertEqual(config.base_dev_dir, root / ".dev")
             self.assertEqual(config.dev_dir, root / ".dev")
 
     def test_load_reads_fallback_cli_settings_from_config_file(self) -> None:

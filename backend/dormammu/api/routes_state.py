@@ -12,10 +12,10 @@ from dormammu.state import StateRepository
 
 
 FILE_TARGETS = {
-    "dashboard": ".dev/DASHBOARD.md",
-    "tasks": ".dev/TASKS.md",
-    "continuation": ".dev/continuation_prompt.txt",
-    "supervisor_report": ".dev/supervisor_report.md",
+    "dashboard": "DASHBOARD.md",
+    "tasks": "TASKS.md",
+    "continuation": "continuation_prompt.txt",
+    "supervisor_report": "supervisor_report.md",
 }
 RUN_ARTIFACT_TARGETS = {
     "prompt_artifact": "prompt",
@@ -50,7 +50,7 @@ def _resolve_file_target(
             return Path(configured)
     if name not in FILE_TARGETS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown file target.")
-    return repository.config.repo_root / FILE_TARGETS[name]
+    return repository.state_file(FILE_TARGETS[name])
 
 
 def _read_text(path: Path | None) -> str:

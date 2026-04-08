@@ -60,6 +60,7 @@ class LocalUiTests(unittest.TestCase):
                 self.assertEqual(ui.status_code, 200)
                 self.assertIn("Run setup", ui.text)
                 self.assertIn("Run details", ui.text)
+                self.assertIn("Live stdout", ui.text)
 
     def test_start_run_endpoint_executes_loop_and_exposes_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
