@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version to publish, for example 0.1.1"
+        required: true
+        type: string
 
 jobs:
   package:
@@ -13,10 +18,34 @@ jobs:
       contents: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            raw_version="${{ inputs.release_version }}"
+          else
+            raw_version="${GITHUB_REF_NAME}"
+          fi
+
+          raw_version="${raw_version#v}"
+          if [[ -z "${raw_version}" ]]; then
+            echo "Release version must not be empty." >&2
+            exit 1
+          fi
+
+          if [[ ! "${raw_version}" =~ ^[0-9]+(\.[0-9]+){2}([.-][0-9A-Za-z]+)*$ ]]; then
+            echo "Release version must look like 1.2.3 or 1.2.3-rc1." >&2
+            exit 1
+          fi
+
+          echo "build_version=${raw_version}" >> "${GITHUB_OUTPUT}"
+          echo "release_tag=v${raw_version}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -24,10 +53,12 @@ jobs:
         run: python -m pip install --upgrade pip build
 
       - name: Build release artifacts
+        env:
+          DORMAMMU_BUILD_VERSION: ${{ steps.release.outputs.build_version }}
         run: python -m build
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dormammu-dist
           path: |
@@ -35,9 +66,10 @@ jobs:
             install.sh
 
       - name: Publish GitHub release assets
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
           generate_release_notes: true
           files: |
             dist/*

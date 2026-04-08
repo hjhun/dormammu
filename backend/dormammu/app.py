@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
+from dormammu import __version__
 from dormammu.config import AppConfig
 from dormammu.state import StateRepository
 
@@ -33,7 +34,7 @@ def create_app(config: AppConfig | None = None) -> Any:
 
     app = FastAPI(
         title=app_config.app_name,
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
     app.state.config = app_config
