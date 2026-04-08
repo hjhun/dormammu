@@ -331,6 +331,8 @@ That precedence matters because it lets you keep:
   Additional CLIs to try when the main backend is exhausted.
 - `cli_overrides`
   Family-specific defaults, such as extra args.
+  The built-in `cline` preset uses a positional prompt, so `extra_args: ["-y"]`
+  produces invocations such as `cline -y "Inspect the repo"`.
 - `token_exhaustion_patterns`
   Output patterns that tell `dormammu` when it should attempt fallback.
 

@@ -180,6 +180,8 @@ Behavior notes:
   `inspect-cli`, and `doctor` when `--agent-cli` is omitted
 - `cli_overrides` lets you attach CLI-family defaults such as the `cline`
   `-y` flag, while still allowing later manual edits
+- the built-in `cline` preset treats the prompt as a positional argument, so a
+  typical invocation becomes `cline -y "Inspect the repo"`
 
 ## Architecture At A Glance
 

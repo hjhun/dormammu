@@ -68,6 +68,7 @@ class HelpParserTests(unittest.TestCase):
         )
 
         self.assertEqual(capabilities.preset_key, "cline")
+        self.assertTrue(capabilities.prompt_positional)
         self.assertIsNotNone(capabilities.auto_approve)
         self.assertEqual(capabilities.auto_approve.candidates[0].value, "-y")
 

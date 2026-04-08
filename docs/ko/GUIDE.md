@@ -330,6 +330,8 @@ dormammu ui --repo-root .
   기본 백엔드가 소진되었을 때 시도할 추가 CLI 목록
 - `cli_overrides`
   CLI 계열별 기본 옵션 설정
+  내장 `cline` preset은 positional prompt를 사용하므로
+  `extra_args: ["-y"]`를 주면 `cline -y "Inspect the repo"` 형태로 실행된다
 - `token_exhaustion_patterns`
   fallback 시도를 시작할지 판단하는 출력 패턴
 

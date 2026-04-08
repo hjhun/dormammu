@@ -83,6 +83,7 @@ KNOWN_CLI_PRESETS: tuple[KnownCliPreset, ...] = (
         label="Cline",
         executable_names=("cline",),
         help_hints=("-y", "cline"),
+        prompt_positional=True,
         auto_approve_candidates=(
             PresetAutoApproveCandidate(
                 value="-y",

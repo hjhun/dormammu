@@ -130,8 +130,6 @@ class CliAdapterTests(unittest.TestCase):
                     {
                         "cli_overrides": {
                             "cline": {
-                                "input_mode": "arg",
-                                "prompt_flag": "--prompt",
                                 "extra_args": ["-y"],
                             }
                         }
@@ -151,10 +149,10 @@ class CliAdapterTests(unittest.TestCase):
             )
 
             self.assertEqual(result.exit_code, 0)
-            self.assertEqual(result.prompt_mode, "arg")
+            self.assertEqual(result.prompt_mode, "positional")
             self.assertEqual(
                 list(result.command),
-                [str(fake_cli), "--prompt", "Summarize the repository.", "-y"],
+                [str(fake_cli), "-y", "Summarize the repository."],
             )
             self.assertIn(
                 "PROMPT::Summarize the repository.",
@@ -300,14 +298,16 @@ class CliAdapterTests(unittest.TestCase):
                 def main() -> int:
                     args = sys.argv[1:]
                     if "--help" in args:
-                        print("Usage: cline [--prompt TEXT] [-y]")
+                        print("Usage: cline [prompt] [options]")
+                        print("-y")
                         return 0
 
-                    if "--prompt" not in args:
-                        print("interactive mode requires explicit prompt flag", file=sys.stderr)
+                    prompt_args = [arg for arg in args if arg != "-y"]
+                    if len(prompt_args) != 1:
+                        print("interactive mode requires a single positional prompt", file=sys.stderr)
                         return 2
 
-                    prompt = args[args.index("--prompt") + 1]
+                    prompt = prompt_args[0]
                     print(f"PROMPT::{{prompt}}")
                     print(f"YOLO::{{'yes' if '-y' in args else 'no'}}")
                     return 0

@@ -92,6 +92,34 @@ class CommandBuilderTests(unittest.TestCase):
             )
             self.assertIsNone(plan.stdin_input)
 
+    def test_positional_prompt_keeps_extra_args_before_prompt_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / "prompt.txt"
+            request = AgentRunRequest(
+                cli_path=Path("/tmp/cline"),
+                prompt_text="inspect the repository",
+                repo_root=Path(tmpdir),
+                extra_args=("-y",),
+            )
+            capabilities = CliCapabilities(
+                help_flag="--help",
+                prompt_file_flag=None,
+                prompt_arg_flag=None,
+                workdir_flag=None,
+                help_text="",
+                help_exit_code=0,
+                prompt_positional=True,
+            )
+
+            plan = build_command_plan(request, capabilities, prompt_path=prompt_path)
+
+            self.assertEqual(plan.prompt_mode, "positional")
+            self.assertEqual(
+                list(plan.argv),
+                ["/tmp/cline", "-y", "inspect the repository"],
+            )
+            self.assertIsNone(plan.stdin_input)
+
 
 if __name__ == "__main__":
     unittest.main()

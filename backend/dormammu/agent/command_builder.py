@@ -26,6 +26,7 @@ def build_command_plan(
     prompt_mode = _resolve_prompt_mode(request, capabilities)
     argv = [str(request.cli_path), *capabilities.command_prefix]
     stdin_input: str | None = None
+    trailing_args: list[str] = []
 
     if prompt_mode == "file":
         prompt_flag = request.prompt_flag or capabilities.prompt_file_flag
@@ -40,9 +41,10 @@ def build_command_plan(
     elif prompt_mode == "stdin":
         stdin_input = request.prompt_text
     elif prompt_mode == "positional":
-        argv.append(request.prompt_text)
+        trailing_args.append(request.prompt_text)
     else:
         raise ValueError(f"Unsupported prompt mode: {prompt_mode}")
 
     argv.extend(request.extra_args)
+    argv.extend(trailing_args)
     return CommandPlan(argv=argv, prompt_mode=prompt_mode, stdin_input=stdin_input)
