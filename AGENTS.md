@@ -73,8 +73,8 @@ Use the skills under `.agents/skills/` to execute each phase:
 
 ### 1. Plan
 
-- update `.dev/DASHBOARD.md`
-- update `.dev/TASKS.md`
+- update `.dev/DASHBOARD.md` with the actual in-progress status for the active scope
+- update `.dev/TASKS.md` with prompt-derived development items in `[ ] Phase N. <title>` form
 - update `.dev/ROADMAP.md` when roadmap slices change
 - record the active phase and next action
 
@@ -152,6 +152,13 @@ When a workflow is active, keep these files aligned when they exist:
 
 Treat `.dev/workflow_state.json` as machine truth and Markdown files as
 operator-facing state.
+
+Use the Markdown files with these roles:
+
+- `.dev/DASHBOARD.md`: show the real current progress, active phase, next action,
+  risks, and notable in-progress context for the active scope
+- `.dev/TASKS.md`: list the development work derived from the current user prompt
+  or scope in ordered phase items such as `[ ] Phase 1. <title>`
 
 ## Roadmap Alignment
 

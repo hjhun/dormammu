@@ -19,11 +19,11 @@ class TaskParsingTests(unittest.TestCase):
                 [
                     "# TASKS",
                     "",
-                    "## Current Workflow",
+                    "## Prompt-Derived Development Queue",
                     "",
-                    "- [O] First task",
-                    "- [x] Second task",
-                    "- [ ] Third task",
+                    "- [O] Phase 1. First task",
+                    "- [x] Phase 2. Second task",
+                    "- [ ] Phase 3. Third task",
                     "",
                     "## Resume Checkpoint",
                     "",
@@ -37,7 +37,7 @@ class TaskParsingTests(unittest.TestCase):
         self.assertEqual(sync_state.total_tasks, 3)
         self.assertEqual(sync_state.completed_tasks, 2)
         self.assertEqual(sync_state.pending_tasks, 1)
-        self.assertEqual(sync_state.next_pending_task, "Third task")
+        self.assertEqual(sync_state.next_pending_task, "Phase 3. Third task")
         self.assertEqual(sync_state.resume_checkpoint, "Resume from the third task.")
 
 

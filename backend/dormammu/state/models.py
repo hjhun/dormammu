@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-STATE_SCHEMA_VERSION = 3
+STATE_SCHEMA_VERSION = 4
 
 PHASE_LABELS = {
     "phase_1": "Phase 1. Core Foundation and Repository Bootstrap",
@@ -136,13 +136,11 @@ class DashboardTemplateContext:
 class TasksTemplateContext:
     task_items: Sequence[str]
     resume_checkpoint: str
-    completion_rule: str
 
     def render_values(self) -> dict[str, str]:
         return {
             "task_items": _task_lines(self.task_items),
             "resume_checkpoint": self.resume_checkpoint,
-            "completion_rule": self.completion_rule,
         }
 
 
@@ -224,9 +222,9 @@ def default_dashboard_context(
             "Proceed into supervised planning and design for the current slice.",
         ],
         notes=[
-            "This file is the operator-facing dashboard.",
+            "This file should show the actual progress of the active scope.",
             "workflow_state.json remains machine truth.",
-            "TASKS.md checkbox state is synchronized into machine-readable state.",
+            "TASKS.md should list prompt-derived development items in phase order.",
             *guidance_notes,
         ],
         active_roadmap_focus=roadmap_focus,
@@ -245,18 +243,14 @@ def default_tasks_context(
 ) -> TasksTemplateContext:
     return TasksTemplateContext(
         task_items=[
-            f"Confirm the goal and success criteria for {goal}",
-            _guidance_review_task(repo_guidance),
-            f"Plan the smallest resumable slice for {goal}",
-            "Validate the slice and keep `.dev` state synchronized before completion",
+            f"Phase 1. Confirm the goal and success criteria for {goal}",
+            f"Phase 2. {_guidance_review_task(repo_guidance)}",
+            f"Phase 3. Plan the smallest resumable slice for {goal}",
+            "Phase 4. Validate the slice and keep `.dev` state synchronized before completion",
         ],
         resume_checkpoint=(
             "Resume from the first unchecked task unless validation requires "
             "a return to earlier planning work."
-        ),
-        completion_rule=(
-            "Do not mark a task complete until the implementation, "
-            "DASHBOARD.md, and workflow_state.json agree."
         ),
     )
 
@@ -360,6 +354,7 @@ def default_workflow_state(
                 "plan",
                 "design",
                 "develop",
+                "test_authoring",
                 "build_and_deploy",
                 "test_and_review",
                 "commit",

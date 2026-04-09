@@ -1,57 +1,45 @@
 # DASHBOARD
 
-## Workflow Summary
+## Actual Progress
 
-- Goal: Harden `dormammu` for multi-session execution without shared-state
-  races in the root `.dev` view.
-- Active delivery slice: Phase 7. Multi-session state model without root mirror
-  writes
+- Goal: Redefine `.dev/DASHBOARD.md` to show actual in-progress work and
+  `.dev/TASKS.md` to list prompt-derived development items.
+- Prompt-driven scope: Align `.dev` templates, state sync, and tests with the
+  new dashboard and task roles
+- Active roadmap focus:
+- Phase 5. CLI Operator Experience and Progress Visibility
 - Current workflow phase: commit
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: Continue from workflow guidance and docs follow-up for the
-  no-mirror multi-session slice
+- Resume point: Continue from template and state sync follow-up for the
+  dashboard and prompt-derived task format
 
-## Next Action
+## In Progress
 
-- Keep `.dev` and workflow state aligned with the new `test_authoring` phase
-  and dedicated test-skill guidance.
-- Refresh operator docs for the new no-mirror multi-session model.
-- Latest commit for the workflow guidance update: `pending amend`.
-- Prepare any remaining docs follow-up as a separate scope if needed.
+- The dashboard and task-role changes are implemented in templates, parser,
+  state defaults, and operator docs.
+- Validation is complete for the related unit test suite.
+- The next workflow action for this scope is commit preparation if versioning is
+  needed.
 
-## Notes
+## Progress Notes
 
-- This file is the operator-facing dashboard.
+- This file should show the actual progress of the active scope.
 - `workflow_state.json` remains machine truth.
-- The current mirror-based active root view is safe for one active session but
-  becomes race-prone when multiple sessions write concurrently.
-- The chosen design keeps session Markdown and machine state under
-  `.dev/sessions/<session_id>/` and limits root `.dev` to pointers, summaries,
-  and shared logs or indexes.
-- Development should preserve backward-readable state where reasonable, but new
-  writes should stop treating root `.dev/DASHBOARD.md` and `.dev/TASKS.md` as
-  canonical session documents.
-- The implementation now auto-creates a session during bootstrap, keeps
-  per-session logs under session-local `logs/`, and switches `restore-session`
-  by pointer instead of snapshot copy.
-- Repository workflow guidance now treats test authoring as a dedicated phase
-  between design and executed validation.
-- Commit guidance now explicitly covers ignored `.dev` files, stored commit
-  message verification, and post-commit state handling.
-
-## Active Roadmap Focus
-
-- Phase 7. Hardening, Multi-Session, and Productization
+- `TASKS.md` should list prompt-derived development items in phase order.
+- The active view should stay easy to scan without reading
+  `workflow_state.json`.
+- The generated templates, tests, and current operator docs should agree on the
+  new roles.
+- `python3 -m unittest tests.test_tasks tests.test_state_repository
+  tests.test_loop_runner tests.test_supervisor` passed for this scope.
 
 ## Risks And Watchpoints
 
-- Existing tests assume root `.dev` contains the active session snapshot and
-  will need to move toward explicit session-path assertions.
-- Resume and restore flows must remain deterministic while the root `.dev`
-  shape becomes thinner.
-- Operator docs still need a pass so the new root index semantics are visible
-  outside the tests and design notes.
+- Existing tests and parsers must accept the new `TASKS.md` heading and task
+  format.
+- Root `.dev` and session-scoped `.dev` behavior should remain backward-readable
+  while the operator-facing wording changes.
 - The machine workflow state and operator-facing Markdown must stay aligned
-  while the new test-authoring phase is introduced.
+  during the template transition.

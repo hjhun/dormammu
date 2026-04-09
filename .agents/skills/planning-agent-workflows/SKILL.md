@@ -1,6 +1,6 @@
 ---
 name: planning-agent-workflows
-description: Creates or updates execution plans, milestones, and task breakdowns for this project. Use when the user asks to plan work, expand a prompt into actionable phases, initialize `.dev/DASHBOARD.md`, or regenerate `.dev/TASKS.md`.
+description: Creates or updates execution plans, milestones, and prompt-derived phase breakdowns for this project. Use when the user asks to plan work, expand a prompt into actionable phases, initialize `.dev/DASHBOARD.md`, or regenerate `.dev/TASKS.md`.
 ---
 
 # Planning Agent Workflows
@@ -26,16 +26,18 @@ Related skills:
 3. Break the active phase into concrete tasks that can be checked off incrementally.
 4. Split implementation work into product-code tasks and test-code tasks when both are needed.
 5. Mark dependencies, risks, manual approvals, and resume checkpoints.
-6. Update `.dev/DASHBOARD.md` with the current phase, status, and next action.
-7. Update `.dev/TASKS.md` with `[ ]` for pending work and `[O]` for already completed work.
+6. Update `.dev/DASHBOARD.md` with the real current progress, active phase, status, and next action.
+7. Update `.dev/TASKS.md` with prompt-derived phase items using `[ ] Phase N. <title>` for pending work and `[O] Phase N. <title>` for completed work.
 
 ## Planning Rules
 
 - Keep phases outcome-focused, not tool-focused.
-- Prefer 4-8 top-level tasks for the active phase.
+- Prefer 4-8 top-level phase items for the active scope.
 - Preserve existing completed work unless the state is clearly wrong.
 - Treat `.dev/workflow_state.json` as machine truth and Markdown as human-readable status.
 - If prior state is inconsistent, note the mismatch in the dashboard before changing tasks.
+- Keep `DASHBOARD.md` focused on what is actually happening now, not a generic template summary.
+- Keep `TASKS.md` focused on prompt-derived development work, not a mixed log of every note.
 
 ## Expected Outputs
 

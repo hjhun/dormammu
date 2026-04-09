@@ -25,7 +25,7 @@ Related skills:
 2. Implement only the current scoped slice; avoid mixing unrelated work.
 3. Keep steps idempotent where possible so interrupted runs can resume safely.
 4. Keep the test authoring agent informed about behavior changes that affect unit, integration, or system-test expectations.
-5. After each meaningful change, update `.dev/TASKS.md` and `.dev/DASHBOARD.md`.
+5. After each meaningful change, update `.dev/DASHBOARD.md` with the real implementation progress and update `.dev/TASKS.md` only when a prompt-derived phase item changes completion state.
 6. Record blockers, partial completion, and required continuation prompts in `.dev/`.
 
 ## Development Rules
@@ -34,6 +34,8 @@ Related skills:
 - Preserve unrelated user changes.
 - Keep product-code ownership separate from test-code ownership.
 - Do not mark a task complete until the code and state files agree.
+- Keep `DASHBOARD.md` focused on live implementation status rather than a generic summary of the whole repo.
+- Keep `TASKS.md` as a scoped prompt-derived checklist, not a running narrative.
 - If implementation reveals a design gap, pause and route back to the design skill.
 - Do not treat authored tests as executed validation; hand off to the testing skill after the implementation slice is finished.
 - Leave enough context in `.dev` for a later rerun to continue cleanly.

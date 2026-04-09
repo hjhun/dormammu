@@ -27,7 +27,7 @@ Related skills:
 5. For required system tests, use a real device or equivalent executable environment when available; otherwise record the gap and escalate instead of claiming success.
 6. Review the changed files for correctness, regressions, and missing edge cases.
 7. Record findings first, then summarize residual risks and verification gaps.
-8. Update `.dev/DASHBOARD.md` and `.dev/TASKS.md` to reflect pass, fail, or blocked status.
+8. Update `.dev/DASHBOARD.md` to reflect the real validation outcome and update `.dev/TASKS.md` when the prompt-derived phase checklist changes because validation is complete or blocked.
 
 ## Review Rules
 
@@ -36,6 +36,7 @@ Related skills:
 - Treat authored tests and executed tests as different evidence levels.
 - If no findings are discovered, state that clearly and note remaining risk.
 - Escalate to manual review when confidence depends on unavailable systems or credentials.
+- Keep `DASHBOARD.md` as the primary operator view for pass, fail, blocked, and residual-risk status.
 
 ## Expected Outputs
 

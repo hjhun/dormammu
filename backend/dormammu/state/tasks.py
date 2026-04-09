@@ -16,6 +16,10 @@ class ParsedTasksDocument:
 
 
 def parse_tasks_document(text: str, *, source: str = ".dev/TASKS.md") -> ParsedTasksDocument:
+    queue_sections = {
+        "current workflow",
+        "prompt-derived development queue",
+    }
     current_section: str | None = None
     task_items: list[TaskSyncItem] = []
     resume_lines: list[str] = []
@@ -26,7 +30,7 @@ def parse_tasks_document(text: str, *, source: str = ".dev/TASKS.md") -> ParsedT
             current_section = header.group("title").strip().lower()
             continue
 
-        if current_section == "current workflow":
+        if current_section in queue_sections:
             task_match = TASK_LINE_RE.match(raw_line)
             if task_match:
                 marker = task_match.group("marker")

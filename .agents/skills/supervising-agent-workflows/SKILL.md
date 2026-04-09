@@ -29,7 +29,7 @@ Re-enter earlier phases whenever later work exposes missing design, failed valid
 ## Workflow
 
 1. Load the current `.dev` state and detect whether this is a new run or a resume.
-2. Verify that dashboard status, task checkboxes, and machine state are consistent enough to continue.
+2. Verify that the dashboard's actual-progress view, the task checklist, and machine state are consistent enough to continue.
 3. Choose the next skill based on the active phase, blockers, and completion evidence.
 4. After design, treat development and test authoring as paired implementation tracks when the scope needs both product code and test code.
 5. Gate each transition with evidence:
@@ -42,11 +42,13 @@ Re-enter earlier phases whenever later work exposes missing design, failed valid
    - commit -> diff scope and validation both support versioning
 6. Do not advance from test authoring to test/review on authored tests alone; require executed evidence.
 7. On interruption, preserve the last safe checkpoint and resume from the earliest uncertain step.
-8. Update `.dev/DASHBOARD.md` with phase, verdict, next action, and escalation status.
+8. Update `.dev/DASHBOARD.md` with the real current phase, verdict, next action, escalation status, and other live progress context that matters for resuming work.
 
 ## Supervisor Rules
 
 - Treat `.dev/workflow_state.json` as machine truth and Markdown as operator-facing state.
+- Expect `.dev/DASHBOARD.md` to describe actual in-progress work for the active scope.
+- Expect `.dev/TASKS.md` to list prompt-derived phase items in ordered checklist form.
 - Prefer deterministic checks before semantic judgment.
 - Do not advance phases on optimism alone.
 - If state is inconsistent, record the mismatch and either repair it or require manual review.

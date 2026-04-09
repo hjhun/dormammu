@@ -41,14 +41,14 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertIn("Bootstrap test goal", dashboard)
 
             workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
-            self.assertEqual(workflow_state["state_schema_version"], 3)
+            self.assertEqual(workflow_state["state_schema_version"], 4)
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["pending_tasks"],
                 4,
             )
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["next_pending_task"],
-                "Confirm the goal and success criteria for Bootstrap test goal",
+                "Phase 1. Confirm the goal and success criteria for Bootstrap test goal",
             )
             self.assertEqual(workflow_state["bootstrap"]["goal"], "Bootstrap test goal")
             self.assertIn("AGENTS.md", workflow_state["bootstrap"]["repo_guidance"]["rule_files"])
@@ -90,18 +90,14 @@ class StateRepositoryTests(unittest.TestCase):
                     [
                         "# TASKS",
                         "",
-                        "## Current Workflow",
+                        "## Prompt-Derived Development Queue",
                         "",
-                        "- [O] Finish the first slice",
-                        "- [ ] Validate the second slice",
+                        "- [O] Phase 1. Finish the first slice",
+                        "- [ ] Phase 2. Validate the second slice",
                         "",
                         "## Resume Checkpoint",
                         "",
                         "Resume from the first unchecked task.",
-                        "",
-                        "## Completion Rule",
-                        "",
-                        "Keep markdown and machine state aligned.",
                         "",
                     ]
                 ),
@@ -119,7 +115,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(task_sync["total_tasks"], 2)
             self.assertEqual(task_sync["completed_tasks"], 1)
             self.assertEqual(task_sync["pending_tasks"], 1)
-            self.assertEqual(task_sync["next_pending_task"], "Validate the second slice")
+            self.assertEqual(task_sync["next_pending_task"], "Phase 2. Validate the second slice")
             self.assertEqual(
                 task_sync["resume_checkpoint"],
                 "Resume from the first unchecked task.",
@@ -261,27 +257,25 @@ class StateRepositoryTests(unittest.TestCase):
                 [
                     "# DASHBOARD",
                     "",
-                    "## Workflow Summary",
+                    "## Actual Progress",
                     "",
                     "- Goal: ${goal}",
-                    "- Active delivery slice: ${active_delivery_slice}",
+                    "- Prompt-driven scope: ${active_delivery_slice}",
+                    "- Active roadmap focus:",
+                    "${active_roadmap_focus}",
                     "- Current workflow phase: ${active_phase}",
                     "- Last completed workflow phase: ${last_completed_phase}",
                     "- Supervisor verdict: `${supervisor_verdict}`",
                     "- Escalation status: `${escalation_status}`",
                     "- Resume point: ${resume_point}",
                     "",
-                    "## Next Action",
+                    "## In Progress",
                     "",
                     "${next_action}",
                     "",
-                    "## Notes",
+                    "## Progress Notes",
                     "",
                     "${notes}",
-                    "",
-                    "## Active Roadmap Focus",
-                    "",
-                    "${active_roadmap_focus}",
                     "",
                     "## Risks And Watchpoints",
                     "",
@@ -296,17 +290,13 @@ class StateRepositoryTests(unittest.TestCase):
                 [
                     "# TASKS",
                     "",
-                    "## Current Workflow",
+                    "## Prompt-Derived Development Queue",
                     "",
                     "${task_items}",
                     "",
                     "## Resume Checkpoint",
                     "",
                     "${resume_checkpoint}",
-                    "",
-                    "## Completion Rule",
-                    "",
-                    "${completion_rule}",
                     "",
                 ]
             ),
