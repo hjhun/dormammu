@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 import tempfile
 import unittest
@@ -117,6 +118,30 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.config_file, config_path.resolve())
             self.assertEqual(config.active_agent_cli, Path("/opt/tools/codex"))
             self.assertEqual(config.cli_overrides["cline"].extra_args, ("-y",))
+
+    def test_load_preserves_absolute_symlink_for_active_agent_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            real_cli = root / "real-codex"
+            real_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            real_cli.chmod(real_cli.stat().st_mode | stat.S_IXUSR)
+            symlink_cli = root / "codex"
+            symlink_cli.symlink_to(real_cli)
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "active_agent_cli": str(symlink_cli),
+                        "cli_overrides": {"codex": {"extra_args": ["--full-auto"]}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=root)
+
+            self.assertEqual(config.active_agent_cli, symlink_cli)
+            self.assertIn("codex", config.cli_overrides)
 
     def test_load_uses_default_fallback_cli_order_when_not_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

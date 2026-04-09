@@ -190,6 +190,44 @@ class CliAdapterTests(unittest.TestCase):
             self.assertIn("PROMPT::Watch the live terminal output.", mirrored)
             self.assertIn("TRACE::stderr", mirrored)
 
+    def test_run_once_applies_cli_override_when_configured_codex_path_is_a_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            real_cli = self._write_fake_codex_cli(root, name="real-codex")
+            symlink_cli = root / "codex"
+            symlink_cli.symlink_to(real_cli)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "active_agent_cli": str(symlink_cli),
+                        "cli_overrides": {
+                            "codex": {
+                                "extra_args": ["--full-auto"],
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=config.active_agent_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    run_label="codex-symlink-override",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(
+                list(result.command[:3]),
+                [str(symlink_cli), "exec", "--full-auto"],
+            )
+            self.assertIn("--full-auto Summarize the repository.", result.stdout_path.read_text(encoding="utf-8"))
+
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
         templates = root / "templates" / "dev"
@@ -237,8 +275,8 @@ class CliAdapterTests(unittest.TestCase):
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
         return script
 
-    def _write_fake_codex_cli(self, root: Path) -> Path:
-        script = root / "codex"
+    def _write_fake_codex_cli(self, root: Path, *, name: str = "codex") -> Path:
+        script = root / name
         script.write_text(
             textwrap.dedent(
                 f"""\

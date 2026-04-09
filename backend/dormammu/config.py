@@ -92,7 +92,7 @@ def _load_config_payload(path: Path | None) -> dict[str, Any]:
 def _resolve_cli_path(raw_path: str, *, config_dir: Path | None) -> Path:
     candidate = Path(raw_path).expanduser()
     if candidate.is_absolute():
-        return candidate.resolve()
+        return Path(os.path.abspath(str(candidate)))
     if config_dir is not None and ("/" in raw_path or raw_path.startswith(".")):
         return (config_dir / candidate).resolve()
     return candidate
