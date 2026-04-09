@@ -200,6 +200,25 @@ link_binary() {
   ln -sf "${VENV_DIR}/bin/dormammu" "${BIN_DIR}/dormammu"
 }
 
+install_agents_bundle() {
+  local agents_dir="${INSTALL_ROOT}/agents"
+  "${VENV_DIR}/bin/python" - "${agents_dir}" <<'PY'
+from __future__ import annotations
+
+import shutil
+import sys
+from pathlib import Path
+
+import dormammu
+
+target_dir = Path(sys.argv[1])
+source_dir = Path(dormammu.__file__).resolve().parent / "assets" / "agents"
+if target_dir.exists():
+    shutil.rmtree(target_dir)
+shutil.copytree(source_dir, target_dir)
+PY
+}
+
 ensure_bashrc_path() {
   mkdir -p "$(dirname "${BASHRC_PATH}")"
   touch "${BASHRC_PATH}"
@@ -251,6 +270,7 @@ main() {
   fi
 
   link_binary
+  install_agents_bundle
   local active_agent_cli=""
   if active_agent_cli="$(detect_active_agent_cli)"; then
     log "Detected active agent CLI: ${active_agent_cli}"
@@ -269,6 +289,7 @@ main() {
 Installed dormammu into ${INSTALL_ROOT}
 Config file: ${CONFIG_PATH}
 Binary directory: ${BIN_DIR}
+Agents directory: ${INSTALL_ROOT}/agents
 Active agent CLI: ${active_agent_cli:-not set}
 Updated ${BASHRC_PATH}: ${bashrc_updated}
 

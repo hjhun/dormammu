@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 
 from dormammu.agent.models import AgentRunResult, AgentRunStarted
 from dormammu.config import AppConfig
+from dormammu.guidance import resolve_guidance_files
 from dormammu.state.models import (
     default_dashboard_context,
     default_session_state,
@@ -143,7 +144,10 @@ class StateRepository:
     ) -> BootstrapArtifacts:
         timestamp = _iso_now()
         roadmap_phase_ids = list(active_roadmap_phase_ids or ["phase_1"])
-        guidance = discover_repo_guidance(self.config.repo_root)
+        guidance = discover_repo_guidance(
+            self.config.repo_root,
+            rule_paths=resolve_guidance_files(self.config),
+        )
         session_id = self._current_session_id(self.dev_dir / "session.json") or self.session_id
         resolved_goal = goal or self._existing_goal() or "Bootstrap dormammu in the current repository."
 
@@ -428,7 +432,10 @@ class StateRepository:
         session_id: str,
         timestamp: str,
     ) -> None:
-        guidance = discover_repo_guidance(self.config.repo_root)
+        guidance = discover_repo_guidance(
+            self.config.repo_root,
+            rule_paths=resolve_guidance_files(self.config),
+        )
         self.dev_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)

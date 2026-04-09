@@ -60,11 +60,14 @@ class InstallScriptTests(unittest.TestCase):
             bin_dir = install_root / "bin"
             config_path = install_root / "config"
             binary = bin_dir / "dormammu"
+            agents_dir = install_root / "agents"
             self.assertTrue(binary.exists())
             self.assertTrue(config_path.exists())
+            self.assertTrue((agents_dir / "AGENTS.md").exists())
             self.assertIn("Installed dormammu into", first_result.stdout)
             self.assertIn(str(config_path), first_result.stdout)
             self.assertIn(str(bin_dir), first_result.stdout)
+            self.assertIn(str(agents_dir), first_result.stdout)
             self.assertIn(str(codex_path), first_result.stdout)
             self.assertIn("Updated", second_result.stdout)
 
@@ -161,7 +164,8 @@ class InstallScriptTests(unittest.TestCase):
             )
             run_once_payload = json.loads(run_once_result.stdout)
             stdout_text = Path(run_once_payload["artifacts"]["stdout"]).read_text(encoding="utf-8")
-            self.assertIn("PROMPT::Installed binary prompt", stdout_text)
+            self.assertIn("Installed binary prompt", stdout_text)
+            self.assertIn("Follow the guidance files below before making changes.", stdout_text)
             self.assertIn("TAG::install", stdout_text)
 
             fake_loop = self._write_fake_loop_cli(packaged_repo, success_attempt=2)

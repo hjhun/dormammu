@@ -77,6 +77,13 @@ Command notes:
   continues the standard recovery flow.
 - `inspect-cli` reports prompt handling mode, matched presets, and risky
   approval-skipping candidates before you run real work.
+- `--guidance-file path/to/file.md` can be repeated on `show-config`,
+  `init-state`, `start-session`, `run`, `run-once`, and `resume` to point the
+  run at custom rule or agent Markdown files.
+- If no custom guidance file with content is supplied, `dormammu` falls back to
+  repository guidance such as `AGENTS.md` or `agents/AGENTS.md`, then to the
+  installed guidance bundle under `~/.dormammu/agents`, then to packaged
+  guidance assets.
 - Low-level compatibility commands such as `run-once`, `run-loop`, and
   `resume-loop` remain available.
 
@@ -130,6 +137,10 @@ pushes and on manual workflow dispatch. The distributable `agents/` guidance
 bundle is included alongside the packaged Python assets so workflow documents
 ship with dormammu. Release runs attach `dist/*` plus the root `install.sh` to
 the GitHub release.
+
+The default install flow also copies the guidance bundle to
+`~/.dormammu/agents` so installed runs can fall back to it when a repository
+does not provide its own guidance files.
 
 ## License
 

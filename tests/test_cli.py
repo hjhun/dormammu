@@ -95,6 +95,34 @@ class CliTests(unittest.TestCase):
             self.assertTrue(Path(payload["tasks"]).exists())
             self.assertIn(".dev/sessions/", payload["dashboard"])
 
+    def test_init_state_records_custom_guidance_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            custom_guidance = root / "docs" / "custom-agent.md"
+            custom_guidance.parent.mkdir(parents=True, exist_ok=True)
+            custom_guidance.write_text("# Custom agent rules\n\nUse this file.\n", encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "init-state",
+                        "--repo-root",
+                        str(root),
+                        "--guidance-file",
+                        str(custom_guidance),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            workflow_state = json.loads(Path(payload["workflow_state"]).read_text(encoding="utf-8"))
+            self.assertEqual(
+                workflow_state["bootstrap"]["repo_guidance"]["rule_files"],
+                ["docs/custom-agent.md"],
+            )
+
     def test_init_state_creates_bootstrap_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -412,10 +440,10 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["exit_code"], 0)
             self.assertEqual(payload["prompt_mode"], "file")
             self.assertTrue(Path(payload["artifacts"]["stdout"]).exists())
-            self.assertIn(
-                "PROMPT::Phase 3 test prompt",
-                Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8"),
-            )
+            stdout_text = Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8")
+            self.assertIn("Phase 3 test prompt", stdout_text)
+            self.assertIn("Follow the guidance files below before making changes.", stdout_text)
+            self.assertIn("bootstrap", stdout_text)
 
     def test_run_once_uses_configured_active_agent_cli_when_flag_is_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -442,10 +470,66 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["cli_path"], str(fake_cli))
-            self.assertIn(
-                "PROMPT::Configured CLI prompt",
-                Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8"),
-            )
+            stdout_text = Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8")
+            self.assertIn("Configured CLI prompt", stdout_text)
+            self.assertIn("Follow the guidance files below before making changes.", stdout_text)
+
+    def test_run_once_uses_custom_guidance_file_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            custom_guidance = root / "custom-rules.md"
+            custom_guidance.write_text("# Rules\n\nAlways mention this custom file.\n", encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--guidance-file",
+                        str(custom_guidance),
+                        "--prompt",
+                        "Custom guidance prompt",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            stdout_text = Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8")
+            self.assertIn("Custom guidance prompt", stdout_text)
+            self.assertIn("Always mention this custom file.", stdout_text)
+            self.assertNotIn("bootstrap", stdout_text)
+
+    def test_run_once_falls_back_to_packaged_guidance_when_repo_guidance_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pyproject.toml").write_text("[project]\nname='temp'\nversion='0'\n", encoding="utf-8")
+            fake_cli = self._write_fake_cli(root)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Fallback guidance prompt",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            stdout_text = Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8")
+            self.assertIn("Fallback guidance prompt", stdout_text)
+            self.assertIn("distributable workflow guidance bundle", stdout_text)
 
     def test_run_loop_and_resume_loop_cover_phase_4_cli_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

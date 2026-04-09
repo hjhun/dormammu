@@ -93,6 +93,22 @@ These files matter most:
 
 They keep the workflow inspectable, automatable, and resumable.
 
+## Guidance Files
+
+`dormammu` can reference rule or agent Markdown files during bootstrap and run
+commands.
+
+- Pass `--guidance-file path/to/file.md` more than once to use explicit
+  guidance files for a command.
+- When explicit files are missing or empty, `dormammu` falls back to repository
+  guidance such as `AGENTS.md` or `agents/AGENTS.md`.
+- If the repository does not provide guidance, `dormammu` falls back to the
+  installed bundle under `~/.dormammu/agents` and then to packaged guidance
+  assets.
+
+For `run` and `run-once`, the selected guidance files are embedded into the
+prompt that is sent to the external coding-agent CLI.
+
 ## The Main Commands
 
 ### `dormammu run`

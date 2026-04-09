@@ -130,6 +130,29 @@ def _discover_asset_root(root: Path, env: Mapping[str, str]) -> Path:
     return root
 
 
+def _discover_agents_dir(root: Path, env: Mapping[str, str], asset_root: Path) -> Path:
+    explicit_dir = env.get("DORMAMMU_AGENTS_DIR")
+    if explicit_dir:
+        candidate = Path(explicit_dir).expanduser()
+        if not candidate.is_absolute():
+            candidate = (root / candidate).resolve()
+        return candidate
+
+    global_agents_dir = _global_home_dir(env) / "agents"
+    if (global_agents_dir / "AGENTS.md").exists():
+        return global_agents_dir
+
+    repo_agents_dir = root / "agents"
+    if (repo_agents_dir / "AGENTS.md").exists():
+        return repo_agents_dir
+
+    packaged_agents_dir = asset_root / "agents"
+    if (packaged_agents_dir / "AGENTS.md").exists():
+        return packaged_agents_dir
+
+    return repo_agents_dir
+
+
 def _coerce_string_list(
     value: Any,
     *,
@@ -286,11 +309,14 @@ class AppConfig:
     dev_dir: Path
     logs_dir: Path
     templates_dir: Path
+    agents_dir: Path
     config_file: Path | None
     active_agent_cli: Path | None = None
     fallback_agent_clis: tuple[FallbackCliConfig, ...] = ()
     cli_overrides: dict[str, CliInvocationConfig] | None = None
     token_exhaustion_patterns: tuple[str, ...] = DEFAULT_TOKEN_EXHAUSTION_PATTERNS
+    guidance_files: tuple[Path, ...] = ()
+    default_guidance_files: tuple[Path, ...] = ()
 
     @classmethod
     def load(
@@ -302,6 +328,7 @@ class AppConfig:
         values = env or os.environ
         root = discover_repo_root(repo_root)
         asset_root = _discover_asset_root(root, values)
+        agents_dir = _discover_agents_dir(root, values, asset_root)
         base_dev_dir = root / ".dev"
         dev_dir = base_dev_dir
         config_file = _resolve_config_file(root, values)
@@ -321,6 +348,7 @@ class AppConfig:
             dev_dir=dev_dir,
             logs_dir=dev_dir / "logs",
             templates_dir=asset_root / "templates",
+            agents_dir=agents_dir,
             config_file=config_file,
             active_agent_cli=_parse_active_agent_cli(
                 config_payload.get("active_agent_cli"),
@@ -337,6 +365,7 @@ class AppConfig:
                 config_path=config_file,
             )
             or DEFAULT_TOKEN_EXHAUSTION_PATTERNS,
+            default_guidance_files=((agents_dir / "AGENTS.md",) if (agents_dir / "AGENTS.md").exists() else ()),
         )
 
     def with_overrides(self, **kwargs: object) -> "AppConfig":
@@ -350,6 +379,7 @@ class AppConfig:
             "dev_dir": str(self.dev_dir),
             "logs_dir": str(self.logs_dir),
             "templates_dir": str(self.templates_dir),
+            "agents_dir": str(self.agents_dir),
             "config_file": str(self.config_file) if self.config_file else None,
             "active_agent_cli": str(self.active_agent_cli) if self.active_agent_cli else None,
             "fallback_agent_clis": [item.to_dict() for item in self.fallback_agent_clis],
@@ -358,4 +388,6 @@ class AppConfig:
                 for key, value in (self.cli_overrides or {}).items()
             },
             "token_exhaustion_patterns": list(self.token_exhaustion_patterns),
+            "guidance_files": [str(path) for path in self.guidance_files],
+            "default_guidance_files": [str(path) for path in self.default_guidance_files],
         }

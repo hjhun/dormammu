@@ -163,6 +163,28 @@ class ConfigTests(unittest.TestCase):
 
             self.assertTrue(config.templates_dir.exists())
             self.assertNotEqual(config.templates_dir, root / "templates")
+            self.assertTrue(config.agents_dir.exists())
+
+    def test_load_prefers_global_agents_dir_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            (root / "AGENTS.md").write_text("marker\n", encoding="utf-8")
+            home_dir = Path(tmpdir) / "home"
+            agents_dir = home_dir / ".dormammu" / "agents"
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            (agents_dir / "AGENTS.md").write_text("global guidance\n", encoding="utf-8")
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            self.assertEqual(config.agents_dir, agents_dir.resolve())
+            self.assertEqual(config.default_guidance_files, (agents_dir.resolve() / "AGENTS.md",))
 
 
 if __name__ == "__main__":

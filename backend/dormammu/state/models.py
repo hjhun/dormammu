@@ -34,18 +34,30 @@ def _as_posix(path: Path) -> str:
     return path.as_posix()
 
 
-def discover_repo_guidance(repo_root: Path) -> RepoGuidance:
-    rule_candidates = [
-        Path("AGENTS.md"),
-        Path("agents/AGENTS.md"),
-        Path(".dev/PROJECT.md"),
-        Path(".dev/ROADMAP.md"),
-    ]
-    rule_files = [
-        _as_posix(candidate)
-        for candidate in rule_candidates
-        if (repo_root / candidate).exists()
-    ]
+def discover_repo_guidance(
+    repo_root: Path,
+    *,
+    rule_paths: Sequence[Path] = (),
+) -> RepoGuidance:
+    if rule_paths:
+        rule_files = [
+            _as_posix(candidate.relative_to(repo_root))
+            if candidate.is_absolute() and repo_root in candidate.parents
+            else _as_posix(candidate)
+            for candidate in rule_paths
+        ]
+    else:
+        rule_candidates = [
+            Path("AGENTS.md"),
+            Path("agents/AGENTS.md"),
+            Path(".dev/PROJECT.md"),
+            Path(".dev/ROADMAP.md"),
+        ]
+        rule_files = [
+            _as_posix(candidate)
+            for candidate in rule_candidates
+            if (repo_root / candidate).exists()
+        ]
 
     workflows_dir = repo_root / ".github" / "workflows"
     workflow_files: list[str] = []
@@ -321,6 +333,19 @@ def default_workflow_state(
     state_root: str,
     repo_guidance: RepoGuidance | None = None,
 ) -> dict[str, Any]:
+    source_goal_files = list(
+        dict.fromkeys(
+            [
+                ".dev/PROJECT.md",
+                ".dev/ROADMAP.md",
+                *(
+                    list(repo_guidance.rule_files)
+                    if repo_guidance is not None
+                    else ["AGENTS.md", "agents/AGENTS.md"]
+                ),
+            ]
+        )
+    )
     return {
         "version": 1,
         "state_schema_version": STATE_SCHEMA_VERSION,
@@ -328,11 +353,7 @@ def default_workflow_state(
         "updated_at": timestamp,
         "mode": "supervised",
         "source_of_truth": {
-            "goal": [
-                ".dev/PROJECT.md",
-                ".dev/ROADMAP.md",
-                "AGENTS.md",
-            ],
+            "goal": source_goal_files,
             "machine_state": _state_path(state_root, "workflow_state.json"),
             "operator_state": [
                 _state_path(state_root, "DASHBOARD.md"),

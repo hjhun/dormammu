@@ -10,6 +10,7 @@ from typing import Sequence
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.config import AppConfig
 from dormammu.doctor import run_doctor
+from dormammu.guidance import build_guidance_prompt, resolve_guidance_files
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
 from dormammu.recovery import RecoveryManager
 from dormammu.state import StateRepository
@@ -24,6 +25,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     show_config = subparsers.add_parser("show-config", help="Print resolved runtime configuration.")
     show_config.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    show_config.add_argument(
+        "--guidance-file",
+        dest="guidance_files",
+        action="append",
+        type=Path,
+        default=None,
+        help="Repeatable Markdown guidance file to use instead of repo autodiscovery when it has content.",
+    )
     show_config.set_defaults(handler=_handle_show_config)
 
     init_state = subparsers.add_parser("init-state", help="Create or merge the bootstrap .dev state.")
@@ -35,6 +44,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         help="Active roadmap phase id to record. Repeat for multiple values.",
+    )
+    init_state.add_argument(
+        "--guidance-file",
+        dest="guidance_files",
+        action="append",
+        type=Path,
+        default=None,
+        help="Repeatable Markdown guidance file to use instead of repo autodiscovery when it has content.",
     )
     init_state.set_defaults(handler=_handle_init_state)
 
@@ -55,6 +72,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--session-id",
         default=None,
         help="Optional explicit session id for the new active session.",
+    )
+    start_session.add_argument(
+        "--guidance-file",
+        dest="guidance_files",
+        action="append",
+        type=Path,
+        default=None,
+        help="Repeatable Markdown guidance file to use instead of repo autodiscovery when it has content.",
     )
     start_session.set_defaults(handler=_handle_start_session)
 
@@ -145,6 +170,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Use --extra-arg=VALUE when the value starts with '-'."
         ),
     )
+    run_once.add_argument(
+        "--guidance-file",
+        dest="guidance_files",
+        action="append",
+        type=Path,
+        default=None,
+        help="Repeatable Markdown guidance file to embed into the run prompt when it has content.",
+    )
     run_once.set_defaults(handler=_handle_run_once)
 
     run_loop = subparsers.add_parser(
@@ -234,6 +267,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Require git worktree changes before the supervisor approves the run.",
     )
+    run_loop.add_argument(
+        "--guidance-file",
+        dest="guidance_files",
+        action="append",
+        type=Path,
+        default=None,
+        help="Repeatable Markdown guidance file to embed into the run prompt when it has content.",
+    )
     run_loop.set_defaults(handler=_handle_run_loop)
 
     resume_loop = subparsers.add_parser(
@@ -252,6 +293,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--session-id",
         default=None,
         help="Resume this saved session id without switching the active root `.dev` view.",
+    )
+    resume_loop.add_argument(
+        "--guidance-file",
+        dest="guidance_files",
+        action="append",
+        type=Path,
+        default=None,
+        help="Repeatable Markdown guidance file to refresh bootstrap guidance before resuming.",
     )
     resume_loop.set_defaults(handler=_handle_resume_loop)
 
@@ -303,6 +352,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _load_config(repo_root: Path | None) -> AppConfig:
     return AppConfig.load(repo_root=repo_root)
+
+
+def _with_guidance_overrides(config: AppConfig, guidance_files: Sequence[Path] | None) -> AppConfig:
+    if not guidance_files:
+        resolved = resolve_guidance_files(config)
+        return config.with_overrides(guidance_files=resolved)
+    resolved = resolve_guidance_files(config, explicit_paths=guidance_files)
+    return config.with_overrides(guidance_files=resolved)
 
 
 def _load_state_scope(
@@ -368,13 +425,15 @@ def _resolve_bootstrap_inputs(
 
 
 def _handle_show_config(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
+    config = _with_guidance_overrides(_load_config(args.repo_root), args.guidance_files)
     print(json.dumps(config.to_dict(), indent=2, ensure_ascii=True))
     return 0
 
 
 def _handle_init_state(args: argparse.Namespace) -> int:
     config, repository = _load_state_scope(args.repo_root)
+    config = _with_guidance_overrides(config, args.guidance_files)
+    repository = StateRepository(config, session_id=repository.session_id)
     goal, roadmap_phases = _resolve_bootstrap_inputs(
         repository=repository,
         goal=args.goal,
@@ -391,6 +450,8 @@ def _handle_init_state(args: argparse.Namespace) -> int:
 
 def _handle_start_session(args: argparse.Namespace) -> int:
     config, repository = _load_state_scope(args.repo_root)
+    config = _with_guidance_overrides(config, args.guidance_files)
+    repository = StateRepository(config, session_id=repository.session_id)
     bootstrap_repository = repository.for_session(args.session_id) if args.session_id else repository
     goal, roadmap_phases = _resolve_bootstrap_inputs(
         repository=bootstrap_repository,
@@ -494,6 +555,8 @@ def _handle_run_once(args: argparse.Namespace) -> int:
         session_id=args.session_id,
         prefer_active_session=True,
     )
+    config = _with_guidance_overrides(config, args.guidance_files)
+    repository = StateRepository(config, session_id=repository.session_id)
     goal, roadmap_phases = _resolve_bootstrap_inputs(
         repository=repository,
         goal=args.goal,
@@ -513,7 +576,11 @@ def _handle_run_once(args: argparse.Namespace) -> int:
 
     request = AgentRunRequest(
         cli_path=agent_cli,
-        prompt_text=_read_prompt_text(args),
+        prompt_text=build_guidance_prompt(
+            _read_prompt_text(args),
+            guidance_files=config.guidance_files,
+            repo_root=config.repo_root,
+        ),
         repo_root=config.repo_root,
         workdir=args.workdir,
         input_mode=args.input_mode,
@@ -539,6 +606,8 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
         session_id=args.session_id,
         prefer_active_session=True,
     )
+    config = _with_guidance_overrides(config, args.guidance_files)
+    repository = StateRepository(config, session_id=repository.session_id)
     goal, roadmap_phases = _resolve_bootstrap_inputs(
         repository=repository,
         goal=args.goal,
@@ -558,7 +627,11 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
 
     request = LoopRunRequest(
         cli_path=agent_cli,
-        prompt_text=_read_prompt_text(args),
+        prompt_text=build_guidance_prompt(
+            _read_prompt_text(args),
+            guidance_files=config.guidance_files,
+            repo_root=config.repo_root,
+        ),
         repo_root=config.repo_root,
         workdir=args.workdir,
         input_mode=args.input_mode,
@@ -587,6 +660,9 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
         session_id=args.session_id,
         prefer_active_session=True,
     )
+    config = _with_guidance_overrides(config, args.guidance_files)
+    repository = StateRepository(config, session_id=repository.session_id)
+    repository.ensure_bootstrap_state()
     config, repository = _resolve_runtime_session_scope(config, repository)
 
     try:
