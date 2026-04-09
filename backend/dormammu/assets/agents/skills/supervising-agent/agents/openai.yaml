@@ -1,0 +1,4 @@
+interface:
+  display_name: "Supervising Workflows"
+  short_description: "Monitors phase transitions, resumes interrupted work, and selects the next workflow skill."
+  default_prompt: "Supervise this project, inspect the .dev state, decide the next workflow phase, and keep the run resumable."

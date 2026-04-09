@@ -1,0 +1,4 @@
+interface:
+  display_name: "Designing Workflows"
+  short_description: "Defines implementation-ready architecture, contracts, and recovery-aware design."
+  default_prompt: "Design the active workflow phase, document the key technical decisions, and update the .dev state."

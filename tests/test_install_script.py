@@ -78,6 +78,28 @@ class InstallScriptTests(unittest.TestCase):
             )
             self.assertIn("usage: dormammu", help_result.stdout)
 
+            package_assets_result = subprocess.run(
+                [
+                    str(install_root / "venv" / "bin" / "python"),
+                    "-c",
+                    (
+                        "from pathlib import Path; "
+                        "import dormammu; "
+                        "asset = Path(dormammu.__file__).resolve().parent / 'assets' / 'agents' / 'AGENTS.md'; "
+                        "print(asset); "
+                        "print(asset.exists())"
+                    ),
+                ],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            package_asset_lines = package_assets_result.stdout.strip().splitlines()
+            self.assertGreaterEqual(len(package_asset_lines), 2)
+            self.assertEqual(package_asset_lines[-1], "True")
+
             packaged_repo = temp_root / "packaged-repo"
             packaged_repo.mkdir()
             subprocess.run(["git", "init", "-q", str(packaged_repo)], check=True)
@@ -168,7 +190,8 @@ class InstallScriptTests(unittest.TestCase):
             self.assertEqual(first_loop.returncode, 1)
             first_loop_payload = json.loads(first_loop.stdout)
             self.assertEqual(first_loop_payload["status"], "failed")
-            self.assertTrue((packaged_repo / ".dev" / "continuation_prompt.txt").exists())
+            self.assertIsNotNone(first_loop_payload["continuation_prompt_path"])
+            self.assertTrue(Path(first_loop_payload["continuation_prompt_path"]).exists())
 
             resume_result = subprocess.run(
                 [

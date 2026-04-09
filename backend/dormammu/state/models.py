@@ -37,6 +37,7 @@ def _as_posix(path: Path) -> str:
 def discover_repo_guidance(repo_root: Path) -> RepoGuidance:
     rule_candidates = [
         Path("AGENTS.md"),
+        Path("agents/AGENTS.md"),
         Path(".dev/PROJECT.md"),
         Path(".dev/ROADMAP.md"),
     ]
@@ -374,7 +375,7 @@ def default_workflow_state(
             ],
         },
         "supervisor": {
-            "skill": "supervising-agent-workflows",
+            "skill": "supervising-agent",
             "verdict": "approved",
             "escalation": "approved",
             "reason": "Bootstrap state was initialized successfully.",

@@ -58,16 +58,24 @@ environment when available.
 
 ## Skill Routing
 
-Use the skills under `.agents/skills/` to execute each phase:
+Use the distributable workflow bundle under `agents/` to execute each phase:
 
-- Planning: `.agents/skills/planning-agent-workflows/SKILL.md`
-- Design: `.agents/skills/designing-agent-workflows/SKILL.md`
-- Development: `.agents/skills/developing-agent-workflows/SKILL.md`
-- Test Authoring: `.agents/skills/test-authoring-agent-workflows/SKILL.md`
-- Build and Deploy: `.agents/skills/building-and-deploying-workflows/SKILL.md`
-- Test and Review: `.agents/skills/testing-and-reviewing-workflows/SKILL.md`
-- Commit: `.agents/skills/committing-agent-workflows/SKILL.md`
-- Supervision: `.agents/skills/supervising-agent-workflows/SKILL.md`
+- Planning and Design workflow: `agents/workflows/planning-design.md`
+- Development and Test Authoring workflow: `agents/workflows/develop-test-authoring.md`
+- Build Deploy and Test Review workflow: `agents/workflows/build-deploy-test-review.md`
+- Cleanup and Commit workflow: `agents/workflows/cleanup-commit.md`
+
+Use the skills under `agents/skills/` when a workflow document routes to a
+specific skill:
+
+- Planning: `agents/skills/planning-agent/SKILL.md`
+- Design: `agents/skills/designing-agent/SKILL.md`
+- Development: `agents/skills/developing-agent/SKILL.md`
+- Test Authoring: `agents/skills/test-authoring-agent/SKILL.md`
+- Build and Deploy: `agents/skills/building-and-deploying/SKILL.md`
+- Test and Review: `agents/skills/testing-and-reviewing/SKILL.md`
+- Commit: `agents/skills/committing-agent/SKILL.md`
+- Supervision: `agents/skills/supervising-agent/SKILL.md`
 
 ## Phase Expectations
 

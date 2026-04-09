@@ -44,6 +44,7 @@ throwing away the whole session.
 
 ```text
 backend/     Python package, loop engine, adapters, supervisor
+agents/      Distributable workflow and skill guidance bundle
 templates/   Bootstrap templates for .dev state
 docs/        Project documentation
 scripts/     Install and developer convenience scripts

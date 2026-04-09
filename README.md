@@ -116,6 +116,7 @@ Without an explicit config, the built-in fallback order is:
 
 ```text
 backend/     Python package, loop engine, adapters, supervisor
+agents/      Distributable workflow and skill guidance bundle
 templates/   Bootstrap templates for .dev state
 docs/svg/    Brand assets, including the project logo
 scripts/     Install and developer convenience scripts
@@ -125,8 +126,10 @@ tests/       Runtime and workflow validation
 ## Release Packaging
 
 `.github/workflows/release.yml` builds wheel and sdist artifacts on `v*` tag
-pushes and on manual workflow dispatch. Release runs attach `dist/*` plus the
-root `install.sh` to the GitHub release.
+pushes and on manual workflow dispatch. The distributable `agents/` guidance
+bundle is included alongside the packaged Python assets so workflow documents
+ship with dormammu. Release runs attach `dist/*` plus the root `install.sh` to
+the GitHub release.
 
 ## License
 

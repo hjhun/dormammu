@@ -1,0 +1,4 @@
+interface:
+  display_name: "Testing and Reviewing"
+  short_description: "Runs validations and produces review findings with clear workflow status."
+  default_prompt: "Validate the active work, report findings first, and update the .dev files with the outcome."

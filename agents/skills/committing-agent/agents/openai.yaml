@@ -1,0 +1,4 @@
+interface:
+  display_name: "Committing Workflows"
+  short_description: "Stages validated changes and turns them into intentional git commits."
+  default_prompt: "Prepare a scoped commit for the completed work, making sure the .dev state matches the git diff."
