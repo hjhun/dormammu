@@ -7,6 +7,12 @@ description: Creates or updates execution plans, milestones, and task breakdowns
 
 Use this skill when the next useful action is planning rather than implementation.
 
+Related skills:
+
+- Prepare explicit handoffs for `designing-agent-workflows`
+- Break out product-code work for `developing-agent-workflows`
+- Break out test-code work for `test-authoring-agent-workflows`
+
 ## Inputs
 
 - The user goal and constraints
@@ -18,9 +24,10 @@ Use this skill when the next useful action is planning rather than implementatio
 1. Read the current goal, repo context, and any existing `.dev/DASHBOARD.md`, `.dev/TASKS.md`, and `.dev/workflow_state.json`.
 2. Convert the goal into a small set of phases with clear completion signals.
 3. Break the active phase into concrete tasks that can be checked off incrementally.
-4. Mark dependencies, risks, manual approvals, and resume checkpoints.
-5. Update `.dev/DASHBOARD.md` with the current phase, status, and next action.
-6. Update `.dev/TASKS.md` with `[ ]` for pending work and `[O]` for already completed work.
+4. Split implementation work into product-code tasks and test-code tasks when both are needed.
+5. Mark dependencies, risks, manual approvals, and resume checkpoints.
+6. Update `.dev/DASHBOARD.md` with the current phase, status, and next action.
+7. Update `.dev/TASKS.md` with `[ ]` for pending work and `[O]` for already completed work.
 
 ## Planning Rules
 

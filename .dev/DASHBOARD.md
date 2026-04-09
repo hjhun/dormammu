@@ -6,18 +6,20 @@
   races in the root `.dev` view.
 - Active delivery slice: Phase 7. Multi-session state model without root mirror
   writes
-- Current workflow phase: test_and_review
-- Last completed workflow phase: develop
+- Current workflow phase: commit
+- Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: Continue from validation or docs follow-up for the no-mirror
-  multi-session slice
+- Resume point: Continue from workflow guidance and docs follow-up for the
+  no-mirror multi-session slice
 
 ## Next Action
 
+- Keep `.dev` and workflow state aligned with the new `test_authoring` phase
+  and dedicated test-skill guidance.
 - Refresh operator docs for the new no-mirror multi-session model.
-- Prepare the validated Phase 7 state-model slice for commit once docs are
-  aligned.
+- Latest commit for the workflow guidance update: `pending amend`.
+- Prepare any remaining docs follow-up as a separate scope if needed.
 
 ## Notes
 
@@ -34,6 +36,10 @@
 - The implementation now auto-creates a session during bootstrap, keeps
   per-session logs under session-local `logs/`, and switches `restore-session`
   by pointer instead of snapshot copy.
+- Repository workflow guidance now treats test authoring as a dedicated phase
+  between design and executed validation.
+- Commit guidance now explicitly covers ignored `.dev` files, stored commit
+  message verification, and post-commit state handling.
 
 ## Active Roadmap Focus
 
@@ -47,3 +53,5 @@
   shape becomes thinner.
 - Operator docs still need a pass so the new root index semantics are visible
   outside the tests and design notes.
+- The machine workflow state and operator-facing Markdown must stay aligned
+  while the new test-authoring phase is introduced.

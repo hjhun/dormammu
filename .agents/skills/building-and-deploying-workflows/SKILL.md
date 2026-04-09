@@ -7,6 +7,12 @@ description: Builds release artifacts, installation flows, and deployment output
 
 Use this skill when the active phase is packaging, release preparation, installation, or deployment validation.
 
+Related skills:
+
+- Consume implementation from `developing-agent-workflows`
+- Ensure required test artifacts from `test-authoring-agent-workflows` are available when packaging depends on them
+- Hand final execution evidence to `testing-and-reviewing-workflows`
+
 ## Inputs
 
 - Current implementation state

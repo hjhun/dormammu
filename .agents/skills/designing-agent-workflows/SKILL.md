@@ -7,6 +7,11 @@ description: Produces implementation-ready designs, interfaces, schemas, and tec
 
 Use this skill after planning and before broad implementation, or when the current phase is blocked on technical decisions.
 
+Related skills:
+
+- Hand off product-code implementation to `developing-agent-workflows`
+- Hand off automated test-code implementation to `test-authoring-agent-workflows`
+
 ## Inputs
 
 - The approved plan and active tasks
@@ -16,7 +21,7 @@ Use this skill after planning and before broad implementation, or when the curre
 ## Workflow
 
 1. Read the active tasks and identify the design decisions that unblock them.
-2. Define boundaries: modules, interfaces, data contracts, state files, and failure handling.
+2. Define boundaries: modules, interfaces, data contracts, state files, failure handling, and test seams.
 3. Prefer designs that support resumability, idempotent reruns, and supervisor verification.
 4. Capture the chosen design in concise project documentation or artifact files.
 5. Reflect design progress in `.dev/DASHBOARD.md` and mark finished design tasks in `.dev/TASKS.md`.
@@ -25,7 +30,7 @@ Use this skill after planning and before broad implementation, or when the curre
 
 - Optimize for operational clarity over novelty.
 - Keep abstractions minimal for the current milestone.
-- Document only the decisions that affect implementation, recovery, testing, or deployment.
+- Document only the decisions that affect implementation, recovery, test authoring, testing, or deployment.
 - Call out assumptions, open questions, and explicit tradeoffs.
 - If a design choice changes an earlier plan, update the dashboard and tasks together.
 
@@ -33,6 +38,7 @@ Use this skill after planning and before broad implementation, or when the curre
 
 - Implementation-ready architecture notes
 - Clear contracts for modules, files, or APIs
+- Clear expectations for unit, integration, and optional system-test coverage
 - Updated `.dev` status showing what is now unblocked
 
 ## Done Criteria

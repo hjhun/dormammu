@@ -1,6 +1,6 @@
 ---
 name: supervising-agent-workflows
-description: Orchestrates planning, design, implementation, build, validation, and commit phases for this project. Use when the user asks to monitor or supervise multi-step delivery, resume interrupted work, or decide the next workflow skill to apply.
+description: Orchestrates planning, design, development, test authoring, build, validation, and commit phases for this project. Use when the user asks to monitor or supervise multi-step delivery, resume interrupted work, or decide the next workflow skill to apply.
 ---
 
 # Supervising Agent Workflows
@@ -19,9 +19,10 @@ Use this skill as the top-level controller for the project. It decides which wor
 1. Planning
 2. Designing
 3. Developing
-4. Building and deploying
-5. Testing and reviewing
-6. Committing
+4. Test authoring
+5. Building and deploying
+6. Testing and reviewing
+7. Committing
 
 Re-enter earlier phases whenever later work exposes missing design, failed validation, or incomplete planning.
 
@@ -30,15 +31,18 @@ Re-enter earlier phases whenever later work exposes missing design, failed valid
 1. Load the current `.dev` state and detect whether this is a new run or a resume.
 2. Verify that dashboard status, task checkboxes, and machine state are consistent enough to continue.
 3. Choose the next skill based on the active phase, blockers, and completion evidence.
-4. Gate each transition with evidence:
+4. After design, treat development and test authoring as paired implementation tracks when the scope needs both product code and test code.
+5. Gate each transition with evidence:
    - planning -> tasks exist and the next action is clear
    - design -> interfaces or decisions exist for the active scope
-   - development -> implementation changed the intended files
+   - development -> product-code implementation changed the intended files
+   - test authoring -> unit and integration test code exists for the active scope, plus system tests when explicitly requested
    - build/deploy -> requested artifacts or scripts exist
-   - test/review -> validation has a clear outcome
+   - test/review -> executed validation has a clear outcome after development is complete
    - commit -> diff scope and validation both support versioning
-5. On interruption, preserve the last safe checkpoint and resume from the earliest uncertain step.
-6. Update `.dev/DASHBOARD.md` with phase, verdict, next action, and escalation status.
+6. Do not advance from test authoring to test/review on authored tests alone; require executed evidence.
+7. On interruption, preserve the last safe checkpoint and resume from the earliest uncertain step.
+8. Update `.dev/DASHBOARD.md` with phase, verdict, next action, and escalation status.
 
 ## Supervisor Rules
 

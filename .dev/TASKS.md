@@ -12,12 +12,16 @@
   pointers and multi-session summaries
 - [O] Update CLI and recovery flows so commands resolve an explicit session
   target before reading or writing state
-- [ ] Refresh tests and operator docs for the no-mirror multi-session model
+- [O] Add the dedicated `test_authoring` workflow skill and route repository
+  guidance through it
+- [ ] Refresh tests, operator docs, and `.dev` guidance for the no-mirror
+  multi-session model
 
 ## Resume Checkpoint
 
 Resume from docs follow-up and any extra validation gaps around the new
-no-mirror multi-session model.
+no-mirror multi-session model, keeping the `test_authoring` workflow stage
+aligned across machine and operator state.
 
 ## Completion Rule
 

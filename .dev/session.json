@@ -1,19 +1,19 @@
 {
   "session_id": "bootstrap-20260407-235000-kst",
   "created_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-09T20:12:00+09:00",
+  "updated_at": "2026-04-09T22:41:17+09:00",
   "run_type": "bootstrap",
   "status": "active",
   "state_schema_version": 3,
-  "active_phase": "test_and_review",
+  "active_phase": "commit",
   "active_roadmap_phase_ids": [
     "phase_7"
   ],
-  "resume_token": "test_and_review:no-mirror-multi-session",
+  "resume_token": "commit:no-mirror-multi-session",
   "last_safe_checkpoint": {
-    "phase": "test_and_review",
-    "timestamp": "2026-04-09T20:12:00+09:00",
-    "description": "Implemented and validated the no-mirror multi-session state model."
+    "phase": "commit",
+    "timestamp": "2026-04-09T22:41:17+09:00",
+    "description": "Updated commit guidance to handle ignored `.dev` files, message verification, and post-commit state synchronization."
   },
   "bootstrap": {
     "goal": "Harden dormammu for multi-session execution without shared-state races in the root .dev view.",
@@ -32,12 +32,12 @@
   },
   "task_sync": {
     "source": ".dev/TASKS.md",
-    "resume_checkpoint": "Resume from docs follow-up and any extra validation gaps around the new no-mirror multi-session model.",
-    "total_tasks": 6,
-    "completed_tasks": 5,
+    "resume_checkpoint": "Resume from docs follow-up and any extra validation gaps around the new no-mirror multi-session model, keeping the `test_authoring` workflow stage aligned across machine and operator state.",
+    "total_tasks": 7,
+    "completed_tasks": 6,
     "pending_tasks": 1,
     "all_completed": false,
-    "next_pending_task": "Refresh tests and operator docs for the no-mirror multi-session model",
+    "next_pending_task": "Refresh tests, operator docs, and `.dev` guidance for the no-mirror multi-session model",
     "items": [
       {
         "text": "Re-open planning for the Phase 7 multi-session hardening slice and align `.dev` state with the new goal",
@@ -55,24 +55,30 @@
           "text": "Redefine root `.dev` as an index layer with active/default session pointers and multi-session summaries",
           "completed": true
         },
-        {
-          "text": "Update CLI and recovery flows so commands resolve an explicit session target before reading or writing state",
-          "completed": true
-        },
       {
-        "text": "Refresh tests and operator docs for the no-mirror multi-session model",
+        "text": "Update CLI and recovery flows so commands resolve an explicit session target before reading or writing state",
+        "completed": true
+      },
+      {
+        "text": "Add the dedicated `test_authoring` workflow skill and route repository guidance through it",
+        "completed": true
+      },
+      {
+        "text": "Refresh tests, operator docs, and `.dev` guidance for the no-mirror multi-session model",
         "completed": false
       }
     ],
-    "synced_at": "2026-04-09T20:12:00+09:00"
+    "synced_at": "2026-04-09T22:41:17+09:00"
   },
-  "next_action": "Refresh operator docs for the new no-mirror multi-session model, then prepare the validated state-model slice for commit.",
+  "next_action": "Finalize the amended workflow-guidance commit, then continue any remaining docs follow-up as a separate scope.",
   "notes": [
     "Resume from development unless a new higher-priority roadmap slice overrides it.",
     "The current mirror-based active root view is convenient for single-session use but unsafe under concurrent multi-session writes.",
     "The chosen Phase 7 direction keeps session documents and machine truth under `.dev/sessions/<session_id>/` only.",
     "Root `.dev` now acts as a pointer and index metadata layer instead of copied session state.",
-    "Validation passed through targeted unit tests covering state repository, CLI, loop runner, supervisor, and CLI adapter behavior."
+    "Validation passed through targeted unit tests covering state repository, CLI, loop runner, supervisor, and CLI adapter behavior.",
+    "Repository workflow guidance now includes a dedicated `test_authoring` phase between design and executed validation.",
+    "Commit guidance now explains how to stage ignored `.dev` files and verify the stored commit message text."
   ],
   "loop": {
     "status": "idle",
@@ -88,7 +94,7 @@
   "latest_continuation_prompt": null,
   "current_run": null,
   "latest_commit": {
-    "hash": "pending",
-    "summary": "Implement no-mirror multi-session state model"
+    "hash": "pending-amend",
+    "summary": "Refine workflow and commit guidance for test authoring"
   }
 }

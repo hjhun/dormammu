@@ -7,6 +7,12 @@ description: Implements the active tasks for this project while keeping workflow
 
 Use this skill when the active phase is implementation.
 
+Related skills:
+
+- Read design handoff from `designing-agent-workflows`
+- Coordinate test ownership with `test-authoring-agent-workflows`
+- Hand executed validation to `testing-and-reviewing-workflows` after implementation is complete
+
 ## Inputs
 
 - The active task list and design decisions
@@ -18,15 +24,18 @@ Use this skill when the active phase is implementation.
 1. Read the active tasks before editing code.
 2. Implement only the current scoped slice; avoid mixing unrelated work.
 3. Keep steps idempotent where possible so interrupted runs can resume safely.
-4. After each meaningful change, update `.dev/TASKS.md` and `.dev/DASHBOARD.md`.
-5. Record blockers, partial completion, and required continuation prompts in `.dev/`.
+4. Keep the test authoring agent informed about behavior changes that affect unit, integration, or system-test expectations.
+5. After each meaningful change, update `.dev/TASKS.md` and `.dev/DASHBOARD.md`.
+6. Record blockers, partial completion, and required continuation prompts in `.dev/`.
 
 ## Development Rules
 
 - Prefer small, verifiable increments.
 - Preserve unrelated user changes.
+- Keep product-code ownership separate from test-code ownership.
 - Do not mark a task complete until the code and state files agree.
 - If implementation reveals a design gap, pause and route back to the design skill.
+- Do not treat authored tests as executed validation; hand off to the testing skill after the implementation slice is finished.
 - Leave enough context in `.dev` for a later rerun to continue cleanly.
 
 ## Expected Outputs
