@@ -30,6 +30,12 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertTrue(artifacts.session.exists())
             self.assertTrue(artifacts.workflow_state.exists())
             self.assertTrue(artifacts.logs_dir.exists())
+            self.assertIn(".dev/sessions/", str(artifacts.dashboard))
+            root_session_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                root_session_index["active_session_id"],
+                repository.read_session_state()["session_id"],
+            )
 
             dashboard = artifacts.dashboard.read_text(encoding="utf-8")
             self.assertIn("Bootstrap test goal", dashboard)
@@ -63,7 +69,11 @@ class StateRepositoryTests(unittest.TestCase):
             repository = StateRepository(config)
             repository.ensure_bootstrap_state()
 
-            merged = json.loads(session_path.read_text(encoding="utf-8"))
+            active_session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+                "active_session_id"
+            ]
+            migrated_session_path = root / ".dev" / "sessions" / active_session_id / "session.json"
+            merged = json.loads(migrated_session_path.read_text(encoding="utf-8"))
             self.assertEqual(merged["session_id"], "existing")
             self.assertEqual(merged["custom"]["answer"], 42)
             self.assertIn("active_phase", merged)
@@ -101,8 +111,8 @@ class StateRepositoryTests(unittest.TestCase):
             config = AppConfig.load(repo_root=root)
             repository = StateRepository(config)
             artifacts = repository.ensure_bootstrap_state()
-
-            self.assertIn("Finish the first slice", tasks_path.read_text(encoding="utf-8"))
+            session_tasks_path = artifacts.tasks
+            self.assertIn("Finish the first slice", session_tasks_path.read_text(encoding="utf-8"))
 
             workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
             task_sync = workflow_state["operator_sync"]["tasks"]
@@ -142,11 +152,14 @@ class StateRepositoryTests(unittest.TestCase):
             current_session = repository.read_session_state()
             self.assertEqual(current_session["session_id"], "phase7-multi-session")
             self.assertEqual(current_session["run_type"], "session")
-            self.assertIn("Fresh goal", (root / ".dev" / "DASHBOARD.md").read_text(encoding="utf-8"))
+            root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
+            self.assertEqual(root_index["active_session_id"], "phase7-multi-session")
+            self.assertFalse((root / ".dev" / "DASHBOARD.md").exists())
 
             archived_dir = root / ".dev" / "sessions" / original_session
             self.assertTrue((archived_dir / "session.json").exists())
             self.assertTrue((archived_dir / "workflow_state.json").exists())
+            self.assertTrue((root / ".dev" / "sessions" / "phase7-multi-session" / "DASHBOARD.md").exists())
             self.assertTrue((archived_dir / "supervisor_report.md").exists())
             self.assertTrue((archived_dir / "continuation_prompt.txt").exists())
 
@@ -171,7 +184,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(len(active_sessions), 1)
             self.assertEqual(active_sessions[0]["session_id"], "phase7-second")
 
-    def test_restore_session_replaces_active_root_with_archived_snapshot(self) -> None:
+    def test_restore_session_switches_active_pointer_without_copying_session_docs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
@@ -180,7 +193,10 @@ class StateRepositoryTests(unittest.TestCase):
             repository = StateRepository(config)
             repository.ensure_bootstrap_state(goal="Original goal")
             original_session = repository.read_session_state()["session_id"]
-            (root / ".dev" / "DASHBOARD.md").write_text("# DASHBOARD\n\nOriginal session\n", encoding="utf-8")
+            (root / ".dev" / "sessions" / original_session / "DASHBOARD.md").write_text(
+                "# DASHBOARD\n\nOriginal session\n",
+                encoding="utf-8",
+            )
             repository.write_supervisor_report("# Original report\n")
 
             repository.start_new_session(
@@ -193,8 +209,15 @@ class StateRepositoryTests(unittest.TestCase):
 
             restored_session = repository.read_session_state()
             self.assertEqual(restored_session["session_id"], original_session)
-            self.assertIn("Original session", (root / ".dev" / "DASHBOARD.md").read_text(encoding="utf-8"))
-            self.assertTrue((root / ".dev" / "supervisor_report.md").exists())
+            self.assertIn(
+                "Original session",
+                (root / ".dev" / "sessions" / original_session / "DASHBOARD.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
+            self.assertEqual(root_index["active_session_id"], original_session)
+            self.assertFalse((root / ".dev" / "supervisor_report.md").exists())
 
     def test_session_scoped_bootstrap_keeps_active_root_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -208,7 +231,7 @@ class StateRepositoryTests(unittest.TestCase):
                 active_roadmap_phase_ids=["phase_7"],
                 session_id="active-session",
             )
-            active_dashboard = (root / ".dev" / "DASHBOARD.md").read_text(encoding="utf-8")
+            active_root_index = (root / ".dev" / "session.json").read_text(encoding="utf-8")
 
             session_repository = StateRepository(config, session_id="parallel-session")
             session_repository.ensure_bootstrap_state(
@@ -217,8 +240,8 @@ class StateRepositoryTests(unittest.TestCase):
             )
 
             self.assertEqual(
-                active_dashboard,
-                (root / ".dev" / "DASHBOARD.md").read_text(encoding="utf-8"),
+                active_root_index,
+                (root / ".dev" / "session.json").read_text(encoding="utf-8"),
             )
             parallel_dashboard = (
                 root / ".dev" / "sessions" / "parallel-session" / "DASHBOARD.md"

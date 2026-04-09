@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 3,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-09T00:50:00+09:00",
+  "updated_at": "2026-04-09T20:12:00+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -26,8 +26,8 @@
     "task_sync_source": ".dev/sessions/bootstrap-20260407-235000-kst/TASKS.md"
   },
   "workflow": {
-    "active_phase": "commit",
-    "last_completed_phase": "commit",
+    "active_phase": "test_and_review",
+    "last_completed_phase": "develop",
     "allowed_sequence": [
       "plan",
       "design",
@@ -36,11 +36,11 @@
       "test_and_review",
       "commit"
     ],
-    "resume_from_phase": "commit"
+    "resume_from_phase": "test_and_review"
   },
   "roadmap": {
     "active_phase_ids": [
-      "phase_5"
+      "phase_7"
     ],
     "priority_order": [
       "phase_1",
@@ -56,11 +56,11 @@
     "skill": "supervising-agent-workflows",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "CLI-only cleanup was planned, designed, validated, and committed."
+    "reason": "The no-mirror multi-session state model is implemented and validated with targeted unit tests."
   },
   "bootstrap": {
-    "goal": "Remove the Web UI and keep dormammu operating as a CLI-only tool.",
-    "captured_at": "2026-04-09T00:40:00+09:00",
+    "goal": "Harden dormammu for multi-session execution without shared-state races in the root .dev view.",
+    "captured_at": "2026-04-09T20:12:00+09:00",
     "state_root": ".dev/sessions/bootstrap-20260407-235000-kst",
     "repo_guidance": {
       "rule_files": [
@@ -84,46 +84,51 @@
   },
   "operator_sync": {
     "tasks": {
-      "source": ".dev/TASKS.md",
-      "resume_checkpoint": "Resume from the next CLI-focused hardening task on top of the latest CLI-only cleanup commit.",
-      "total_tasks": 5,
+      "source": ".dev/sessions/bootstrap-20260407-235000-kst/TASKS.md",
+      "resume_checkpoint": "Resume from docs follow-up and any extra validation gaps around the new no-mirror multi-session model.",
+      "total_tasks": 6,
       "completed_tasks": 5,
-      "pending_tasks": 0,
-      "all_completed": true,
-      "next_pending_task": null,
+      "pending_tasks": 1,
+      "all_completed": false,
+      "next_pending_task": "Refresh tests and operator docs for the no-mirror multi-session model",
       "items": [
         {
-          "text": "Re-open planning for the product-direction change from optional Web UI to CLI-only operation",
+          "text": "Re-open planning for the Phase 7 multi-session hardening slice and align `.dev` state with the new goal",
           "completed": true
         },
         {
-          "text": "Capture the CLI-only design decisions and runtime deletion scope",
+          "text": "Capture the design decision that per-session state lives only under `.dev/sessions/<session_id>/`",
           "completed": true
         },
         {
-          "text": "Remove Web UI commands, runtime modules, frontend assets, and packaging dependencies",
+          "text": "Refactor state writes so session runs never mirror `DASHBOARD.md`, `TASKS.md`, `session.json`, or `workflow_state.json` back into root `.dev`",
           "completed": true
         },
         {
-          "text": "Refresh docs, roadmap, and `.dev` state so they describe a CLI-only tool",
+          "text": "Redefine root `.dev` as an index layer with active/default session pointers and multi-session summaries",
           "completed": true
         },
         {
-          "text": "Validate the CLI-only slice and keep `.dev` state synchronized before completion",
+          "text": "Update CLI and recovery flows so commands resolve an explicit session target before reading or writing state",
           "completed": true
+        },
+        {
+          "text": "Refresh tests and operator docs for the no-mirror multi-session model",
+          "completed": false
         }
       ],
-      "synced_at": "2026-04-09T00:50:00+09:00"
+      "synced_at": "2026-04-09T20:12:00+09:00"
     }
   },
-  "next_action": "Continue the next CLI-focused hardening slice from the latest CLI-only cleanup commit.",
+  "next_action": "Refresh operator docs for the new no-mirror multi-session model, then prepare the validated state-model slice for commit.",
   "blockers": [],
   "phase_history": [],
   "notes": [
     "Treat this file as machine truth and keep Markdown synchronized.",
-    "The product direction now excludes Web UI and browser-served runtime paths.",
-    "Validation passed through targeted CLI/config tests and full unittest discovery.",
-    "Amending the latest CLI-only cleanup commit to include the strengthened commit message checks."
+    "The current mirror-based active root view is convenient for single-session use but unsafe under concurrent multi-session writes.",
+    "The chosen Phase 7 direction keeps session documents and machine truth under `.dev/sessions/<session_id>/` only.",
+    "Root `.dev` now acts as a pointer and index metadata layer instead of copied session state.",
+    "Validation passed through targeted unit tests covering state repository, CLI, loop runner, supervisor, and CLI adapter behavior."
   ],
   "loop": {
     "status": "idle",
@@ -139,7 +144,7 @@
   "latest_continuation_prompt": null,
   "current_run": null,
   "latest_commit": {
-    "hash": "pending-amend",
-    "summary": "Remove Web UI and tighten commit message checks"
+    "hash": "pending",
+    "summary": "Implement no-mirror multi-session state model"
   }
 }

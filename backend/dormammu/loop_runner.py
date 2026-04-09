@@ -129,6 +129,20 @@ class LoopRunner:
 
         roadmap_phase_ids = [request.expected_roadmap_phase_id] if request.expected_roadmap_phase_id else None
         self.repository.ensure_bootstrap_state(active_roadmap_phase_ids=roadmap_phase_ids)
+        runtime_repository = self.repository
+        runtime_adapter = self.adapter
+        runtime_supervisor = self.supervisor
+        if self.repository.session_id is None:
+            session_state = self.repository.read_session_state()
+            session_id = session_state.get("session_id")
+            if isinstance(session_id, str) and session_id.strip():
+                runtime_repository = StateRepository(self.config, session_id=session_id)
+                runtime_config = self.config.with_overrides(
+                    dev_dir=runtime_repository.dev_dir,
+                    logs_dir=runtime_repository.logs_dir,
+                )
+                runtime_adapter = CliAdapter(runtime_config)
+                runtime_supervisor = Supervisor(self.config, repository=runtime_repository)
 
         current_prompt = prompt_text if prompt_text is not None else request.prompt_text
         attempt_number = start_attempt
@@ -150,7 +164,7 @@ class LoopRunner:
             )
 
             def _handle_started(started: Any) -> None:
-                self.repository.record_current_run(started)
+                runtime_repository.record_current_run(started)
                 self._persist_loop_state(
                     status="running",
                     request=request,
@@ -166,11 +180,11 @@ class LoopRunner:
                     ),
                 )
 
-            result = self.adapter.run_once(
+            result = runtime_adapter.run_once(
                 request.as_agent_run_request(current_prompt),
                 on_started=_handle_started,
             )
-            self.repository.record_latest_run(result)
+            runtime_repository.record_latest_run(result)
 
             if result.exit_code != 0 and result.fallback_trigger is not None:
                 self._persist_loop_state(
@@ -198,14 +212,14 @@ class LoopRunner:
                     continuation_prompt_path=continuation_prompt_path,
                 )
 
-            report = self.supervisor.validate(
+            report = runtime_supervisor.validate(
                 SupervisorRequest(
                     required_paths=request.required_paths,
                     require_worktree_changes=request.require_worktree_changes,
                     expected_roadmap_phase_id=request.expected_roadmap_phase_id,
                 )
             )
-            report_path = self.repository.write_supervisor_report(report.to_markdown())
+            report_path = runtime_repository.write_supervisor_report(report.to_markdown())
             report = report.with_report_path(report_path)
 
             if report.verdict == "approved":
@@ -255,15 +269,15 @@ class LoopRunner:
                     continuation_prompt_path=continuation_prompt_path,
                 )
 
-            next_task = self.repository.read_session_state().get("task_sync", {}).get("next_pending_task")
-            workflow_state = self.repository.read_workflow_state()
+            next_task = runtime_repository.read_session_state().get("task_sync", {}).get("next_pending_task")
+            workflow_state = runtime_repository.read_workflow_state()
             continuation = build_continuation_prompt(
                 latest_run=workflow_state["latest_run"],
                 report=report,
                 next_task=next_task,
                 repo_guidance=workflow_state.get("bootstrap", {}).get("repo_guidance"),
             )
-            continuation_prompt_path = self.repository.write_continuation_prompt(continuation.text)
+            continuation_prompt_path = runtime_repository.write_continuation_prompt(continuation.text)
 
             if not self._should_retry(request.max_retries, retries_used):
                 self._persist_loop_state(

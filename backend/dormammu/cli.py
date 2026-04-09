@@ -320,7 +320,7 @@ def _load_state_scope(
                 payload = json.loads(session_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 payload = {}
-            candidate = payload.get("session_id")
+            candidate = payload.get("active_session_id") or payload.get("session_id")
             if isinstance(candidate, str) and candidate.strip():
                 resolved_session_id = candidate
     repository = StateRepository(config, session_id=session_id)
@@ -464,6 +464,30 @@ def _resolve_agent_cli(config: AppConfig, cli_path: Path | None) -> Path:
     )
 
 
+def _resolve_runtime_session_scope(
+    config: AppConfig,
+    repository: StateRepository,
+) -> tuple[AppConfig, StateRepository]:
+    if repository.session_id is not None:
+        return config, repository
+    session_index_path = config.base_dev_dir / "session.json"
+    if not session_index_path.exists():
+        return config, repository
+    try:
+        payload = json.loads(session_index_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return config, repository
+    session_id = payload.get("active_session_id") or payload.get("session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        return config, repository
+    session_repository = StateRepository(config, session_id=session_id)
+    scoped_config = config.with_overrides(
+        dev_dir=session_repository.dev_dir,
+        logs_dir=session_repository.logs_dir,
+    )
+    return scoped_config, StateRepository(scoped_config, session_id=session_id)
+
+
 def _handle_run_once(args: argparse.Namespace) -> int:
     config, repository = _load_state_scope(
         args.repo_root,
@@ -480,6 +504,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
         goal=goal,
         active_roadmap_phase_ids=roadmap_phases or ["phase_3"],
     )
+    config, repository = _resolve_runtime_session_scope(config, repository)
     try:
         agent_cli = _resolve_agent_cli(config, args.agent_cli)
     except ValueError as exc:
@@ -524,6 +549,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
         goal=goal,
         active_roadmap_phase_ids=roadmap_phases or ["phase_4"],
     )
+    config, repository = _resolve_runtime_session_scope(config, repository)
     try:
         agent_cli = _resolve_agent_cli(config, args.agent_cli)
     except ValueError as exc:
@@ -561,6 +587,7 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
         session_id=args.session_id,
         prefer_active_session=True,
     )
+    config, repository = _resolve_runtime_session_scope(config, repository)
 
     try:
         result = RecoveryManager(config, repository=repository).resume(

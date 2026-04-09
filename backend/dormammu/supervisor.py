@@ -168,11 +168,12 @@ class Supervisor:
         workflow_state = self.repository.read_workflow_state()
         checks: list[SupervisorCheck] = []
 
+        state_root = Path(str(session_state.get("bootstrap", {}).get("state_root", ".dev")))
         dev_paths = [
-            self.config.dev_dir / "DASHBOARD.md",
-            self.config.dev_dir / "TASKS.md",
-            self.config.dev_dir / "session.json",
-            self.config.dev_dir / "workflow_state.json",
+            self.config.repo_root / state_root / "DASHBOARD.md",
+            self.config.repo_root / state_root / "TASKS.md",
+            self.config.repo_root / state_root / "session.json",
+            self.config.repo_root / state_root / "workflow_state.json",
         ]
         missing_dev_paths = [str(path) for path in dev_paths if not path.exists()]
         checks.append(

@@ -47,7 +47,14 @@ class CliAdapterTests(unittest.TestCase):
             self.assertIn("TAG::phase3", result.stdout_path.read_text(encoding="utf-8"))
             self.assertTrue(result.stderr_path.exists())
 
-            workflow_state = json.loads((root / ".dev" / "workflow_state.json").read_text(encoding="utf-8"))
+            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+                "active_session_id"
+            ]
+            workflow_state = json.loads(
+                (root / ".dev" / "sessions" / session_id / "workflow_state.json").read_text(
+                    encoding="utf-8"
+                )
+            )
             self.assertEqual(workflow_state["latest_run"]["run_id"], result.run_id)
             self.assertEqual(workflow_state["latest_run"]["prompt_mode"], "file")
 

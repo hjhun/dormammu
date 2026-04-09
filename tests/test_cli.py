@@ -90,8 +90,10 @@ class CliTests(unittest.TestCase):
                 exit_code = main(["init-state", "--repo-root", str(root)])
 
             self.assertEqual(exit_code, 0)
-            self.assertTrue((root / ".dev" / "DASHBOARD.md").exists())
-            self.assertTrue((root / ".dev" / "TASKS.md").exists())
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(Path(payload["dashboard"]).exists())
+            self.assertTrue(Path(payload["tasks"]).exists())
+            self.assertIn(".dev/sessions/", payload["dashboard"])
 
     def test_init_state_creates_bootstrap_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -114,8 +116,11 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
-            self.assertTrue((root / ".dev" / "DASHBOARD.md").exists())
-            self.assertEqual(payload["logs_dir"], str(root / ".dev" / "logs"))
+            self.assertTrue(Path(payload["dashboard"]).exists())
+            self.assertIn(".dev/sessions/", payload["dashboard"])
+            self.assertIn(".dev/sessions/", payload["logs_dir"])
+            root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
+            self.assertIn("active_session_id", root_index)
 
     def test_init_state_prompts_for_bootstrap_inputs_on_first_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -134,7 +139,14 @@ class CliTests(unittest.TestCase):
                 exit_code = main(["init-state", "--repo-root", str(root)])
 
             self.assertEqual(exit_code, 0)
-            workflow_state = json.loads((root / ".dev" / "workflow_state.json").read_text(encoding="utf-8"))
+            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+                "active_session_id"
+            ]
+            workflow_state = json.loads(
+                (root / ".dev" / "sessions" / session_id / "workflow_state.json").read_text(
+                    encoding="utf-8"
+                )
+            )
             self.assertEqual(workflow_state["bootstrap"]["goal"], "Interactive bootstrap goal")
             self.assertEqual(workflow_state["roadmap"]["active_phase_ids"], ["phase_7"])
 
@@ -464,7 +476,12 @@ class CliTests(unittest.TestCase):
             self.assertEqual(first_exit, 1)
             first_payload = json.loads(first_stdout.getvalue())
             self.assertEqual(first_payload["status"], "failed")
-            self.assertTrue((root / ".dev" / "continuation_prompt.txt").exists())
+            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+                "active_session_id"
+            ]
+            self.assertTrue(
+                (root / ".dev" / "sessions" / session_id / "continuation_prompt.txt").exists()
+            )
 
             resume_stdout = io.StringIO()
             with contextlib.redirect_stdout(resume_stdout):

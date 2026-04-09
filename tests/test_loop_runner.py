@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import subprocess
 import stat
@@ -44,7 +45,12 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertEqual(result.attempts_completed, 2)
             self.assertEqual(result.retries_used, 1)
             self.assertTrue((root / "done.txt").exists())
-            self.assertTrue((root / ".dev" / "continuation_prompt.txt").exists())
+            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+                "active_session_id"
+            ]
+            self.assertTrue(
+                (root / ".dev" / "sessions" / session_id / "continuation_prompt.txt").exists()
+            )
 
     def test_resume_continues_failed_loop_from_saved_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -68,7 +74,12 @@ class LoopRunnerTests(unittest.TestCase):
             )
 
             self.assertEqual(first_result.status, "failed")
-            self.assertTrue((root / ".dev" / "continuation_prompt.txt").exists())
+            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+                "active_session_id"
+            ]
+            self.assertTrue(
+                (root / ".dev" / "sessions" / session_id / "continuation_prompt.txt").exists()
+            )
 
             resumed = RecoveryManager(
                 config,
