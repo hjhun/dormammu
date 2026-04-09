@@ -17,9 +17,9 @@ class TaskParsingTests(unittest.TestCase):
         parsed = parse_tasks_document(
             "\n".join(
                 [
-                    "# TASKS",
+                    "# PLAN",
                     "",
-                    "## Prompt-Derived Development Queue",
+                    "## Prompt-Derived Implementation Plan",
                     "",
                     "- [O] Phase 1. First task",
                     "- [x] Phase 2. Second task",

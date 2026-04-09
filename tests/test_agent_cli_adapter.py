@@ -233,7 +233,7 @@ class CliAdapterTests(unittest.TestCase):
         templates = root / "templates" / "dev"
         templates.mkdir(parents=True, exist_ok=True)
         (templates / "dashboard.md.tmpl").write_text("# DASHBOARD\n\n- Goal: ${goal}\n", encoding="utf-8")
-        (templates / "tasks.md.tmpl").write_text("# TASKS\n\n${task_items}\n", encoding="utf-8")
+        (templates / "plan.md.tmpl").write_text("# PLAN\n\n${task_items}\n", encoding="utf-8")
 
     def _write_fake_cli(self, root: Path) -> Path:
         script = root / "fake-agent"

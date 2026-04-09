@@ -86,7 +86,7 @@ What each step does:
 These files matter most:
 
 - `.dev/DASHBOARD.md`: the operator-facing view of what is actually in progress now
-- `.dev/TASKS.md`: the prompt-derived checklist of development items to work through
+- `.dev/PLAN.md`: the prompt-derived checklist of development items to work through
 - `.dev/workflow_state.json`
 - `.dev/session.json`
 - `.dev/logs/`

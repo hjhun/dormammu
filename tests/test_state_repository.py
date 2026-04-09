@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -26,7 +27,7 @@ class StateRepositoryTests(unittest.TestCase):
             artifacts = repository.ensure_bootstrap_state(goal="Bootstrap test goal")
 
             self.assertTrue(artifacts.dashboard.exists())
-            self.assertTrue(artifacts.tasks.exists())
+            self.assertTrue(artifacts.plan.exists())
             self.assertTrue(artifacts.session.exists())
             self.assertTrue(artifacts.workflow_state.exists())
             self.assertTrue(artifacts.logs_dir.exists())
@@ -41,10 +42,10 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertIn("Bootstrap test goal", dashboard)
 
             workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
-            self.assertEqual(workflow_state["state_schema_version"], 4)
+            self.assertEqual(workflow_state["state_schema_version"], 5)
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["pending_tasks"],
-                4,
+                3,
             )
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["next_pending_task"],
@@ -84,8 +85,8 @@ class StateRepositoryTests(unittest.TestCase):
             self._seed_repo(root)
             dev_dir = root / ".dev"
             dev_dir.mkdir(parents=True, exist_ok=True)
-            tasks_path = dev_dir / "TASKS.md"
-            tasks_path.write_text(
+            legacy_tasks_path = dev_dir / "TASKS.md"
+            legacy_tasks_path.write_text(
                 "\n".join(
                     [
                         "# TASKS",
@@ -107,8 +108,8 @@ class StateRepositoryTests(unittest.TestCase):
             config = AppConfig.load(repo_root=root)
             repository = StateRepository(config)
             artifacts = repository.ensure_bootstrap_state()
-            session_tasks_path = artifacts.tasks
-            self.assertIn("Finish the first slice", session_tasks_path.read_text(encoding="utf-8"))
+            session_plan_path = artifacts.plan
+            self.assertIn("Finish the first slice", session_plan_path.read_text(encoding="utf-8"))
 
             workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
             task_sync = workflow_state["operator_sync"]["tasks"]
@@ -158,6 +159,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertTrue((root / ".dev" / "sessions" / "phase7-multi-session" / "DASHBOARD.md").exists())
             self.assertTrue((archived_dir / "supervisor_report.md").exists())
             self.assertTrue((archived_dir / "continuation_prompt.txt").exists())
+            self.assertTrue((root / ".dev" / "sessions" / "phase7-multi-session" / "PLAN.md").exists())
 
     def test_list_sessions_marks_active_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -243,10 +245,37 @@ class StateRepositoryTests(unittest.TestCase):
                 root / ".dev" / "sessions" / "parallel-session" / "DASHBOARD.md"
             ).read_text(encoding="utf-8")
             self.assertIn("Parallel session goal", parallel_dashboard)
+            self.assertTrue((root / ".dev" / "sessions" / "parallel-session" / "PLAN.md").exists())
             self.assertEqual(
                 session_repository.read_session_state()["session_id"],
                 "parallel-session",
             )
+
+    def test_persist_input_prompt_copies_prompt_into_session_and_global_mirror(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home = Path(tmpdir) / "home"
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={"HOME": str(home), **{key: value for key, value in os.environ.items() if key != "HOME"}},
+            )
+            repository = StateRepository(config)
+            repository.start_new_session(goal="Prompt goal", session_id="prompt-session")
+
+            source_prompt = root / "PROMPT.md"
+            source_prompt.write_text("# Prompt\n\nImplement prompt-driven bootstrap.\n", encoding="utf-8")
+            prompt_path = repository.persist_input_prompt(
+                prompt_text=source_prompt.read_text(encoding="utf-8"),
+                source_path=source_prompt,
+            )
+
+            self.assertEqual(prompt_path.read_text(encoding="utf-8"), source_prompt.read_text(encoding="utf-8"))
+            global_prompt = home / ".dormammu" / "sessions" / "prompt-session" / ".dev" / "PROMPT.md"
+            self.assertTrue(global_prompt.exists())
+            self.assertEqual(global_prompt.read_text(encoding="utf-8"), source_prompt.read_text(encoding="utf-8"))
 
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
@@ -285,12 +314,12 @@ class StateRepositoryTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        (templates / "tasks.md.tmpl").write_text(
+        (templates / "plan.md.tmpl").write_text(
             "\n".join(
                 [
-                    "# TASKS",
+                    "# PLAN",
                     "",
-                    "## Prompt-Derived Development Queue",
+                    "## Prompt-Derived Implementation Plan",
                     "",
                     "${task_items}",
                     "",

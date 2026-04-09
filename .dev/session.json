@@ -1,23 +1,23 @@
 {
   "session_id": "bootstrap-20260407-235000-kst",
   "created_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-09T22:41:17+09:00",
+  "updated_at": "2026-04-10T08:55:00+09:00",
   "run_type": "bootstrap",
   "status": "active",
-  "state_schema_version": 3,
-  "active_phase": "commit",
+  "state_schema_version": 5,
+  "active_phase": "test_and_review",
   "active_roadmap_phase_ids": [
     "phase_7"
   ],
-  "resume_token": "commit:no-mirror-multi-session",
+  "resume_token": "test_and_review:prompt-plan-bootstrap",
   "last_safe_checkpoint": {
-    "phase": "commit",
-    "timestamp": "2026-04-09T22:41:17+09:00",
-    "description": "Updated commit guidance to handle ignored `.dev` files, message verification, and post-commit state synchronization."
+    "phase": "test_and_review",
+    "timestamp": "2026-04-10T08:55:00+09:00",
+    "description": "Validated prompt-driven PLAN bootstrap, prompt persistence, and resume compatibility."
   },
   "bootstrap": {
-    "goal": "Harden dormammu for multi-session execution without shared-state races in the root .dev view.",
-    "captured_at": "2026-04-09T20:12:00+09:00",
+    "goal": "Make dormammu bootstrap new runs from PROMPT.md, generate DASHBOARD.md and PLAN.md, persist prompt copies per session, and resume the previous session from saved state.",
+    "captured_at": "2026-04-10T08:05:00+09:00",
     "state_root": ".dev/sessions/bootstrap-20260407-235000-kst",
     "repo_guidance": {
       "rule_files": [
@@ -31,54 +31,43 @@
     }
   },
   "task_sync": {
-    "source": ".dev/TASKS.md",
-    "resume_checkpoint": "Resume from docs follow-up and any extra validation gaps around the new no-mirror multi-session model, keeping the `test_authoring` workflow stage aligned across machine and operator state.",
-    "total_tasks": 7,
-    "completed_tasks": 6,
-    "pending_tasks": 1,
-    "all_completed": false,
-    "next_pending_task": "Refresh tests, operator docs, and `.dev` guidance for the no-mirror multi-session model",
+    "source": ".dev/PLAN.md",
+    "resume_checkpoint": "Prompt-driven PLAN bootstrap validation is complete. Resume from optional docs cleanup, commit preparation, or the next scope.",
+    "total_tasks": 5,
+    "completed_tasks": 5,
+    "pending_tasks": 0,
+    "all_completed": true,
+    "next_pending_task": null,
     "items": [
       {
-        "text": "Re-open planning for the Phase 7 multi-session hardening slice and align `.dev` state with the new goal",
+        "text": "Phase 1. Replace legacy `TASKS.md` bootstrap output with `PLAN.md`",
         "completed": true
       },
       {
-        "text": "Capture the design decision that per-session state lives only under `.dev/sessions/<session_id>/`",
-        "completed": true
-      },
-        {
-          "text": "Refactor state writes so session runs never mirror `DASHBOARD.md`, `TASKS.md`, `session.json`, or `workflow_state.json` back into root `.dev`",
-          "completed": true
-        },
-        {
-          "text": "Redefine root `.dev` as an index layer with active/default session pointers and multi-session summaries",
-          "completed": true
-        },
-      {
-        "text": "Update CLI and recovery flows so commands resolve an explicit session target before reading or writing state",
+        "text": "Phase 2. Generate initial `DASHBOARD.md` and `PLAN.md` from the incoming user prompt",
         "completed": true
       },
       {
-        "text": "Add the dedicated `test_authoring` workflow skill and route repository guidance through it",
+        "text": "Phase 3. Persist `PROMPT.md` into the active session and mirror it under `~/.dormammu/sessions/<session id>/.dev/`",
         "completed": true
       },
       {
-        "text": "Refresh tests, operator docs, and `.dev` guidance for the no-mirror multi-session model",
-        "completed": false
+        "text": "Phase 4. Keep `resume` bound to the saved active session while remaining compatible with explicitly targeted sessions",
+        "completed": true
+      },
+      {
+        "text": "Phase 5. Validate the prompt-driven PLAN bootstrap flow with automated tests",
+        "completed": true
       }
     ],
-    "synced_at": "2026-04-09T22:41:17+09:00"
+    "synced_at": "2026-04-10T08:55:00+09:00"
   },
-  "next_action": "Finalize the amended workflow-guidance commit, then continue any remaining docs follow-up as a separate scope.",
+  "next_action": "Prepare an optional cleanup or commit for the validated prompt-driven PLAN bootstrap updates, or begin the next user-directed scope.",
   "notes": [
-    "Resume from development unless a new higher-priority roadmap slice overrides it.",
-    "The current mirror-based active root view is convenient for single-session use but unsafe under concurrent multi-session writes.",
-    "The chosen Phase 7 direction keeps session documents and machine truth under `.dev/sessions/<session_id>/` only.",
-    "Root `.dev` now acts as a pointer and index metadata layer instead of copied session state.",
-    "Validation passed through targeted unit tests covering state repository, CLI, loop runner, supervisor, and CLI adapter behavior.",
-    "Repository workflow guidance now includes a dedicated `test_authoring` phase between design and executed validation.",
-    "Commit guidance now explains how to stage ignored `.dev` files and verify the stored commit message text."
+    "Resume from the validated PLAN bootstrap slice unless a new higher-priority roadmap slice overrides it.",
+    "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
+    "Prompt copies now persist both inside the active session and under ~/.dormammu/sessions/<session id>/.dev/.",
+    "Validation passed through targeted unit tests covering state repository, CLI, loop runner, supervisor, CLI adapter, and config behavior."
   ],
   "loop": {
     "status": "idle",

@@ -125,12 +125,12 @@ class SupervisorTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        (templates / "tasks.md.tmpl").write_text(
+        (templates / "plan.md.tmpl").write_text(
             "\n".join(
                 [
-                    "# TASKS",
+                    "# PLAN",
                     "",
-                    "## Prompt-Derived Development Queue",
+                    "## Prompt-Derived Implementation Plan",
                     "",
                     "${task_items}",
                     "",

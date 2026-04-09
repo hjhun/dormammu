@@ -19,7 +19,7 @@ Use this skill after design when the active scope needs test code, not just test
 3. Write unit tests for isolated logic and integration tests for cross-module or CLI flows by default.
 4. Add system tests only when the user, prompt, or acceptance criteria explicitly call for system-test-level coverage.
 5. When system tests are required, target the closest real device or device-like environment available and record any environment dependency clearly.
-6. Update `.dev/DASHBOARD.md` with authored test coverage, gaps, and blockers, and update `.dev/TASKS.md` only when the prompt-derived phase checklist changes.
+6. Update `.dev/DASHBOARD.md` with authored test coverage, gaps, and blockers, and update `.dev/PLAN.md` only when the prompt-derived phase checklist changes.
 
 ## Test Authoring Rules
 

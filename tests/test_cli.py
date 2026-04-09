@@ -636,6 +636,130 @@ class CliTests(unittest.TestCase):
             self.assertEqual(resume_payload["status"], "completed")
             self.assertTrue((root / "done.txt").exists())
 
+    def test_run_once_emits_runtime_banner_and_live_agent_output_to_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                exit_code = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Visible prompt",
+                        "--extra-arg=--echo-tag",
+                        "--extra-arg=live",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["exit_code"], 0)
+            progress = stderr.getvalue()
+            self.assertIn("=== dormammu run ===", progress)
+            self.assertIn(f"target project: {root}", progress)
+            self.assertIn(f"cli: {fake_cli}", progress)
+            self.assertIn("=== dormammu command ===", progress)
+            self.assertIn("command: ", progress)
+            self.assertIn("Task prompt:\nVisible prompt", progress)
+            self.assertIn("TAG::live", progress)
+
+    def test_run_loop_emits_dashboard_and_tasks_snapshots_to_stderr_each_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                exit_code = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                        "--run-label",
+                        "visible-loop",
+                        "--max-retries",
+                        "1",
+                        "--required-path",
+                        "done.txt",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["status"], "completed")
+            progress = stderr.getvalue()
+            self.assertIn("=== dormammu run ===", progress)
+            self.assertGreaterEqual(progress.count("=== DASHBOARD.md ==="), 2)
+            self.assertGreaterEqual(progress.count("=== PLAN.md ==="), 2)
+            self.assertIn("# DASHBOARD", progress)
+            self.assertIn("# PLAN", progress)
+            self.assertIn("=== dormammu supervisor ===", progress)
+            self.assertIn("ATTEMPT::1", progress)
+            self.assertIn("ATTEMPT::2", progress)
+
+    def test_run_with_prompt_file_copies_prompt_to_session_and_global_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home = Path(tmpdir) / "home"
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            prompt_file = root / "PROMPT.md"
+            prompt_file.write_text(
+                "# Session Prompt\n\n- Create DASHBOARD.md and PLAN.md from this request.\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with (
+                mock.patch.dict("os.environ", {"HOME": str(home)}, clear=False),
+                contextlib.redirect_stdout(stdout),
+            ):
+                exit_code = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt-file",
+                        str(prompt_file),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            session_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
+            session_id = session_index["active_session_id"]
+            session_prompt = root / ".dev" / "sessions" / session_id / "PROMPT.md"
+            self.assertTrue(session_prompt.exists())
+            self.assertEqual(session_prompt.read_text(encoding="utf-8"), prompt_file.read_text(encoding="utf-8"))
+            global_prompt = home / ".dormammu" / "sessions" / session_id / ".dev" / "PROMPT.md"
+            self.assertTrue(global_prompt.exists())
+            self.assertEqual(global_prompt.read_text(encoding="utf-8"), prompt_file.read_text(encoding="utf-8"))
+            session_plan = root / ".dev" / "sessions" / session_id / "PLAN.md"
+            self.assertTrue(session_plan.exists())
+            self.assertIn("Create DASHBOARD.md and PLAN.md from this request", session_plan.read_text(encoding="utf-8"))
+
     def test_inspect_cli_reports_preset_and_auto_approve_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -755,8 +879,8 @@ class CliTests(unittest.TestCase):
             "# DASHBOARD\n\n- Goal: ${goal}\n",
             encoding="utf-8",
         )
-        (templates / "tasks.md.tmpl").write_text(
-            "# TASKS\n\n${task_items}\n",
+        (templates / "plan.md.tmpl").write_text(
+            "# PLAN\n\n${task_items}\n",
             encoding="utf-8",
         )
 

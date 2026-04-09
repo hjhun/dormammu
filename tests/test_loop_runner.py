@@ -51,6 +51,7 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertTrue(
                 (root / ".dev" / "sessions" / session_id / "continuation_prompt.txt").exists()
             )
+            self.assertTrue((root / ".dev" / "sessions" / session_id / "PLAN.md").exists())
 
     def test_resume_continues_failed_loop_from_saved_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -275,12 +276,12 @@ class LoopRunnerTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        (templates / "tasks.md.tmpl").write_text(
+        (templates / "plan.md.tmpl").write_text(
             "\n".join(
                 [
-                    "# TASKS",
+                    "# PLAN",
                     "",
-                    "## Prompt-Derived Development Queue",
+                    "## Prompt-Derived Implementation Plan",
                     "",
                     "${task_items}",
                     "",

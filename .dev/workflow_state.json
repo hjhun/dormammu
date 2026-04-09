@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "state_schema_version": 4,
+  "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T00:50:00+09:00",
+  "updated_at": "2026-04-10T08:19:00+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -14,17 +14,17 @@
     "machine_state": ".dev/workflow_state.json",
     "operator_state": [
       ".dev/DASHBOARD.md",
-      ".dev/TASKS.md"
+      ".dev/PLAN.md"
     ]
   },
   "state_schema": {
     "dashboard_template": "templates/dev/dashboard.md.tmpl",
-    "tasks_template": "templates/dev/tasks.md.tmpl",
+    "plan_template": "templates/dev/plan.md.tmpl",
     "task_markers": {
       "pending": "[ ]",
       "completed": "[O]"
     },
-    "task_sync_source": ".dev/TASKS.md"
+    "task_sync_source": ".dev/PLAN.md"
   },
   "workflow": {
     "active_phase": "test_and_review",
@@ -58,11 +58,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "Guidance installation, fallback resolution, and prompt embedding are implemented and validated."
+      "reason": "Prompt-driven PLAN bootstrap, prompt persistence, and resume compatibility are implemented and validated."
   },
   "bootstrap": {
-    "goal": "Install the distributed `agents/` bundle into `~/.dormammu/agents` and let runs fall back to it with custom guidance overrides.",
-    "captured_at": "2026-04-09T12:20:00+09:00",
+    "goal": "Make dormammu bootstrap new runs from PROMPT.md, generate DASHBOARD.md and PLAN.md, persist prompt copies per session, and resume the previous session from saved state.",
+    "captured_at": "2026-04-10T08:05:00+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -82,49 +82,53 @@
   },
   "artifacts": {
     "dashboard": ".dev/sessions/bootstrap-20260407-235000-kst/DASHBOARD.md",
-    "tasks": ".dev/sessions/bootstrap-20260407-235000-kst/TASKS.md",
+    "plan": ".dev/sessions/bootstrap-20260407-235000-kst/PLAN.md",
     "logs_dir": ".dev/sessions/bootstrap-20260407-235000-kst/logs"
   },
   "operator_sync": {
     "tasks": {
-      "source": ".dev/TASKS.md",
-      "resume_checkpoint": "All prompt-derived phase items for guidance installation and fallback are complete. Resume from optional cleanup, commit preparation, or the next user-directed scope.",
-      "total_tasks": 4,
-      "completed_tasks": 4,
+      "source": ".dev/PLAN.md",
+      "resume_checkpoint": "Prompt-driven PLAN bootstrap validation is complete. Resume from optional docs cleanup, commit preparation, or the next scope.",
+      "total_tasks": 5,
+      "completed_tasks": 5,
       "pending_tasks": 0,
       "all_completed": true,
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Install the guidance bundle into `~/.dormammu/agents` during the default install flow",
+          "text": "Phase 1. Replace legacy `TASKS.md` bootstrap output with `PLAN.md`",
           "completed": true
         },
         {
-          "text": "Phase 2. Add repeatable `--guidance-file` options so commands can use explicit rule or agent Markdown files",
+          "text": "Phase 2. Generate initial `DASHBOARD.md` and `PLAN.md` from the incoming user prompt",
           "completed": true
         },
         {
-          "text": "Phase 3. Fall back to repo guidance, installed guidance, or packaged guidance when explicit content is missing",
+          "text": "Phase 3. Persist `PROMPT.md` into the active session and mirror it under `~/.dormammu/sessions/<session id>/.dev/`",
           "completed": true
         },
         {
-          "text": "Phase 4. Update docs and validation for prompt embedding and guidance fallback",
+          "text": "Phase 4. Keep `resume` bound to the saved active session while remaining compatible with explicitly targeted sessions",
+          "completed": true
+        },
+        {
+          "text": "Phase 5. Validate the prompt-driven PLAN bootstrap flow with automated tests",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-10T00:50:00+09:00"
+      "synced_at": "2026-04-10T08:55:00+09:00"
     }
   },
-  "next_action": "Prepare an optional cleanup or commit for the validated guidance fallback work, or begin the next user-directed scope.",
+  "next_action": "Prepare an optional cleanup or commit for the validated prompt-driven PLAN bootstrap updates, or begin the next user-directed scope.",
   "blockers": [],
   "phase_history": [],
   "notes": [
     "Treat this file as machine truth and keep Markdown synchronized.",
     "DASHBOARD.md should show the actual progress of the active scope.",
-    "TASKS.md should list prompt-derived development items in `[ ] Phase N. <title>` format.",
+    "PLAN.md should list prompt-derived development items in `[ ] Phase N. <title>` format.",
     "The installed guidance bundle and packaged asset copy should stay synchronized.",
-    "Validation passed with `python3 -m unittest tests.test_config tests.test_state_repository tests.test_cli tests.test_install_script`.",
-    "A wheel built with `python3 -m pip wheel . --no-deps` contained the expected packaged guidance files."
+    "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
+    "Validation passed with `python3 -m unittest tests.test_tasks tests.test_state_repository tests.test_cli tests.test_loop_runner tests.test_supervisor tests.test_agent_cli_adapter tests.test_config`."
   ],
   "loop": {
     "status": "idle",

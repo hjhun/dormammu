@@ -23,7 +23,7 @@ Related skills:
 2. Define boundaries: modules, interfaces, data contracts, state files, failure handling, and test seams.
 3. Prefer designs that support resumability, idempotent reruns, and supervisor verification.
 4. Capture the chosen design in concise project documentation or artifact files.
-5. Reflect real design progress in `.dev/DASHBOARD.md` and mark finished prompt-derived design phase items in `.dev/TASKS.md`.
+5. Reflect real design progress in `.dev/DASHBOARD.md` and mark finished prompt-derived design phase items in `.dev/PLAN.md`.
 
 ## Design Rules
 
@@ -31,7 +31,7 @@ Related skills:
 - Keep abstractions minimal for the current milestone.
 - Document only the decisions that affect implementation, recovery, test authoring, testing, or deployment.
 - Call out assumptions, open questions, and explicit tradeoffs.
-- If a design choice changes an earlier plan, update the dashboard and tasks together.
+- If a design choice changes an earlier plan, update the dashboard and plan together.
 - Keep `DASHBOARD.md` focused on what design work is actively unblocking the scope right now.
 
 ## Expected Outputs

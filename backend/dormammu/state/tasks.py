@@ -15,10 +15,11 @@ class ParsedTasksDocument:
     current_workflow: OperatorTaskSyncState
 
 
-def parse_tasks_document(text: str, *, source: str = ".dev/TASKS.md") -> ParsedTasksDocument:
+def parse_tasks_document(text: str, *, source: str = ".dev/PLAN.md") -> ParsedTasksDocument:
     queue_sections = {
         "current workflow",
         "prompt-derived development queue",
+        "prompt-derived implementation plan",
     }
     current_section: str | None = None
     task_items: list[TaskSyncItem] = []

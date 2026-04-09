@@ -26,7 +26,7 @@ Related skills:
 5. For required system tests, use a real device or equivalent executable environment when available; otherwise record the gap and escalate instead of claiming success.
 6. Review the changed files for correctness, regressions, and missing edge cases.
 7. Record findings first, then summarize residual risks and verification gaps.
-8. Update `.dev/DASHBOARD.md` to reflect the real validation outcome and update `.dev/TASKS.md` when the prompt-derived phase checklist changes because validation is complete or blocked.
+8. Update `.dev/DASHBOARD.md` to reflect the real validation outcome and update `.dev/PLAN.md` when the prompt-derived phase checklist changes because validation is complete or blocked.
 
 ## Review Rules
 

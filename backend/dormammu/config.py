@@ -305,6 +305,7 @@ def _parse_cli_overrides(
 class AppConfig:
     app_name: str
     repo_root: Path
+    global_home_dir: Path
     base_dev_dir: Path
     dev_dir: Path
     logs_dir: Path
@@ -344,6 +345,7 @@ class AppConfig:
         return cls(
             app_name=str(values.get("DORMAMMU_APP_NAME", _config_value(config_payload, "app_name", "dormammu"))),
             repo_root=root,
+            global_home_dir=_global_home_dir(values),
             base_dev_dir=base_dev_dir,
             dev_dir=dev_dir,
             logs_dir=dev_dir / "logs",
@@ -375,6 +377,7 @@ class AppConfig:
         return {
             "app_name": self.app_name,
             "repo_root": str(self.repo_root),
+            "global_home_dir": str(self.global_home_dir),
             "base_dev_dir": str(self.base_dev_dir),
             "dev_dir": str(self.dev_dir),
             "logs_dir": str(self.logs_dir),

@@ -14,10 +14,11 @@ from dormammu.config import AppConfig
 from dormammu.guidance import resolve_guidance_files
 from dormammu.state.models import (
     default_dashboard_context,
+    default_plan_context,
     default_session_state,
-    default_tasks_context,
     default_workflow_state,
     discover_repo_guidance,
+    summarize_prompt_goal,
 )
 from dormammu.state.tasks import parse_tasks_document
 
@@ -39,19 +40,24 @@ def _deep_merge(defaults: dict[str, Any], current: Mapping[str, Any]) -> dict[st
 @dataclass(frozen=True, slots=True)
 class BootstrapArtifacts:
     dashboard: Path
-    tasks: Path
+    plan: Path
     session: Path
     workflow_state: Path
     logs_dir: Path
+    prompt: Path | None = None
 
     def to_dict(self) -> dict[str, str]:
-        return {
+        payload = {
             "dashboard": str(self.dashboard),
-            "tasks": str(self.tasks),
+            "plan": str(self.plan),
+            "tasks": str(self.plan),
             "session": str(self.session),
             "workflow_state": str(self.workflow_state),
             "logs_dir": str(self.logs_dir),
         }
+        if self.prompt is not None:
+            payload["prompt"] = str(self.prompt)
+        return payload
 
 
 class StateRepository:
@@ -59,7 +65,7 @@ class StateRepository:
 
     CORE_STATE_FILENAMES = (
         "DASHBOARD.md",
-        "TASKS.md",
+        "PLAN.md",
         "session.json",
         "workflow_state.json",
     )
@@ -91,16 +97,19 @@ class StateRepository:
         self,
         *,
         goal: str | None = None,
+        prompt_text: str | None = None,
         active_roadmap_phase_ids: Sequence[str] | None = None,
     ) -> BootstrapArtifacts:
         if self.session_id is None:
             return self._ensure_root_bootstrap_state(
                 goal=goal,
+                prompt_text=prompt_text,
                 active_roadmap_phase_ids=active_roadmap_phase_ids,
             )
 
         return self._ensure_session_bootstrap_state(
             goal=goal,
+            prompt_text=prompt_text,
             active_roadmap_phase_ids=active_roadmap_phase_ids,
         )
 
@@ -108,6 +117,7 @@ class StateRepository:
         self,
         *,
         goal: str | None = None,
+        prompt_text: str | None = None,
         active_roadmap_phase_ids: Sequence[str] | None = None,
     ) -> BootstrapArtifacts:
         timestamp = _iso_now()
@@ -123,6 +133,7 @@ class StateRepository:
         session_repository = self.for_session(active_session_id)
         artifacts = session_repository._ensure_session_bootstrap_state(
             goal=goal,
+            prompt_text=prompt_text,
             active_roadmap_phase_ids=active_roadmap_phase_ids,
         )
         if legacy_session_payload is not None:
@@ -140,6 +151,7 @@ class StateRepository:
         self,
         *,
         goal: str | None = None,
+        prompt_text: str | None = None,
         active_roadmap_phase_ids: Sequence[str] | None = None,
     ) -> BootstrapArtifacts:
         timestamp = _iso_now()
@@ -149,25 +161,35 @@ class StateRepository:
             rule_paths=resolve_guidance_files(self.config),
         )
         session_id = self._current_session_id(self.dev_dir / "session.json") or self.session_id
-        resolved_goal = goal or self._existing_goal() or "Bootstrap dormammu in the current repository."
+        resolved_goal = (
+            goal
+            or self._existing_goal()
+            or summarize_prompt_goal(
+                prompt_text,
+                fallback="Bootstrap dormammu in the current repository.",
+            )
+        )
 
         self.dev_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
 
         dashboard_path = self.state_file("DASHBOARD.md")
-        tasks_path = self.state_file("TASKS.md")
+        plan_path = self.state_file("PLAN.md")
         session_path = self.state_file("session.json")
         workflow_path = self.state_file("workflow_state.json")
         state_root = self._state_root_display()
+        self._ensure_plan_file(plan_path)
 
         dashboard_context = default_dashboard_context(
             goal=resolved_goal,
             roadmap_phase_ids=roadmap_phase_ids,
+            prompt_text=prompt_text,
             repo_guidance=guidance,
         )
-        tasks_context = default_tasks_context(
+        plan_context = default_plan_context(
             goal=resolved_goal,
+            prompt_text=prompt_text,
             repo_guidance=guidance,
         )
 
@@ -176,11 +198,7 @@ class StateRepository:
             "dashboard.md.tmpl",
             dashboard_context.render_values(),
         )
-        self._ensure_template_file(
-            tasks_path,
-            "tasks.md.tmpl",
-            tasks_context.render_values(),
-        )
+        self._ensure_template_file(plan_path, "plan.md.tmpl", plan_context.render_values())
 
         session_defaults = default_session_state(
             timestamp=timestamp,
@@ -188,6 +206,7 @@ class StateRepository:
             roadmap_phase_ids=roadmap_phase_ids,
             goal=resolved_goal,
             state_root=state_root,
+            prompt_text=prompt_text,
             repo_guidance=guidance,
             session_id=session_id,
         )
@@ -196,6 +215,7 @@ class StateRepository:
             roadmap_phase_ids=roadmap_phase_ids,
             goal=resolved_goal,
             state_root=state_root,
+            prompt_text=prompt_text,
             repo_guidance=guidance,
         )
 
@@ -210,7 +230,7 @@ class StateRepository:
         self._sync_operator_state(
             session_path=session_path,
             workflow_path=workflow_path,
-            tasks_path=tasks_path,
+            plan_path=plan_path,
             timestamp=timestamp,
         )
         self._sync_root_index(timestamp=timestamp)
@@ -220,6 +240,7 @@ class StateRepository:
         self,
         *,
         goal: str | None = None,
+        prompt_text: str | None = None,
         active_roadmap_phase_ids: Sequence[str] | None = None,
         session_id: str | None = None,
     ) -> BootstrapArtifacts:
@@ -239,6 +260,7 @@ class StateRepository:
         session_repository = self.for_session(next_session_id)
         session_repository._reset_bootstrap_state(
             goal=goal or "Bootstrap dormammu in the current repository.",
+            prompt_text=prompt_text,
             roadmap_phase_ids=roadmap_phase_ids,
             session_id=next_session_id,
             timestamp=timestamp,
@@ -254,7 +276,14 @@ class StateRepository:
         target_dir = self.sessions_dir / normalized_session_id
         if not target_dir.exists():
             raise RuntimeError(f"Saved session was not found: {normalized_session_id}")
-        for filename in self.CORE_STATE_FILENAMES:
+        self.for_session(normalized_session_id)._ensure_plan_file(target_dir / "PLAN.md")
+        required_files = (
+            "DASHBOARD.md",
+            "PLAN.md",
+            "session.json",
+            "workflow_state.json",
+        )
+        for filename in required_files:
             if not (target_dir / filename).exists():
                 raise RuntimeError(
                     f"Saved session {normalized_session_id} is missing required file: {filename}"
@@ -301,7 +330,7 @@ class StateRepository:
         self._sync_operator_state(
             session_path=self.state_file("session.json"),
             workflow_path=self.state_file("workflow_state.json"),
-            tasks_path=self.state_file("TASKS.md"),
+            plan_path=self._operator_plan_path(),
             timestamp=sync_time,
         )
 
@@ -428,6 +457,7 @@ class StateRepository:
         self,
         *,
         goal: str,
+        prompt_text: str | None,
         roadmap_phase_ids: Sequence[str],
         session_id: str,
         timestamp: str,
@@ -441,7 +471,7 @@ class StateRepository:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
 
         dashboard_path = self.state_file("DASHBOARD.md")
-        tasks_path = self.state_file("TASKS.md")
+        plan_path = self.state_file("PLAN.md")
         session_path = self.state_file("session.json")
         workflow_path = self.state_file("workflow_state.json")
         state_root = self._state_root_display()
@@ -449,10 +479,12 @@ class StateRepository:
         dashboard_context = default_dashboard_context(
             goal=goal,
             roadmap_phase_ids=roadmap_phase_ids,
+            prompt_text=prompt_text,
             repo_guidance=guidance,
         )
-        tasks_context = default_tasks_context(
+        plan_context = default_plan_context(
             goal=goal,
+            prompt_text=prompt_text,
             repo_guidance=guidance,
         )
         self._write_template_file(
@@ -460,11 +492,7 @@ class StateRepository:
             "dashboard.md.tmpl",
             dashboard_context.render_values(),
         )
-        self._write_template_file(
-            tasks_path,
-            "tasks.md.tmpl",
-            tasks_context.render_values(),
-        )
+        self._write_template_file(plan_path, "plan.md.tmpl", plan_context.render_values())
 
         session_defaults = default_session_state(
             timestamp=timestamp,
@@ -472,6 +500,7 @@ class StateRepository:
             roadmap_phase_ids=roadmap_phase_ids,
             goal=goal,
             state_root=state_root,
+            prompt_text=prompt_text,
             repo_guidance=guidance,
             session_id=session_id,
             run_type="session",
@@ -481,6 +510,7 @@ class StateRepository:
             roadmap_phase_ids=roadmap_phase_ids,
             goal=goal,
             state_root=state_root,
+            prompt_text=prompt_text,
             repo_guidance=guidance,
         )
         self._write_json(session_path, session_defaults)
@@ -494,7 +524,7 @@ class StateRepository:
         self._sync_operator_state(
             session_path=session_path,
             workflow_path=workflow_path,
-            tasks_path=tasks_path,
+            plan_path=plan_path,
             timestamp=timestamp,
         )
 
@@ -502,12 +532,16 @@ class StateRepository:
         return self._artifacts_for_dir(self.dev_dir)
 
     def _artifacts_for_dir(self, directory: Path) -> BootstrapArtifacts:
+        plan_path = directory / "PLAN.md"
+        if not plan_path.exists() and (directory / "TASKS.md").exists():
+            plan_path.write_text((directory / "TASKS.md").read_text(encoding="utf-8"), encoding="utf-8")
         return BootstrapArtifacts(
             dashboard=directory / "DASHBOARD.md",
-            tasks=directory / "TASKS.md",
+            plan=plan_path,
             session=directory / "session.json",
             workflow_state=directory / "workflow_state.json",
             logs_dir=directory / "logs",
+            prompt=(directory / "PROMPT.md") if (directory / "PROMPT.md").exists() else None,
         )
 
     def _ensure_template_file(
@@ -518,7 +552,7 @@ class StateRepository:
     ) -> None:
         if path.exists():
             return
-        template = Template((self.templates_dir / template_name).read_text(encoding="utf-8"))
+        template = Template(self._template_path(template_name).read_text(encoding="utf-8"))
         path.write_text(template.safe_substitute(values), encoding="utf-8")
 
     def _write_template_file(
@@ -527,7 +561,7 @@ class StateRepository:
         template_name: str,
         values: Mapping[str, str],
     ) -> None:
-        template = Template((self.templates_dir / template_name).read_text(encoding="utf-8"))
+        template = Template(self._template_path(template_name).read_text(encoding="utf-8"))
         path.write_text(template.safe_substitute(values), encoding="utf-8")
 
     def _ensure_json_file(self, path: Path, defaults: dict[str, Any]) -> None:
@@ -563,10 +597,13 @@ class StateRepository:
         *,
         session_path: Path,
         workflow_path: Path,
-        tasks_path: Path,
+        plan_path: Path,
         timestamp: str,
     ) -> None:
-        parsed_tasks = parse_tasks_document(tasks_path.read_text(encoding="utf-8"))
+        parsed_tasks = parse_tasks_document(
+            plan_path.read_text(encoding="utf-8"),
+            source=self._display_state_path(plan_path),
+        )
         task_sync = parsed_tasks.current_workflow.to_dict(synced_at=timestamp)
 
         session_state = self._read_json(session_path)
@@ -645,7 +682,7 @@ class StateRepository:
                 "session_path": f"{state_root}/session.json",
                 "workflow_path": f"{state_root}/workflow_state.json",
                 "dashboard_path": f"{state_root}/DASHBOARD.md",
-                "tasks_path": f"{state_root}/TASKS.md",
+                "plan_path": f"{state_root}/PLAN.md",
                 "logs_dir": f"{state_root}/logs",
                 "goal": session_state.get("bootstrap", {}).get("goal"),
                 "updated_at": session_state.get("updated_at"),
@@ -667,7 +704,7 @@ class StateRepository:
                 "session_machine_state": f"{state_root}/workflow_state.json",
                 "session_operator_state": [
                     f"{state_root}/DASHBOARD.md",
-                    f"{state_root}/TASKS.md",
+                    f"{state_root}/PLAN.md",
                 ],
             },
             "session_index": {
@@ -713,12 +750,19 @@ class StateRepository:
                 target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
             elif target.exists():
                 target.unlink()
+        legacy_tasks_path = source_dir / "TASKS.md"
+        target_plan_path = target_dir / "PLAN.md"
+        if legacy_tasks_path.exists() and not target_plan_path.exists():
+            target_plan_path.write_text(legacy_tasks_path.read_text(encoding="utf-8"), encoding="utf-8")
 
     def _state_root_display(self) -> str:
         return self.dev_dir.relative_to(self.config.repo_root).as_posix()
 
     def _has_legacy_root_snapshot(self) -> bool:
-        return any((self.base_dev_dir / filename).exists() for filename in self.CORE_STATE_FILENAMES)
+        return any(
+            (self.base_dev_dir / filename).exists()
+            for filename in (*self.CORE_STATE_FILENAMES, "TASKS.md")
+        )
 
     def _migrate_legacy_root_snapshot(self, *, timestamp: str | None = None) -> str | None:
         legacy_session_id = self._read_active_session_id()
@@ -762,3 +806,82 @@ class StateRepository:
             json.dumps(dict(payload), indent=2, ensure_ascii=True) + "\n",
             encoding="utf-8",
         )
+
+    def persist_input_prompt(
+        self,
+        *,
+        prompt_text: str,
+        source_path: Path | None = None,
+    ) -> Path:
+        if self.session_id is None:
+            return self._active_session_repository().persist_input_prompt(
+                prompt_text=prompt_text,
+                source_path=source_path,
+            )
+
+        prompt_path = self.state_file("PROMPT.md")
+        if source_path is not None and source_path.exists():
+            shutil.copyfile(source_path, prompt_path)
+        else:
+            prompt_path.write_text(prompt_text, encoding="utf-8")
+
+        mirror_path = self._global_prompt_mirror_path()
+        mirror_path.parent.mkdir(parents=True, exist_ok=True)
+        if source_path is not None and source_path.exists():
+            shutil.copyfile(source_path, mirror_path)
+        else:
+            mirror_path.write_text(prompt_text, encoding="utf-8")
+
+        timestamp = _iso_now()
+        session_state = self._read_json(self.state_file("session.json"))
+        session_state["updated_at"] = timestamp
+        session_state.setdefault("bootstrap", {})
+        session_state["bootstrap"]["prompt_path"] = self._display_state_path(prompt_path)
+        session_state["bootstrap"]["global_prompt_path"] = str(mirror_path)
+        self._write_json(self.state_file("session.json"), session_state)
+
+        workflow_state = self._read_json(self.state_file("workflow_state.json"))
+        workflow_state["updated_at"] = timestamp
+        workflow_state.setdefault("bootstrap", {})
+        workflow_state["bootstrap"]["prompt_path"] = self._display_state_path(prompt_path)
+        workflow_state["bootstrap"]["global_prompt_path"] = str(mirror_path)
+        workflow_state.setdefault("artifacts", {})
+        workflow_state["artifacts"]["prompt"] = self._display_state_path(prompt_path)
+        self._write_json(self.state_file("workflow_state.json"), workflow_state)
+        self._sync_root_index(timestamp=timestamp)
+        return prompt_path
+
+    def _ensure_plan_file(self, plan_path: Path) -> None:
+        if plan_path.exists():
+            return
+        legacy_tasks_path = self.state_file("TASKS.md")
+        if legacy_tasks_path.exists():
+            plan_path.write_text(legacy_tasks_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    def _operator_plan_path(self) -> Path:
+        plan_path = self.state_file("PLAN.md")
+        self._ensure_plan_file(plan_path)
+        if plan_path.exists():
+            return plan_path
+        return self.state_file("TASKS.md")
+
+    def _display_state_path(self, path: Path) -> str:
+        try:
+            return path.relative_to(self.config.repo_root).as_posix()
+        except ValueError:
+            return str(path)
+
+    def _template_path(self, template_name: str) -> Path:
+        candidate = self.templates_dir / template_name
+        if candidate.exists():
+            return candidate
+        if template_name == "plan.md.tmpl":
+            fallback = self.templates_dir / "tasks.md.tmpl"
+            if fallback.exists():
+                return fallback
+        raise FileNotFoundError(f"Template file was not found: {candidate}")
+
+    def _global_prompt_mirror_path(self) -> Path:
+        session_state = self._read_json(self.state_file("session.json"))
+        session_id = str(session_state.get("session_id") or self.session_id)
+        return self.config.global_home_dir / "sessions" / session_id / ".dev" / "PROMPT.md"

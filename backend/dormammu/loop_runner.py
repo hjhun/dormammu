@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
+from typing import TextIO
 from typing import Any, Sequence
 
 from dormammu.agent import AgentRunRequest, CliAdapter
@@ -111,11 +113,13 @@ class LoopRunner:
         repository: StateRepository | None = None,
         adapter: CliAdapter | None = None,
         supervisor: Supervisor | None = None,
+        progress_stream: TextIO | None = None,
     ) -> None:
         self.config = config
         self.repository = repository or StateRepository(config)
         self.adapter = adapter or CliAdapter(config)
         self.supervisor = supervisor or Supervisor(config, repository=self.repository)
+        self.progress_stream = progress_stream or sys.stderr
 
     def run(
         self,
@@ -162,9 +166,16 @@ class LoopRunner:
                 continuation_prompt_path=continuation_prompt_path,
                 next_action=f"Run supervised loop attempt {attempt_number} for the active request.",
             )
+            self._emit_loop_snapshot(
+                repository=runtime_repository,
+                request=request,
+                attempt_number=attempt_number,
+                retries_used=retries_used,
+            )
 
             def _handle_started(started: Any) -> None:
                 runtime_repository.record_current_run(started)
+                self._emit_command_started(started)
                 self._persist_loop_state(
                     status="running",
                     request=request,
@@ -221,6 +232,7 @@ class LoopRunner:
             )
             report_path = runtime_repository.write_supervisor_report(report.to_markdown())
             report = report.with_report_path(report_path)
+            self._emit_supervisor_result(report, attempt_number=attempt_number)
 
             if report.verdict == "approved":
                 self._persist_loop_state(
@@ -316,6 +328,68 @@ class LoopRunner:
             current_prompt = continuation.text
             attempt_number += 1
             retries_used += 1
+
+    def _emit_loop_snapshot(
+        self,
+        *,
+        repository: StateRepository,
+        request: LoopRunRequest,
+        attempt_number: int,
+        retries_used: int,
+    ) -> None:
+        lines = [
+            "=== dormammu loop attempt ===",
+            f"attempt: {attempt_number}",
+            f"retries used: {retries_used}/{request.max_retries if request.max_retries != -1 else 'infinite'}",
+            f"target project: {request.repo_root.resolve()}",
+            f"session: {repository.session_id or 'active-root'}",
+            f"cli: {request.cli_path}",
+            f"workdir: {(request.workdir or request.repo_root).resolve()}",
+        ]
+        self._write_progress(lines)
+        self._emit_state_snapshot(repository, "DASHBOARD.md")
+        self._emit_state_snapshot(repository, "PLAN.md")
+
+    def _emit_command_started(self, started: Any) -> None:
+        self._write_progress(
+            [
+                "=== dormammu command ===",
+                f"run id: {started.run_id}",
+                f"cli path: {started.cli_path}",
+                f"workdir: {started.workdir}",
+                f"prompt mode: {started.prompt_mode}",
+                f"command: {' '.join(started.command)}",
+                f"stdout log: {started.stdout_path}",
+                f"stderr log: {started.stderr_path}",
+            ]
+        )
+
+    def _emit_supervisor_result(self, report: SupervisorReport, *, attempt_number: int) -> None:
+        self._write_progress(
+            [
+                "=== dormammu supervisor ===",
+                f"attempt: {attempt_number}",
+                f"verdict: {report.verdict}",
+                f"escalation: {report.escalation}",
+                f"summary: {report.summary}",
+                f"report: {report.report_path or '.dev/supervisor_report.md'}",
+            ]
+        )
+
+    def _emit_state_snapshot(self, repository: StateRepository, name: str) -> None:
+        path = repository.state_file(name)
+        if not path.exists():
+            self._write_progress([f"=== {name} missing ===", str(path)])
+            return
+        content = path.read_text(encoding="utf-8").rstrip()
+        self._write_progress([f"=== {name} ===", content if content else "(empty)"])
+
+    def _write_progress(self, lines: Sequence[str]) -> None:
+        if self.progress_stream is None:
+            return
+        for line in lines:
+            print(line, file=self.progress_stream)
+        self.progress_stream.flush()
 
     def _should_retry(self, max_retries: int, retries_used: int) -> bool:
         if max_retries == -1:

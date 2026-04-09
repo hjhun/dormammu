@@ -2,41 +2,45 @@
 
 ## Actual Progress
 
-- Goal: Install the distributed `agents/` bundle into `~/.dormammu/agents`,
-  let runs fall back to it, and add command options for custom guidance files.
-- Prompt-driven scope: Add guidance-file command options, embed guidance into
-  run prompts, and use the installed or packaged bundle when repo guidance is
-  absent.
+- Goal: Make `dormammu` bootstrap new runs from `PROMPT.md`, generate
+  `DASHBOARD.md` and `PLAN.md`, persist a prompt copy per session, and resume
+  the previous session when only `resume` is provided.
+- Prompt-driven scope: Replace legacy `TASKS.md` planning with `PLAN.md`,
+  persist `PROMPT.md` into session state, mirror the prompt under
+  `~/.dormammu/sessions/<session id>/.dev/`, and keep `resume` aligned with the
+  saved active session.
 - Active roadmap focus:
+- Phase 4. Supervisor Validation, Continuation Loop, and Resume
 - Phase 7. Hardening, Multi-Session, and Productization
 - Current workflow phase: test_and_review
 - Last completed workflow phase: build_and_deploy
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: Validation is complete for guidance installation and fallback.
-  Resume from optional cleanup, commit preparation, or the next scope.
+- Resume point: Validation passed for the prompt-driven PLAN bootstrap slice.
+  Resume from docs cleanup, commit preparation, or the next user-directed scope.
 
 ## In Progress
 
-- The install flow now copies packaged guidance into `~/.dormammu/agents`.
-- CLI commands can accept repeatable `--guidance-file` paths to use explicit
-  rule or agent Markdown files.
-- `run` and `run-once` now embed resolved guidance content into the prompt sent
-  to the external coding-agent CLI.
+- `run` and `run-once` now derive initial bootstrap state from the incoming
+  prompt, create `PLAN.md`, and persist `PROMPT.md` into the session state.
+- Session prompt copies are mirrored under
+  `~/.dormammu/sessions/<session id>/.dev/PROMPT.md`.
+- Loop progress snapshots now show `PLAN.md` instead of `TASKS.md`, while
+  legacy `TASKS.md` content is still migrated forward for compatibility.
 
 ## Progress Notes
 
-- Guidance resolution prefers explicit `--guidance-file` inputs, then repo
-  guidance, then `~/.dormammu/agents`, then packaged assets.
-- The installed and packaged guidance paths are both covered by tests.
-- Validation passed with `python3 -m unittest tests.test_config
-  tests.test_state_repository tests.test_cli tests.test_install_script`.
-- A wheel built with `python3 -m pip wheel . --no-deps` contains the expected
-  packaged guidance files.
+- State schema advanced to version 5 so the operator-facing plan source now
+  points at `PLAN.md`.
+- The bootstrap repository layer can upgrade legacy `TASKS.md` snapshots into
+  `PLAN.md` without losing prior checklist state.
+- Validation passed with `python3 -m unittest tests.test_tasks
+  tests.test_state_repository tests.test_cli tests.test_loop_runner
+  tests.test_supervisor tests.test_agent_cli_adapter tests.test_config`.
 
 ## Risks And Watchpoints
 
-- Custom install roots still need explicit `DORMAMMU_AGENTS_DIR` if the runtime
-  guidance directory should differ from `~/.dormammu/agents`.
-- The machine workflow state and operator-facing Markdown must stay aligned
-  while the guidance fallback behavior evolves.
+- Older sessions may still contain legacy `TASKS.md`; the runtime now migrates
+  them, but docs and guidance need to stay consistently on `PLAN.md`.
+- JSON consumers that read the bootstrap artifacts may still rely on the legacy
+  `tasks` key, so compatibility aliases remain in place for now.

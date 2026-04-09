@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any, Sequence
 
 
-STATE_SCHEMA_VERSION = 4
+STATE_SCHEMA_VERSION = 5
 
 PHASE_LABELS = {
     "phase_1": "Phase 1. Core Foundation and Repository Bootstrap",
@@ -115,6 +116,55 @@ def _guidance_review_task(repo_guidance: RepoGuidance | None) -> str:
     return "Review repository guidance from " + ", ".join(targets)
 
 
+def summarize_prompt_goal(prompt_text: str | None, *, fallback: str) -> str:
+    if prompt_text is None:
+        return fallback
+
+    for raw_line in prompt_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped == "```":
+            continue
+        normalized = re.sub(r"^#+\s*", "", stripped)
+        normalized = re.sub(r"^[-*+]\s+", "", normalized)
+        normalized = re.sub(r"^\d+[.)]\s+", "", normalized)
+        normalized = " ".join(normalized.split())
+        if not normalized:
+            continue
+        if len(normalized) > 120:
+            return normalized[:117].rstrip() + "..."
+        return normalized
+    return fallback
+
+
+def _prompt_requirement_lines(prompt_text: str | None) -> list[str]:
+    if prompt_text is None:
+        return []
+
+    items: list[str] = []
+    seen: set[str] = set()
+    for raw_line in prompt_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped == "```":
+            continue
+
+        normalized = re.sub(r"^#+\s*", "", stripped)
+        normalized = re.sub(r"^[-*+]\s+", "", normalized)
+        normalized = re.sub(r"^\d+[.)]\s+", "", normalized)
+        normalized = " ".join(normalized.split())
+        normalized = normalized.strip(" -")
+        if len(normalized) < 8:
+            continue
+
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(normalized.rstrip("."))
+        if len(items) == 4:
+            break
+    return items
+
+
 @dataclass(frozen=True, slots=True)
 class DashboardTemplateContext:
     goal: str
@@ -146,7 +196,7 @@ class DashboardTemplateContext:
 
 
 @dataclass(frozen=True, slots=True)
-class TasksTemplateContext:
+class PlanTemplateContext:
     task_items: Sequence[str]
     resume_checkpoint: str
 
@@ -213,31 +263,33 @@ def default_dashboard_context(
     *,
     goal: str,
     roadmap_phase_ids: Sequence[str],
+    prompt_text: str | None = None,
     repo_guidance: RepoGuidance | None = None,
 ) -> DashboardTemplateContext:
     roadmap_focus = _active_roadmap_focus(roadmap_phase_ids)
     guidance_notes = _guidance_note_lines(repo_guidance)
+    prompt_summary = summarize_prompt_goal(prompt_text, fallback=goal)
     return DashboardTemplateContext(
         goal=goal,
         active_delivery_slice=(
-            f"{roadmap_focus[0]} bootstrap and supervised planning setup"
+            f"{roadmap_focus[0]} prompt-driven setup for {prompt_summary}"
             if roadmap_focus
-            else "Bootstrap and supervised planning setup"
+            else f"Prompt-driven setup for {prompt_summary}"
         ),
         active_phase="plan",
         last_completed_phase="none",
         supervisor_verdict="approved",
         escalation_status="approved",
-        resume_point="Return to Plan if setup is interrupted",
+        resume_point="Return to Plan and resume from the first unchecked PLAN item if setup is interrupted",
         next_action=[
-            f"Confirm the goal and success criteria for {goal}.",
+            f"Review the prompt-derived goal and success criteria for {goal}.",
             _guidance_review_task(repo_guidance),
-            "Proceed into supervised planning and design for the current slice.",
+            "Generate DASHBOARD.md and PLAN.md from the active prompt before implementation continues.",
         ],
         notes=[
             "This file should show the actual progress of the active scope.",
             "workflow_state.json remains machine truth.",
-            "TASKS.md should list prompt-derived development items in phase order.",
+            "PLAN.md should list prompt-derived development items in phase order.",
             *guidance_notes,
         ],
         active_roadmap_focus=roadmap_focus,
@@ -249,20 +301,37 @@ def default_dashboard_context(
     )
 
 
-def default_tasks_context(
+def default_plan_context(
     *,
     goal: str,
+    prompt_text: str | None = None,
     repo_guidance: RepoGuidance | None = None,
-) -> TasksTemplateContext:
-    return TasksTemplateContext(
-        task_items=[
+) -> PlanTemplateContext:
+    prompt_requirements = _prompt_requirement_lines(prompt_text)
+    if prompt_requirements:
+        task_items = [
+            f"Phase {index}. {item}"
+            for index, item in enumerate(prompt_requirements, start=1)
+        ]
+    else:
+        task_items = [
             f"Phase 1. Confirm the goal and success criteria for {goal}",
             f"Phase 2. {_guidance_review_task(repo_guidance)}",
             f"Phase 3. Plan the smallest resumable slice for {goal}",
-            "Phase 4. Validate the slice and keep `.dev` state synchronized before completion",
-        ],
+        ]
+
+    if not any(
+        any(keyword in item.casefold() for keyword in ("validate", "test", "review", "sync"))
+        for item in task_items
+    ):
+        task_items.append(
+            f"Phase {len(task_items) + 1}. Validate the slice and keep `.dev` state synchronized before completion"
+        )
+
+    return PlanTemplateContext(
+        task_items=task_items,
         resume_checkpoint=(
-            "Resume from the first unchecked task unless validation requires "
+            "Resume from the first unchecked PLAN item unless validation requires "
             "a return to earlier planning work."
         ),
     )
@@ -275,6 +344,7 @@ def default_session_state(
     roadmap_phase_ids: Sequence[str],
     goal: str,
     state_root: str,
+    prompt_text: str | None = None,
     repo_guidance: RepoGuidance | None = None,
     session_id: str | None = None,
     run_type: str = "bootstrap",
@@ -305,7 +375,7 @@ def default_session_state(
             ),
         },
         "task_sync": OperatorTaskSyncState(
-            source=_state_path(state_root, "TASKS.md"),
+            source=_state_path(state_root, "PLAN.md"),
             resume_checkpoint=None,
             items=(),
         ).to_dict(synced_at=timestamp),
@@ -331,6 +401,7 @@ def default_workflow_state(
     roadmap_phase_ids: Sequence[str],
     goal: str,
     state_root: str,
+    prompt_text: str | None = None,
     repo_guidance: RepoGuidance | None = None,
 ) -> dict[str, Any]:
     source_goal_files = list(
@@ -357,17 +428,17 @@ def default_workflow_state(
             "machine_state": _state_path(state_root, "workflow_state.json"),
             "operator_state": [
                 _state_path(state_root, "DASHBOARD.md"),
-                _state_path(state_root, "TASKS.md"),
+                _state_path(state_root, "PLAN.md"),
             ],
         },
         "state_schema": {
             "dashboard_template": "templates/dev/dashboard.md.tmpl",
-            "tasks_template": "templates/dev/tasks.md.tmpl",
+            "plan_template": "templates/dev/plan.md.tmpl",
             "task_markers": {
                 "pending": "[ ]",
                 "completed": "[O]",
             },
-            "task_sync_source": _state_path(state_root, "TASKS.md"),
+            "task_sync_source": _state_path(state_root, "PLAN.md"),
         },
         "workflow": {
             "active_phase": "plan",
@@ -417,12 +488,12 @@ def default_workflow_state(
         },
         "artifacts": {
             "dashboard": _state_path(state_root, "DASHBOARD.md"),
-            "tasks": _state_path(state_root, "TASKS.md"),
+            "plan": _state_path(state_root, "PLAN.md"),
             "logs_dir": _state_path(state_root, "logs"),
         },
         "operator_sync": {
             "tasks": OperatorTaskSyncState(
-                source=_state_path(state_root, "TASKS.md"),
+                source=_state_path(state_root, "PLAN.md"),
                 resume_checkpoint=None,
                 items=(),
             ).to_dict(synced_at=timestamp),

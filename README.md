@@ -19,8 +19,9 @@ Start with the full project guide at [docs/GUIDE.md](docs/GUIDE.md).
   written to `.dev/` so interrupted runs can continue instead of restarting.
 - Supervisor-driven validation: required paths, worktree changes, and follow-up
   continuation prompts are handled as part of the loop.
-- Operator-visible state: Markdown files remain readable for humans while JSON
-  state stays available for tooling and automation.
+- Operator-visible state: `DASHBOARD.md`, `PLAN.md`, and `PROMPT.md` remain
+  readable for humans while JSON state stays available for tooling and
+  automation.
 - Fallback agent CLIs: configure failover when the primary coding agent hits a
   token or quota wall.
 
@@ -53,7 +54,7 @@ dormammu doctor --repo-root .
 dormammu init-state
 dormammu run \
   --repo-root . \
-  --prompt "Inspect the repo and implement the requested change." \
+  --prompt-file PROMPT.md \
   --required-path README.md
 ```
 

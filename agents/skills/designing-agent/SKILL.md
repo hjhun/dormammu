@@ -23,7 +23,7 @@ Related skills:
 2. Define boundaries: modules, interfaces, data contracts, state files, failure handling, and test seams.
 3. Prefer designs that support resumability, idempotent reruns, and supervisor verification.
 4. Capture the chosen design in concise project documentation or artifact files.
-5. Reflect real design progress in `.dev/DASHBOARD.md` and mark finished prompt-derived design phase items in `.dev/TASKS.md`.
+5. Reflect real design progress in `.dev/DASHBOARD.md` and mark finished prompt-derived design phase items in `.dev/PLAN.md`.
 
 ## Design Rules
 

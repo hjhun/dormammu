@@ -8,6 +8,7 @@ import sys
 from typing import Sequence
 
 from dormammu.agent import AgentRunRequest, CliAdapter
+from dormammu.agent.models import AgentRunStarted
 from dormammu.config import AppConfig
 from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt, resolve_guidance_files
@@ -399,12 +400,13 @@ def _resolve_bootstrap_inputs(
     goal: str | None,
     roadmap_phases: Sequence[str] | None,
     default_phase: str,
+    prompt_text_provided: bool = False,
 ) -> tuple[str | None, Sequence[str] | None]:
     session_exists = repository.state_file("workflow_state.json").exists()
     resolved_goal = goal
     resolved_roadmap_phases = list(roadmap_phases) if roadmap_phases else None
 
-    if not session_exists and sys.stdin.isatty():
+    if not session_exists and sys.stdin.isatty() and not prompt_text_provided:
         if resolved_goal is None:
             resolved_goal = _prompt_with_default(
                 "Initial workflow goal",
@@ -499,11 +501,11 @@ def _handle_restore_session(args: argparse.Namespace) -> int:
     return 0
 
 
-def _read_prompt_text(args: argparse.Namespace) -> str:
+def _read_prompt_input(args: argparse.Namespace) -> tuple[str, Path | None]:
     if args.prompt is not None:
-        return args.prompt
+        return args.prompt, None
     if args.prompt_file is not None:
-        return args.prompt_file.read_text(encoding="utf-8")
+        return args.prompt_file.read_text(encoding="utf-8"), args.prompt_file
     raise ValueError("Either --prompt or --prompt-file is required.")
 
 
@@ -512,6 +514,23 @@ def _display_cli_path(cli_path: Path) -> str:
     if candidate.is_absolute() or "/" in str(cli_path):
         return os.path.abspath(str(candidate))
     return str(candidate)
+
+
+def _emit_runtime_banner(
+    *,
+    command_name: str,
+    repo_root: Path,
+    repository: StateRepository,
+    cli_path: Path,
+    workdir: Path | None,
+) -> None:
+    print("=== dormammu run ===", file=sys.stderr)
+    print(f"command: {command_name}", file=sys.stderr)
+    print(f"target project: {repo_root.resolve()}", file=sys.stderr)
+    print(f"session: {repository.session_id or 'active-root'}", file=sys.stderr)
+    print(f"cli: {_display_cli_path(cli_path)}", file=sys.stderr)
+    print(f"workdir: {(workdir or repo_root).resolve()}", file=sys.stderr)
+    sys.stderr.flush()
 
 
 def _resolve_agent_cli(config: AppConfig, cli_path: Path | None) -> Path:
@@ -557,27 +576,41 @@ def _handle_run_once(args: argparse.Namespace) -> int:
     )
     config = _with_guidance_overrides(config, args.guidance_files)
     repository = StateRepository(config, session_id=repository.session_id)
+    prompt_text, prompt_source_path = _read_prompt_input(args)
     goal, roadmap_phases = _resolve_bootstrap_inputs(
         repository=repository,
         goal=args.goal,
         roadmap_phases=args.roadmap_phases,
         default_phase="phase_3",
+        prompt_text_provided=True,
     )
     repository.ensure_bootstrap_state(
         goal=goal,
+        prompt_text=prompt_text,
         active_roadmap_phase_ids=roadmap_phases or ["phase_3"],
     )
     config, repository = _resolve_runtime_session_scope(config, repository)
+    repository.persist_input_prompt(
+        prompt_text=prompt_text,
+        source_path=prompt_source_path,
+    )
     try:
         agent_cli = _resolve_agent_cli(config, args.agent_cli)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    _emit_runtime_banner(
+        command_name="run-once",
+        repo_root=config.repo_root,
+        repository=repository,
+        cli_path=agent_cli,
+        workdir=args.workdir,
+    )
 
     request = AgentRunRequest(
         cli_path=agent_cli,
         prompt_text=build_guidance_prompt(
-            _read_prompt_text(args),
+            prompt_text,
             guidance_files=config.guidance_files,
             repo_root=config.repo_root,
         ),
@@ -590,7 +623,17 @@ def _handle_run_once(args: argparse.Namespace) -> int:
     )
 
     try:
-        result = CliAdapter(config).run_once(request, on_started=repository.record_current_run)
+        def _handle_started(started: AgentRunStarted) -> None:
+            repository.record_current_run(started)
+            print("=== dormammu command ===", file=sys.stderr)
+            print(f"run id: {started.run_id}", file=sys.stderr)
+            print(f"cli path: {started.cli_path}", file=sys.stderr)
+            print(f"workdir: {started.workdir}", file=sys.stderr)
+            print(f"prompt mode: {started.prompt_mode}", file=sys.stderr)
+            print(f"command: {' '.join(started.command)}", file=sys.stderr)
+            sys.stderr.flush()
+
+        result = CliAdapter(config).run_once(request, on_started=_handle_started)
     except (RuntimeError, ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -608,27 +651,41 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
     )
     config = _with_guidance_overrides(config, args.guidance_files)
     repository = StateRepository(config, session_id=repository.session_id)
+    prompt_text, prompt_source_path = _read_prompt_input(args)
     goal, roadmap_phases = _resolve_bootstrap_inputs(
         repository=repository,
         goal=args.goal,
         roadmap_phases=args.roadmap_phases,
         default_phase="phase_4",
+        prompt_text_provided=True,
     )
     repository.ensure_bootstrap_state(
         goal=goal,
+        prompt_text=prompt_text,
         active_roadmap_phase_ids=roadmap_phases or ["phase_4"],
     )
     config, repository = _resolve_runtime_session_scope(config, repository)
+    repository.persist_input_prompt(
+        prompt_text=prompt_text,
+        source_path=prompt_source_path,
+    )
     try:
         agent_cli = _resolve_agent_cli(config, args.agent_cli)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    _emit_runtime_banner(
+        command_name="run",
+        repo_root=config.repo_root,
+        repository=repository,
+        cli_path=agent_cli,
+        workdir=args.workdir,
+    )
 
     request = LoopRunRequest(
         cli_path=agent_cli,
         prompt_text=build_guidance_prompt(
-            _read_prompt_text(args),
+            prompt_text,
             guidance_files=config.guidance_files,
             repo_root=config.repo_root,
         ),
@@ -664,6 +721,17 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
     repository = StateRepository(config, session_id=repository.session_id)
     repository.ensure_bootstrap_state()
     config, repository = _resolve_runtime_session_scope(config, repository)
+
+    loop_state = repository.read_workflow_state().get("loop", {})
+    cli_path_text = loop_state.get("request", {}).get("cli_path")
+    if isinstance(cli_path_text, str) and cli_path_text.strip():
+        _emit_runtime_banner(
+            command_name="resume",
+            repo_root=config.repo_root,
+            repository=repository,
+            cli_path=Path(cli_path_text),
+            workdir=None,
+        )
 
     try:
         result = RecoveryManager(config, repository=repository).resume(

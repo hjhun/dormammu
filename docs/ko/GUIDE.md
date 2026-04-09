@@ -77,7 +77,7 @@ dormammu run \
 중요한 파일은 다음과 같습니다.
 
 - `.dev/DASHBOARD.md`: 지금 실제로 진행 중인 내용을 보여주는 운영 대시보드
-- `.dev/TASKS.md`: PROMPT 기반으로 진행해야 할 개발 항목을 나열한 체크리스트
+- `.dev/PLAN.md`: PROMPT 기반으로 진행해야 할 개발 항목을 나열한 체크리스트
 - `.dev/workflow_state.json`
 - `.dev/session.json`
 - `.dev/logs/`

@@ -10,7 +10,7 @@ Use this skill as the top-level controller for the project. It decides which wor
 
 - The user goal
 - [PROJECT.md](../../../PROJECT.md)
-- Existing `.dev/DASHBOARD.md`, `.dev/TASKS.md`, and `.dev/workflow_state.json`
+- Existing `.dev/DASHBOARD.md`, `.dev/PLAN.md`, and `.dev/workflow_state.json`
 - Current repository and git state
 
 ## Orchestration Order
@@ -47,7 +47,7 @@ Re-enter earlier phases whenever later work exposes missing design, failed valid
 
 - Treat `.dev/workflow_state.json` as machine truth and Markdown as operator-facing state.
 - Expect `.dev/DASHBOARD.md` to describe actual in-progress work for the active scope.
-- Expect `.dev/TASKS.md` to list prompt-derived phase items in ordered checklist form.
+- Expect `.dev/PLAN.md` to list prompt-derived phase items in ordered checklist form.
 - Prefer deterministic checks before semantic judgment.
 - Do not advance phases on optimism alone.
 - If state is inconsistent, record the mismatch and either repair it or require manual review.

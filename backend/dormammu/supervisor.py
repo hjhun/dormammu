@@ -169,9 +169,11 @@ class Supervisor:
         checks: list[SupervisorCheck] = []
 
         state_root = Path(str(session_state.get("bootstrap", {}).get("state_root", ".dev")))
+        plan_path = self.config.repo_root / state_root / "PLAN.md"
+        legacy_tasks_path = self.config.repo_root / state_root / "TASKS.md"
         dev_paths = [
             self.config.repo_root / state_root / "DASHBOARD.md",
-            self.config.repo_root / state_root / "TASKS.md",
+            plan_path if plan_path.exists() or not legacy_tasks_path.exists() else legacy_tasks_path,
             self.config.repo_root / state_root / "session.json",
             self.config.repo_root / state_root / "workflow_state.json",
         ]
