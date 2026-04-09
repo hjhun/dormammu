@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -9,7 +8,6 @@ import sys
 from typing import Sequence
 
 from dormammu.agent import AgentRunRequest, CliAdapter
-from dormammu.app import create_app
 from dormammu.config import AppConfig
 from dormammu.doctor import run_doctor
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
@@ -280,38 +278,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include the raw CLI help text in the JSON output.",
     )
     inspect_cli.set_defaults(handler=_handle_inspect_cli)
-
-    serve = subparsers.add_parser(
-        "ui",
-        aliases=["serve"],
-        help="Start the local backend app and UI.",
-    )
-    serve.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
-    serve.add_argument(
-        "--session-id",
-        default=None,
-        help="Optional saved session id to serve instead of the active root `.dev` view.",
-    )
-    serve.add_argument(
-        "--goal",
-        default=None,
-        help="Bootstrap goal used when the target session has no saved state yet.",
-    )
-    serve.add_argument(
-        "--roadmap-phase",
-        dest="roadmap_phases",
-        action="append",
-        default=None,
-        help="Bootstrap roadmap phase id when the target session has no saved state yet.",
-    )
-    serve.add_argument("--host", default=None, help="Host interface to bind.")
-    serve.add_argument("--port", type=int, default=None, help="Port to bind.")
-    serve.add_argument(
-        "--skip-init-state",
-        action="store_true",
-        help="Skip the startup bootstrap state initialization.",
-    )
-    serve.set_defaults(handler=_handle_serve)
 
     doctor = subparsers.add_parser(
         "doctor",
@@ -630,49 +596,6 @@ def _handle_inspect_cli(args: argparse.Namespace) -> int:
         "capabilities": capabilities.to_dict(include_help_text=args.include_help_text),
     }
     print(json.dumps(payload, indent=2, ensure_ascii=True))
-    return 0
-
-
-def _handle_serve(args: argparse.Namespace) -> int:
-    try:
-        import uvicorn
-    except ModuleNotFoundError:
-        print(
-            "uvicorn is not installed. Install the project dependencies before "
-            "starting the backend app.",
-            file=sys.stderr,
-        )
-        return 2
-
-    config, repository = _load_state_scope(
-        args.repo_root,
-        session_id=args.session_id,
-        prefer_active_session=True,
-    )
-    if args.host is not None:
-        config = replace(config, host=args.host)
-    if args.port is not None:
-        config = replace(config, port=args.port)
-
-    if not args.skip_init_state:
-        goal, roadmap_phases = _resolve_bootstrap_inputs(
-            repository=repository,
-            goal=args.goal,
-            roadmap_phases=args.roadmap_phases,
-            default_phase="phase_5",
-        )
-        repository.ensure_bootstrap_state(
-            goal=goal,
-            active_roadmap_phase_ids=roadmap_phases,
-        )
-
-    try:
-        app = create_app(config)
-    except RuntimeError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-
-    uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)
     return 0
 
 

@@ -561,19 +561,16 @@ class CliTests(unittest.TestCase):
             self.assertTrue(capabilities["auto_approve"]["supported"])
             self.assertEqual(capabilities["auto_approve"]["candidates"][0]["value"], "--yes")
 
-    def test_phase_6_aliases_parse_with_existing_handlers(self) -> None:
+    def test_loop_aliases_parse_with_existing_handlers(self) -> None:
         parser = build_parser()
 
         run_args = parser.parse_args(["run-loop", "--agent-cli", "tool", "--prompt", "hi"])
         resume_args = parser.parse_args(["resume-loop"])
-        ui_args = parser.parse_args(["serve"])
 
         self.assertEqual(run_args.command, "run-loop")
         self.assertEqual(resume_args.command, "resume-loop")
-        self.assertEqual(ui_args.command, "serve")
         self.assertIsNotNone(run_args.handler)
         self.assertIsNotNone(resume_args.handler)
-        self.assertIsNotNone(ui_args.handler)
 
     def test_doctor_reports_ready_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -609,7 +606,10 @@ class CliTests(unittest.TestCase):
             self._seed_repo(root)
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict("os.environ", {"HOME": str(root / "home")}, clear=False),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "doctor",

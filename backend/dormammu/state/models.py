@@ -12,7 +12,7 @@ PHASE_LABELS = {
     "phase_2": "Phase 2. `.dev` State Model and Template Generation",
     "phase_3": "Phase 3. Agent CLI Adapter and Single-Run Execution",
     "phase_4": "Phase 4. Supervisor Validation, Continuation Loop, and Resume",
-    "phase_5": "Phase 5. Local Web UI and Progress Visibility",
+    "phase_5": "Phase 5. CLI Operator Experience and Progress Visibility",
     "phase_6": "Phase 6. Installer, Commands, and Environment Diagnostics",
     "phase_7": "Phase 7. Hardening, Multi-Session, and Productization",
 }
@@ -373,8 +373,8 @@ def default_workflow_state(
                 "phase_2",
                 "phase_3",
                 "phase_4",
-                "phase_6",
                 "phase_5",
+                "phase_6",
                 "phase_7",
             ],
         },

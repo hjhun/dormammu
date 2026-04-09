@@ -22,5 +22,6 @@ Installed dormammu into ${VENV_DIR}.
 
 Next steps:
   ${VENV_DIR}/bin/dormammu doctor --repo-root "${ROOT_DIR}" --agent-cli /path/to/agent-cli
-  ${VENV_DIR}/bin/dormammu ui --repo-root "${ROOT_DIR}"
+  ${VENV_DIR}/bin/dormammu init-state --repo-root "${ROOT_DIR}"
+  ${VENV_DIR}/bin/dormammu run --repo-root "${ROOT_DIR}" --prompt "Inspect the repo and implement the requested change."
 EOF

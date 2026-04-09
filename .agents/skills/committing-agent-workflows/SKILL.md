@@ -23,6 +23,8 @@ Use this skill only after the active scope has been implemented and validated or
    - keep a subject line and a separate body
    - keep every line at 80 characters or fewer
    - use real line breaks, not escaped newline sequences such as `\n`
+   - check the exact final message text line by line before `git commit`
+   - if any line is 81+ characters, rewrite and re-check before committing
 6. Record the commit hash or pending-commit status in `.dev/DASHBOARD.md`.
 
 ## Commit Rules
@@ -33,6 +35,8 @@ Use this skill only after the active scope has been implemented and validated or
 - If the worktree is mixed, ask for scope clarification or stage explicit paths only.
 - Before finalizing a commit, inspect the final message text as it will be
   stored by Git and wrap lines manually when needed.
+- Treat the 80-character limit as a hard requirement for the subject and every
+  body line with no exceptions.
 
 ## Expected Outputs
 

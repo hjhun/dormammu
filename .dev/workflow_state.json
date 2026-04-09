@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "state_schema_version": 3,
+  "initialized_at": "2026-04-08T14:41:11+09:00",
+  "updated_at": "2026-04-09T00:50:00+09:00",
+  "mode": "supervised",
+  "source_of_truth": {
+    "goal": [
+      ".dev/PROJECT.md",
+      ".dev/ROADMAP.md",
+      "AGENTS.md"
+    ],
+    "machine_state": ".dev/sessions/bootstrap-20260407-235000-kst/workflow_state.json",
+    "operator_state": [
+      ".dev/sessions/bootstrap-20260407-235000-kst/DASHBOARD.md",
+      ".dev/sessions/bootstrap-20260407-235000-kst/TASKS.md"
+    ]
+  },
+  "state_schema": {
+    "dashboard_template": "templates/dev/dashboard.md.tmpl",
+    "tasks_template": "templates/dev/tasks.md.tmpl",
+    "task_markers": {
+      "pending": "[ ]",
+      "completed": "[O]"
+    },
+    "task_sync_source": ".dev/sessions/bootstrap-20260407-235000-kst/TASKS.md"
+  },
+  "workflow": {
+    "active_phase": "commit",
+    "last_completed_phase": "commit",
+    "allowed_sequence": [
+      "plan",
+      "design",
+      "develop",
+      "build_and_deploy",
+      "test_and_review",
+      "commit"
+    ],
+    "resume_from_phase": "commit"
+  },
+  "roadmap": {
+    "active_phase_ids": [
+      "phase_5"
+    ],
+    "priority_order": [
+      "phase_1",
+      "phase_2",
+      "phase_3",
+      "phase_4",
+      "phase_5",
+      "phase_6",
+      "phase_7"
+    ]
+  },
+  "supervisor": {
+    "skill": "supervising-agent-workflows",
+    "verdict": "approved",
+    "escalation": "approved",
+    "reason": "CLI-only cleanup was planned, designed, validated, and committed."
+  },
+  "bootstrap": {
+    "goal": "Remove the Web UI and keep dormammu operating as a CLI-only tool.",
+    "captured_at": "2026-04-09T00:40:00+09:00",
+    "state_root": ".dev/sessions/bootstrap-20260407-235000-kst",
+    "repo_guidance": {
+      "rule_files": [
+        "AGENTS.md",
+        ".dev/PROJECT.md",
+        ".dev/ROADMAP.md"
+      ],
+      "workflow_files": [
+        ".github/workflows/release.yml"
+      ]
+    }
+  },
+  "session": {
+    "path": ".dev/sessions/bootstrap-20260407-235000-kst/session.json",
+    "status": "active"
+  },
+  "artifacts": {
+    "dashboard": ".dev/sessions/bootstrap-20260407-235000-kst/DASHBOARD.md",
+    "tasks": ".dev/sessions/bootstrap-20260407-235000-kst/TASKS.md",
+    "logs_dir": ".dev/sessions/bootstrap-20260407-235000-kst/logs"
+  },
+  "operator_sync": {
+    "tasks": {
+      "source": ".dev/TASKS.md",
+      "resume_checkpoint": "Resume from the next CLI-focused hardening task on top of the latest CLI-only cleanup commit.",
+      "total_tasks": 5,
+      "completed_tasks": 5,
+      "pending_tasks": 0,
+      "all_completed": true,
+      "next_pending_task": null,
+      "items": [
+        {
+          "text": "Re-open planning for the product-direction change from optional Web UI to CLI-only operation",
+          "completed": true
+        },
+        {
+          "text": "Capture the CLI-only design decisions and runtime deletion scope",
+          "completed": true
+        },
+        {
+          "text": "Remove Web UI commands, runtime modules, frontend assets, and packaging dependencies",
+          "completed": true
+        },
+        {
+          "text": "Refresh docs, roadmap, and `.dev` state so they describe a CLI-only tool",
+          "completed": true
+        },
+        {
+          "text": "Validate the CLI-only slice and keep `.dev` state synchronized before completion",
+          "completed": true
+        }
+      ],
+      "synced_at": "2026-04-09T00:50:00+09:00"
+    }
+  },
+  "next_action": "Continue the next CLI-focused hardening slice from the latest CLI-only cleanup commit.",
+  "blockers": [],
+  "phase_history": [],
+  "notes": [
+    "Treat this file as machine truth and keep Markdown synchronized.",
+    "The product direction now excludes Web UI and browser-served runtime paths.",
+    "Validation passed through targeted CLI/config tests and full unittest discovery.",
+    "Amending the latest CLI-only cleanup commit to include the strengthened commit message checks."
+  ],
+  "loop": {
+    "status": "idle",
+    "latest_run_id": "20260408-144111-430438-agent-run",
+    "latest_supervisor_verdict": "approved",
+    "latest_supervisor_report_path": null,
+    "latest_continuation_prompt_path": null
+  },
+  "supervisor_report": {
+    "path": ".dev/supervisor_report.md",
+    "status": "not_run"
+  },
+  "latest_continuation_prompt": null,
+  "current_run": null,
+  "latest_commit": {
+    "hash": "pending-amend",
+    "summary": "Remove Web UI and tighten commit message checks"
+  }
+}

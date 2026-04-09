@@ -32,16 +32,10 @@ class ConfigTests(unittest.TestCase):
                 repo_root=root,
                 env={
                     "DORMAMMU_APP_NAME": "custom-app",
-                    "DORMAMMU_HOST": "0.0.0.0",
-                    "DORMAMMU_PORT": "9000",
-                    "DORMAMMU_LOG_LEVEL": "debug",
                 },
             )
 
             self.assertEqual(config.app_name, "custom-app")
-            self.assertEqual(config.host, "0.0.0.0")
-            self.assertEqual(config.port, 9000)
-            self.assertEqual(config.log_level, "debug")
             self.assertEqual(config.repo_root, root)
             self.assertEqual(config.base_dev_dir, root / ".dev")
             self.assertEqual(config.dev_dir, root / ".dev")
@@ -143,7 +137,6 @@ class ConfigTests(unittest.TestCase):
             config = AppConfig.load(repo_root=root)
 
             self.assertTrue(config.templates_dir.exists())
-            self.assertTrue(config.frontend_dir.exists())
             self.assertNotEqual(config.templates_dir, root / "templates")
 
 

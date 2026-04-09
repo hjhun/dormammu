@@ -9,4 +9,4 @@ if [[ ! -d "${VENV_DIR}" ]]; then
 fi
 
 "${VENV_DIR}/bin/pip" install -e "${ROOT_DIR}"
-exec "${VENV_DIR}/bin/python" -m dormammu serve --repo-root "${ROOT_DIR}"
+exec "${VENV_DIR}/bin/python" -m dormammu doctor --repo-root "${ROOT_DIR}"

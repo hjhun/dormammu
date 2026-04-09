@@ -274,7 +274,8 @@ Updated ${BASHRC_PATH}: ${bashrc_updated}
 
 Next steps:
   ${BIN_DIR}/dormammu doctor
-  ${BIN_DIR}/dormammu ui
+  ${BIN_DIR}/dormammu init-state
+  ${BIN_DIR}/dormammu run --prompt "Inspect the repo and implement the requested change."
 EOF
 }
 

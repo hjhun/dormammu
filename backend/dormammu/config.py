@@ -121,11 +121,11 @@ def _discover_asset_root(root: Path, env: Mapping[str, str]) -> Path:
         return candidate
 
     source_root = Path(__file__).resolve().parents[2]
-    if (source_root / "templates").exists() and (source_root / "frontend").exists():
+    if (source_root / "templates").exists():
         return source_root
 
     packaged_asset_root = Path(__file__).resolve().parent / "assets"
-    if (packaged_asset_root / "templates").exists() and (packaged_asset_root / "frontend").exists():
+    if (packaged_asset_root / "templates").exists():
         return packaged_asset_root
     return root
 
@@ -281,15 +281,11 @@ def _parse_cli_overrides(
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     app_name: str
-    host: str
-    port: int
-    log_level: str
     repo_root: Path
     base_dev_dir: Path
     dev_dir: Path
     logs_dir: Path
     templates_dir: Path
-    frontend_dir: Path
     config_file: Path | None
     active_agent_cli: Path | None = None
     fallback_agent_clis: tuple[FallbackCliConfig, ...] = ()
@@ -320,15 +316,11 @@ class AppConfig:
         )
         return cls(
             app_name=str(values.get("DORMAMMU_APP_NAME", _config_value(config_payload, "app_name", "dormammu"))),
-            host=str(values.get("DORMAMMU_HOST", _config_value(config_payload, "host", "127.0.0.1"))),
-            port=_read_int(values, "DORMAMMU_PORT", int(_config_value(config_payload, "port", 8000))),
-            log_level=str(values.get("DORMAMMU_LOG_LEVEL", _config_value(config_payload, "log_level", "info"))),
             repo_root=root,
             base_dev_dir=base_dev_dir,
             dev_dir=dev_dir,
             logs_dir=dev_dir / "logs",
             templates_dir=asset_root / "templates",
-            frontend_dir=asset_root / "frontend",
             config_file=config_file,
             active_agent_cli=_parse_active_agent_cli(
                 config_payload.get("active_agent_cli"),
@@ -353,15 +345,11 @@ class AppConfig:
     def to_dict(self) -> dict[str, object]:
         return {
             "app_name": self.app_name,
-            "host": self.host,
-            "port": self.port,
-            "log_level": self.log_level,
             "repo_root": str(self.repo_root),
             "base_dev_dir": str(self.base_dev_dir),
             "dev_dir": str(self.dev_dir),
             "logs_dir": str(self.logs_dir),
             "templates_dir": str(self.templates_dir),
-            "frontend_dir": str(self.frontend_dir),
             "config_file": str(self.config_file) if self.config_file else None,
             "active_agent_cli": str(self.active_agent_cli) if self.active_agent_cli else None,
             "fallback_agent_clis": [item.to_dict() for item in self.fallback_agent_clis],
