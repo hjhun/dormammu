@@ -2,29 +2,28 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-import shlex
 import re
 import sys
 import time
 from typing import Mapping, TextIO
 
-from dormammu.agent import AgentRunRequest, CliAdapter
-from dormammu.agent.models import AgentRunStarted
 from dormammu.config import AppConfig
-from dormammu.daemon.models import DaemonConfig, DaemonPromptResult, PHASE_SEQUENCE, PhaseExecutionConfig, PhaseExecutionResult
+from dormammu.daemon.models import DaemonConfig, DaemonPromptResult
 from dormammu.daemon.queue import is_prompt_candidate, prompt_sort_key
 from dormammu.daemon.reports import render_result_markdown
 from dormammu.daemon.watchers import EFFECTIVE_POLL_INTERVAL_SECONDS, PromptWatcher, build_watcher
 from dormammu.guidance import build_guidance_prompt
+from dormammu.loop_runner import LoopRunResult, LoopRunRequest, LoopRunner
 from dormammu.state import StateRepository
 from dormammu.state.models import summarize_prompt_goal
 
 
+DEFAULT_DAEMON_MAX_RETRIES = 49
+_RESULT_STATUS_RE = re.compile(r"^- Status: `([^`]+)`$", re.MULTILINE)
+
+
 def _iso_now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-
-
-_RESULT_STATUS_RE = re.compile(r"^- Status: `([^`]+)`$", re.MULTILINE)
 
 
 class DaemonRunner:
@@ -42,10 +41,7 @@ class DaemonRunner:
         self.repository = repository or StateRepository(app_config)
         self.progress_stream = progress_stream or sys.stderr
         self.watcher = watcher
-        self._processed_successes: set[Path] = set()
         self._in_progress: set[Path] = set()
-        self._waiting_for_plan_completion: set[Path] = set()
-        self._waiting_prompt_results: dict[Path, DaemonPromptResult] = {}
 
     def run_forever(self) -> int:
         self.daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
@@ -61,13 +57,6 @@ class DaemonRunner:
             while True:
                 processed = self.run_pending_once(watcher_backend=watcher.backend_name)
                 if processed == 0:
-                    if self._has_queue_blocker():
-                        self._log(
-                            "daemon queue scan: active prompt is not completed yet; "
-                            "keeping newly detected prompts pending"
-                        )
-                        time.sleep(1)
-                        continue
                     watcher.wait_for_changes()
         finally:
             watcher.close()
@@ -101,44 +90,25 @@ class DaemonRunner:
             return processed + 1
 
     def _scan_prompt_queue(self) -> tuple[list[Path], float | None]:
-        self._refresh_waiting_for_plan_prompts()
         candidates: list[Path] = []
         retry_after_seconds: float | None = None
         settle_seconds = self.daemon_config.watch.settle_seconds
         now = datetime.now(timezone.utc).timestamp()
-        blocking_prompt = self._queue_blocker_path()
         for path in sorted(self.daemon_config.prompt_path.iterdir(), key=lambda item: prompt_sort_key(item.name)):
-            if (
-                path in self._processed_successes
-                or path in self._in_progress
-                or path in self._waiting_for_plan_completion
-            ):
-                if path in self._waiting_for_plan_completion:
-                    self._log(f"daemon queue scan: preserving {path.name} while waiting for PLAN completion")
+            if path in self._in_progress:
                 continue
             if not is_prompt_candidate(path, self.daemon_config.queue):
                 self._log(f"daemon queue scan: skipping non-candidate {path.name}")
-                continue
-            if blocking_prompt is not None and path != blocking_prompt:
-                self._log(
-                    "daemon queue scan: keeping "
-                    f"{path.name} pending until {blocking_prompt.name} is completed"
-                )
                 continue
             result_path = self._result_path_for_prompt(path)
             if result_path.exists():
                 existing_status = self._existing_result_status(result_path)
                 if existing_status == "completed":
                     result_path.unlink()
-                    self._processed_successes.discard(path)
                     self._log(
                         "daemon queue scan: removing stale completed result for "
                         f"{path.name} and reprocessing prompt"
                     )
-                if existing_status == "waiting_for_plan":
-                    self._waiting_for_plan_completion.add(path)
-                    self._log(f"daemon queue scan: preserving {path.name} because PLAN completion is still pending")
-                    continue
             try:
                 stat_result = path.stat()
             except FileNotFoundError:
@@ -154,65 +124,6 @@ class DaemonRunner:
                 continue
             candidates.append(path)
         return candidates, retry_after_seconds
-
-    def _has_queue_blocker(self) -> bool:
-        return self._queue_blocker_path() is not None
-
-    def _queue_blocker_path(self) -> Path | None:
-        for collection in (self._in_progress, self._waiting_for_plan_completion):
-            for path in sorted(collection, key=lambda item: prompt_sort_key(item.name)):
-                return path
-        return None
-
-    def _refresh_waiting_for_plan_prompts(self) -> None:
-        for prompt_path in sorted(
-            tuple(self._waiting_for_plan_completion),
-            key=lambda item: prompt_sort_key(item.name),
-        ):
-            prompt_result = self._waiting_prompt_results.get(prompt_path)
-            if prompt_result is None or prompt_result.session_id is None:
-                continue
-            session_repository = StateRepository(self.app_config, session_id=prompt_result.session_id)
-            try:
-                plan_all_completed, _ = self._sync_plan_state(session_repository)
-            except FileNotFoundError:
-                continue
-            if not plan_all_completed:
-                continue
-
-            completed_result = DaemonPromptResult(
-                prompt_path=prompt_result.prompt_path,
-                result_path=prompt_result.result_path,
-                status="completed",
-                started_at=prompt_result.started_at,
-                completed_at=_iso_now(),
-                watcher_backend=prompt_result.watcher_backend,
-                sort_key=prompt_result.sort_key,
-                session_id=prompt_result.session_id,
-                phase_results=prompt_result.phase_results,
-                error=None,
-                plan_all_completed=True,
-                next_pending_task=None,
-            )
-            self._write_result_report_from_result(completed_result)
-            if prompt_path.exists():
-                prompt_path.unlink()
-            self._processed_successes.add(prompt_path)
-            self._waiting_for_plan_completion.discard(prompt_path)
-            self._waiting_prompt_results.pop(prompt_path, None)
-            self._log(
-                f"daemon prompt {prompt_path.name}: PLAN is now complete; releasing the queue and marking the prompt completed"
-            )
-
-    def _existing_result_status(self, result_path: Path) -> str | None:
-        try:
-            text = result_path.read_text(encoding="utf-8")
-        except OSError:
-            return None
-        match = _RESULT_STATUS_RE.search(text)
-        if match is None:
-            return None
-        return match.group(1).strip()
 
     def _emit_startup_banner(self, *, watcher_backend: str) -> None:
         print("=== dormammu daemonize ===", file=self.progress_stream)
@@ -236,11 +147,7 @@ class DaemonRunner:
             file=self.progress_stream,
         )
         print(
-            "child cli output: stdout+stderr are mirrored live to parent stderr and archived under .dev/logs",
-            file=self.progress_stream,
-        )
-        print(
-            "prompt lifecycle: accepted prompts are processed sequentially and removed only after a completed result with PLAN.md fully marked [O]",
+            "prompt lifecycle: each accepted prompt reuses the dormammu run loop and writes its result only after the loop reaches a terminal outcome",
             file=self.progress_stream,
         )
         self.progress_stream.flush()
@@ -268,110 +175,35 @@ class DaemonRunner:
             "daemon prompt detected: "
             f"{prompt_path.name} (sort_key={sort_key}, watcher={watcher_backend}, result={result_path.name})"
         )
-        session_id: str | None = None
-        session_repository: StateRepository | None = None
-        phase_results: list[PhaseExecutionResult] = []
         status = "failed"
         error: str | None = None
+        session_id: str | None = None
         plan_all_completed: bool | None = None
         next_pending_task: str | None = None
+        loop_result: LoopRunResult | None = None
         interrupted = False
+
         try:
+            if result_path.exists():
+                result_path.unlink()
             prompt_text = prompt_path.read_text(encoding="utf-8")
-            goal = summarize_prompt_goal(prompt_text, fallback=f"Process daemon prompt {prompt_path.name}")
-            self.repository.start_new_session(
-                goal=goal,
-                prompt_text=prompt_text,
-                active_roadmap_phase_ids=["phase_5", "phase_7"],
-            )
-            session_state = self.repository.read_session_state()
-            for candidate_key in ("active_session_id", "session_id"):
-                candidate = session_state.get(candidate_key)
-                if isinstance(candidate, str) and candidate.strip():
-                    session_id = candidate
-                    break
-            self._write_result_report(
+            session_repository, scoped_config, session_id = self._start_prompt_session(
                 prompt_path=prompt_path,
-                result_path=result_path,
-                status="in_progress",
-                started_at=started_at,
-                completed_at=None,
-                watcher_backend=watcher_backend,
-                sort_key=sort_key,
-                session_id=session_id,
-                phase_results=phase_results,
-                error=None,
-                plan_all_completed=None,
-                next_pending_task=None,
+                prompt_text=prompt_text,
             )
-            session_repository = StateRepository(self.app_config, session_id=session_id)
-            scoped_config = self.app_config.with_overrides(
-                dev_dir=session_repository.dev_dir,
-                logs_dir=session_repository.logs_dir,
+            loop_result = self._run_prompt_loop(
+                scoped_config=scoped_config,
+                session_repository=session_repository,
+                prompt_path=prompt_path,
+                prompt_text=prompt_text,
             )
-            session_repository = StateRepository(scoped_config, session_id=session_id)
-            session_repository.persist_input_prompt(prompt_text=prompt_text, source_path=prompt_path)
-            for phase_name in PHASE_SEQUENCE:
-                phase_result = self._run_phase(
-                    scoped_config,
-                    session_repository,
-                    phase_config=self.daemon_config.phases[phase_name],
-                    original_prompt=prompt_text,
-                    prompt_path=prompt_path,
-                )
-                phase_results.append(phase_result)
-                plan_all_completed, next_pending_task = self._sync_plan_state(session_repository)
-                self._write_result_report(
-                    prompt_path=prompt_path,
-                    result_path=result_path,
-                    status="in_progress",
-                    started_at=started_at,
-                    completed_at=None,
-                    watcher_backend=watcher_backend,
-                    sort_key=sort_key,
-                    session_id=session_id,
-                    phase_results=phase_results,
-                    error=None,
-                    plan_all_completed=plan_all_completed,
-                    next_pending_task=next_pending_task,
-                )
-                if phase_result.exit_code != 0:
-                    status = "failed"
-                    error = phase_result.error or f"Phase {phase_name} exited with code {phase_result.exit_code}."
-                    break
-            else:
-                if plan_all_completed:
-                    status = "completed"
-                else:
-                    status = "waiting_for_plan"
-                    pending_suffix = (
-                        f" Next pending task: {next_pending_task}."
-                        if isinstance(next_pending_task, str) and next_pending_task.strip()
-                        else ""
-                    )
-                    error = (
-                        "All daemon phases exited successfully, but the session PLAN.md still contains "
-                        f"incomplete items.{pending_suffix}"
-                    )
-                    self._waiting_for_plan_completion.add(prompt_path)
-                    self._waiting_prompt_results[prompt_path] = DaemonPromptResult(
-                        prompt_path=prompt_path,
-                        result_path=result_path,
-                        status=status,
-                        started_at=started_at,
-                        completed_at=None,
-                        watcher_backend=watcher_backend,
-                        sort_key=sort_key,
-                        session_id=session_id,
-                        phase_results=tuple(phase_results),
-                        error=error,
-                        plan_all_completed=plan_all_completed,
-                        next_pending_task=next_pending_task,
-                    )
-                    self._log(
-                        f"daemon prompt {prompt_path.name}: waiting for PLAN completion"
-                        + (f" ({next_pending_task})" if next_pending_task else "")
-                    )
+            plan_all_completed, next_pending_task = self._sync_plan_state(session_repository)
+            status = loop_result.status
+            if status == "completed" and not plan_all_completed:
+                status = "failed"
+                error = "Loop returned completed but session PLAN.md is not fully complete."
+            elif status != "completed":
+                error = self._terminal_error_message(loop_result, next_pending_task)
         except KeyboardInterrupt:
             interrupted = True
             status = "interrupted"
@@ -391,18 +223,19 @@ class DaemonRunner:
                 watcher_backend=watcher_backend,
                 sort_key=sort_key,
                 session_id=session_id,
-                phase_results=tuple(phase_results),
                 error=error,
                 plan_all_completed=plan_all_completed,
                 next_pending_task=next_pending_task,
+                attempts_completed=(loop_result.attempts_completed if loop_result else None),
+                latest_run_id=(loop_result.latest_run_id if loop_result else None),
+                supervisor_verdict=(loop_result.supervisor_verdict if loop_result else None),
+                supervisor_report_path=(loop_result.report_path if loop_result else None),
+                continuation_prompt_path=(loop_result.continuation_prompt_path if loop_result else None),
             )
-            self._write_result_report_from_result(prompt_result)
-            if status == "completed" and prompt_path.exists():
-                prompt_path.unlink()
-                self._waiting_for_plan_completion.discard(prompt_path)
-                self._waiting_prompt_results.pop(prompt_path, None)
-            if status == "completed":
-                self._processed_successes.add(prompt_path)
+            if not interrupted:
+                self._write_result_report_from_result(prompt_result)
+                if prompt_path.exists():
+                    prompt_path.unlink()
             self._in_progress.discard(prompt_path)
             print(f"daemon prompt {prompt_path.name}: {status} -> {result_path}", file=self.progress_stream)
             self.progress_stream.flush()
@@ -410,37 +243,79 @@ class DaemonRunner:
                 raise KeyboardInterrupt()
             return prompt_result
 
-    def _write_result_report(
+    def _start_prompt_session(
         self,
         *,
         prompt_path: Path,
-        result_path: Path,
-        status: str,
-        started_at: str,
-        completed_at: str | None,
-        watcher_backend: str,
-        sort_key: tuple[int, object, str],
-        session_id: str | None,
-        phase_results: list[PhaseExecutionResult],
-        error: str | None,
-        plan_all_completed: bool | None,
-        next_pending_task: str | None,
-    ) -> None:
-        prompt_result = DaemonPromptResult(
-            prompt_path=prompt_path,
-            result_path=result_path,
-            status=status,
-            started_at=started_at,
-            completed_at=completed_at,
-            watcher_backend=watcher_backend,
-            sort_key=sort_key,
-            session_id=session_id,
-            phase_results=tuple(phase_results),
-            error=error,
-            plan_all_completed=plan_all_completed,
-            next_pending_task=next_pending_task,
+        prompt_text: str,
+    ) -> tuple[StateRepository, AppConfig, str]:
+        goal = summarize_prompt_goal(prompt_text, fallback=f"Process daemon prompt {prompt_path.name}")
+        self.repository.start_new_session(
+            goal=goal,
+            prompt_text=prompt_text,
+            active_roadmap_phase_ids=["phase_4"],
         )
-        self._write_result_report_from_result(prompt_result)
+        session_state = self.repository.read_session_state()
+        session_id = str(session_state.get("active_session_id") or session_state.get("session_id") or "").strip()
+        if not session_id:
+            raise RuntimeError("daemonize failed to determine the new session id.")
+        session_repository = StateRepository(self.app_config, session_id=session_id)
+        scoped_config = self.app_config.with_overrides(
+            dev_dir=session_repository.dev_dir,
+            logs_dir=session_repository.logs_dir,
+        )
+        scoped_repository = StateRepository(scoped_config, session_id=session_id)
+        scoped_repository.persist_input_prompt(prompt_text=prompt_text, source_path=prompt_path)
+        return scoped_repository, scoped_config, session_id
+
+    def _run_prompt_loop(
+        self,
+        *,
+        scoped_config: AppConfig,
+        session_repository: StateRepository,
+        prompt_path: Path,
+        prompt_text: str,
+    ) -> LoopRunResult:
+        agent_cli = self._resolve_agent_cli(scoped_config)
+        request = LoopRunRequest(
+            cli_path=agent_cli,
+            prompt_text=build_guidance_prompt(
+                prompt_text,
+                guidance_files=scoped_config.guidance_files,
+                repo_root=scoped_config.repo_root,
+            ),
+            repo_root=scoped_config.repo_root,
+            workdir=scoped_config.repo_root,
+            input_mode="auto",
+            prompt_flag=None,
+            extra_args=(),
+            run_label=f"daemon-{prompt_path.stem}",
+            max_retries=DEFAULT_DAEMON_MAX_RETRIES,
+            expected_roadmap_phase_id="phase_4",
+        )
+        return LoopRunner(
+            scoped_config,
+            repository=session_repository,
+            progress_stream=self.progress_stream,
+        ).run(request)
+
+    def _resolve_agent_cli(self, config: AppConfig) -> Path:
+        if config.active_agent_cli is not None:
+            return config.active_agent_cli
+        raise RuntimeError(
+            "daemonize requires active_agent_cli in dormammu.json or ~/.dormammu/config. "
+            "It now reuses the normal dormammu run loop instead of per-phase daemon CLI settings."
+        )
+
+    def _terminal_error_message(self, loop_result: LoopRunResult, next_pending_task: str | None) -> str:
+        if loop_result.status == "failed":
+            suffix = f" Next pending PLAN task: {next_pending_task}." if next_pending_task else ""
+            return f"Loop retry budget was exhausted before PLAN.md completed.{suffix}"
+        if loop_result.status == "blocked":
+            return "Loop stopped because the configured coding-agent CLIs were blocked."
+        if loop_result.status == "manual_review_needed":
+            return "Loop stopped because manual review is required."
+        return f"Loop finished with terminal status: {loop_result.status}."
 
     def _write_result_report_from_result(self, prompt_result: DaemonPromptResult) -> None:
         prompt_result.result_path.write_text(render_result_markdown(prompt_result), encoding="utf-8")
@@ -457,121 +332,15 @@ class DaemonRunner:
         next_pending_task = next_pending_raw.strip() if isinstance(next_pending_raw, str) and next_pending_raw.strip() else None
         return all_completed, next_pending_task
 
-    def _run_phase(
-        self,
-        scoped_config: AppConfig,
-        session_repository: StateRepository,
-        *,
-        phase_config: PhaseExecutionConfig,
-        original_prompt: str,
-        prompt_path: Path,
-    ) -> PhaseExecutionResult:
-        adapter = CliAdapter(scoped_config)
-        skill_text = phase_config.skill_path.read_text(encoding="utf-8").rstrip()
-        request = AgentRunRequest(
-            cli_path=phase_config.agent_cli.path,
-            prompt_text=build_guidance_prompt(
-                self._compose_phase_prompt(
-                    phase_name=phase_config.phase_name,
-                    skill_name=phase_config.skill_name,
-                    skill_path=phase_config.skill_path,
-                    skill_text=skill_text,
-                    original_prompt=original_prompt,
-                    prompt_path=prompt_path,
-                ),
-                guidance_files=scoped_config.guidance_files,
-                repo_root=scoped_config.repo_root,
-            ),
-            repo_root=scoped_config.repo_root,
-            workdir=scoped_config.repo_root,
-            input_mode=phase_config.agent_cli.input_mode,
-            prompt_flag=phase_config.agent_cli.prompt_flag,
-            extra_args=phase_config.agent_cli.extra_args,
-            run_label=f"daemon-{phase_config.phase_name}",
-        )
-        started_ref: dict[str, AgentRunStarted] = {}
-
-        def _handle_started(started: AgentRunStarted) -> None:
-            started_ref["value"] = started
-            session_repository.record_current_run(started)
-            self._log(
-                f"daemon phase {phase_config.phase_name}: launching CLI "
-                f"(prompt={prompt_path.name}, run_id={started.run_id}, prompt_mode={started.prompt_mode})"
-            )
-            self._log(f"  cli path: {started.cli_path}")
-            self._log(f"  workdir: {started.workdir}")
-            self._log(f"  command: {shlex.join(started.command)}")
-            self._log(f"  prompt artifact: {started.prompt_path}")
-            self._log(f"  stdout artifact: {started.stdout_path}")
-            self._log(f"  stderr artifact: {started.stderr_path}")
-
+    def _existing_result_status(self, result_path: Path) -> str | None:
         try:
-            result = adapter.run_once(request, on_started=_handle_started)
-            session_repository.record_latest_run(result)
-            self._log(
-                f"daemon phase {phase_config.phase_name}: exit_code={result.exit_code} "
-                f"(prompt={prompt_path.name}, run_id={result.run_id})"
-            )
-            return PhaseExecutionResult(
-                phase_name=phase_config.phase_name,
-                cli_path=phase_config.agent_cli.path,
-                exit_code=result.exit_code,
-                run_id=result.run_id,
-                started_at=result.started_at,
-                completed_at=result.completed_at,
-                stdout_path=result.stdout_path,
-                stderr_path=result.stderr_path,
-                prompt_path=result.prompt_path,
-                metadata_path=result.metadata_path,
-                command=tuple(result.command),
-                error=None if result.exit_code == 0 else f"Phase exited with code {result.exit_code}",
-            )
-        except Exception as exc:
-            started = started_ref.get("value")
-            self._log(
-                f"daemon phase {phase_config.phase_name}: failed before completion "
-                f"(prompt={prompt_path.name}, run_id={started.run_id if started else 'n/a'}): {exc}"
-            )
-            return PhaseExecutionResult(
-                phase_name=phase_config.phase_name,
-                cli_path=phase_config.agent_cli.path,
-                exit_code=2,
-                run_id=started.run_id if started else None,
-                started_at=started.started_at if started else None,
-                completed_at=_iso_now(),
-                stdout_path=started.stdout_path if started else None,
-                stderr_path=started.stderr_path if started else None,
-                prompt_path=started.prompt_path if started else None,
-                metadata_path=started.metadata_path if started else None,
-                command=tuple(started.command) if started else (),
-                error=str(exc),
-            )
-
-    def _compose_phase_prompt(
-        self,
-        *,
-        phase_name: str,
-        skill_name: str | None,
-        skill_path: Path,
-        skill_text: str,
-        original_prompt: str,
-        prompt_path: Path,
-    ) -> str:
-        skill_label = skill_name or skill_path.as_posix()
-        return (
-            f"Phase: {phase_name}\n"
-            f"Prompt file: {prompt_path.name}\n\n"
-            f"Required skill: {skill_label}\n"
-            f"Skill file: {skill_path}\n\n"
-            "Follow the skill document below as a required phase instruction.\n\n"
-            f"Begin skill from {skill_path}:\n"
-            f"{skill_text}\n"
-            f"End skill from {skill_path}.\n\n"
-            "Keep the repository `.dev` state aligned with the work you perform.\n"
-            "Preserve resumability and leave enough state for the next phase.\n\n"
-            "Original prompt:\n"
-            f"{original_prompt.rstrip()}\n"
-        )
+            text = result_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        match = _RESULT_STATUS_RE.search(text)
+        if match is None:
+            return None
+        return match.group(1).strip()
 
     def _result_path_for_prompt(self, prompt_path: Path) -> Path:
         return self.daemon_config.result_path / f"{prompt_path.stem}_RESULT.md"

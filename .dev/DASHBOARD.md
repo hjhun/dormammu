@@ -2,11 +2,12 @@
 
 ## Actual Progress
 
-- Goal: Make `daemonize` create a fresh session per newly started prompt file
-  and keep later prompt files pending until the earlier prompt is completed.
-- Prompt-driven scope: Serialize daemon prompt execution, treat
-  `waiting_for_plan` prompts as queue blockers, and prevent same-second session
-  ID collisions across prompt-driven sessions.
+- Goal: Simplify `daemonize` so queued prompts run through the normal
+  `dormammu run --prompt-file` loop instead of a separate phase-by-phase CLI
+  pipeline.
+- Prompt-driven scope: Remove phase-specific daemon CLI config, reuse the
+  existing supervised run loop for queued prompts, and keep prompt cleanup plus
+  result creation aligned with loop completion.
 - Active roadmap focus:
 - Phase 5. CLI Operator Experience and Progress Visibility
 - Phase 4. Supervisor Validation, Continuation Loop, and Resume
@@ -14,38 +15,30 @@
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The daemon queue/session change is implemented and validated.
-  Resume from commit finalization and push for this daemonize behavior slice.
+- Resume point: The daemonize simplification is implemented and validated.
+  Resume from commit preparation only if a follow-up requests version-control
+  finalization.
 
 ## In Progress
 
-- `backend/dormammu/daemon/runner.py` now keeps daemon prompt processing to a
-  single active prompt at a time. If multiple prompt files are ready, the first
-  one starts and later ones remain pending until it fully finishes.
-- `backend/dormammu/daemon/runner.py` now tracks `waiting_for_plan` prompts as
-  active queue blockers. Once that session's `PLAN.md` becomes fully completed,
-  the runner finalizes the blocked prompt result, removes the source prompt,
-  and releases the next queued prompt.
-- `backend/dormammu/state/repository.py` now guarantees unique generated
-  session IDs even when multiple sessions are created within the same second,
-  so daemon prompt files no longer collide onto the same session directory.
+- `daemonize.json` now only controls prompt watching and queue behavior.
+- Each queued prompt now starts a normal supervised Dormammu run-loop session,
+  writes its result report only after terminal completion, and then removes the
+  processed prompt file.
+- Examples, README, English guide, Korean guide, and daemon regression tests
+  were updated together to remove stale phase-specific daemon CLI guidance.
 
 ## Progress Notes
 
-- Queue behavior changed from "process every ready file in one scan" to
-  "consume one prompt, leave the rest pending, then come back after the active
-  prompt is completed," which matches the requested serialized work model.
-- Prompt-local session isolation is now covered by regression tests that verify
-  different prompt files produce different session IDs even when they start in
-  the same second.
+- The daemon runner no longer maintains a separate per-phase execution graph.
+- The coding agent now comes from the normal runtime config via
+  `active_agent_cli`.
 - Validation passed with `python3 -m unittest tests.test_daemon` and
   `python3 -m unittest tests.test_cli tests.test_loop_runner`.
 
 ## Risks And Watchpoints
 
-- Queue release for `waiting_for_plan` depends on the blocked session syncing
-  operator state to `all_completed=true`; future changes to that contract need
-  to keep the daemon release logic aligned.
-- The external `daemonize` smoke path now naturally takes longer because each
-  phase still inherits the previously added 5-second CLI cooldown, so
-  end-to-end daemon tests need a larger timeout budget than before.
+- Example filenames still reflect the old naming history, so the docs now frame
+  them as watch/queue presets instead of skill or per-phase CLI presets.
+- Commit preparation is still outstanding because the user asked for the
+  implementation change, not a commit.

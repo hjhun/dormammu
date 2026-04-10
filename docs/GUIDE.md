@@ -283,11 +283,11 @@ loop:
 - rescan `prompt_path` every 60 seconds using the daemon polling loop
 - sort prompt files by leading numeric prefix first, then alphabetic prefix,
   then plain filename
-- execute configured workflow phases for each prompt
-- write an in-progress result report to `result_path` before phase execution
-  completes, then finalize that report when processing ends
-- remove the processed prompt file from `prompt_path` only after the prompt run
-  finishes with `PLAN.md` fully completed
+- execute each prompt through the same supervised loop used by
+  `dormammu run --prompt-file <path>`
+- write the result report to `result_path` only after that loop reaches a
+  terminal outcome
+- remove the processed prompt file from `prompt_path` after the loop finishes
 
 Use [daemonize.json.example](../daemonize.json.example) as the starting point
 for the config. This daemon file is separate from the general runtime config
@@ -300,15 +300,9 @@ DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json \
   dormammu daemonize --repo-root . --config ./ops/daemonize.prod.json
 ```
 
-For known interactive CLIs, `daemonize` also injects non-interactive defaults
-when a phase leaves `agent_cli.extra_args` empty:
-
-- `codex`: `--dangerously-bypass-approvals-and-sandbox`, plus
-  `--skip-git-repo-check` when supported by the installed `codex exec`
-- `claude`: `--dangerously-skip-permissions`
-- `gemini`: `--approval-mode yolo --include-directories /`
-
-Set explicit phase `extra_args` when you want to override those defaults.
+`daemonize` no longer accepts phase-specific `agent_cli` settings. Configure
+`active_agent_cli` in `dormammu.json` or `~/.dormammu/config`, and daemonize
+will reuse the normal run-loop behavior for that CLI.
 
 ## The `.dev` Directory
 
@@ -367,194 +361,60 @@ The most important fields are:
 - `result_path`
 - `watch`
 - `queue`
-- `phases`
+- no phase-specific coding-agent settings
 
-### Phase Skill Resolution
-
-Each phase must define exactly one of:
-
-- `skill_name`
-- `skill_path`
-
-Do not set both in the same phase entry.
-
-#### `skill_name`
-
-`skill_name` is the preferred reusable form when the phase should point at a
-named skill bundle such as `planning-agent` or `developing-agent`.
-
-Resolution order is:
-
-1. `repo_root/agents/skills/<skill_name>/SKILL.md`
-2. `~/.dormammu/agents/skills/<skill_name>/SKILL.md`
-
-If the skill cannot be found in either location, `daemonize` fails fast during
-config loading before the watch loop starts.
-
-Example:
-
-```json
-{
-  "skill_name": "planning-agent",
-  "agent_cli": {
-    "path": "codex",
-    "input_mode": "auto",
-    "extra_args": []
-  }
-}
-```
-
-Leaving `extra_args` empty is enough for unattended `daemonize` runs with the
-built-in presets above. Add explicit args only when you need a different
-approval or sandbox policy.
-
-Use `skill_name` when:
-
-- the skill is part of the repository's `agents/skills/`
-- the skill is installed under `~/.dormammu/agents/skills/`
-- you want the config to stay portable across machines with the same skill
-  layout
-
-#### `skill_path`
-
-`skill_path` is the explicit file-path form. Use it when the skill file lives
-outside the standard named-skill lookup layout or when you want the config to
-pin one exact file.
+Daemonize now reuses the existing supervised run loop instead of defining its
+own phase or skill graph in `daemonize.json`. Set the coding agent through the
+normal Dormammu runtime config and keep `daemonize.json` focused on queue and
+watch behavior.
 
 Relative paths are resolved relative to the daemon config file directory, not
 the current shell working directory.
 
-Example:
+If you need a different coding agent for daemon mode, change the normal
+runtime config instead of the daemon config:
 
 ```json
 {
-  "skill_path": "./custom-skills/release-checklist.md",
-  "agent_cli": {
-    "path": "codex",
-    "input_mode": "auto",
-    "extra_args": []
-  }
+  "active_agent_cli": "/home/you/.local/bin/codex"
 }
 ```
-
-Use `skill_path` when:
-
-- the skill file is custom to one repository
-- the skill is not organized under `agents/skills/<name>/SKILL.md`
-- you want the daemon config to lock to one exact skill document
-
-### Skill Rule Summary
-
-- Every phase needs one skill reference.
-- `skill_name` and `skill_path` are mutually exclusive.
-- `skill_name` is resolved through repository-local skills first, then the
-  installed `~/.dormammu/agents` bundle.
-- `skill_path` must point to an existing file.
-- Missing or ambiguous skill configuration is treated as a startup error.
-
-### Recommended Default Mapping
-
-For the current built-in workflow bundle, the usual phase mapping is:
-
-- `plan` -> `planning-agent`
-- `design` -> `designing-agent`
-- `develop` -> `developing-agent`
-- `build_and_deploy` -> `building-and-deploying`
-- `test_and_review` -> `testing-and-reviewing`
-- `commit` -> `committing-agent`
-
-### Installed Skill Paths Under `~/.dormammu/agents`
-
-If you prefer explicit `skill_path` values instead of `skill_name`, the
-installed skill bundle typically uses these paths:
-
-- `plan` -> `~/.dormammu/agents/skills/planning-agent/SKILL.md`
-- `design` -> `~/.dormammu/agents/skills/designing-agent/SKILL.md`
-- `develop` -> `~/.dormammu/agents/skills/developing-agent/SKILL.md`
-- `build_and_deploy` -> `~/.dormammu/agents/skills/building-and-deploying/SKILL.md`
-- `test_and_review` -> `~/.dormammu/agents/skills/testing-and-reviewing/SKILL.md`
-- `commit` -> `~/.dormammu/agents/skills/committing-agent/SKILL.md`
-
-Example:
-
-```json
-{
-  "phases": {
-    "plan": {
-      "skill_path": "~/.dormammu/agents/skills/planning-agent/SKILL.md",
-      "agent_cli": {
-        "path": "codex",
-        "input_mode": "auto",
-        "extra_args": []
-      }
-    }
-  }
-}
-```
-
-Use explicit `skill_path` values when:
-
-- you want the config to pin the exact installed skill file
-- you are operating without a repository-local `agents/skills/` directory
-- you want to make the daemon config's dependency on the installed bundle
-  obvious during review
 
 ### Example Config Files
 
 Dormammu now ships multiple daemon config examples so you can start from the
-closest operating model instead of editing one generic file from scratch.
+closest watch and queue preset instead of editing one generic file from
+scratch.
 
 - `daemonize.json.example`
-  - uses explicit installed `skill_path` values under `~/.dormammu/agents`
-  - good when you want reviewable, fully expanded phase-to-skill paths
+  - baseline prompt watcher with `.md` and `.txt` inputs
 - `daemonize.named-skill.example.json`
-  - uses `skill_name` for every phase
-  - good when you want the most portable config across machines and repos
+  - minimal Markdown-only queue preset
 - `daemonize.mixed-skill-resolution.example.json`
-  - mixes `skill_name` and `skill_path`
-  - good when most phases use standard skills but one or two phases need a
-    repository-local custom skill file
+  - Markdown-only queue with a short settle delay for editors that write files
+    in multiple passes
 - `daemonize.phase-specific-clis.example.json`
-  - keeps standard skills but varies the external `agent_cli` per phase
-  - good when planning, implementation, review, and packaging should run
-    through different agent backends
+  - polling-focused preset with a faster rescan interval
 
 ### Which Example Should I Start From?
 
 Use this quick chooser when you are not sure which file to copy first.
 
 - Start from `daemonize.json.example`
-  - when you want the safest review surface with fully expanded installed
-    `skill_path` values
+  - when you want the default setup
 - Start from `daemonize.named-skill.example.json`
-  - when you want the most portable config and expect repository or installed
-    skill lookup to work consistently
+  - when the queue should accept only Markdown prompts
 - Start from `daemonize.mixed-skill-resolution.example.json`
-  - when most phases use standard skills but one or more phases need a custom
-    repository-local skill file
+  - when prompt files may be written gradually and need a short settle window
 - Start from `daemonize.phase-specific-clis.example.json`
-  - when you already know that different phases should run through different
-    external agent CLIs
+  - when you want explicit polling with a shorter scan cadence
 
 Typical operator choices:
 
-- team-wide installed workflow bundle -> `daemonize.json.example`
-- portable repo template -> `daemonize.named-skill.example.json`
-- repo with one custom release or review skill -> `daemonize.mixed-skill-resolution.example.json`
-- split planning/review/implementation backends -> `daemonize.phase-specific-clis.example.json`
-
-### Why This Rule Exists
-
-Dormammu separates:
-
-- which skill contract defines the phase behavior
-- which external agent CLI is used to execute that phase
-
-That separation keeps configs maintainable:
-
-- you can keep the same skill but switch from `codex` to another CLI
-- you can keep the same CLI but point one phase at a different skill
-- you do not have to duplicate skill text inline in the JSON config
+- default mixed `.md` and `.txt` prompt queue -> `daemonize.json.example`
+- strict Markdown-only prompt queue -> `daemonize.named-skill.example.json`
+- editor writes files in chunks before closing -> `daemonize.mixed-skill-resolution.example.json`
+- polling-heavy environment with shorter rescan cadence -> `daemonize.phase-specific-clis.example.json`
 
 ## Working Directory And CLI Overrides
 

@@ -5,32 +5,6 @@ from pathlib import Path
 from typing import Any
 
 
-PHASE_SEQUENCE = (
-    "plan",
-    "design",
-    "develop",
-    "build_and_deploy",
-    "test_and_review",
-    "commit",
-)
-
-
-@dataclass(frozen=True, slots=True)
-class PhaseCliConfig:
-    path: Path
-    input_mode: str = "auto"
-    prompt_flag: str | None = None
-    extra_args: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class PhaseExecutionConfig:
-    phase_name: str
-    skill_name: str | None
-    skill_path: Path
-    agent_cli: PhaseCliConfig
-
-
 @dataclass(frozen=True, slots=True)
 class WatchConfig:
     backend: str = "auto"
@@ -52,7 +26,6 @@ class DaemonConfig:
     result_path: Path
     watch: WatchConfig
     queue: QueueConfig
-    phases: dict[str, PhaseExecutionConfig]
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +82,11 @@ class DaemonPromptResult:
     error: str | None = None
     plan_all_completed: bool | None = None
     next_pending_task: str | None = None
+    attempts_completed: int | None = None
+    latest_run_id: str | None = None
+    supervisor_verdict: str | None = None
+    supervisor_report_path: Path | None = None
+    continuation_prompt_path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -124,4 +102,11 @@ class DaemonPromptResult:
             "error": self.error,
             "plan_all_completed": self.plan_all_completed,
             "next_pending_task": self.next_pending_task,
+            "attempts_completed": self.attempts_completed,
+            "latest_run_id": self.latest_run_id,
+            "supervisor_verdict": self.supervisor_verdict,
+            "supervisor_report_path": str(self.supervisor_report_path) if self.supervisor_report_path else None,
+            "continuation_prompt_path": (
+                str(self.continuation_prompt_path) if self.continuation_prompt_path else None
+            ),
         }

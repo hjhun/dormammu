@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-11T00:00:00+09:00",
+  "updated_at": "2026-04-11T16:25:00+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -60,10 +60,10 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The daemon queue/session serialization change is implemented and validated."
+    "reason": "Daemonize now reuses dormammu run --prompt-file semantics, examples/docs are aligned, and regression validation passed."
   },
   "bootstrap": {
-    "goal": "Make daemonize create a fresh session for each newly started prompt file and keep later prompt files pending until the earlier prompt is completed.",
+    "goal": "Simplify daemonize so queued prompts reuse dormammu run --prompt-file semantics instead of phase-specific daemon CLI config.",
     "captured_at": "2026-04-10T23:32:00+09:00",
     "state_root": ".dev",
     "repo_guidance": {
@@ -87,38 +87,30 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume from commit finalization and push for the validated daemon queue/session change.",
-      "total_tasks": 5,
-      "completed_tasks": 5,
+      "resume_checkpoint": "Implementation and validation are complete. Resume from commit preparation only if a follow-up asks for staging or committing this daemonize simplification.",
+      "total_tasks": 3,
+      "completed_tasks": 3,
       "pending_tasks": 0,
       "all_completed": true,
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Inspect current daemon prompt processing, session creation, and queue behavior to identify the right serialization point",
+          "text": "Phase 1. Simplify daemonize config so it no longer accepts phase-specific coding agent CLI settings",
           "completed": true
         },
         {
-          "text": "Phase 2. Make daemonize process one prompt at a time and keep later ready prompt files pending until the current prompt is completed",
+          "text": "Phase 2. Rework daemonize to process each queued prompt through the same supervised loop behavior as `dormammu run --prompt-file <path>`",
           "completed": true
         },
         {
-          "text": "Phase 3. Keep `waiting_for_plan` prompts as queue blockers, release the queue when their session `PLAN.md` becomes fully complete, and finalize the result report at release time",
-          "completed": true
-        },
-        {
-          "text": "Phase 4. Ensure every newly started daemon prompt gets a unique fresh session even when multiple sessions start within the same second",
-          "completed": true
-        },
-        {
-          "text": "Phase 5. Add regression coverage and rerun daemon plus session-related CLI validation",
+          "text": "Phase 3. Update daemon examples, docs, and regression coverage for the simplified config and run-loop reuse",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-11T00:00:00+09:00"
+      "synced_at": "2026-04-11T16:25:00+09:00"
     }
   },
-  "next_action": "Create a commit for the validated daemon queue/session change and push it to the current branch.",
+  "next_action": "Await direction on whether to prepare a commit for the validated daemonize simplification.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -129,10 +121,10 @@
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
     "A new prompt-driven scope now targets daemonized prompt watching from JSON configuration.",
     "The repository does not currently contain .dev/PROJECT.md or .dev/ROADMAP.md, so planning is grounded in the direct request, AGENTS.md, current code, and machine state.",
-    "Daemon prompt execution is now serialized so only one prompt file advances at a time and later files remain pending until the active prompt is completed.",
-    "Waiting-for-plan prompts now block the daemon queue until their session PLAN.md becomes fully complete, at which point the runner finalizes the result and releases the next prompt.",
-    "Generated session IDs now add a numeric suffix when a same-second session directory already exists, preventing daemon prompt files from colliding onto one session.",
-    "Focused validation passed through python3 -m unittest tests.test_daemon and python3 -m unittest tests.test_cli tests.test_loop_runner."
+    "Daemon prompt execution remains serialized so only one prompt file advances at a time and later files remain pending until the active prompt is completed.",
+    "This scope removes the custom daemon phase pipeline in favor of reusing the existing supervised run loop.",
+    "Daemon config examples and docs must move with the schema change so operators no longer configure phase-specific agent CLIs in daemonize.json.",
+    "Validation completed successfully for tests.test_daemon, tests.test_cli, and tests.test_loop_runner."
   ],
   "loop": {
     "status": "idle",
@@ -143,12 +135,12 @@
   },
   "supervisor_report": {
     "path": ".dev/supervisor_report.md",
-    "status": "not_run"
+    "status": "validated"
   },
   "latest_continuation_prompt": null,
   "current_run": null,
   "latest_commit": {
     "hash": "pending",
-    "summary": "pending"
+    "summary": "Simplify daemonize prompt execution"
   }
 }

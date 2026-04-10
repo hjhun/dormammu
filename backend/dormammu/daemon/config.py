@@ -5,15 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from dormammu.config import AppConfig
-from dormammu.config import VALID_INPUT_MODES
-from dormammu.daemon.models import (
-    DaemonConfig,
-    PHASE_SEQUENCE,
-    PhaseCliConfig,
-    PhaseExecutionConfig,
-    QueueConfig,
-    WatchConfig,
-)
+from dormammu.daemon.models import DaemonConfig, QueueConfig, WatchConfig
 
 
 def _resolve_path(value: str, *, base_dir: Path) -> Path:
@@ -58,121 +50,13 @@ def _parse_queue_config(value: Any, *, config_path: Path) -> QueueConfig:
     allowed_extensions = payload.get("allowed_extensions", [])
     if not isinstance(allowed_extensions, list) or any(not isinstance(item, str) for item in allowed_extensions):
         raise RuntimeError(f"queue.allowed_extensions must be a JSON array of strings in {config_path}")
-    normalized = tuple(
-        item if item.startswith(".") else f".{item}"
-        for item in allowed_extensions
-    )
+    normalized = tuple(item if item.startswith(".") else f".{item}" for item in allowed_extensions)
     ignore_hidden = payload.get("ignore_hidden_files", True)
     if not isinstance(ignore_hidden, bool):
         raise RuntimeError(f"queue.ignore_hidden_files must be a boolean in {config_path}")
     return QueueConfig(
         allowed_extensions=normalized,
         ignore_hidden_files=ignore_hidden,
-    )
-
-
-def _parse_phase_cli_config(value: Any, *, phase_name: str, config_path: Path, base_dir: Path) -> PhaseCliConfig:
-    payload = _require_mapping(
-        value,
-        field_name=f"phases.{phase_name}.agent_cli",
-        config_path=config_path,
-    )
-    path_text = _require_non_empty_string(
-        payload.get("path"),
-        field_name=f"phases.{phase_name}.agent_cli.path",
-        config_path=config_path,
-    )
-    input_mode = str(payload.get("input_mode", "auto"))
-    if input_mode not in VALID_INPUT_MODES:
-        raise RuntimeError(
-            f"phases.{phase_name}.agent_cli.input_mode must be one of {sorted(VALID_INPUT_MODES)} in {config_path}"
-        )
-    prompt_flag = payload.get("prompt_flag")
-    if prompt_flag is not None and not isinstance(prompt_flag, str):
-        raise RuntimeError(f"phases.{phase_name}.agent_cli.prompt_flag must be a string in {config_path}")
-    extra_args = payload.get("extra_args", [])
-    if not isinstance(extra_args, list) or any(not isinstance(item, str) for item in extra_args):
-        raise RuntimeError(f"phases.{phase_name}.agent_cli.extra_args must be a JSON array of strings in {config_path}")
-    cli_path = _resolve_path(path_text, base_dir=base_dir) if "/" in path_text or path_text.startswith(".") else Path(path_text)
-    return PhaseCliConfig(
-        path=cli_path,
-        input_mode=input_mode,
-        prompt_flag=prompt_flag,
-        extra_args=tuple(extra_args),
-    )
-
-
-def _resolve_skill_path(
-    *,
-    skill_path_text: str | None,
-    skill_name: str | None,
-    app_config: AppConfig,
-    config_path: Path,
-    base_dir: Path,
-) -> tuple[str | None, Path]:
-    if skill_path_text and skill_name:
-        raise RuntimeError(f"Specify only one of skill_path or skill_name in {config_path}")
-
-    if skill_path_text:
-        resolved = _resolve_path(skill_path_text, base_dir=base_dir)
-        if not resolved.exists():
-            raise RuntimeError(f"Skill path was not found: {resolved}")
-        return None, resolved
-
-    if skill_name:
-        candidates = (
-            app_config.repo_root / "agents" / "skills" / skill_name / "SKILL.md",
-            app_config.global_home_dir / "agents" / "skills" / skill_name / "SKILL.md",
-        )
-        for candidate in candidates:
-            if candidate.exists():
-                return skill_name, candidate.resolve()
-        raise RuntimeError(
-            f"Skill name '{skill_name}' was not found under "
-            f"{app_config.repo_root / 'agents' / 'skills'} or "
-            f"{app_config.global_home_dir / 'agents' / 'skills'}"
-        )
-
-    raise RuntimeError(f"Each phase must define skill_path or skill_name in {config_path}")
-
-
-def _parse_phase_config(
-    value: Any,
-    *,
-    phase_name: str,
-    config_path: Path,
-    base_dir: Path,
-    app_config: AppConfig,
-) -> PhaseExecutionConfig:
-    payload = _require_mapping(value, field_name=f"phases.{phase_name}", config_path=config_path)
-    skill_path_text = payload.get("skill_path")
-    if skill_path_text is not None and not isinstance(skill_path_text, str):
-        raise RuntimeError(f"phases.{phase_name}.skill_path must be a string in {config_path}")
-    raw_skill_name = payload.get("skill_name")
-    skill_name = None
-    if raw_skill_name is not None:
-        skill_name = _require_non_empty_string(
-            raw_skill_name,
-            field_name=f"phases.{phase_name}.skill_name",
-            config_path=config_path,
-        )
-    resolved_skill_name, resolved_skill_path = _resolve_skill_path(
-        skill_path_text=skill_path_text,
-        skill_name=skill_name,
-        app_config=app_config,
-        config_path=config_path,
-        base_dir=base_dir,
-    )
-    return PhaseExecutionConfig(
-        phase_name=phase_name,
-        skill_name=resolved_skill_name,
-        skill_path=resolved_skill_path,
-        agent_cli=_parse_phase_cli_config(
-            payload.get("agent_cli"),
-            phase_name=phase_name,
-            config_path=config_path,
-            base_dir=base_dir,
-        ),
     )
 
 
@@ -186,6 +70,11 @@ def load_daemon_config(path: Path, *, app_config: AppConfig) -> DaemonConfig:
         raise RuntimeError(f"Failed to parse daemon config file: {config_path}") from exc
 
     payload = _require_mapping(raw_payload, field_name="daemon config", config_path=config_path)
+    if "phases" in payload:
+        raise RuntimeError(
+            f"phases is no longer supported in {config_path}. "
+            "Configure the coding agent through dormammu.json and let daemonize reuse dormammu run semantics."
+        )
     schema_version = int(payload.get("schema_version", 1))
     prompt_path = _resolve_path(
         _require_non_empty_string(payload.get("prompt_path"), field_name="prompt_path", config_path=config_path),
@@ -195,17 +84,6 @@ def load_daemon_config(path: Path, *, app_config: AppConfig) -> DaemonConfig:
         _require_non_empty_string(payload.get("result_path"), field_name="result_path", config_path=config_path),
         base_dir=config_path.parent,
     )
-    phases_payload = _require_mapping(payload.get("phases"), field_name="phases", config_path=config_path)
-    phases = {
-        phase_name: _parse_phase_config(
-            phases_payload.get(phase_name),
-            phase_name=phase_name,
-            config_path=config_path,
-            base_dir=config_path.parent,
-            app_config=app_config,
-        )
-        for phase_name in PHASE_SEQUENCE
-    }
     return DaemonConfig(
         schema_version=schema_version,
         config_path=config_path,
@@ -213,5 +91,4 @@ def load_daemon_config(path: Path, *, app_config: AppConfig) -> DaemonConfig:
         result_path=result_path,
         watch=_parse_watch_config(payload.get("watch"), config_path=config_path),
         queue=_parse_queue_config(payload.get("queue"), config_path=config_path),
-        phases=phases,
     )

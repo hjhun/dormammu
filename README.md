@@ -163,27 +163,18 @@ DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json \
   dormammu daemonize --repo-root . --config ./ops/daemonize.prod.json
 ```
 
-Each queued prompt writes its result report early into `result_path` while the
-workflow is still running, and the source prompt file is removed from
-`prompt_path` after that prompt run finishes.
+Each queued prompt now reuses the same supervised loop as
+`dormammu run --prompt-file <path>`. When that loop reaches a terminal
+outcome, daemonize writes the result report into `result_path` and removes the
+source prompt file from `prompt_path`.
 
-Additional daemon config examples are also available:
+Additional daemon config examples are also available for different watch and
+queue presets:
 
-- [daemonize.json.example](daemonize.json.example): explicit installed
-  `skill_path` values under `~/.dormammu/agents`
-- [daemonize.named-skill.example.json](daemonize.named-skill.example.json):
-  portable `skill_name`-based config
-- [daemonize.mixed-skill-resolution.example.json](daemonize.mixed-skill-resolution.example.json):
-  mix repository-local `skill_path`, installed `skill_path`, and `skill_name`
-- [daemonize.phase-specific-clis.example.json](daemonize.phase-specific-clis.example.json):
-  different external agent CLIs per phase
-
-Quick chooser:
-
-- installed bundle and explicit paths -> `daemonize.json.example`
-- portable named-skill config -> `daemonize.named-skill.example.json`
-- mix standard and custom skills -> `daemonize.mixed-skill-resolution.example.json`
-- different CLIs by phase -> `daemonize.phase-specific-clis.example.json`
+- [daemonize.json.example](daemonize.json.example)
+- [daemonize.named-skill.example.json](daemonize.named-skill.example.json)
+- [daemonize.mixed-skill-resolution.example.json](daemonize.mixed-skill-resolution.example.json)
+- [daemonize.phase-specific-clis.example.json](daemonize.phase-specific-clis.example.json)
 
 ## What Gets Written
 
@@ -317,27 +308,10 @@ dormammu show-config --repo-root .
 DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json dormammu run --repo-root . --prompt-file PROMPT.md
 ```
 
-For `daemonize` configs, each phase should use either:
-
-- `skill_name`, resolved from `agents/skills/<name>/SKILL.md` in the repo
-  first and then from `~/.dormammu/agents/skills/<name>/SKILL.md`
-- `skill_path`, which points at one explicit skill file
-
-Common installed skill paths under `~/.dormammu/agents` are:
-
-- `~/.dormammu/agents/skills/planning-agent/SKILL.md`
-- `~/.dormammu/agents/skills/designing-agent/SKILL.md`
-- `~/.dormammu/agents/skills/developing-agent/SKILL.md`
-- `~/.dormammu/agents/skills/building-and-deploying/SKILL.md`
-- `~/.dormammu/agents/skills/testing-and-reviewing/SKILL.md`
-- `~/.dormammu/agents/skills/committing-agent/SKILL.md`
-
-See [docs/GUIDE.md](docs/GUIDE.md) for the full `daemonize` skill resolution
-rules.
-
-When a `daemonize` phase leaves `agent_cli.extra_args` empty, these
-non-interactive CLI defaults still apply automatically for `codex`, `claude`,
-and `gemini`.
+`daemonize` no longer accepts phase-specific agent CLI settings. Configure the
+coding agent once through `dormammu.json` or `~/.dormammu/config` with
+`active_agent_cli`, and daemonize will reuse the same supervised run loop as
+`dormammu run`.
 
 ## Repository Layout
 

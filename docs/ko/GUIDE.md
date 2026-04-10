@@ -240,25 +240,17 @@ dormammu daemonize --repo-root . --config daemonize.json
 - daemon polling 루프로 60초마다 `prompt_path`를 다시 스캔
 - 파일명 앞의 숫자 prefix 우선, 그다음 알파벳 prefix 우선, 마지막으로 일반
   파일명 순서로 정렬
-- 각 프롬프트마다 설정된 phase를 순서대로 실행
-- phase 실행이 끝나기 전부터 `result_path`에 진행 중 결과 리포트 생성 후,
-  처리 종료 시 최종 결과로 갱신
-- 프롬프트 처리 종료 후 세션 `PLAN.md`가 모두 완료된 경우에만
-  `prompt_path`의 원본 프롬프트 파일 제거
+- 각 프롬프트를 `dormammu run --prompt-file <path>`와 동일한 supervised
+  loop 의미로 실행
+- loop가 종료된 뒤에만 `result_path`에 결과 리포트 생성
+- loop가 끝나면 `prompt_path`의 원본 프롬프트 파일 제거
 
 시작점으로는 [daemonize.json.example](../../daemonize.json.example)를
 사용하면 됩니다.
 
-잘 알려진 상호작용형 CLI는 phase의 `agent_cli.extra_args`를 비워두면
-`daemonize`가 기본 비대화형 옵션을 자동으로 붙입니다.
-
-- `codex`: `--dangerously-bypass-approvals-and-sandbox`, 그리고 설치된
-  `codex exec`가 지원하면 `--skip-git-repo-check`
-- `claude`: `--dangerously-skip-permissions`
-- `gemini`: `--approval-mode yolo --include-directories /`
-
-이 기본값을 바꾸고 싶을 때만 phase별 `extra_args`를 명시적으로 넣으면
-됩니다.
+`daemonize`는 더 이상 phase별 `agent_cli` 설정을 받지 않습니다.
+대신 `dormammu.json` 또는 `~/.dormammu/config`의 `active_agent_cli`를
+사용하고, 일반 `run` 루프 동작을 그대로 재사용합니다.
 
 ## `.dev` 디렉터리
 
@@ -310,194 +302,54 @@ dormammu run \
 - `result_path`
 - `watch`
 - `queue`
-- `phases`
+- phase별 coding-agent 설정 없음
 
-## Phase의 Skill 지정 규칙
+이제 daemonize는 자체 phase/skill 그래프를 정의하지 않고, 기존 supervised
+run loop를 재사용합니다. coding agent는 일반 Dormammu 런타임 설정에서
+잡고, `daemonize.json`은 watch와 queue 설정에만 집중하세요.
 
-각 phase는 아래 둘 중 하나를 반드시 지정해야 합니다.
-
-- `skill_name`
-- `skill_path`
-
-같은 phase에서 둘을 동시에 지정하면 안 됩니다.
-
-### `skill_name`
-
-`skill_name`은 재사용 가능한 named skill을 가리키는 방식입니다.
-예를 들어 `planning-agent`, `developing-agent` 같은 이름을 넣습니다.
-
-탐색 순서는 다음과 같습니다.
-
-1. `repo_root/agents/skills/<skill_name>/SKILL.md`
-2. `~/.dormammu/agents/skills/<skill_name>/SKILL.md`
-
-두 위치 어디에도 없으면 daemon은 감시를 시작하지 않고, 설정 로딩 단계에서
-즉시 실패합니다.
-
-예시:
+`active_agent_cli`를 잡는 예시는 아래처럼 일반 런타임 설정에 둡니다.
 
 ```json
 {
-  "skill_name": "planning-agent",
-  "agent_cli": {
-    "path": "codex",
-    "input_mode": "auto",
-    "extra_args": []
-  }
+  "active_agent_cli": "/home/you/.local/bin/codex"
 }
 ```
-
-즉, unattended `daemonize` 실행에서는 `extra_args`를 비워둬도 위 기본
-preset이 자동 적용됩니다. 승인 또는 sandbox 정책을 다르게 주고 싶을 때만
-명시적으로 넣으세요.
-
-`skill_name`을 쓰는 것이 좋은 경우:
-
-- 저장소의 `agents/skills/` 아래 skill을 그대로 쓰고 싶을 때
-- `~/.dormammu/agents/skills/`에 설치된 skill을 재사용하고 싶을 때
-- 여러 머신에서 같은 skill 레이아웃을 기준으로 portable하게 운영하고 싶을 때
-
-### `skill_path`
-
-`skill_path`는 실제 skill 파일 경로를 직접 지정하는 방식입니다.
-표준 named skill 레이아웃 바깥에 있는 파일을 사용하거나, 특정 skill 파일에
-정확히 고정하고 싶을 때 적합합니다.
-
-상대 경로는 셸의 현재 작업 디렉터리가 아니라 daemon config 파일이 있는
-디렉터리를 기준으로 해석됩니다.
-
-예시:
-
-```json
-{
-  "skill_path": "./custom-skills/release-checklist.md",
-  "agent_cli": {
-    "path": "codex",
-    "input_mode": "auto",
-    "extra_args": []
-  }
-}
-```
-
-`skill_path`를 쓰는 것이 좋은 경우:
-
-- 저장소 전용 커스텀 skill 문서를 쓰고 싶을 때
-- 파일이 `agents/skills/<name>/SKILL.md` 구조를 따르지 않을 때
-- config가 하나의 정확한 skill 문서를 가리키도록 고정하고 싶을 때
-
-## Skill 규칙 요약
-
-- 모든 phase는 skill 참조가 하나 필요합니다.
-- `skill_name`과 `skill_path`는 상호 배타적입니다.
-- `skill_name`은 저장소 로컬 skill을 먼저 찾고, 그다음
-  `~/.dormammu/agents` 아래 설치된 skill을 찾습니다.
-- `skill_path`는 실제 존재하는 파일이어야 합니다.
-- skill 설정이 누락되거나 충돌하면 startup error로 처리합니다.
-
-## 권장 기본 매핑
-
-현재 내장 워크플로 번들 기준으로 일반적인 phase 매핑은 다음과 같습니다.
-
-- `plan` -> `planning-agent`
-- `design` -> `designing-agent`
-- `develop` -> `developing-agent`
-- `build_and_deploy` -> `building-and-deploying`
-- `test_and_review` -> `testing-and-reviewing`
-- `commit` -> `committing-agent`
-
-## `~/.dormammu/agents` 아래 설치되는 Skill Path 예시
-
-`skill_name` 대신 명시적인 `skill_path`를 쓰고 싶다면, 설치된 skill 번들의
-일반적인 경로는 다음과 같습니다.
-
-- `plan` -> `~/.dormammu/agents/skills/planning-agent/SKILL.md`
-- `design` -> `~/.dormammu/agents/skills/designing-agent/SKILL.md`
-- `develop` -> `~/.dormammu/agents/skills/developing-agent/SKILL.md`
-- `build_and_deploy` -> `~/.dormammu/agents/skills/building-and-deploying/SKILL.md`
-- `test_and_review` -> `~/.dormammu/agents/skills/testing-and-reviewing/SKILL.md`
-- `commit` -> `~/.dormammu/agents/skills/committing-agent/SKILL.md`
-
-예시:
-
-```json
-{
-  "phases": {
-    "plan": {
-      "skill_path": "~/.dormammu/agents/skills/planning-agent/SKILL.md",
-      "agent_cli": {
-        "path": "codex",
-        "input_mode": "auto",
-        "extra_args": []
-      }
-    }
-  }
-}
-```
-
-명시적 `skill_path`가 특히 유용한 경우:
-
-- config가 정확히 어떤 설치된 skill 파일에 의존하는지 분명히 보여주고 싶을 때
-- 저장소 안에 `agents/skills/`가 없고 설치된 번들을 직접 쓰고 싶을 때
-- 운영 리뷰 시 `skill_name` 해석 규칙보다 실제 파일 경로를 바로 보이고 싶을 때
 
 ## 추가 example 파일
 
-Dormammu는 여러 운영 패턴을 바로 시작할 수 있도록 daemon config example을
-여러 개 제공합니다.
+Dormammu는 여러 watch/queue 운영 패턴을 바로 시작할 수 있도록 daemon
+config example을 여러 개 제공합니다.
 
 - `daemonize.json.example`
-  - `~/.dormammu/agents` 아래 설치된 기본 skill bundle의 `skill_path`를
-    명시적으로 사용합니다.
-  - phase와 skill 파일의 실제 연결을 리뷰하기 쉽게 보여주고 싶을 때 적합합니다.
+  - `.md`와 `.txt`를 함께 받는 기본 prompt watcher 예시입니다.
 - `daemonize.named-skill.example.json`
-  - 모든 phase를 `skill_name` 기반으로 작성한 예시입니다.
-  - 여러 저장소와 머신에서 portable하게 쓰고 싶을 때 적합합니다.
+  - Markdown만 받는 최소 queue preset 예시입니다.
 - `daemonize.mixed-skill-resolution.example.json`
-  - `skill_name`과 `skill_path`를 섞어서 쓰는 예시입니다.
-  - 대부분은 표준 skill을 쓰고 일부 phase만 저장소 로컬 custom skill로
-    덮어쓰고 싶을 때 적합합니다.
+  - 여러 번 나눠 저장되는 파일을 위해 짧은 settle delay를 둔 Markdown
+    queue 예시입니다.
 - `daemonize.phase-specific-clis.example.json`
-  - skill은 표준 매핑을 유지하면서 phase별 `agent_cli`를 다르게 두는
-    예시입니다.
-  - 계획, 구현, 리뷰, 배포 단계를 서로 다른 에이전트 CLI로 분리하고 싶을 때
-    적합합니다.
+  - 더 짧은 polling interval을 쓰는 polling 중심 preset 예시입니다.
 
 ## 어떤 example부터 시작하면 좋나요
 
 처음 선택이 헷갈리면 아래 기준으로 고르면 됩니다.
 
 - `daemonize.json.example`부터 시작
-  - 설치된 기본 skill bundle의 `skill_path`를 전부 명시적으로 보고 싶을 때
-  - 운영 리뷰에서 phase와 skill 파일 연결을 바로 확인하고 싶을 때
+  - 기본 설정으로 시작하고 싶을 때
 - `daemonize.named-skill.example.json`부터 시작
-  - 가장 portable한 구성을 원할 때
-  - 저장소 로컬 또는 설치된 skill 탐색 규칙을 그대로 활용하고 싶을 때
+  - queue가 Markdown prompt만 받아야 할 때
 - `daemonize.mixed-skill-resolution.example.json`부터 시작
-  - 대부분은 표준 skill을 쓰되 일부 phase만 저장소 전용 custom skill로
-    바꾸고 싶을 때
+  - 편집기가 파일을 여러 번 나눠 쓰므로 짧은 settle window가 필요할 때
 - `daemonize.phase-specific-clis.example.json`부터 시작
-  - 계획, 구현, 테스트/리뷰, 배포 단계를 서로 다른 agent CLI로 실행하고
-    싶을 때
+  - polling을 명시적으로 쓰면서 더 자주 다시 스캔하고 싶을 때
 
 운영 상황별 추천은 보통 이렇게 보면 됩니다.
 
-- 팀 공용으로 설치된 workflow bundle 중심 운영 -> `daemonize.json.example`
-- 여러 저장소에 배포할 portable 템플릿 -> `daemonize.named-skill.example.json`
-- 저장소에 릴리스/리뷰 전용 custom skill이 하나 섞인 경우 -> `daemonize.mixed-skill-resolution.example.json`
-- planning/review/implementation backend를 분리해서 쓰는 경우 -> `daemonize.phase-specific-clis.example.json`
-
-## 왜 이렇게 분리하나요
-
-Dormammu는 다음 두 가지를 분리합니다.
-
-- 이 phase에서 어떤 skill 계약을 따를지
-- 그 skill을 어떤 외부 agent CLI로 실행할지
-
-이 분리를 해두면 운영이 쉬워집니다.
-
-- skill은 그대로 두고 `codex`에서 다른 CLI로 바꿀 수 있습니다.
-- CLI는 그대로 두고 특정 phase만 다른 skill로 바꿀 수 있습니다.
-- JSON 안에 긴 skill 본문을 중복해서 넣지 않아도 됩니다.
+- `.md`와 `.txt`를 함께 받는 기본 queue -> `daemonize.json.example`
+- Markdown만 받는 엄격한 queue -> `daemonize.named-skill.example.json`
+- 파일이 여러 번 저장된 뒤 닫히는 편집기 환경 -> `daemonize.mixed-skill-resolution.example.json`
+- polling 간격을 짧게 가져가야 하는 환경 -> `daemonize.phase-specific-clis.example.json`
 
 ## Working Directory와 CLI Override
 
