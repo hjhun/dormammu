@@ -103,6 +103,60 @@ class DaemonConfigTests(unittest.TestCase):
             self.assertIsNone(config.phases["plan"].skill_name)
             self.assertEqual(config.phases["plan"].skill_path, skill_path.resolve())
 
+    def test_daemonize_codex_defaults_avoid_interactive_approval_when_extra_args_are_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_codex = self._write_fake_codex_cli(root)
+            daemon_config_path = root / "daemon.json"
+            daemon_config_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "prompt_path": "./prompts",
+                        "result_path": "./results",
+                        "watch": {
+                            "backend": "polling",
+                            "poll_interval_seconds": 1,
+                            "settle_seconds": 0,
+                        },
+                        "phases": {
+                            phase_name: {
+                                "skill_name": self._skill_name_for_phase(phase_name),
+                                "agent_cli": {
+                                    "path": str(fake_codex),
+                                    "input_mode": "auto",
+                                    "prompt_flag": None,
+                                    "extra_args": [],
+                                },
+                            }
+                            for phase_name in (
+                                "plan",
+                                "design",
+                                "develop",
+                                "build_and_deploy",
+                                "test_and_review",
+                                "commit",
+                            )
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            daemon_config = load_daemon_config(daemon_config_path, app_config=AppConfig.load(repo_root=root))
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            (daemon_config.prompt_path / "001-first.md").write_text("First prompt\n", encoding="utf-8")
+
+            config = AppConfig.load(repo_root=root)
+            processed = DaemonRunner(config, daemon_config).run_pending_once(watcher_backend="polling")
+
+            self.assertEqual(processed, 1)
+            result_text = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
+            self.assertIn("Status: `completed`", result_text)
+            self.assertTrue((root / "codex-danger.txt").exists())
+
     def _phase_payload(self, cli_path: str, *, skill_path: str | None = None) -> dict[str, object]:
         return {
             phase_name: {
@@ -155,6 +209,46 @@ class DaemonConfigTests(unittest.TestCase):
             skill_dir = skills_dir / name
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(f"# {name}\n\nUse {name}.\n", encoding="utf-8")
+
+    def _write_fake_codex_cli(self, root: Path) -> Path:
+        script = root / "codex"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+                from pathlib import Path
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        if args[:2] == ["exec", "--help"]:
+                            print("Run Codex non-interactively")
+                            print("Usage: codex exec [OPTIONS] [PROMPT]")
+                            print("  --skip-git-repo-check")
+                            return 0
+                        print("Usage: codex [OPTIONS] [PROMPT]")
+                        print("  codex exec [OPTIONS] [PROMPT]")
+                        print("  --dangerously-bypass-approvals-and-sandbox")
+                        print("  --skip-git-repo-check")
+                        return 0
+
+                    if args and args[0] == "exec":
+                        dangerous = "--dangerously-bypass-approvals-and-sandbox" in args
+                        if dangerous:
+                            Path({str(root / "codex-danger.txt")!r}).write_text("danger\\n", encoding="utf-8")
+                        print(f"MODE::{{'dangerous' if dangerous else 'interactive'}}")
+                        return 0
+
+                    return 1
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
 
 
 class DaemonQueueTests(unittest.TestCase):
@@ -376,6 +470,46 @@ class DaemonRunnerTests(unittest.TestCase):
                     print(f"PHASE::{{phase}}")
                     print(f"PROMPT::{{prompt.strip()}}")
                     return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_fake_codex_cli(self, root: Path) -> Path:
+        script = root / "codex"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        if args[:2] == ["exec", "--help"]:
+                            print("Run Codex non-interactively")
+                            print("Usage: codex exec [OPTIONS] [PROMPT]")
+                            print("  --skip-git-repo-check")
+                            return 0
+                        print("Usage: codex [OPTIONS] [PROMPT]")
+                        print("  codex exec [OPTIONS] [PROMPT]")
+                        print("  --dangerously-bypass-approvals-and-sandbox")
+                        print("  --skip-git-repo-check")
+                        return 0
+
+                    if args and args[0] == "exec":
+                        dangerous = "--dangerously-bypass-approvals-and-sandbox" in args
+                        if dangerous:
+                            from pathlib import Path
+                            Path({str(root / "codex-danger.txt")!r}).write_text("danger\n", encoding="utf-8")
+                        print(f"MODE::{{'dangerous' if dangerous else 'interactive'}}")
+                        return 0
+
+                    return 1
 
                 raise SystemExit(main())
                 """

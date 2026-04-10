@@ -247,6 +247,17 @@ dormammu daemonize --repo-root . --config daemonize.json
 시작점으로는 [daemonize.json.example](../../daemonize.json.example)를
 사용하면 됩니다.
 
+잘 알려진 상호작용형 CLI는 phase의 `agent_cli.extra_args`를 비워두면
+`daemonize`가 기본 비대화형 옵션을 자동으로 붙입니다.
+
+- `codex`: `--dangerously-bypass-approvals-and-sandbox`, 그리고 설치된
+  `codex exec`가 지원하면 `--skip-git-repo-check`
+- `claude`: `--dangerously-skip-permissions`
+- `gemini`: `--approval-mode yolo --include-directories /`
+
+이 기본값을 바꾸고 싶을 때만 phase별 `extra_args`를 명시적으로 넣으면
+됩니다.
+
 ## `.dev` 디렉터리
 
 `dormammu`는 `.dev/`를 사람과 자동화가 함께 보는 제어면으로 사용합니다.
@@ -333,6 +344,10 @@ dormammu run \
   }
 }
 ```
+
+즉, unattended `daemonize` 실행에서는 `extra_args`를 비워둬도 위 기본
+preset이 자동 적용됩니다. 승인 또는 sandbox 정책을 다르게 주고 싶을 때만
+명시적으로 넣으세요.
 
 `skill_name`을 쓰는 것이 좋은 경우:
 

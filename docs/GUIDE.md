@@ -247,6 +247,16 @@ loop:
 Use [daemonize.json.example](../daemonize.json.example) as the starting point
 for the config.
 
+For known interactive CLIs, `daemonize` also injects non-interactive defaults
+when a phase leaves `agent_cli.extra_args` empty:
+
+- `codex`: `--dangerously-bypass-approvals-and-sandbox`, plus
+  `--skip-git-repo-check` when supported by the installed `codex exec`
+- `claude`: `--dangerously-skip-permissions`
+- `gemini`: `--approval-mode yolo --include-directories /`
+
+Set explicit phase `extra_args` when you want to override those defaults.
+
 ## The `.dev` Directory
 
 `dormammu` uses `.dev/` as the shared control surface for humans and tooling.
@@ -333,6 +343,10 @@ Example:
   }
 }
 ```
+
+Leaving `extra_args` empty is enough for unattended `daemonize` runs with the
+built-in presets above. Add explicit args only when you need a different
+approval or sandbox policy.
 
 Use `skill_name` when:
 

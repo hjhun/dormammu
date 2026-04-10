@@ -34,9 +34,22 @@ KNOWN_CLI_PRESETS: tuple[KnownCliPreset, ...] = (
         help_hints=("codex exec", "--full-auto", "--dangerously-bypass-approvals-and-sandbox"),
         command_prefix=("exec",),
         prompt_positional=True,
-        default_extra_args=("--skip-git-repo-check",),
-        suppress_default_extra_args_when_present=("--skip-git-repo-check",),
+        default_extra_args=("--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"),
+        suppress_default_extra_args_when_present=(
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--full-auto",
+            "--ask-for-approval",
+            "-a",
+            "--sandbox",
+            "-s",
+            "--skip-git-repo-check",
+        ),
         auto_approve_candidates=(
+            PresetAutoApproveCandidate(
+                value="--dangerously-bypass-approvals-and-sandbox",
+                risk="high",
+                summary="Bypasses approvals and sandboxing for fully non-interactive execution.",
+            ),
             PresetAutoApproveCandidate(
                 value="--full-auto",
                 risk="medium",

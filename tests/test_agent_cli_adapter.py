@@ -77,13 +77,17 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(result.prompt_mode, "positional")
             self.assertEqual(list(result.command[:2]), [str(fake_cli), "exec"])
+            self.assertIn("--dangerously-bypass-approvals-and-sandbox", result.command)
             self.assertIn(
                 "PROMPT::Summarize the repository.",
                 result.stdout_path.read_text(encoding="utf-8"),
             )
             self.assertEqual(result.capabilities.preset_key, "codex")
             self.assertIsNotNone(result.capabilities.auto_approve)
-            self.assertEqual(result.capabilities.auto_approve.candidates[0].value, "--full-auto")
+            self.assertEqual(
+                result.capabilities.auto_approve.candidates[0].value,
+                "--dangerously-bypass-approvals-and-sandbox",
+            )
 
     def test_run_once_applies_skip_git_repo_check_for_supported_codex_exec(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -103,8 +107,13 @@ class CliAdapterTests(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(
-                list(result.command[:3]),
-                [str(fake_cli), "exec", "--skip-git-repo-check"],
+                list(result.command[:4]),
+                [
+                    str(fake_cli),
+                    "exec",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "--skip-git-repo-check",
+                ],
             )
 
     def test_run_once_applies_skip_git_repo_check_when_only_exec_help_advertises_it(self) -> None:
@@ -149,6 +158,28 @@ class CliAdapterTests(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(result.command.count("--skip-git-repo-check"), 1)
+            self.assertIn("--dangerously-bypass-approvals-and-sandbox", result.command)
+
+    def test_run_once_does_not_add_dangerous_bypass_when_codex_approval_flags_are_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_codex_cli(root, include_skip_git_repo_check=True)
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    extra_args=("--full-auto",),
+                    run_label="phase-7-codex-explicit-approval-mode",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", result.command)
+            self.assertEqual(result.command.count("--full-auto"), 1)
 
     def test_run_once_falls_back_across_configured_clis_when_token_limit_is_hit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -430,7 +461,9 @@ class CliAdapterTests(unittest.TestCase):
                 list(result.command[:3]),
                 [str(symlink_cli), "exec", "--full-auto"],
             )
-            self.assertIn("--full-auto Summarize the repository.", result.stdout_path.read_text(encoding="utf-8"))
+            output_text = result.stdout_path.read_text(encoding="utf-8")
+            self.assertIn("PROMPT::Summarize the repository.", output_text)
+            self.assertIn("MODE::", output_text)
 
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
@@ -511,12 +544,33 @@ class CliAdapterTests(unittest.TestCase):
                         print("Usage: codex [OPTIONS] [PROMPT]")
                         print("  codex exec [OPTIONS] [PROMPT]")
                         print("  --full-auto")
+                        print("  --dangerously-bypass-approvals-and-sandbox")
                         {main_help_skip_git_repo_check_line}
                         return 0
 
                     if args and args[0] == "exec":
-                        prompt = " ".join(args[1:]).strip()
+                        filtered_args = []
+                        skip_next = False
+                        for arg in args[1:]:
+                            if skip_next:
+                                skip_next = False
+                                continue
+                            if arg in ("-a", "-s"):
+                                skip_next = True
+                                continue
+                            if arg in (
+                                "--dangerously-bypass-approvals-and-sandbox",
+                                "--full-auto",
+                                "--skip-git-repo-check",
+                                "--ask-for-approval",
+                                "--sandbox",
+                            ):
+                                continue
+                            filtered_args.append(arg)
+                        prompt = " ".join(filtered_args).strip()
+                        mode = "dangerous" if "--dangerously-bypass-approvals-and-sandbox" in args else ""
                         print(f"PROMPT::{{prompt}}")
+                        print(f"MODE::{{mode}}")
                         return 0
 
                     print("unexpected invocation", file=sys.stderr)

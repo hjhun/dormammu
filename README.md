@@ -226,6 +226,14 @@ dormammu restore-session --repo-root . --session-id your-session-id
 Use `dormammu inspect-cli` before real runs if you want to confirm prompt mode,
 workdir support, matched preset, and approval-related hints.
 
+For unattended daemon-style runs, Dormammu applies non-interactive defaults for
+known CLIs when you do not pass explicit approval args:
+
+- `codex`: `--dangerously-bypass-approvals-and-sandbox`, plus
+  `--skip-git-repo-check` when the installed `codex exec` help advertises it
+- `claude`: `--dangerously-skip-permissions`
+- `gemini`: `--approval-mode yolo --include-directories /`
+
 ## Configuration
 
 Without an explicit config file, the built-in fallback order is:
@@ -281,6 +289,10 @@ Common installed skill paths under `~/.dormammu/agents` are:
 
 See [docs/GUIDE.md](docs/GUIDE.md) for the full `daemonize` skill resolution
 rules.
+
+When a `daemonize` phase leaves `agent_cli.extra_args` empty, these
+non-interactive CLI defaults still apply automatically for `codex`, `claude`,
+and `gemini`.
 
 ## Repository Layout
 

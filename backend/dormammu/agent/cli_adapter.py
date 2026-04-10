@@ -320,18 +320,77 @@ class CliAdapter:
         if preset is None or not preset.default_extra_args:
             return request
 
-        if preset.key == "codex" and "--skip-git-repo-check" not in capabilities.help_text.lower():
-            return request
-
         extra_args = tuple(request.extra_args)
-        normalized_args = {arg.strip().lower() for arg in extra_args if arg.strip()}
-        if any(flag.lower() in normalized_args for flag in preset.suppress_default_extra_args_when_present):
+        default_args = self._default_preset_args_to_prepend(
+            preset_key=preset.key,
+            default_extra_args=preset.default_extra_args,
+            suppress_flags=preset.suppress_default_extra_args_when_present,
+            capabilities=capabilities,
+            extra_args=extra_args,
+        )
+        if not default_args:
             return request
 
         return replace(
             request,
-            extra_args=tuple(preset.default_extra_args) + extra_args,
+            extra_args=tuple(default_args) + extra_args,
         )
+
+    def _default_preset_args_to_prepend(
+        self,
+        *,
+        preset_key: str,
+        default_extra_args: tuple[str, ...],
+        suppress_flags: tuple[str, ...],
+        capabilities: CliCapabilities,
+        extra_args: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        normalized_args = {arg.strip().lower() for arg in extra_args if arg.strip()}
+
+        if preset_key == "codex":
+            default_args: list[str] = []
+            if not any(
+                flag in normalized_args
+                for flag in (
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "--full-auto",
+                    "--ask-for-approval",
+                    "-a",
+                    "--sandbox",
+                    "-s",
+                )
+            ):
+                default_args.append("--dangerously-bypass-approvals-and-sandbox")
+            if (
+                "--skip-git-repo-check" not in normalized_args
+                and "--skip-git-repo-check" in capabilities.help_text.lower()
+            ):
+                default_args.append("--skip-git-repo-check")
+            return tuple(default_args)
+
+        if preset_key == "gemini":
+            default_args = []
+            if not any(flag in normalized_args for flag in ("--approval-mode", "--yolo")):
+                default_args.extend(["--approval-mode", "yolo"])
+            if "--include-directories" not in normalized_args:
+                default_args.extend(["--include-directories", "/"])
+            return tuple(default_args)
+
+        if preset_key == "claude_code":
+            if any(
+                flag in normalized_args
+                for flag in (
+                    "--permission-mode",
+                    "--dangerously-skip-permissions",
+                    "--allow-dangerously-skip-permissions",
+                )
+            ):
+                return ()
+            return ("--dangerously-skip-permissions",)
+
+        if any(flag.lower() in normalized_args for flag in suppress_flags):
+            return ()
+        return default_extra_args
 
     def _resolve_cli_override(self, cli_path: Path) -> CliInvocationConfig | None:
         overrides = self.config.cli_overrides or {}
