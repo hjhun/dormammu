@@ -157,6 +157,61 @@ class DaemonConfigTests(unittest.TestCase):
             self.assertIn("Status: `completed`", result_text)
             self.assertTrue((root / "codex-danger.txt").exists())
 
+    def test_daemonize_claude_defaults_avoid_interactive_approval_when_extra_args_are_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_claude = self._write_fake_claude_cli(root)
+            daemon_config_path = root / "daemon.json"
+            daemon_config_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "prompt_path": "./prompts",
+                        "result_path": "./results",
+                        "watch": {
+                            "backend": "polling",
+                            "poll_interval_seconds": 1,
+                            "settle_seconds": 0,
+                        },
+                        "phases": {
+                            phase_name: {
+                                "skill_name": self._skill_name_for_phase(phase_name),
+                                "agent_cli": {
+                                    "path": str(fake_claude),
+                                    "input_mode": "auto",
+                                    "prompt_flag": None,
+                                    "extra_args": [],
+                                },
+                            }
+                            for phase_name in (
+                                "plan",
+                                "design",
+                                "develop",
+                                "build_and_deploy",
+                                "test_and_review",
+                                "commit",
+                            )
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            daemon_config = load_daemon_config(daemon_config_path, app_config=AppConfig.load(repo_root=root))
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            (daemon_config.prompt_path / "001-first.md").write_text("First prompt\n", encoding="utf-8")
+
+            config = AppConfig.load(repo_root=root)
+            processed = DaemonRunner(config, daemon_config).run_pending_once(watcher_backend="polling")
+
+            self.assertEqual(processed, 1)
+            result_text = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
+            self.assertIn("Status: `completed`", result_text)
+            self.assertTrue((root / "claude-print.txt").exists())
+            self.assertTrue((root / "claude-danger.txt").exists())
+
     def _phase_payload(self, cli_path: str, *, skill_path: str | None = None) -> dict[str, object]:
         return {
             phase_name: {
@@ -250,6 +305,54 @@ class DaemonConfigTests(unittest.TestCase):
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
         return script
 
+    def _write_fake_claude_cli(self, root: Path) -> Path:
+        script = root / "claude"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+                from pathlib import Path
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("Usage: claude [options] [command] [prompt]")
+                        print("  -p, --print")
+                        print("  --permission-mode <mode>")
+                        print("  --dangerously-skip-permissions")
+                        return 0
+
+                    if "--print" not in args:
+                        print("missing print mode", file=sys.stderr)
+                        return 13
+                    Path({str(root / "claude-print.txt")!r}).write_text("print\\n", encoding="utf-8")
+
+                    mode = ""
+                    if "--permission-mode" in args:
+                        index = args.index("--permission-mode")
+                        mode = args[index + 1]
+                    elif "--dangerously-skip-permissions" in args:
+                        mode = "dangerously-skip-permissions"
+
+                    if mode != "dangerously-skip-permissions":
+                        print(f"unexpected mode::{{mode}}", file=sys.stderr)
+                        return 14
+                    Path({str(root / "claude-danger.txt")!r}).write_text(mode + "\\n", encoding="utf-8")
+
+                    prompt = args[-1] if args else ""
+                    print(f"PROMPT::{{prompt}}")
+                    print(f"MODE::{{mode}}")
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
 
 class DaemonQueueTests(unittest.TestCase):
     def test_prompt_sort_key_orders_numeric_then_alpha_then_plain(self) -> None:
@@ -303,7 +406,7 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIn(f"prompt path: {daemon_config.prompt_path}", progress)
             self.assertIn("watcher: polling", progress)
             self.assertIn("prompt detection: hidden_files=ignore, extensions=.md", progress)
-            self.assertIn("skip_when_result_exists=yes", progress)
+            self.assertIn("skip_when_completed_result_exists=yes", progress)
             self.assertIn("child cli output: stdout+stderr are mirrored live to parent stderr", progress)
 
     def test_run_pending_once_processes_existing_prompts_in_sorted_order(self) -> None:
@@ -361,7 +464,7 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIn("stderr artifact:", progress)
             self.assertIn("daemon phase commit: exit_code=0", progress)
 
-    def test_run_pending_once_skips_prompts_with_existing_result_file(self) -> None:
+    def test_run_pending_once_skips_prompts_with_existing_completed_result_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
@@ -372,12 +475,39 @@ class DaemonRunnerTests(unittest.TestCase):
             daemon_config.result_path.mkdir(parents=True, exist_ok=True)
             prompt_path = daemon_config.prompt_path / "001-first.md"
             prompt_path.write_text("First prompt\n", encoding="utf-8")
-            (daemon_config.result_path / "001-first_RESULT.md").write_text("existing\n", encoding="utf-8")
+            (daemon_config.result_path / "001-first_RESULT.md").write_text(
+                "# Result: 001-first.md\n\n## Summary\n\n- Status: `completed`\n",
+                encoding="utf-8",
+            )
 
             config = AppConfig.load(repo_root=root)
             processed = DaemonRunner(config, daemon_config).run_pending_once(watcher_backend="polling")
 
             self.assertEqual(processed, 0)
+
+    def test_run_pending_once_reprocesses_prompt_when_existing_result_is_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            daemon_config_path = self._write_daemon_config(root, fake_cli)
+            daemon_config = load_daemon_config(daemon_config_path, app_config=AppConfig.load(repo_root=root))
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+            (daemon_config.result_path / "001-first_RESULT.md").write_text(
+                "# Result: 001-first.md\n\n## Summary\n\n- Status: `failed`\n",
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=root)
+            processed = DaemonRunner(config, daemon_config).run_pending_once(watcher_backend="polling")
+
+            self.assertEqual(processed, 1)
+            result_text = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
+            self.assertIn("Status: `completed`", result_text)
+            self.assertFalse(prompt_path.exists())
 
     def test_run_pending_once_writes_in_progress_result_before_phase_completion(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -415,7 +545,7 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIn("### commit", result_text)
             self.assertFalse(prompt_path.exists())
 
-    def test_run_pending_once_removes_prompt_after_failed_run(self) -> None:
+    def test_run_pending_once_preserves_prompt_after_failed_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
@@ -433,7 +563,7 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertEqual(processed, 1)
             result_text = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
             self.assertIn("Status: `failed`", result_text)
-            self.assertFalse(prompt_path.exists())
+            self.assertTrue(prompt_path.exists())
 
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import shlex
+import re
 import sys
 from typing import TextIO
 
@@ -20,6 +21,9 @@ from dormammu.state.models import summarize_prompt_goal
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+_RESULT_STATUS_RE = re.compile(r"^- Status: `([^`]+)`$", re.MULTILINE)
 
 
 class DaemonRunner:
@@ -77,8 +81,9 @@ class DaemonRunner:
                 continue
             result_path = self._result_path_for_prompt(path)
             if result_path.exists():
-                self._processed_successes.add(path)
-                continue
+                if self._existing_result_is_completed(result_path):
+                    self._processed_successes.add(path)
+                    continue
             try:
                 stat_result = path.stat()
             except FileNotFoundError:
@@ -87,6 +92,14 @@ class DaemonRunner:
                 continue
             candidates.append(path)
         return candidates
+
+    def _existing_result_is_completed(self, result_path: Path) -> bool:
+        try:
+            text = result_path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        match = _RESULT_STATUS_RE.search(text)
+        return match is not None and match.group(1).strip() == "completed"
 
     def _emit_startup_banner(self, *, watcher_backend: str) -> None:
         print("=== dormammu daemonize ===", file=self.progress_stream)
@@ -105,7 +118,7 @@ class DaemonRunner:
             "prompt detection: "
             f"hidden_files={'ignore' if self.daemon_config.queue.ignore_hidden_files else 'include'}, "
             f"extensions={self._describe_allowed_extensions()}, "
-            "skip_when_result_exists=yes, "
+            "skip_when_completed_result_exists=yes, "
             "order=numeric-prefix -> alpha-prefix -> remaining-name",
             file=self.progress_stream,
         )
@@ -217,7 +230,7 @@ class DaemonRunner:
                 error=error,
             )
             self._write_result_report_from_result(prompt_result)
-            if prompt_path.exists():
+            if status == "completed" and prompt_path.exists():
                 prompt_path.unlink()
             if status == "completed":
                 self._processed_successes.add(prompt_path)
