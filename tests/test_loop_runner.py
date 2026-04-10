@@ -8,6 +8,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -15,12 +16,23 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from dormammu.config import AppConfig
+from dormammu.agent import cli_adapter as cli_adapter_module
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
 from dormammu.recovery import RecoveryManager
 from dormammu.state import StateRepository
 
 
 class LoopRunnerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cli_adapter_module._cli_calls_started = 0
+        self._sleep_patcher = mock.patch.object(cli_adapter_module.time, "sleep", return_value=None)
+        self._sleep_patcher.start()
+
+    def tearDown(self) -> None:
+        self._sleep_patcher.stop()
+        super().tearDown()
+
     def test_run_completes_after_retry_and_writes_continuation_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

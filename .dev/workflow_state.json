@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T23:02:30+09:00",
+  "updated_at": "2026-04-11T00:00:00+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -44,7 +44,7 @@
   "roadmap": {
     "active_phase_ids": [
       "phase_5",
-      "phase_7"
+      "phase_4"
     ],
     "priority_order": [
       "phase_1",
@@ -60,11 +60,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The inotify daemonize restore, settle retry, prompt preservation, PLAN gating, and stale-result replacement changes are implemented and validated."
+    "reason": "The daemon queue/session serialization change is implemented and validated."
   },
   "bootstrap": {
-    "goal": "Restore daemonize to inotify-based watching, preserve prompt files on Ctrl+C, gate completion on PLAN.md, and reprocess prompts when a stale completed result file already exists.",
-    "captured_at": "2026-04-10T23:02:30+09:00",
+    "goal": "Make daemonize create a fresh session for each newly started prompt file and keep later prompt files pending until the earlier prompt is completed.",
+    "captured_at": "2026-04-10T23:32:00+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -87,7 +87,7 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume from commit preparation and push for the validated `inotify` daemonize fix; otherwise the next daemon scope can begin from this requeue-safe baseline.",
+      "resume_checkpoint": "Resume from commit finalization and push for the validated daemon queue/session change.",
       "total_tasks": 5,
       "completed_tasks": 5,
       "pending_tasks": 0,
@@ -95,30 +95,30 @@
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Refresh `.dev` state for the restored `inotify`-based `daemonize` scope and replace the stale polling-only narrative",
+          "text": "Phase 1. Inspect current daemon prompt processing, session creation, and queue behavior to identify the right serialization point",
           "completed": true
         },
         {
-          "text": "Phase 2. Restore `inotify` watcher selection with event-level logging and keep polling as the explicit fallback path",
+          "text": "Phase 2. Make daemonize process one prompt at a time and keep later ready prompt files pending until the current prompt is completed",
           "completed": true
         },
         {
-          "text": "Phase 3. Preserve user prompt files on `Ctrl+C`, gate daemon prompt completion on the session `PLAN.md` reaching all `[O]`, and retry after the settle window without waiting for another watcher event",
+          "text": "Phase 3. Keep `waiting_for_plan` prompts as queue blockers, release the queue when their session `PLAN.md` becomes fully complete, and finalize the result report at release time",
           "completed": true
         },
         {
-          "text": "Phase 4. Reprocess requeued prompt filenames by removing stale completed result files before execution starts",
+          "text": "Phase 4. Ensure every newly started daemon prompt gets a unique fresh session even when multiple sessions start within the same second",
           "completed": true
         },
         {
-          "text": "Phase 5. Add regression coverage and run automated plus real daemon smoke validation for the restored `inotify` workflow",
+          "text": "Phase 5. Add regression coverage and rerun daemon plus session-related CLI validation",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-10T23:02:30+09:00"
+      "synced_at": "2026-04-11T00:00:00+09:00"
     }
   },
-  "next_action": "Prepare a commit and push for the validated inotify daemonize fix.",
+  "next_action": "Create a commit for the validated daemon queue/session change and push it to the current branch.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -129,12 +129,10 @@
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
     "A new prompt-driven scope now targets daemonized prompt watching from JSON configuration.",
     "The repository does not currently contain .dev/PROJECT.md or .dev/ROADMAP.md, so planning is grounded in the direct request, AGENTS.md, current code, and machine state.",
-    "Daemon mode again prefers inotify on Linux for auto watch mode and logs watcher events as they arrive.",
-    "The feature request requires separating dormammu workflow skills from per-phase external agent CLI command configuration.",
-    "The daemonize design is captured in docs/daemonize-design.md and has been implemented in the new backend/dormammu/daemon package.",
-    "The current user request restores inotify-driven watching, keeps prompt preservation on Ctrl+C, and requires stale completed results to be replaced on requeue.",
-    "Daemon prompt completion now depends on the synced session PLAN summary reporting all tasks complete.",
-    "Focused validation passed through python3 -m unittest tests.test_daemon tests.test_tasks tests.test_supervisor."
+    "Daemon prompt execution is now serialized so only one prompt file advances at a time and later files remain pending until the active prompt is completed.",
+    "Waiting-for-plan prompts now block the daemon queue until their session PLAN.md becomes fully complete, at which point the runner finalizes the result and releases the next prompt.",
+    "Generated session IDs now add a numeric suffix when a same-second session directory already exists, preventing daemon prompt files from colliding onto one session.",
+    "Focused validation passed through python3 -m unittest tests.test_daemon and python3 -m unittest tests.test_cli tests.test_loop_runner."
   ],
   "loop": {
     "status": "idle",

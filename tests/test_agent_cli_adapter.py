@@ -9,6 +9,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -16,11 +17,22 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from dormammu.agent import AgentRunRequest, CliAdapter
+from dormammu.agent import cli_adapter as cli_adapter_module
 from dormammu.config import AppConfig
 from dormammu.state import StateRepository
 
 
 class CliAdapterTests(unittest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cli_adapter_module._cli_calls_started = 0
+        self._sleep_patcher = mock.patch.object(cli_adapter_module.time, "sleep", return_value=None)
+        self.sleep_mock = self._sleep_patcher.start()
+
+    def tearDown(self) -> None:
+        self._sleep_patcher.stop()
+        super().tearDown()
+
     def test_run_once_writes_artifacts_and_updates_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -222,6 +234,38 @@ class CliAdapterTests(unittest.TestCase):
             )
             self.assertEqual(result.fallback_trigger, "quota exceeded")
             self.assertIn("PROMPT::Write a tiny test plan.", result.stdout_path.read_text(encoding="utf-8"))
+
+    def test_run_once_waits_between_fallback_cli_attempts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            primary_cli = self._write_exhausted_cli(root, name="primary-agent", message="usage limit exceeded")
+            fallback_one = self._write_exhausted_cli(root, name="fallback-one", message="quota exceeded")
+            fallback_two = self._write_fake_cli(root, name="fallback-two")
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "fallback_agent_clis": [
+                            str(fallback_one),
+                            str(fallback_two),
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=root)
+            adapter = CliAdapter(config)
+            self.sleep_mock.reset_mock()
+            result = adapter.run_once(
+                AgentRunRequest(
+                    cli_path=primary_cli,
+                    prompt_text="Write a tiny test plan.",
+                    repo_root=root,
+                )
+            )
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(self.sleep_mock.call_count, 2)
 
     def test_run_once_applies_cli_overrides_for_cline_style_invocation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -425,6 +469,43 @@ class CliAdapterTests(unittest.TestCase):
             self.assertIn("PROMPT::Watch the live terminal output.", mirrored)
             self.assertIn("TRACE::stderr", mirrored)
 
+    def test_run_once_waits_before_second_agent_cli_call_and_logs_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            first_cli = self._write_fake_cli(root)
+            second_cli = self._write_fake_cli(root, name="fake-agent-two")
+
+            config = AppConfig.load(repo_root=root)
+            stderr = io.StringIO()
+            self.sleep_mock.reset_mock()
+            with contextlib.redirect_stderr(stderr):
+                adapter = CliAdapter(config)
+                first_result = adapter.run_once(
+                    AgentRunRequest(
+                        cli_path=first_cli,
+                        prompt_text="First call.",
+                        repo_root=root,
+                        run_label="first-call",
+                    )
+                )
+                second_result = adapter.run_once(
+                    AgentRunRequest(
+                        cli_path=second_cli,
+                        prompt_text="Second call.",
+                        repo_root=root,
+                        run_label="second-call",
+                    )
+                )
+
+            self.assertEqual(first_result.exit_code, 0)
+            self.assertEqual(second_result.exit_code, 0)
+            self.sleep_mock.assert_called_once_with(cli_adapter_module.CLI_RETRY_DELAY_SECONDS)
+            mirrored = stderr.getvalue()
+            self.assertIn(cli_adapter_module.CLI_RETRY_DELAY_MESSAGE, mirrored)
+            self.assertIn("PROMPT::First call.", mirrored)
+            self.assertIn("PROMPT::Second call.", mirrored)
+
     def test_run_once_applies_cli_override_when_configured_codex_path_is_a_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -472,8 +553,8 @@ class CliAdapterTests(unittest.TestCase):
         (templates / "dashboard.md.tmpl").write_text("# DASHBOARD\n\n- Goal: ${goal}\n", encoding="utf-8")
         (templates / "plan.md.tmpl").write_text("# PLAN\n\n${task_items}\n", encoding="utf-8")
 
-    def _write_fake_cli(self, root: Path) -> Path:
-        script = root / "fake-agent"
+    def _write_fake_cli(self, root: Path, *, name: str = "fake-agent") -> Path:
+        script = root / name
         script.write_text(
             textwrap.dedent(
                 f"""\
@@ -484,7 +565,7 @@ class CliAdapterTests(unittest.TestCase):
                 def main() -> int:
                     args = sys.argv[1:]
                     if "--help" in args:
-                        print("usage: fake-agent [--prompt-file PATH] [--echo-tag TAG]")
+                        print("usage: {name} [--prompt-file PATH] [--echo-tag TAG]")
                         return 0
 
                     prompt = ""

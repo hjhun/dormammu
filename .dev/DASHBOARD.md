@@ -2,62 +2,50 @@
 
 ## Actual Progress
 
-- Goal: Restore `daemonize` prompt discovery to `inotify`, add event-level
-  watcher logs, preserve prompt files on `Ctrl+C`, gate completion on session
-  `PLAN.md`, and allow requeued prompt filenames to replace stale completed
-  result files.
-- Prompt-driven scope: Revert the watcher back to `inotify` with per-event
-  logging, fix the settle-window retry gap, preserve user prompts during
-  interruption, expose `PLAN.md` completion in daemon result reports, and
-  reprocess prompts when a matching completed result file already exists.
+- Goal: Make `daemonize` create a fresh session per newly started prompt file
+  and keep later prompt files pending until the earlier prompt is completed.
+- Prompt-driven scope: Serialize daemon prompt execution, treat
+  `waiting_for_plan` prompts as queue blockers, and prevent same-second session
+  ID collisions across prompt-driven sessions.
 - Active roadmap focus:
-- Phase 4. Supervisor Validation, Continuation Loop, and Resume
 - Phase 5. CLI Operator Experience and Progress Visibility
-- Phase 7. Hardening, Multi-Session, and Productization
+- Phase 4. Supervisor Validation, Continuation Loop, and Resume
 - Current workflow phase: commit
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The `inotify`-based daemonize fix is implemented and validated.
-  Resume from commit preparation and push for this daemon slice.
+- Resume point: The daemon queue/session change is implemented and validated.
+  Resume from commit finalization and push for this daemonize behavior slice.
 
 ## In Progress
 
-- `backend/dormammu/daemon/watchers.py` now uses `inotify` again for
-  `auto`/`inotify` watcher selection on Linux, logs each raw watcher event,
-  and keeps polling as the explicit compatibility fallback.
-- `backend/dormammu/daemon/runner.py` now retries prompt scans after the
-  settle window expires, replaces stale completed result files when the same
-  prompt filename is requeued, keeps `PLAN.md` completion as the final
-  completion gate, and preserves the source prompt file on `KeyboardInterrupt`.
-- Focused validation passed with:
-  `python3 -m unittest tests.test_daemon tests.test_tasks
-  tests.test_supervisor`.
-- Additional smoke validation passed with a real daemonize run under
-  `~/samba/test/dormammu-daemonize-smoke`, including prompt detection,
-  event-log output, settle-window retry, completed-result replacement, and
-  `Ctrl+C` exit code `130`.
+- `backend/dormammu/daemon/runner.py` now keeps daemon prompt processing to a
+  single active prompt at a time. If multiple prompt files are ready, the first
+  one starts and later ones remain pending until it fully finishes.
+- `backend/dormammu/daemon/runner.py` now tracks `waiting_for_plan` prompts as
+  active queue blockers. Once that session's `PLAN.md` becomes fully completed,
+  the runner finalizes the blocked prompt result, removes the source prompt,
+  and releases the next queued prompt.
+- `backend/dormammu/state/repository.py` now guarantees unique generated
+  session IDs even when multiple sessions are created within the same second,
+  so daemon prompt files no longer collide onto the same session directory.
 
 ## Progress Notes
 
-- Runtime watcher selection again prefers `inotify` on Linux when
-  `watch.backend` is `auto`, and startup logs now report
-  `replace_completed_result_on_requeued_prompt=yes`.
-- Settle-window handling no longer deadlocks after `IN_CLOSE_WRITE`. When a
-  prompt is too fresh, the daemon logs the defer reason, sleeps for the
-  remaining window, and retries without requiring another filesystem event.
-- Prompt completion is still not implied by phase exit codes alone. A daemon
-  prompt is only marked `completed` when all configured phases exit cleanly and
-  the synced session `PLAN.md` summary reports `all_completed=true`.
-- A `Ctrl+C` raised during prompt processing now writes an `interrupted` result
-  report, leaves the source prompt file in place, clears the in-progress
-  marker, and re-raises so the CLI still exits with code `130`.
+- Queue behavior changed from "process every ready file in one scan" to
+  "consume one prompt, leave the rest pending, then come back after the active
+  prompt is completed," which matches the requested serialized work model.
+- Prompt-local session isolation is now covered by regression tests that verify
+  different prompt files produce different session IDs even when they start in
+  the same second.
+- Validation passed with `python3 -m unittest tests.test_daemon` and
+  `python3 -m unittest tests.test_cli tests.test_loop_runner`.
 
 ## Risks And Watchpoints
 
-- Requeued prompts with the same filename now overwrite any stale completed
-  result report before processing starts, so operators should not rely on the
-  old result file remaining available once a replacement prompt is dropped.
-- `waiting_for_plan` results are preserved in place so operators can inspect
-  the pending PLAN task before deciding whether to rerun or continue the work
-  manually.
+- Queue release for `waiting_for_plan` depends on the blocked session syncing
+  operator state to `all_completed=true`; future changes to that contract need
+  to keep the daemon release logic aligned.
+- The external `daemonize` smoke path now naturally takes longer because each
+  phase still inherits the previously added 5-second CLI cooldown, so
+  end-to-end daemon tests need a larger timeout budget than before.

@@ -681,7 +681,13 @@ class StateRepository:
 
     def _generated_session_id(self, timestamp: str) -> str:
         compact = timestamp.replace("-", "").replace(":", "").replace("+", "-").replace("T", "-")
-        return f"{self.config.app_name}-{compact}"
+        base = f"{self.config.app_name}-{compact}"
+        candidate = base
+        sequence = 1
+        while (self.sessions_dir / candidate).exists():
+            candidate = f"{base}-{sequence:02d}"
+            sequence += 1
+        return candidate
 
     def _normalize_session_id(self, value: str) -> str:
         normalized = re.sub(r"[^a-zA-Z0-9._-]+", "-", value.strip()).strip("-._")

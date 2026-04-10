@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from threading import Thread
 from typing import Callable, TextIO
 
@@ -45,6 +46,13 @@ def _recorded_cli_path(cli_path: Path) -> Path:
     if cli_path.is_absolute() or "/" in text:
         return Path(os.path.abspath(str(cli_path.expanduser())))
     return cli_path
+
+
+CLI_RETRY_DELAY_SECONDS = 5.0
+CLI_RETRY_DELAY_MESSAGE = (
+    f"Taking a short break for {int(CLI_RETRY_DELAY_SECONDS)} seconds before the next agent CLI call."
+)
+_cli_calls_started = 0
 
 
 def _mirror_pipe(
@@ -158,12 +166,26 @@ class CliAdapter:
             fallback_trigger=fallback_trigger,
         )
 
+    def _pause_before_next_cli_call_if_needed(self) -> None:
+        global _cli_calls_started
+
+        if _cli_calls_started == 0:
+            _cli_calls_started += 1
+            return
+
+        if self.live_output_stream is not None:
+            print(CLI_RETRY_DELAY_MESSAGE, file=self.live_output_stream)
+            self.live_output_stream.flush()
+        time.sleep(CLI_RETRY_DELAY_SECONDS)
+        _cli_calls_started += 1
+
     def _run_single(
         self,
         request: AgentRunRequest,
         *,
         on_started: Callable[[AgentRunStarted], None] | None = None,
     ) -> AgentRunResult:
+        self._pause_before_next_cli_call_if_needed()
         self.config.logs_dir.mkdir(parents=True, exist_ok=True)
         effective_workdir = (request.workdir or Path.cwd()).resolve()
         request = replace(request, workdir=effective_workdir)

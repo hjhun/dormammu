@@ -19,9 +19,20 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from dormammu.cli import build_parser, main
+from dormammu.agent import cli_adapter as cli_adapter_module
 
 
 class CliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cli_adapter_module._cli_calls_started = 0
+        self._sleep_patcher = mock.patch.object(cli_adapter_module.time, "sleep", return_value=None)
+        self._sleep_patcher.start()
+
+    def tearDown(self) -> None:
+        self._sleep_patcher.stop()
+        super().tearDown()
+
     def test_top_level_help_mentions_runtime_and_daemon_config_entry_points(self) -> None:
         parser = build_parser()
 

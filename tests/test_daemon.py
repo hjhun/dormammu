@@ -15,6 +15,7 @@ import threading
 import time
 import unittest
 from unittest import mock
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -27,9 +28,20 @@ from dormammu.daemon.models import DaemonConfig, WatchConfig
 from dormammu.daemon.queue import prompt_sort_key
 from dormammu.daemon.runner import DaemonRunner
 from dormammu.daemon.watchers import EFFECTIVE_POLL_INTERVAL_SECONDS, InotifyWatcher, PollingWatcher, build_watcher
+from dormammu.agent import cli_adapter as cli_adapter_module
 
 
 class DaemonConfigTests(unittest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cli_adapter_module._cli_calls_started = 0
+        self._sleep_patcher = mock.patch.object(cli_adapter_module.time, "sleep", return_value=None)
+        self._sleep_patcher.start()
+
+    def tearDown(self) -> None:
+        self._sleep_patcher.stop()
+        super().tearDown()
+
     def test_load_daemon_config_resolves_relative_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -509,6 +521,16 @@ class PollingWatcherTests(unittest.TestCase):
 
 
 class DaemonRunnerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cli_adapter_module._cli_calls_started = 0
+        self._sleep_patcher = mock.patch.object(cli_adapter_module.time, "sleep", return_value=None)
+        self._sleep_patcher.start()
+
+    def tearDown(self) -> None:
+        self._sleep_patcher.stop()
+        super().tearDown()
+
     def test_run_forever_emits_startup_banner_with_detection_rules(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -560,9 +582,12 @@ class DaemonRunnerTests(unittest.TestCase):
             config = AppConfig.load(repo_root=root)
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
-                processed = DaemonRunner(config, daemon_config).run_pending_once(watcher_backend="polling")
+                runner = DaemonRunner(config, daemon_config)
+                first_processed = runner.run_pending_once(watcher_backend="polling")
+                second_processed = runner.run_pending_once(watcher_backend="polling")
 
-            self.assertEqual(processed, 2)
+            self.assertEqual(first_processed, 1)
+            self.assertEqual(second_processed, 1)
             first_result = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
             second_result = (daemon_config.result_path / "b-second_RESULT.md").read_text(encoding="utf-8")
             self.assertIn("Status: `completed`", first_result)
@@ -570,7 +595,38 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertFalse((daemon_config.prompt_path / "001-first.md").exists())
             self.assertFalse((daemon_config.prompt_path / "b-second.md").exists())
             stderr_text = stderr.getvalue()
-            self.assertLess(stderr_text.index("001-first.md"), stderr_text.index("b-second.md"))
+            first_detect = "daemon prompt detected: 001-first.md"
+            second_detect = "daemon prompt detected: b-second.md"
+            self.assertIn(first_detect, stderr_text)
+            self.assertIn(second_detect, stderr_text)
+            self.assertLess(stderr_text.index(first_detect), stderr_text.index(second_detect))
+            self.assertIn("keeping queued prompts pending until the current prompt finishes", stderr_text)
+
+    def test_run_pending_once_creates_a_new_session_for_each_prompt_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            daemon_config_path = self._write_daemon_config(root, fake_cli)
+            daemon_config = load_daemon_config(daemon_config_path, app_config=AppConfig.load(repo_root=root))
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            (daemon_config.prompt_path / "001-first.md").write_text("First prompt\n", encoding="utf-8")
+            (daemon_config.prompt_path / "002-second.md").write_text("Second prompt\n", encoding="utf-8")
+
+            config = AppConfig.load(repo_root=root)
+            runner = DaemonRunner(config, daemon_config)
+            self.assertEqual(runner.run_pending_once(watcher_backend="polling"), 1)
+            self.assertEqual(runner.run_pending_once(watcher_backend="polling"), 1)
+
+            first_result = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
+            second_result = (daemon_config.result_path / "002-second_RESULT.md").read_text(encoding="utf-8")
+            first_session_id = self._extract_session_id(first_result)
+            second_session_id = self._extract_session_id(second_result)
+
+            self.assertNotEqual(first_session_id, second_session_id)
+            self.assertTrue((root / ".dev" / "sessions" / first_session_id / "session.json").exists())
+            self.assertTrue((root / ".dev" / "sessions" / second_session_id / "session.json").exists())
 
     def test_run_pending_once_logs_prompt_detection_and_phase_launch_details(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -814,6 +870,61 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertTrue(prompt_path.exists())
             self.assertIn("waiting for PLAN completion", stderr.getvalue())
 
+    def test_run_pending_once_keeps_later_prompts_pending_until_waiting_plan_prompt_is_completed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_plan_status_cli(root, mark_complete=False)
+            daemon_config_path = self._write_daemon_config(root, fake_cli)
+            daemon_config = load_daemon_config(daemon_config_path, app_config=AppConfig.load(repo_root=root))
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            first_prompt = daemon_config.prompt_path / "001-first.md"
+            second_prompt = daemon_config.prompt_path / "002-second.md"
+            first_prompt.write_text("First prompt\n", encoding="utf-8")
+            second_prompt.write_text("Second prompt\n", encoding="utf-8")
+
+            config = AppConfig.load(repo_root=root)
+            stderr = io.StringIO()
+            runner = DaemonRunner(config, daemon_config, progress_stream=stderr)
+
+            self.assertEqual(runner.run_pending_once(watcher_backend="polling"), 1)
+            self.assertTrue(first_prompt.exists())
+            self.assertTrue(second_prompt.exists())
+
+            blocked_processed = runner.run_pending_once(watcher_backend="polling")
+            self.assertEqual(blocked_processed, 0)
+            self.assertTrue(second_prompt.exists())
+            self.assertIn(
+                "keeping 002-second.md pending until 001-first.md is completed",
+                stderr.getvalue(),
+            )
+
+            first_result_text = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
+            first_session_id = self._extract_session_id(first_result_text)
+            first_plan = root / ".dev" / "sessions" / first_session_id / "PLAN.md"
+            first_plan.write_text(
+                "# PLAN\n\n"
+                "## Prompt-Derived Implementation Plan\n\n"
+                "- [O] Phase 1. Session task\n\n"
+                "## Resume Checkpoint\n\n"
+                "Resume here.\n",
+                encoding="utf-8",
+            )
+
+            processed_after_release = runner.run_pending_once(watcher_backend="polling")
+            self.assertEqual(processed_after_release, 1)
+            released_first_result = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
+            second_result_text = (daemon_config.result_path / "002-second_RESULT.md").read_text(encoding="utf-8")
+            self.assertIn("Status: `completed`", released_first_result)
+            self.assertIn("Status: `waiting_for_plan`", second_result_text)
+            self.assertFalse(first_prompt.exists())
+            self.assertTrue(second_prompt.exists())
+            self.assertIn(
+                "PLAN is now complete; releasing the queue and marking the prompt completed",
+                stderr.getvalue(),
+            )
+
     def test_run_pending_once_removes_prompt_when_plan_is_complete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -873,12 +984,12 @@ class DaemonRunnerTests(unittest.TestCase):
                 prompt_path.write_text("Smoke prompt\n", encoding="utf-8")
 
                 result_path = result_dir / "001-smoke_RESULT.md"
-                deadline = time.time() + 20
+                deadline = time.time() + 60
                 while time.time() < deadline and not result_path.exists():
                     time.sleep(0.1)
                 self.assertTrue(result_path.exists(), "daemonize did not produce a result report in time")
 
-                deadline = time.time() + 20
+                deadline = time.time() + 60
                 while time.time() < deadline:
                     result_text = result_path.read_text(encoding="utf-8")
                     if "Status: `completed`" in result_text:
@@ -1031,6 +1142,11 @@ class DaemonRunnerTests(unittest.TestCase):
                 return
             time.sleep(0.1)
         raise AssertionError(f"Did not observe '{pattern}' in {path}")
+
+    def _extract_session_id(self, result_text: str) -> str:
+        match = re.search(r"- Session id: `([^`]+)`", result_text)
+        self.assertIsNotNone(match)
+        return match.group(1)
 
     def _write_fake_codex_cli(self, root: Path) -> Path:
         script = root / "codex"
