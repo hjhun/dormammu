@@ -12,9 +12,74 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SCRIPT = ROOT / "install.sh"
+LOCAL_INSTALL_SCRIPT = ROOT / "scripts" / "install.sh"
 
 
 class InstallScriptTests(unittest.TestCase):
+    def test_local_install_script_creates_launcher_and_bootstraps_bashrc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_root = Path(tmpdir)
+            home_dir = temp_root / "home"
+            home_dir.mkdir()
+            launcher_dir = home_dir / ".local" / "bin"
+            bashrc_path = home_dir / ".bashrc"
+            bashrc_path.write_text("# test bashrc\n", encoding="utf-8")
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "HOME": str(home_dir),
+                    "PYTHON": sys.executable,
+                    "DORMAMMU_BASHRC_PATH": str(bashrc_path),
+                }
+            )
+
+            first_result = subprocess.run(
+                ["bash", str(LOCAL_INSTALL_SCRIPT)],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            second_result = subprocess.run(
+                ["bash", str(LOCAL_INSTALL_SCRIPT)],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            launcher = launcher_dir / "dormammu"
+            self.assertTrue(launcher.exists())
+            self.assertIn("Installed dormammu into", first_result.stdout)
+            self.assertIn(str(launcher_dir), first_result.stdout)
+            self.assertIn("source ~/.bashrc", first_result.stdout)
+            self.assertIn(
+                f"Added {launcher_dir} PATH entry to {bashrc_path}: yes",
+                first_result.stdout,
+            )
+            self.assertIn(
+                f"Added {launcher_dir} PATH entry to {bashrc_path}: no",
+                second_result.stdout,
+            )
+
+            help_result = subprocess.run(
+                [str(launcher), "--help"],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertIn("usage: dormammu", help_result.stdout)
+
+            export_line = f'export PATH="{launcher_dir}:$PATH"'
+            bashrc_contents = bashrc_path.read_text(encoding="utf-8")
+            self.assertEqual(bashrc_contents.count(export_line), 1)
+            self.assertIn("# dormammu", bashrc_contents)
+
     def test_root_install_script_bootstraps_global_home_config_and_bin_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)
