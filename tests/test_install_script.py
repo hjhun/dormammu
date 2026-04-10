@@ -167,6 +167,12 @@ class InstallScriptTests(unittest.TestCase):
             self.assertIn("Installed binary prompt", stdout_text)
             self.assertIn("Follow the guidance files below before making changes.", stdout_text)
             self.assertIn("TAG::install", stdout_text)
+            project_log = packaged_repo / "DORMAMMU.log"
+            self.assertTrue(project_log.exists())
+            run_once_log = project_log.read_text(encoding="utf-8")
+            self.assertIn("=== dormammu run-once started", run_once_log)
+            self.assertIn("Installed binary prompt", run_once_log)
+            self.assertIn("TAG::install", run_once_log)
 
             fake_loop = self._write_fake_loop_cli(packaged_repo, success_attempt=2)
             first_loop = subprocess.run(
@@ -215,6 +221,11 @@ class InstallScriptTests(unittest.TestCase):
             resume_payload = json.loads(resume_result.stdout)
             self.assertEqual(resume_payload["status"], "completed")
             self.assertTrue((packaged_repo / "done.txt").exists())
+            resumed_log = project_log.read_text(encoding="utf-8")
+            self.assertIn("=== dormammu run started", resumed_log)
+            self.assertIn("=== dormammu resume started", resumed_log)
+            self.assertIn("ATTEMPT::1", resumed_log)
+            self.assertIn("ATTEMPT::2", resumed_log)
 
             config_payload = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(config_payload["active_agent_cli"], str(codex_path))

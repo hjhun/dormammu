@@ -39,9 +39,12 @@ def build_continuation_prompt(
     latest_run: Mapping[str, Any],
     report: SupervisorReport,
     next_task: str | None,
+    original_prompt_text: str | None = None,
     repo_guidance: Mapping[str, Any] | None = None,
 ) -> ContinuationPrompt:
-    prior_prompt = load_prompt_text(latest_run).strip()
+    prior_prompt = (original_prompt_text or "").strip()
+    if not prior_prompt:
+        prior_prompt = load_prompt_text(latest_run).strip()
     artifacts = latest_run.get("artifacts", {})
     findings: list[str] = []
     for check in report.checks:
@@ -68,6 +71,16 @@ def build_continuation_prompt(
     lines = [
         "You are continuing a previous coding-agent attempt inside the same repository.",
         "Continue from the saved repository state instead of starting over.",
+        (
+            "Work inside the current repository and its active workdir by default. "
+            "If the original task explicitly requires a specific external system path "
+            "such as /proc, access only that path."
+        ),
+        (
+            "Do not inspect or modify unrelated paths outside the repository such as "
+            "/tmp, /bin, or arbitrary parent directories."
+        ),
+        "If your CLI supports a planning mode, leave planning mode now and make the required repository edits directly.",
         "",
         f"Latest run id: {latest_run.get('run_id', 'unknown')}",
         f"Previous prompt artifact: {artifacts.get('prompt', 'unknown')}",

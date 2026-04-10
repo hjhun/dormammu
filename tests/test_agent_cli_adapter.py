@@ -167,6 +167,103 @@ class CliAdapterTests(unittest.TestCase):
             )
             self.assertIn("YOLO::yes", result.stdout_path.read_text(encoding="utf-8"))
 
+    def test_run_once_applies_default_no_approval_mode_for_claude(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_claude_cli(root)
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    run_label="claude-no-approval",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.prompt_mode, "positional")
+            self.assertEqual(
+                list(result.command[:3]),
+                [str(fake_cli), "--print", "--dangerously-skip-permissions"],
+            )
+            self.assertIn("MODE::dangerously-skip-permissions", result.stdout_path.read_text(encoding="utf-8"))
+
+    def test_run_once_applies_default_no_approval_mode_for_gemini(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_gemini_cli(root)
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    run_label="gemini-no-approval",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.prompt_mode, "arg")
+            self.assertIn("--approval-mode", result.command)
+            self.assertIn("yolo", result.command)
+            self.assertIn("--include-directories", result.command)
+            self.assertIn("/", result.command)
+            self.assertIn("MODE::yolo", result.stdout_path.read_text(encoding="utf-8"))
+            self.assertIn("INCLUDE::/", result.stdout_path.read_text(encoding="utf-8"))
+
+    def test_run_once_does_not_duplicate_explicit_approval_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_gemini_cli(root)
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    extra_args=("--approval-mode", "auto_edit"),
+                    run_label="gemini-explicit-approval",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(
+                list(result.command[-2:]),
+                ["--approval-mode", "auto_edit"],
+            )
+            self.assertIn("MODE::auto_edit", result.stdout_path.read_text(encoding="utf-8"))
+
+    def test_run_once_does_not_duplicate_explicit_include_directories_for_gemini(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_gemini_cli(root)
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    extra_args=("--include-directories", "/proc"),
+                    run_label="gemini-explicit-include",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("--include-directories", result.command)
+            self.assertIn("/proc", result.command)
+            output_lines = result.stdout_path.read_text(encoding="utf-8").splitlines()
+            self.assertNotIn("INCLUDE::/", output_lines)
+            self.assertIn("INCLUDE::/proc", output_lines)
+
     def test_run_once_mirrors_live_output_to_parent_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -355,6 +452,88 @@ class CliAdapterTests(unittest.TestCase):
                     prompt = prompt_args[0]
                     print(f"PROMPT::{{prompt}}")
                     print(f"YOLO::{{'yes' if '-y' in args else 'no'}}")
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_fake_claude_cli(self, root: Path) -> Path:
+        script = root / "claude"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("Usage: claude [options] [command] [prompt]")
+                        print("  -p, --print")
+                        print("  --permission-mode <mode>")
+                        print("  --dangerously-skip-permissions")
+                        return 0
+
+                    mode = ""
+                    if "--permission-mode" in args:
+                        index = args.index("--permission-mode")
+                        mode = args[index + 1]
+                    elif "--dangerously-skip-permissions" in args:
+                        mode = "dangerously-skip-permissions"
+
+                    prompt = args[-1] if args else ""
+                    print(f"PROMPT::{{prompt}}")
+                    print(f"MODE::{{mode}}")
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_fake_gemini_cli(self, root: Path) -> Path:
+        script = root / "gemini"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("Usage: gemini [options] [command]")
+                        print("  -p, --prompt")
+                        print("  --approval-mode")
+                        print("  --yolo")
+                        return 0
+
+                    prompt = ""
+                    mode = ""
+                    include_dir = ""
+                    if "--prompt" in args:
+                        index = args.index("--prompt")
+                        prompt = args[index + 1]
+                    if "--approval-mode" in args:
+                        index = args.index("--approval-mode")
+                        mode = args[index + 1]
+                    elif "--yolo" in args:
+                        mode = "yolo"
+                    if "--include-directories" in args:
+                        index = args.index("--include-directories")
+                        include_dir = args[index + 1]
+
+                    print(f"PROMPT::{{prompt}}")
+                    print(f"MODE::{{mode}}")
+                    print(f"INCLUDE::{{include_dir}}")
                     return 0
 
                 raise SystemExit(main())

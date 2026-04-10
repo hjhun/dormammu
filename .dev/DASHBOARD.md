@@ -2,45 +2,58 @@
 
 ## Actual Progress
 
-- Goal: Make `dormammu` bootstrap new runs from `PROMPT.md`, generate
-  `DASHBOARD.md` and `PLAN.md`, persist a prompt copy per session, and resume
-  the previous session when only `resume` is provided.
-- Prompt-driven scope: Replace legacy `TASKS.md` planning with `PLAN.md`,
-  persist `PROMPT.md` into session state, mirror the prompt under
-  `~/.dormammu/sessions/<session id>/.dev/`, and keep `resume` aligned with the
-  saved active session.
+- Goal: Install `dormammu` locally, validate it from `~/samba/test`, and run
+  Rust Tetris completion loops with `codex`, `claude`, and `gemini` for at
+  least three attempts each.
+- Prompt-driven scope: Repair supervised loop continuation behavior so retries
+  do not over-constrain valid external-path tasks or recursively bloat retry
+  prompts.
 - Active roadmap focus:
+- Phase 3. Agent CLI Adapter and Single-Run Execution
 - Phase 4. Supervisor Validation, Continuation Loop, and Resume
+- Phase 6. Installer, Commands, and Environment Diagnostics
 - Phase 7. Hardening, Multi-Session, and Productization
 - Current workflow phase: test_and_review
-- Last completed workflow phase: build_and_deploy
+- Last completed workflow phase: test_authoring
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: Validation passed for the prompt-driven PLAN bootstrap slice.
-  Resume from docs cleanup, commit preparation, or the next user-directed scope.
+- Resume point: The supervised loop continuation repair is implemented and
+  validated. Resume from review if additional external-loop reruns are needed.
 
 ## In Progress
 
-- `run` and `run-once` now derive initial bootstrap state from the incoming
-  prompt, create `PLAN.md`, and persist `PROMPT.md` into the session state.
-- Session prompt copies are mirrored under
-  `~/.dormammu/sessions/<session id>/.dev/PROMPT.md`.
-- Loop progress snapshots now show `PLAN.md` instead of `TASKS.md`, while
-  legacy `TASKS.md` content is still migrated forward for compatibility.
+- Continuation prompts now keep the original user task as the retry baseline
+  instead of recursively embedding the previous retry prompt.
+- Retry guidance now defaults to repository-local work while still allowing
+  explicitly required external system paths such as `/proc`.
+- Focused regression coverage for continuation generation and loop retries is in
+  place alongside the existing loop, CLI, and install-script tests.
+- External rerun evidence from
+  `~/samba/test/proc-mem-gemini-loop-v3` shows the repaired continuation prompt
+  is emitted during retry attempts and preserves the original task prompt while
+  allowing `/proc`-style external-path work.
 
 ## Progress Notes
 
-- State schema advanced to version 5 so the operator-facing plan source now
-  points at `PLAN.md`.
-- The bootstrap repository layer can upgrade legacy `TASKS.md` snapshots into
-  `PLAN.md` without losing prior checklist state.
-- Validation passed with `python3 -m unittest tests.test_tasks
-  tests.test_state_repository tests.test_cli tests.test_loop_runner
-  tests.test_supervisor tests.test_agent_cli_adapter tests.test_config`.
+- Focused validation passed with
+  `python3 -m unittest tests.test_continuation tests.test_loop_runner`.
+- Guardrail regression validation also passed with
+  `python3 -m unittest tests.test_supervisor tests.test_agent_cli_adapter`.
+- Repository-external verification on
+  `~/samba/test/proc-mem-gemini-loop-v3` reached three supervised attempts and
+  produced working Rust code. Manual checks passed with `cargo test` and
+  `cargo run -- $$`, and `DORMAMMU.log` captured all three attempts plus the
+  retry continuation prompt text.
+- The repair intentionally leaves existing `DORMAMMU.log`, installer, and CLI
+  preset changes intact while narrowing the continuation-specific fix.
 
 ## Risks And Watchpoints
 
-- Older sessions may still contain legacy `TASKS.md`; the runtime now migrates
-  them, but docs and guidance need to stay consistently on `PLAN.md`.
-- JSON consumers that read the bootstrap artifacts may still rely on the legacy
-  `tasks` key, so compatibility aliases remain in place for now.
+- Prompt wording changes can improve retry behavior, but external CLI variance
+  may still limit convergence on long real-world tasks.
+- The latest Gemini rerun still failed supervisor approval because the agent did
+  not finish `README.md`, `NOTES.md`, or `.attempt3-complete` before shell/tool
+  instability and manual interruption ended the run.
+- The repository currently tracks this repair slice in `.dev/PLAN.md`, not in a
+  separate `.dev/TASKS.md`; state files should continue to reflect that source
+  of truth.

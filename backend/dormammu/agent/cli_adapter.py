@@ -20,6 +20,7 @@ from dormammu.agent.models import (
     AgentRunStarted,
     CliCapabilities,
 )
+from dormammu.agent.presets import preset_for_executable_name
 from dormammu.config import AppConfig, CliInvocationConfig, FallbackCliConfig
 
 
@@ -264,6 +265,7 @@ class CliAdapter:
 
         prompt_flag = request.prompt_flag or override.prompt_flag
         extra_args = tuple(override.extra_args) + tuple(request.extra_args)
+        extra_args = self._merge_default_preset_extra_args(cli_path, extra_args)
         return replace(
             request,
             cli_path=cli_path,
@@ -272,6 +274,21 @@ class CliAdapter:
             extra_args=extra_args,
         )
 
+    def _merge_default_preset_extra_args(
+        self,
+        cli_path: Path,
+        extra_args: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        preset = preset_for_executable_name(cli_path.name)
+        if preset is None or not preset.default_extra_args:
+            return extra_args
+
+        normalized_args = {arg.strip().lower() for arg in extra_args if arg.strip()}
+        if any(flag.lower() in normalized_args for flag in preset.suppress_default_extra_args_when_present):
+            return extra_args
+
+        return tuple(preset.default_extra_args) + extra_args
+
     def _resolve_cli_override(self, cli_path: Path) -> CliInvocationConfig | None:
         overrides = self.config.cli_overrides or {}
         keys = self._cli_override_keys(cli_path)
@@ -279,7 +296,7 @@ class CliAdapter:
             override = overrides.get(key)
             if override is not None:
                 return override
-        return None
+        return CliInvocationConfig()
 
     def _cli_override_keys(self, cli_path: Path) -> tuple[str, ...]:
         raw_text = str(cli_path).strip()

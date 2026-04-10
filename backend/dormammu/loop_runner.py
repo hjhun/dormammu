@@ -287,6 +287,7 @@ class LoopRunner:
                 latest_run=workflow_state["latest_run"],
                 report=report,
                 next_task=next_task,
+                original_prompt_text=request.prompt_text,
                 repo_guidance=workflow_state.get("bootstrap", {}).get("repo_guidance"),
             )
             continuation_prompt_path = runtime_repository.write_continuation_prompt(continuation.text)

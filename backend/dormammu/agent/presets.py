@@ -21,6 +21,8 @@ class KnownCliPreset:
     prompt_arg_flag: str | None = None
     prompt_positional: bool = False
     workdir_flag: str | None = None
+    default_extra_args: tuple[str, ...] = ()
+    suppress_default_extra_args_when_present: tuple[str, ...] = ()
     auto_approve_candidates: tuple[PresetAutoApproveCandidate, ...] = ()
 
 
@@ -46,16 +48,27 @@ KNOWN_CLI_PRESETS: tuple[KnownCliPreset, ...] = (
         executable_names=("gemini",),
         help_hints=("--approval-mode", "--prompt-interactive", "gemini cli"),
         prompt_arg_flag="--prompt",
+        default_extra_args=("--approval-mode", "yolo", "--include-directories", "/"),
+        suppress_default_extra_args_when_present=(
+            "--approval-mode",
+            "--yolo",
+            "--include-directories",
+        ),
         auto_approve_candidates=(
-            PresetAutoApproveCandidate(
-                value="--yolo",
-                risk="high",
-                summary="Auto-accepts all actions and should remain opt-in.",
-            ),
             PresetAutoApproveCandidate(
                 value="--approval-mode yolo",
                 risk="high",
-                summary="Enables yolo approval mode and should remain opt-in.",
+                summary="Auto-accepts all actions without confirmation and should remain opt-in.",
+            ),
+            PresetAutoApproveCandidate(
+                value="--yolo",
+                risk="high",
+                summary="Auto-accepts all actions without confirmation and should remain opt-in.",
+            ),
+            PresetAutoApproveCandidate(
+                value="--approval-mode auto_edit",
+                risk="medium",
+                summary="Auto-accepts edit operations without enabling full yolo mode.",
             ),
         ),
     ),
@@ -64,17 +77,29 @@ KNOWN_CLI_PRESETS: tuple[KnownCliPreset, ...] = (
         label="Claude Code",
         executable_names=("claude", "claude-code"),
         help_hints=("--permission-mode", "--output-format", "bypassPermissions"),
-        prompt_arg_flag="-p",
+        command_prefix=("--print",),
+        prompt_positional=True,
+        default_extra_args=("--dangerously-skip-permissions",),
+        suppress_default_extra_args_when_present=(
+            "--permission-mode",
+            "--dangerously-skip-permissions",
+            "--allow-dangerously-skip-permissions",
+        ),
         auto_approve_candidates=(
             PresetAutoApproveCandidate(
-                value="--permission-mode auto",
-                risk="medium",
-                summary="Starts Claude Code in auto permission mode.",
+                value="--dangerously-skip-permissions",
+                risk="high",
+                summary="Bypasses all permission checks and should remain opt-in.",
             ),
             PresetAutoApproveCandidate(
                 value="--permission-mode bypassPermissions",
                 risk="high",
-                summary="Bypasses permission prompts and should remain opt-in.",
+                summary="Bypasses permission prompts for the full session and should remain opt-in.",
+            ),
+            PresetAutoApproveCandidate(
+                value="--permission-mode auto",
+                risk="medium",
+                summary="Starts Claude Code in auto permission mode.",
             ),
         ),
     ),
@@ -126,3 +151,11 @@ def match_known_preset(
             return preset, "help_text"
 
     return None, None
+
+
+def preset_for_executable_name(executable_name: str | None) -> KnownCliPreset | None:
+    normalized_name = (executable_name or "").strip().lower()
+    for preset in KNOWN_CLI_PRESETS:
+        if normalized_name in preset.executable_names:
+            return preset
+    return None

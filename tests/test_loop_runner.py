@@ -52,6 +52,43 @@ class LoopRunnerTests(unittest.TestCase):
                 (root / ".dev" / "sessions" / session_id / "continuation_prompt.txt").exists()
             )
             self.assertTrue((root / ".dev" / "sessions" / session_id / "PLAN.md").exists())
+            continuation_text = (
+                root / ".dev" / "sessions" / session_id / "continuation_prompt.txt"
+            ).read_text(encoding="utf-8")
+            self.assertIn("Work inside the current repository and its active workdir by default.", continuation_text)
+            self.assertIn("Do not inspect or modify unrelated paths outside the repository", continuation_text)
+            self.assertIn("leave planning mode now and make the required repository edits directly", continuation_text)
+
+    def test_retry_prompt_keeps_original_prompt_instead_of_nesting_previous_retry_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=3)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Build a /proc-based memory CLI and create the marker file.",
+                    repo_root=root,
+                    run_label="loop-original-prompt-test",
+                    max_retries=2,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+                "active_session_id"
+            ]
+            prompt_dir = root / ".dev" / "sessions" / session_id / "logs"
+            prompt_paths = sorted(prompt_dir.glob("*.prompt.txt"))
+            self.assertEqual(len(prompt_paths), 3)
+            third_prompt = prompt_paths[-1].read_text(encoding="utf-8")
+            self.assertEqual(third_prompt.count("Original prompt:"), 1)
+            self.assertIn("Build a /proc-based memory CLI and create the marker file.", third_prompt)
 
     def test_resume_continues_failed_loop_from_saved_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

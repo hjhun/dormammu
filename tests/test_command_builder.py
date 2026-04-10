@@ -120,6 +120,35 @@ class CommandBuilderTests(unittest.TestCase):
             )
             self.assertIsNone(plan.stdin_input)
 
+    def test_claude_print_mode_keeps_permission_flags_before_prompt_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / "prompt.txt"
+            request = AgentRunRequest(
+                cli_path=Path("/tmp/claude"),
+                prompt_text="build the feature",
+                repo_root=Path(tmpdir),
+                extra_args=("--permission-mode", "auto"),
+            )
+            capabilities = CliCapabilities(
+                help_flag="--help",
+                prompt_file_flag=None,
+                prompt_arg_flag=None,
+                workdir_flag=None,
+                help_text="",
+                help_exit_code=0,
+                command_prefix=("--print",),
+                prompt_positional=True,
+            )
+
+            plan = build_command_plan(request, capabilities, prompt_path=prompt_path)
+
+            self.assertEqual(plan.prompt_mode, "positional")
+            self.assertEqual(
+                list(plan.argv),
+                ["/tmp/claude", "--print", "--permission-mode", "auto", "build the feature"],
+            )
+            self.assertIsNone(plan.stdin_input)
+
 
 if __name__ == "__main__":
     unittest.main()

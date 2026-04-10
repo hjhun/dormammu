@@ -717,6 +717,86 @@ class CliTests(unittest.TestCase):
             self.assertIn("ATTEMPT::1", progress)
             self.assertIn("ATTEMPT::2", progress)
 
+    def test_run_once_appends_runtime_output_to_project_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                exit_code = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Visible prompt for project log",
+                        "--run-label",
+                        "project-log-once",
+                        "--extra-arg=--echo-tag",
+                        "--extra-arg",
+                        "project-log",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            project_log = root / "DORMAMMU.log"
+            self.assertTrue(project_log.exists())
+            log_text = project_log.read_text(encoding="utf-8")
+            self.assertIn("=== dormammu run-once started", log_text)
+            self.assertIn("=== dormammu run ===", log_text)
+            self.assertIn(f"target project: {root}", log_text)
+            self.assertIn("=== dormammu command ===", log_text)
+            self.assertIn("Visible prompt for project log", log_text)
+            self.assertIn("TAG::project-log", log_text)
+            self.assertIn("=== dormammu run-once finished", log_text)
+
+    def test_run_loop_appends_attempt_progress_to_project_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                        "--run-label",
+                        "project-log-loop",
+                        "--max-retries",
+                        "1",
+                        "--required-path",
+                        "done.txt",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            project_log = root / "DORMAMMU.log"
+            self.assertTrue(project_log.exists())
+            log_text = project_log.read_text(encoding="utf-8")
+            self.assertIn("=== dormammu run started", log_text)
+            self.assertIn("=== dormammu run ===", log_text)
+            self.assertIn("=== DASHBOARD.md ===", log_text)
+            self.assertIn("=== PLAN.md ===", log_text)
+            self.assertIn("=== dormammu supervisor ===", log_text)
+            self.assertIn("ATTEMPT::1", log_text)
+            self.assertIn("ATTEMPT::2", log_text)
+            self.assertIn("=== dormammu run finished", log_text)
+
     def test_run_with_prompt_file_copies_prompt_to_session_and_global_home(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "repo"

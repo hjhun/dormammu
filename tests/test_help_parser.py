@@ -59,7 +59,28 @@ class HelpParserTests(unittest.TestCase):
         self.assertEqual(list(capabilities.command_prefix), [])
         self.assertFalse(capabilities.prompt_positional)
         self.assertIsNotNone(capabilities.auto_approve)
-        self.assertEqual(capabilities.auto_approve.candidates[0].value, "--yolo")
+        self.assertEqual(
+            capabilities.auto_approve.candidates[0].value,
+            "--approval-mode yolo",
+        )
+
+    def test_parse_help_text_applies_claude_print_mode_preset(self) -> None:
+        capabilities = parse_help_text(
+            "Usage: claude [options] [prompt]\n"
+            "  -p, --print             Print response and exit\n"
+            "  --permission-mode <mode>\n",
+            executable_name="claude",
+        )
+
+        self.assertEqual(capabilities.preset_key, "claude_code")
+        self.assertEqual(list(capabilities.command_prefix), ["--print"])
+        self.assertTrue(capabilities.prompt_positional)
+        self.assertIsNone(capabilities.prompt_arg_flag)
+        self.assertIsNotNone(capabilities.auto_approve)
+        self.assertEqual(
+            capabilities.auto_approve.candidates[0].value,
+            "--dangerously-skip-permissions",
+        )
 
     def test_parse_help_text_detects_cline_preset(self) -> None:
         capabilities = parse_help_text(
