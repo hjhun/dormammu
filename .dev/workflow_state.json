@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T14:55:32+09:00",
+  "updated_at": "2026-04-10T15:35:00+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -43,8 +43,7 @@
   },
   "roadmap": {
     "active_phase_ids": [
-      "phase_3",
-      "phase_5",
+      "phase_4",
       "phase_7"
     ],
     "priority_order": [
@@ -61,11 +60,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The Codex trusted-directory repair scope is complete: dormammu now adds --skip-git-repo-check only when the installed codex exec help output advertises that flag, avoids duplicating an explicit operator-provided skip flag, and focused adapter plus broader CLI/config validation passed."
+    "reason": "The PLAN-gated loop termination slice is complete: supervisor approval now requires all prompt-derived PLAN tasks to be complete, loop sessions seed PLAN from the active request prompt, and focused supervisor plus loop/CLI validation passed."
   },
   "bootstrap": {
-    "goal": "Repair Codex CLI execution so dormammu can run outside trusted directories by applying --skip-git-repo-check when supported.",
-    "captured_at": "2026-04-10T14:55:32+09:00",
+    "goal": "Keep the supervised loop running until the prompt-derived PLAN.md checklist is actually completed.",
+    "captured_at": "2026-04-10T15:35:00+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -88,34 +87,38 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume after the Codex trusted-directory repair slice. dormammu now adds --skip-git-repo-check for Codex only when codex exec --help advertises the flag, avoids duplicating an explicit operator-provided skip flag, passes the focused adapter/help/parser suite plus the broader CLI/config suite, and the manual codex exec reproduction confirms the trusted-directory guard is cleared when that flag is present.",
-      "total_tasks": 4,
-      "completed_tasks": 4,
+      "resume_checkpoint": "Resume after the PLAN-gated loop termination slice. dormammu now keeps the supervised loop running until prompt-derived PLAN.md tasks are checked off, initializes loop session state from the active request prompt so PLAN reflects the real task, and passes tests.test_supervisor, tests.test_loop_runner, and tests.test_cli.",
+      "total_tasks": 5,
+      "completed_tasks": 5,
       "pending_tasks": 0,
       "all_completed": true,
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Reproduce the Codex trusted-directory failure and confirm which codex exec flag clears the startup guard",
+          "text": "Phase 1. Add a supervisor approval check that keeps the loop running until the prompt-derived PLAN.md checklist is fully completed",
           "completed": true
         },
         {
-          "text": "Phase 2. Update the Codex preset path so dormammu adds --skip-git-repo-check only when the installed CLI advertises support",
+          "text": "Phase 2. Ensure loop sessions initialize bootstrap state from the active request prompt so PLAN.md reflects the real task for the current run",
           "completed": true
         },
         {
-          "text": "Phase 3. Add regression coverage for the supported-flag path and for explicit no-duplication behavior",
+          "text": "Phase 3. Update loop and CLI regression fakes so successful attempts also complete the session PLAN.md checklist and satisfy the stricter exit rule",
           "completed": true
         },
         {
-          "text": "Phase 4. Run focused validation across the agent adapter, command builder, CLI, and config surfaces",
+          "text": "Phase 4. Extend supervisor coverage to prove approval is blocked while PLAN items remain incomplete even if other completion evidence exists",
+          "completed": true
+        },
+        {
+          "text": "Phase 5. Run focused validation for supervisor, loop-runner, and CLI flows with the stricter PLAN-gated termination logic",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-10T14:55:32+09:00"
+      "synced_at": "2026-04-10T15:35:00+09:00"
     }
   },
-  "next_action": "Prepare a commit for the validated Codex trusted-directory repair, or extend operator documentation around Codex compatibility flags and trusted-directory behavior.",
+  "next_action": "Prepare a commit for the validated PLAN-gated loop termination change, or refine the policy if some PLAN item classes should be allowed to remain open at approval time.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -124,12 +127,13 @@
     "PLAN.md should list prompt-derived development items in `[ ] Phase N. <title>` format.",
     "The installed guidance bundle and packaged asset copy should stay synchronized.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "This slice targets Codex CLI invocation compatibility when dormammu runs in non-trusted directories.",
-    "The Codex preset now adds --skip-git-repo-check only when codex exec --help advertises the flag.",
-    "Codex-specific default flags are now applied after capability inspection so dormammu can gate compatibility behavior on the installed CLI version.",
-    "Focused validation passed through `python3 -m unittest tests.test_agent_cli_adapter tests.test_command_builder tests.test_help_parser`.",
-    "Broader CLI/config validation passed through `python3 -m unittest tests.test_cli tests.test_config`.",
-    "Manual reproduction confirmed codex exec fails without --skip-git-repo-check and proceeds past the trusted-directory guard when the flag is present."
+    "This slice targets PLAN-gated supervisor approval for the supervised loop.",
+    "Supervisor now refuses approval while prompt-derived PLAN tasks remain incomplete.",
+    "Loop runner now seeds bootstrap state from the active request prompt so PLAN.md reflects the real loop task.",
+    "Loop and CLI regression fakes now mark PLAN.md complete on successful attempts so the stricter exit rule is exercised end-to-end.",
+    "Focused validation passed through `python3 -m unittest tests.test_supervisor`.",
+    "Loop runner validation passed through `python3 -m unittest tests.test_loop_runner`.",
+    "CLI validation passed through `python3 -m unittest tests.test_cli`."
   ],
   "loop": {
     "status": "idle",

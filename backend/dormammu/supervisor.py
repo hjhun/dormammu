@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import subprocess
 from typing import Any, Mapping, Sequence
 
@@ -47,6 +48,125 @@ def _resolve_path(repo_root: Path, value: str) -> Path:
     if path.is_absolute():
         return path
     return (repo_root / path).resolve()
+
+
+_ACTION_PROMPT_PATTERNS = (
+    r"\bimplement\b",
+    r"\bfix\b",
+    r"\badd\b",
+    r"\bupdate\b",
+    r"\bchange\b",
+    r"\bmodify\b",
+    r"\bedit\b",
+    r"\bwrite\b",
+    r"\bcreate\b",
+    r"\bbuild\b",
+    r"\brefactor\b",
+    r"\brepair\b",
+    r"\bimprove\b",
+    r"\bremove\b",
+    r"\bdelete\b",
+    r"\brename\b",
+    r"\bwire\b",
+    r"\bpatch\b",
+    r"구현",
+    r"수정",
+    r"추가",
+    r"변경",
+    r"작성",
+    r"만들",
+    r"개선",
+    r"리팩터",
+    r"삭제",
+    r"고쳐",
+)
+
+_QUESTION_LINE_PATTERNS = (
+    r"\?$",
+    r"\bclarif(?:y|ication)\b",
+    r"\bwhich\b.{0,80}\?$",
+    r"\bwhat\b.{0,80}\?$",
+    r"\bwhere\b.{0,80}\?$",
+    r"\bshould i\b",
+    r"\bdo you want\b",
+    r"\bcan you\b",
+    r"\bplease provide\b",
+    r"\bneed (?:more|additional) (?:context|details|information)\b",
+    r"\bI need\b.{0,80}\?$",
+    r"어떻게",
+    r"무엇",
+    r"어떤",
+    r"원하시",
+    r"필요합니까",
+    r"알려주",
+)
+
+
+def _load_artifact_text(path_value: Any) -> str:
+    if not path_value:
+        return ""
+    path = Path(str(path_value))
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+def _normalize_text_for_match(value: str) -> str:
+    return " ".join(value.split()).strip()
+
+
+def _prompt_requires_progress(prompt_text: str, next_task: str | None) -> bool:
+    haystacks = [prompt_text]
+    if next_task:
+        haystacks.append(next_task)
+    for item in haystacks:
+        normalized = _normalize_text_for_match(item)
+        if not normalized:
+            continue
+        for pattern in _ACTION_PROMPT_PATTERNS:
+            if re.search(pattern, normalized, flags=re.IGNORECASE):
+                return True
+    return False
+
+
+def _find_question_lines(*texts: str) -> list[str]:
+    matches: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        for raw_line in text.splitlines():
+            normalized = _normalize_text_for_match(raw_line)
+            if len(normalized) < 6:
+                continue
+            if normalized in seen:
+                continue
+            if any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in _QUESTION_LINE_PATTERNS):
+                matches.append(normalized)
+                seen.add(normalized)
+    return matches
+
+
+def _meaningful_changed_files(changed_files: Sequence[str]) -> list[str]:
+    meaningful: list[str] = []
+    for entry in changed_files:
+        candidate = entry[3:].strip() if len(entry) > 3 else entry.strip()
+        if not candidate:
+            continue
+        if " -> " in candidate:
+            candidate = candidate.split(" -> ", 1)[1].strip()
+        if candidate == "DORMAMMU.log":
+            continue
+        if candidate.startswith(".dev/"):
+            continue
+        if candidate.startswith(".dev/logs/"):
+            continue
+        if candidate.startswith(".dev/sessions/") and "/logs/" in candidate:
+            continue
+        if candidate.endswith("supervisor_report.md"):
+            continue
+        if candidate.endswith("continuation_prompt.txt"):
+            continue
+        meaningful.append(candidate)
+    return meaningful
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +318,32 @@ class Supervisor:
             )
         )
 
+        tasks_complete_ok = True
+        task_completion_details: list[str] = []
+        if isinstance(session_task_sync, Mapping):
+            total_tasks = int(session_task_sync.get("total_tasks", 0) or 0)
+            completed_tasks = int(session_task_sync.get("completed_tasks", 0) or 0)
+            next_pending_task = session_task_sync.get("next_pending_task")
+            tasks_complete_ok = total_tasks == 0 or bool(session_task_sync.get("all_completed"))
+            if not tasks_complete_ok:
+                task_completion_details.append(
+                    f"completed {completed_tasks} of {total_tasks} prompt-derived PLAN task(s)"
+                )
+                if isinstance(next_pending_task, str) and next_pending_task.strip():
+                    task_completion_details.append(f"next pending task: {next_pending_task}")
+        checks.append(
+            SupervisorCheck(
+                name="plan-completion",
+                ok=tasks_complete_ok,
+                summary=(
+                    "All prompt-derived PLAN tasks are complete."
+                    if tasks_complete_ok
+                    else "Prompt-derived PLAN tasks are still incomplete."
+                ),
+                details=task_completion_details,
+            )
+        )
+
         session_phase = session_state.get("active_phase")
         workflow_phase = workflow_state.get("workflow", {}).get("active_phase")
         phase_match = session_phase == workflow_phase
@@ -316,6 +462,67 @@ class Supervisor:
                     else "Unable to confirm the required worktree diff state."
                 ),
                 details=git_details,
+            )
+        )
+
+        prompt_text = ""
+        if isinstance(workflow_run, Mapping):
+            prompt_text = _load_artifact_text(workflow_run.get("artifacts", {}).get("prompt"))
+        if not prompt_text:
+            prompt_text = _load_artifact_text(workflow_state.get("bootstrap", {}).get("prompt_path"))
+        next_pending_task = None
+        if isinstance(session_task_sync, Mapping):
+            next_pending_task = session_task_sync.get("next_pending_task")
+        prompt_requires_progress = _prompt_requires_progress(
+            prompt_text,
+            str(next_pending_task) if isinstance(next_pending_task, str) else None,
+        )
+        stdout_text = ""
+        stderr_text = ""
+        if isinstance(workflow_run, Mapping):
+            artifacts = workflow_run.get("artifacts", {})
+            if isinstance(artifacts, Mapping):
+                stdout_text = _load_artifact_text(artifacts.get("stdout"))
+                stderr_text = _load_artifact_text(artifacts.get("stderr"))
+        question_lines = _find_question_lines(stdout_text, stderr_text)
+        progress_evidence = bool(_meaningful_changed_files(changed_files)) or (
+            bool(required_paths) and not missing_required_paths
+        )
+        prompt_alignment_details = [
+            (
+                "Prompt appears to require repository or deliverable progress."
+                if prompt_requires_progress
+                else "Prompt appears compatible with a read-only or reporting-only run."
+            ),
+            (
+                "Meaningful progress evidence detected."
+                if progress_evidence
+                else "No meaningful progress evidence detected beyond runtime artifacts."
+            ),
+        ]
+        if question_lines:
+            prompt_alignment_details.extend(
+                f"Latest run output includes an unresolved question: {line}"
+                for line in question_lines[:3]
+            )
+        prompt_alignment_ok = (not prompt_requires_progress) or progress_evidence
+        prompt_alignment_summary = "Latest run outcome matches the prompt's expected completion shape."
+        if prompt_requires_progress and not progress_evidence:
+            prompt_alignment_summary = (
+                "Prompt appears to require implementation progress, but the latest run did not produce "
+                "meaningful completion evidence."
+            )
+            if question_lines:
+                prompt_alignment_summary = (
+                    "Prompt appears to require implementation progress, but the latest run ended with a "
+                    "clarifying question before producing meaningful completion evidence."
+                )
+        checks.append(
+            SupervisorCheck(
+                name="prompt-outcome-alignment",
+                ok=prompt_alignment_ok,
+                summary=prompt_alignment_summary,
+                details=prompt_alignment_details,
             )
         )
 

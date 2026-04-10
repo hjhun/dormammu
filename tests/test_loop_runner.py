@@ -403,6 +403,25 @@ class LoopRunnerTests(unittest.TestCase):
                 SUCCESS_ATTEMPT = {success_attempt}
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
+                SESSION_PATH = ROOT / ".dev" / "session.json"
+
+                def mark_plan_complete() -> None:
+                    if not SESSION_PATH.exists():
+                        return
+                    import json
+                    payload = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
+                    session_id = payload.get("active_session_id") or payload.get("session_id")
+                    if not session_id:
+                        return
+                    plan_path = ROOT / ".dev" / "sessions" / str(session_id) / "PLAN.md"
+                    if not plan_path.exists():
+                        return
+                    lines = plan_path.read_text(encoding="utf-8").splitlines()
+                    rewritten = [
+                        line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                        for line in lines
+                    ]
+                    plan_path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
 
                 def main() -> int:
                     args = sys.argv[1:]
@@ -428,6 +447,7 @@ class LoopRunnerTests(unittest.TestCase):
 
                     if attempt >= SUCCESS_ATTEMPT:
                         TARGET_PATH.write_text("done\\n", encoding="utf-8")
+                        mark_plan_complete()
 
                     return 0
 

@@ -43,7 +43,128 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(report.verdict, "rework_required")
             self.assertTrue(any(check.name == "phase-pointer" and not check.ok for check in report.checks))
 
-    def _seed_latest_run(self, root: Path, repository: StateRepository) -> None:
+    def test_validate_requires_progress_for_action_oriented_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(
+                active_roadmap_phase_ids=["phase_4"],
+                prompt_text="Implement the missing retry loop handling.",
+            )
+            self._seed_latest_run(
+                root,
+                repository,
+                prompt_text="Implement the missing retry loop handling.\n",
+                stdout_text="What should happen if the supervisor disagrees?\n",
+            )
+            self._mark_plan_complete(repository)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "rework_required")
+            self.assertTrue(
+                any(check.name == "prompt-outcome-alignment" and not check.ok for check in report.checks)
+            )
+
+    def test_validate_allows_read_only_prompt_without_worktree_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(
+                active_roadmap_phase_ids=["phase_4"],
+                prompt_text="Summarize the current repository layout and call out the loop entrypoints.",
+            )
+            self._seed_latest_run(
+                root,
+                repository,
+                prompt_text="Summarize the current repository layout and call out the loop entrypoints.\n",
+                stdout_text="The main loop lives in backend/dormammu/loop_runner.py.\n",
+            )
+            self._mark_plan_complete(repository)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "approved")
+            self.assertTrue(
+                any(check.name == "prompt-outcome-alignment" and check.ok for check in report.checks)
+            )
+
+    def test_validate_accepts_action_prompt_when_meaningful_changes_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(
+                active_roadmap_phase_ids=["phase_4"],
+                prompt_text="Fix the resume command so it restores the saved prompt.",
+            )
+            (root / "feature.txt").write_text("implemented\n", encoding="utf-8")
+            self._seed_latest_run(
+                root,
+                repository,
+                prompt_text="Fix the resume command so it restores the saved prompt.\n",
+                stdout_text="Implemented the resume-path fix.\n",
+            )
+            self._mark_plan_complete(repository)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "approved")
+            self.assertTrue(
+                any(check.name == "prompt-outcome-alignment" and check.ok for check in report.checks)
+            )
+
+    def test_validate_requires_plan_completion_before_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(
+                active_roadmap_phase_ids=["phase_4"],
+                prompt_text="Fix the resume command so it restores the saved prompt.",
+            )
+            (root / "feature.txt").write_text("implemented\n", encoding="utf-8")
+            self._seed_latest_run(
+                root,
+                repository,
+                prompt_text="Fix the resume command so it restores the saved prompt.\n",
+                stdout_text="Implemented the resume-path fix.\n",
+            )
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "rework_required")
+            self.assertTrue(
+                any(check.name == "plan-completion" and not check.ok for check in report.checks)
+            )
+
+    def _seed_latest_run(
+        self,
+        root: Path,
+        repository: StateRepository,
+        *,
+        prompt_text: str = "phase 4 seed prompt\n",
+        stdout_text: str = "ok\n",
+        stderr_text: str = "",
+    ) -> None:
         logs_dir = root / ".dev" / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         prompt_path = logs_dir / "seed.prompt.txt"
@@ -51,9 +172,9 @@ class SupervisorTests(unittest.TestCase):
         stderr_path = logs_dir / "seed.stderr.log"
         metadata_path = logs_dir / "seed.meta.json"
 
-        prompt_path.write_text("phase 4 seed prompt\n", encoding="utf-8")
-        stdout_path.write_text("ok\n", encoding="utf-8")
-        stderr_path.write_text("", encoding="utf-8")
+        prompt_path.write_text(prompt_text, encoding="utf-8")
+        stdout_path.write_text(stdout_text, encoding="utf-8")
+        stderr_path.write_text(stderr_text, encoding="utf-8")
 
         payload = {
             "run_id": "seed-run",
@@ -142,6 +263,22 @@ class SupervisorTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Dormammu Tests"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "tests@example.com"], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "seed"], check=True)
+
+    def _mark_plan_complete(self, repository: StateRepository) -> None:
+        plan_path = repository.state_file("PLAN.md")
+        if not plan_path.exists():
+            session_id = repository.read_session_state().get("session_id")
+            if isinstance(session_id, str) and session_id.strip():
+                plan_path = repository.for_session(session_id).state_file("PLAN.md")
+        rewritten_lines = [
+            line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+            for line in plan_path.read_text(encoding="utf-8").splitlines()
+        ]
+        plan_path.write_text("\n".join(rewritten_lines) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

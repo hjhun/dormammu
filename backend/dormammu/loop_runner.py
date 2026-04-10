@@ -141,7 +141,10 @@ class LoopRunner:
             raise ValueError("max_retries must be -1 or greater.")
 
         roadmap_phase_ids = [request.expected_roadmap_phase_id] if request.expected_roadmap_phase_id else None
-        self.repository.ensure_bootstrap_state(active_roadmap_phase_ids=roadmap_phase_ids)
+        self.repository.ensure_bootstrap_state(
+            prompt_text=request.prompt_text,
+            active_roadmap_phase_ids=roadmap_phase_ids,
+        )
         runtime_repository = self.repository
         runtime_adapter = self.adapter
         runtime_supervisor = self.supervisor
