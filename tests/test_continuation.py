@@ -52,8 +52,9 @@ class ContinuationPromptTests(unittest.TestCase):
                 original_prompt_text="Build a tool that reads /proc/<pid>/status and prints memory usage.",
             )
 
-            self.assertIn("Build a tool that reads /proc/<pid>/status", continuation.text)
-            self.assertNotIn("Nested retry prompt that should not be reused.", continuation.text)
+        self.assertIn("Build a tool that reads /proc/<pid>/status", continuation.text)
+        self.assertNotIn("Nested retry prompt that should not be reused.", continuation.text)
+        self.assertIn("describe the completed work clearly in DASHBOARD.md", continuation.text)
 
     def test_build_continuation_prompt_allows_task_specific_external_system_paths(self) -> None:
         report = SupervisorReport(

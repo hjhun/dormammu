@@ -221,6 +221,31 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertEqual(result.max_iterations, 50)
             self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "1")
 
+    def test_run_retries_until_plan_items_are_marked_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1, plan_completion_attempt=2)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file and finish the plan.",
+                    repo_root=root,
+                    run_label="plan-gated-loop-test",
+                    max_retries=1,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.attempts_completed, 2)
+            self.assertTrue((root / "done.txt").exists())
+            self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "2")
+
     def test_resume_does_not_run_again_when_total_iteration_budget_is_already_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -390,8 +415,18 @@ class LoopRunnerTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _write_loop_cli(self, root: Path, *, success_attempt: int, name: str = "fake-loop-agent") -> Path:
+    def _write_loop_cli(
+        self,
+        root: Path,
+        *,
+        success_attempt: int,
+        plan_completion_attempt: int | None = None,
+        name: str = "fake-loop-agent",
+    ) -> Path:
         script = root / name
+        effective_plan_completion_attempt = (
+            success_attempt if plan_completion_attempt is None else plan_completion_attempt
+        )
         script.write_text(
             textwrap.dedent(
                 f"""\
@@ -401,6 +436,7 @@ class LoopRunnerTests(unittest.TestCase):
 
                 ROOT = Path({str(root)!r})
                 SUCCESS_ATTEMPT = {success_attempt}
+                PLAN_COMPLETION_ATTEMPT = {effective_plan_completion_attempt}
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
                 SESSION_PATH = ROOT / ".dev" / "session.json"
@@ -447,6 +483,7 @@ class LoopRunnerTests(unittest.TestCase):
 
                     if attempt >= SUCCESS_ATTEMPT:
                         TARGET_PATH.write_text("done\\n", encoding="utf-8")
+                    if attempt >= PLAN_COMPLETION_ATTEMPT:
                         mark_plan_complete()
 
                     return 0

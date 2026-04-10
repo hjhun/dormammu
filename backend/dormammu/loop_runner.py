@@ -248,6 +248,9 @@ class LoopRunner:
             self._emit_supervisor_result(report, attempt_number=attempt_number)
 
             if report.verdict == "approved":
+                next_action = (
+                    "All PLAN.md items are marked [O]. Supervisor approved the latest run and the loop can stop."
+                )
                 self._persist_loop_state(
                     status="completed",
                     request=request,
@@ -257,7 +260,7 @@ class LoopRunner:
                     report=report,
                     report_path=report_path,
                     continuation_prompt_path=continuation_prompt_path,
-                    next_action="Supervisor approved the latest run. Proceed to validation or the next planned phase.",
+                    next_action=next_action,
                 )
                 return LoopRunResult(
                     status="completed",
@@ -308,6 +311,7 @@ class LoopRunner:
             continuation_prompt_path = runtime_repository.write_continuation_prompt(continuation.text)
 
             if not self._should_retry(request.max_retries, retries_used):
+                next_action = "Retry budget is exhausted before every PLAN.md item reached [O]. Resume later or increase the loop budget."
                 self._persist_loop_state(
                     status="failed",
                     request=request,
@@ -317,7 +321,7 @@ class LoopRunner:
                     report=report,
                     report_path=report_path,
                     continuation_prompt_path=continuation_prompt_path,
-                    next_action="Retry budget is exhausted. Resume later or adjust the loop configuration.",
+                    next_action=next_action,
                 )
                 return LoopRunResult(
                     status="failed",
@@ -331,6 +335,11 @@ class LoopRunner:
                     continuation_prompt_path=continuation_prompt_path,
                 )
 
+            next_action = (
+                f"Retry attempt {attempt_number + 1} is queued because PLAN.md still has unchecked work."
+            )
+            if isinstance(next_task, str) and next_task.strip():
+                next_action = f"{next_action} Next pending item: {next_task}"
             self._persist_loop_state(
                 status="awaiting_retry",
                 request=request,
@@ -340,7 +349,7 @@ class LoopRunner:
                 report=report,
                 report_path=report_path,
                 continuation_prompt_path=continuation_prompt_path,
-                next_action=f"Retry attempt {attempt_number + 1} is queued from the saved continuation prompt.",
+                next_action=next_action,
             )
             current_prompt = continuation.text
             attempt_number += 1

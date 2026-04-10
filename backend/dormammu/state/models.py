@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 import re
 from typing import Any, Sequence
 
 
-STATE_SCHEMA_VERSION = 5
+STATE_SCHEMA_VERSION = 6
 
 PHASE_LABELS = {
     "phase_1": "Phase 1. Core Foundation and Repository Bootstrap",
@@ -134,6 +135,19 @@ def summarize_prompt_goal(prompt_text: str | None, *, fallback: str) -> str:
             return normalized[:117].rstrip() + "..."
         return normalized
     return fallback
+
+
+def normalize_prompt_text(prompt_text: str | None) -> str:
+    if prompt_text is None:
+        return ""
+    return "\n".join(line.rstrip() for line in prompt_text.strip().splitlines()).strip()
+
+
+def prompt_fingerprint(prompt_text: str | None) -> str | None:
+    normalized = normalize_prompt_text(prompt_text)
+    if not normalized:
+        return None
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _prompt_requirement_lines(prompt_text: str | None) -> list[str]:
@@ -349,6 +363,7 @@ def default_session_state(
     session_id: str | None = None,
     run_type: str = "bootstrap",
 ) -> dict[str, Any]:
+    prompt_summary = summarize_prompt_goal(prompt_text, fallback=goal)
     return {
         "session_id": session_id or f"{app_name}-bootstrap",
         "created_at": timestamp,
@@ -368,6 +383,8 @@ def default_session_state(
             "goal": goal,
             "captured_at": timestamp,
             "state_root": state_root,
+            "prompt_summary": prompt_summary,
+            "prompt_fingerprint": prompt_fingerprint(prompt_text),
             "repo_guidance": (
                 repo_guidance.to_dict()
                 if repo_guidance is not None
@@ -404,6 +421,7 @@ def default_workflow_state(
     prompt_text: str | None = None,
     repo_guidance: RepoGuidance | None = None,
 ) -> dict[str, Any]:
+    prompt_summary = summarize_prompt_goal(prompt_text, fallback=goal)
     source_goal_files = list(
         dict.fromkeys(
             [
@@ -476,6 +494,8 @@ def default_workflow_state(
             "goal": goal,
             "captured_at": timestamp,
             "state_root": state_root,
+            "prompt_summary": prompt_summary,
+            "prompt_fingerprint": prompt_fingerprint(prompt_text),
             "repo_guidance": (
                 repo_guidance.to_dict()
                 if repo_guidance is not None

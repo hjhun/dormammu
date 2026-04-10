@@ -42,7 +42,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertIn("Bootstrap test goal", dashboard)
 
             workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
-            self.assertEqual(workflow_state["state_schema_version"], 5)
+            self.assertEqual(workflow_state["state_schema_version"], 6)
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["pending_tasks"],
                 3,
@@ -276,6 +276,36 @@ class StateRepositoryTests(unittest.TestCase):
             global_prompt = home / ".dormammu" / "sessions" / "prompt-session" / ".dev" / "PROMPT.md"
             self.assertTrue(global_prompt.exists())
             self.assertEqual(global_prompt.read_text(encoding="utf-8"), source_prompt.read_text(encoding="utf-8"))
+
+    def test_ensure_bootstrap_state_regenerates_dashboard_and_plan_when_prompt_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(
+                goal="Original goal",
+                prompt_text="Implement alpha support.",
+            )
+
+            artifacts.dashboard.write_text("# DASHBOARD\n\nstale dashboard\n", encoding="utf-8")
+            artifacts.plan.write_text(
+                "# PLAN\n\n## Prompt-Derived Implementation Plan\n\n- [O] Phase 1. Stale work\n",
+                encoding="utf-8",
+            )
+
+            repository.ensure_bootstrap_state(
+                goal="Updated goal",
+                prompt_text="Implement beta support.",
+            )
+
+            refreshed_dashboard = artifacts.dashboard.read_text(encoding="utf-8")
+            refreshed_plan = artifacts.plan.read_text(encoding="utf-8")
+            self.assertNotIn("stale dashboard", refreshed_dashboard)
+            self.assertNotIn("Stale work", refreshed_plan)
+            self.assertIn("Updated goal", refreshed_dashboard)
+            self.assertIn("Phase 1. Implement beta support", refreshed_plan)
 
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")

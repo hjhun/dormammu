@@ -18,6 +18,7 @@ from dormammu.state.models import (
     default_session_state,
     default_workflow_state,
     discover_repo_guidance,
+    prompt_fingerprint,
     summarize_prompt_goal,
 )
 from dormammu.state.tasks import parse_tasks_document
@@ -181,6 +182,21 @@ class StateRepository:
         state_root = self._state_root_display()
         self._ensure_plan_file(plan_path)
 
+        if self._should_regenerate_operator_state(
+            prompt_text=prompt_text,
+            dashboard_path=dashboard_path,
+            plan_path=plan_path,
+        ):
+            self._reset_bootstrap_state(
+                goal=resolved_goal,
+                prompt_text=prompt_text,
+                roadmap_phase_ids=roadmap_phase_ids,
+                session_id=session_id or self._generated_session_id(timestamp),
+                timestamp=timestamp,
+            )
+            self._sync_root_index(timestamp=timestamp)
+            return self._artifacts()
+
         dashboard_context = default_dashboard_context(
             goal=resolved_goal,
             roadmap_phase_ids=roadmap_phase_ids,
@@ -235,6 +251,51 @@ class StateRepository:
         )
         self._sync_root_index(timestamp=timestamp)
         return self._artifacts()
+
+    def _should_regenerate_operator_state(
+        self,
+        *,
+        prompt_text: str | None,
+        dashboard_path: Path,
+        plan_path: Path,
+    ) -> bool:
+        if not dashboard_path.exists() or not plan_path.exists():
+            return False
+        incoming_fingerprint = prompt_fingerprint(prompt_text)
+        if incoming_fingerprint is None:
+            return False
+        stored_fingerprint = self._stored_prompt_fingerprint()
+        if stored_fingerprint is None:
+            return False
+        return stored_fingerprint != incoming_fingerprint
+
+    def _stored_prompt_fingerprint(self) -> str | None:
+        for candidate in (
+            self.state_file("session.json"),
+            self.state_file("workflow_state.json"),
+        ):
+            if not candidate.exists():
+                continue
+            try:
+                payload = self._read_json(candidate)
+            except json.JSONDecodeError:
+                continue
+            bootstrap = payload.get("bootstrap")
+            if not isinstance(bootstrap, Mapping):
+                continue
+            fingerprint = bootstrap.get("prompt_fingerprint")
+            if isinstance(fingerprint, str) and fingerprint.strip():
+                return fingerprint
+            for key in ("prompt_path", "global_prompt_path"):
+                prompt_path_value = bootstrap.get(key)
+                if not isinstance(prompt_path_value, str) or not prompt_path_value.strip():
+                    continue
+                prompt_path = Path(prompt_path_value)
+                if not prompt_path.is_absolute():
+                    prompt_path = self.config.repo_root / prompt_path
+                if prompt_path.exists():
+                    return prompt_fingerprint(prompt_path.read_text(encoding="utf-8"))
+        return None
 
     def start_new_session(
         self,

@@ -81,6 +81,8 @@ def build_continuation_prompt(
             "/tmp, /bin, or arbitrary parent directories."
         ),
         "If your CLI supports a planning mode, leave planning mode now and make the required repository edits directly.",
+        "Each time you complete a PLAN.md item, describe the completed work clearly in DASHBOARD.md and then mark that PLAN.md line as [O].",
+        "Do not leave a PLAN.md item unchecked if the work is actually finished, and do not mark [O] before the repository and DASHBOARD.md both reflect the completion.",
         "",
         f"Latest run id: {latest_run.get('run_id', 'unknown')}",
         f"Previous prompt artifact: {artifacts.get('prompt', 'unknown')}",
