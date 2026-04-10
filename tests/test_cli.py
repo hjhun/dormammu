@@ -877,6 +877,28 @@ class CliTests(unittest.TestCase):
         self.assertIsNotNone(run_args.handler)
         self.assertIsNotNone(resume_args.handler)
 
+    def test_main_without_arguments_prints_usage_only(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("usage: dormammu", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_root_help_mentions_prompt_file_example(self) -> None:
+        parser = build_parser()
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            parser.print_help()
+
+        help_text = stdout.getvalue()
+        self.assertIn("dormammu run --agent-cli codex --prompt-file PROMPT.md", help_text)
+        self.assertIn("Use `dormammu <command> --help`", help_text)
+
     def test_doctor_reports_ready_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

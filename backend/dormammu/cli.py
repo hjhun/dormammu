@@ -59,7 +59,17 @@ def _project_log_capture(repo_root: Path, command_name: str) -> Iterator[None]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dormammu",
-        description="Bootstrap CLI for the dormammu orchestrator.",
+        description=(
+            "CLI for running dormammu sessions, one-off agent executions, and supervised retries."
+        ),
+        epilog=(
+            "Prompt input examples:\n"
+            "  dormammu run-once --agent-cli codex --prompt \"Summarize this repo\"\n"
+            "  dormammu run --agent-cli codex --prompt-file PROMPT.md\n"
+            "\n"
+            "Use `dormammu <command> --help` for command-specific options."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -144,7 +154,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_once = subparsers.add_parser(
         "run-once",
-        help="Run an external coding-agent CLI once and persist the artifacts.",
+        help="Run one agent execution with --prompt or --prompt-file and persist the artifacts.",
+        description=(
+            "Run an external coding-agent CLI once.\n"
+            "Provide the prompt inline with --prompt or load it from disk with --prompt-file."
+        ),
     )
     run_once.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
     run_once.add_argument(
@@ -223,7 +237,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop = subparsers.add_parser(
         "run",
         aliases=["run-loop"],
-        help="Run an external coding-agent CLI under the supervised retry loop.",
+        help="Run the supervised loop with --prompt or --prompt-file input.",
+        description=(
+            "Run an external coding-agent CLI under the supervised retry loop.\n"
+            "Provide the prompt inline with --prompt or load it from disk with --prompt-file."
+        ),
     )
     run_loop.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
     run_loop.add_argument(
@@ -386,7 +404,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args_list = list(argv) if argv is not None else sys.argv[1:]
+    if not args_list:
+        parser.print_usage(sys.stdout)
+        return 0
+    args = parser.parse_args(args_list)
     return args.handler(args)
 
 
