@@ -123,6 +123,8 @@ if not isinstance(extra_args, list):
     extra_args = []
 if "-y" not in extra_args:
     extra_args.append("-y")
+if "--verbose" not in extra_args:
+    extra_args.append("--verbose")
 cline_override["extra_args"] = extra_args
 cli_overrides["cline"] = cline_override
 payload["cli_overrides"] = cli_overrides

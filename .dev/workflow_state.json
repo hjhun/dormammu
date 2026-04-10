@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T09:25:00+09:00",
+  "updated_at": "2026-04-10T23:10:00+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -61,11 +61,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-      "reason": "The supervised loop continuation repair is implemented and focused regression validation passed."
+      "reason": "The Cline option slice is implemented, focused regression validation passed, and remaining work is limited to optional broader end-to-end confirmation."
   },
   "bootstrap": {
-    "goal": "Repair supervised loop continuation behavior so retries stay aligned with the original task without over-constraining valid external-path work.",
-    "captured_at": "2026-04-10T09:10:00+09:00",
+    "goal": "Extend the Cline CLI adapter so Dormammu passes `--cwd <path>` and `--verbose` alongside `-y <prompt>` for visible operator output.",
+    "captured_at": "2026-04-10T23:10:00+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -91,42 +91,42 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume from the supervised loop repair review. Focused tests and an external Gemini rerun are complete; remaining work is optional follow-up on external CLI convergence.",
+      "resume_checkpoint": "Resume from review of the Cline option slice. Focused tests are complete, and remaining work is optional confirmation against a real upstream Cline binary.",
       "total_tasks": 6,
       "completed_tasks": 5,
       "pending_tasks": 1,
       "all_completed": false,
-      "next_pending_task": "Phase 6. Review the repaired loop behavior and capture any residual risks",
+      "next_pending_task": "Phase 6. Review residual compatibility risk against real upstream Cline builds and decide whether a broader end-to-end rerun is needed",
       "items": [
         {
-          "text": "Phase 1. Review the supervised loop implementation and isolate concrete continuation-related failure modes",
+          "text": "Phase 1. Review the current Cline adapter, presets, installer defaults, and tests to find the correct injection points for `--cwd` and `--verbose`",
           "completed": true
         },
         {
-          "text": "Phase 2. Design a continuation strategy that preserves the original task prompt while avoiding over-broad path prohibitions",
+          "text": "Phase 2. Design the Cline invocation update so Dormammu passes workdir via the CLI flag while preserving existing prompt delivery behavior",
           "completed": true
         },
         {
-          "text": "Phase 3. Implement continuation prompt fixes for external-path guidance and retry prompt de-duplication",
+          "text": "Phase 3. Implement the adapter and preset changes for `--cwd <path> -y --verbose <prompt>`",
           "completed": true
         },
         {
-          "text": "Phase 4. Author regression tests covering the repaired continuation behaviors",
+          "text": "Phase 4. Author and update regression tests for command planning, help parsing, config loading, installer defaults, and adapter execution",
           "completed": true
         },
         {
-          "text": "Phase 5. Run focused validation for supervised loop continuation and recovery flows",
+          "text": "Phase 5. Run focused validation for the Cline option and output-visibility slice",
           "completed": true
         },
         {
-          "text": "Phase 6. Review the repaired loop behavior and capture any residual risks",
+          "text": "Phase 6. Review residual compatibility risk against real upstream Cline builds and decide whether a broader end-to-end rerun is needed",
           "completed": false
         }
       ],
-      "synced_at": "2026-04-10T09:25:00+09:00"
+      "synced_at": "2026-04-10T23:10:00+09:00"
     }
   },
-  "next_action": "Use the captured Gemini rerun evidence to decide whether another external CLI-specific mitigation is warranted or whether the continuation repair can be considered validated enough to close.",
+  "next_action": "Decide whether to run one broader end-to-end confirmation against a real Cline binary or to stop at the focused adapter and installer validation that already passed.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -135,9 +135,9 @@
     "PLAN.md should list prompt-derived development items in `[ ] Phase N. <title>` format.",
     "The installed guidance bundle and packaged asset copy should stay synchronized.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "This repair slice was focused on continuation prompt generation rather than another external CLI execution window.",
-    "The repaired areas are task-specific external-path guidance during retries and recursive continuation prompt growth across repeated rework attempts.",
-    "The latest external Gemini rerun in ~/samba/test/proc-mem-gemini-loop-v3 confirmed the repaired continuation prompt shape, but supervisor approval still failed because the CLI did not finish all required documentation artifacts."
+    "This slice targets Cline-specific invocation behavior rather than continuation prompt generation.",
+    "The implemented Cline changes are default `--verbose` support plus explicit `--cwd` forwarding when a workdir is supplied.",
+    "Focused unit and integration-style tests passed for command building, help parsing, config loading, installer defaults, and adapter execution."
   ],
   "loop": {
     "status": "idle",

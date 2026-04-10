@@ -132,12 +132,14 @@ class CliAdapterTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
             fake_cli = self._write_fake_cline_cli(root)
+            workdir = root / "workspace"
+            workdir.mkdir()
             (root / "dormammu.json").write_text(
                 json.dumps(
                     {
                         "cli_overrides": {
                             "cline": {
-                                "extra_args": ["-y"],
+                                "extra_args": ["-y", "--verbose"],
                             }
                         }
                     }
@@ -151,6 +153,7 @@ class CliAdapterTests(unittest.TestCase):
                     cli_path=fake_cli,
                     prompt_text="Summarize the repository.",
                     repo_root=root,
+                    workdir=workdir,
                     run_label="phase-7-cline",
                 )
             )
@@ -159,13 +162,15 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(result.prompt_mode, "positional")
             self.assertEqual(
                 list(result.command),
-                [str(fake_cli), "-y", "Summarize the repository."],
+                [str(fake_cli), "--cwd", str(workdir), "-y", "--verbose", "Summarize the repository."],
             )
             self.assertIn(
                 "PROMPT::Summarize the repository.",
                 result.stdout_path.read_text(encoding="utf-8"),
             )
             self.assertIn("YOLO::yes", result.stdout_path.read_text(encoding="utf-8"))
+            self.assertIn(f"CWD::{workdir}", result.stdout_path.read_text(encoding="utf-8"))
+            self.assertIn("VERBOSE::yes", result.stdout_path.read_text(encoding="utf-8"))
 
     def test_run_once_applies_default_no_approval_mode_for_claude(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -442,9 +447,27 @@ class CliAdapterTests(unittest.TestCase):
                     if "--help" in args:
                         print("Usage: cline [prompt] [options]")
                         print("-y")
+                        print("--verbose")
+                        print("--cwd")
                         return 0
 
-                    prompt_args = [arg for arg in args if arg != "-y"]
+                    cwd = ""
+                    if "--cwd" in args:
+                        index = args.index("--cwd")
+                        cwd = args[index + 1]
+                    filtered_args = []
+                    skip_next = False
+                    for arg in args:
+                        if skip_next:
+                            skip_next = False
+                            continue
+                        if arg == "--cwd":
+                            skip_next = True
+                            continue
+                        if arg in ("-y", "--verbose"):
+                            continue
+                        filtered_args.append(arg)
+                    prompt_args = filtered_args
                     if len(prompt_args) != 1:
                         print("interactive mode requires a single positional prompt", file=sys.stderr)
                         return 2
@@ -452,6 +475,8 @@ class CliAdapterTests(unittest.TestCase):
                     prompt = prompt_args[0]
                     print(f"PROMPT::{{prompt}}")
                     print(f"YOLO::{{'yes' if '-y' in args else 'no'}}")
+                    print(f"CWD::{{cwd}}")
+                    print(f"VERBOSE::{{'yes' if '--verbose' in args else 'no'}}")
                     return 0
 
                 raise SystemExit(main())

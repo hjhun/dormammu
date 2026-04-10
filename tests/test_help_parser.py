@@ -84,12 +84,13 @@ class HelpParserTests(unittest.TestCase):
 
     def test_parse_help_text_detects_cline_preset(self) -> None:
         capabilities = parse_help_text(
-            "Usage: cline [options]\n-y\n--print",
+            "Usage: cline [options]\n-y\n--verbose\n--cwd",
             executable_name="cline",
         )
 
         self.assertEqual(capabilities.preset_key, "cline")
         self.assertTrue(capabilities.prompt_positional)
+        self.assertEqual(capabilities.workdir_flag, "--cwd")
         self.assertIsNotNone(capabilities.auto_approve)
         self.assertEqual(capabilities.auto_approve.candidates[0].value, "-y")
 

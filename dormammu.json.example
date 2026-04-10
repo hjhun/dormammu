@@ -9,7 +9,7 @@
   ],
   "cli_overrides": {
     "cline": {
-      "extra_args": ["-y"]
+      "extra_args": ["-y", "--verbose"]
     }
   },
   "token_exhaustion_patterns": [

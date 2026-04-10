@@ -27,6 +27,8 @@ def build_command_plan(
     argv = [str(request.cli_path), *capabilities.command_prefix]
     stdin_input: str | None = None
     trailing_args: list[str] = []
+    if request.workdir is not None and capabilities.workdir_flag is not None:
+        argv.extend([capabilities.workdir_flag, str(request.workdir)])
 
     if prompt_mode == "file":
         prompt_flag = request.prompt_flag or capabilities.prompt_file_flag

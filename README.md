@@ -108,7 +108,7 @@ Without an explicit config, the built-in fallback order is:
   ],
   "cli_overrides": {
     "cline": {
-      "extra_args": ["-y"]
+      "extra_args": ["-y", "--verbose"]
     }
   },
   "token_exhaustion_patterns": [

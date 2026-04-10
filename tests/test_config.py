@@ -65,7 +65,7 @@ class ConfigTests(unittest.TestCase):
                             "cline": {
                                 "input_mode": "arg",
                                 "prompt_flag": "--prompt",
-                                "extra_args": ["-y"],
+                                "extra_args": ["-y", "--verbose"],
                             }
                         },
                     }
@@ -82,7 +82,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.fallback_agent_clis[1].input_mode, "arg")
             self.assertEqual(config.fallback_agent_clis[1].prompt_flag, "--message")
             self.assertIsNotNone(config.cli_overrides)
-            self.assertEqual(config.cli_overrides["cline"].extra_args, ("-y",))
+            self.assertEqual(config.cli_overrides["cline"].extra_args, ("-y", "--verbose"))
             self.assertEqual(config.cli_overrides["cline"].input_mode, "arg")
             self.assertEqual(config.cli_overrides["cline"].prompt_flag, "--prompt")
             self.assertEqual(
@@ -101,7 +101,7 @@ class ConfigTests(unittest.TestCase):
                 json.dumps(
                     {
                         "active_agent_cli": "/opt/tools/codex",
-                        "cli_overrides": {"cline": {"extra_args": ["-y"]}},
+                        "cli_overrides": {"cline": {"extra_args": ["-y", "--verbose"]}},
                     }
                 ),
                 encoding="utf-8",
@@ -117,7 +117,7 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(config.config_file, config_path.resolve())
             self.assertEqual(config.active_agent_cli, Path("/opt/tools/codex"))
-            self.assertEqual(config.cli_overrides["cline"].extra_args, ("-y",))
+            self.assertEqual(config.cli_overrides["cline"].extra_args, ("-y", "--verbose"))
 
     def test_load_preserves_absolute_symlink_for_active_agent_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
