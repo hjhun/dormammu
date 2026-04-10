@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T11:16:40+09:00",
+  "updated_at": "2026-04-10T11:35:45+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -43,8 +43,7 @@
   },
   "roadmap": {
     "active_phase_ids": [
-      "phase_3",
-      "phase_4",
+      "phase_5",
       "phase_6"
     ],
     "priority_order": [
@@ -61,11 +60,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The new scope is complete: run and resume now use a repo-level .session marker, run starts a fresh session when the marker is missing, omitted --workdir values resolve to the current directory, and focused automated validation passed."
+    "reason": "The installer migration scope is complete: install.sh now creates a ~/.local/bin launcher, removes legacy ~/.dormammu/bin PATH exports from .bashrc, conditionally adds ~/.local/bin when the current PATH is missing it, and focused installer validation passed."
   },
   "bootstrap": {
-    "goal": "Update dormammu so omitted --cwd work defaults to the current directory, and add a repo-level .session marker that links run and resume to the same session automatically.",
-    "captured_at": "2026-04-10T11:16:40+09:00",
+    "goal": "Migrate install.sh to a ~/.local/bin launcher flow, clean up legacy ~/.dormammu/bin PATH bootstrap lines, and add explicit shell reload guidance.",
+    "captured_at": "2026-04-10T11:35:45+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -88,7 +87,7 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume after the .session marker and current-directory workdir slice. Dormammu now writes a repo .session marker, run creates a fresh session when the marker is missing, resume prefers the marker before the root .dev index, omitted --workdir values resolve to the current shell directory, and focused automated tests passed.",
+      "resume_checkpoint": "Resume after the install launcher migration slice. install.sh now creates a ~/.local/bin/dormammu launcher, removes installer-managed legacy ~/.dormammu/bin PATH exports from .bashrc, adds ~/.local/bin only when the current shell PATH is missing it, prints source ~/.bashrc guidance, and the focused installer regression test passed.",
       "total_tasks": 5,
       "completed_tasks": 5,
       "pending_tasks": 0,
@@ -96,30 +95,30 @@
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Inspect the CLI session-selection flow and agent workdir forwarding so the new .session marker and current-directory defaults land in the right layer",
+          "text": "Phase 1. Inspect the installer entrypoint and existing shell PATH bootstrap behavior for dormammu",
           "completed": true
         },
         {
-          "text": "Phase 2. Change run to create a new session when .session is absent, reuse the marker when it exists, and keep resume aligned with the same session marker behavior",
+          "text": "Phase 2. Replace the exposed install command path with a ~/.local/bin/dormammu launcher while preserving the internal installed binary",
           "completed": true
         },
         {
-          "text": "Phase 3. Default external agent workdir resolution to the current directory when --workdir is omitted while preserving explicit overrides",
+          "text": "Phase 3. Remove legacy ~/.dormammu/bin PATH exports and only add ~/.local/bin to .bashrc when the current shell PATH is missing it",
           "completed": true
         },
         {
-          "text": "Phase 4. Add focused regression tests for .session creation and reuse, missing-marker session bootstrap, marker-driven resume selection, and current-directory cwd forwarding",
+          "text": "Phase 4. Update the installer output so operators are prompted to run source ~/.bashrc before using the launcher command",
           "completed": true
         },
         {
-          "text": "Phase 5. Run focused automated validation for the updated CLI and agent adapter behavior",
+          "text": "Phase 5. Add and run focused regression coverage for the installer migration behavior",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-10T11:16:40+09:00"
+      "synced_at": "2026-04-10T11:35:45+09:00"
     }
   },
-  "next_action": "Prepare a commit for the validated .session marker and current-directory workdir change, or extend the operator docs around the new session marker workflow.",
+  "next_action": "Prepare a commit for the validated install launcher migration, or extend the operator docs around the new ~/.local/bin shell bootstrap flow.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -128,11 +127,11 @@
     "PLAN.md should list prompt-derived development items in `[ ] Phase N. <title>` format.",
     "The installed guidance bundle and packaged asset copy should stay synchronized.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "This slice targets repo-local session continuation and default current-directory workdir behavior.",
-    "The CLI now writes the active session id to a repo-level .session file and reuses it across run and resume.",
-    "When .session is missing, run now creates a fresh session instead of silently reusing the root .dev active session.",
-    "Omitted --workdir values now resolve to the current shell directory for agent execution and forwarded --cwd flags.",
-    "Focused validation passed through `python3 -m unittest tests.test_agent_cli_adapter` and `python3 -m unittest tests.test_cli`."
+    "This slice targets install-time launcher and shell PATH management.",
+    "The installer now creates a ~/.local/bin/dormammu launcher that execs the installed venv binary.",
+    "Installer-managed legacy ~/.dormammu/bin PATH export lines are now removed from .bashrc during installation.",
+    "The installer only appends ~/.local/bin to .bashrc when the current shell PATH does not already include that directory.",
+    "Focused validation passed through `python3 -m unittest tests.test_install_script`."
   ],
   "loop": {
     "status": "idle",

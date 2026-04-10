@@ -22,8 +22,13 @@ class InstallScriptTests(unittest.TestCase):
             home_dir.mkdir()
             fake_tools_dir = temp_root / "fake-tools"
             fake_tools_dir.mkdir()
+            launcher_dir = home_dir / ".local" / "bin"
             bashrc_path = home_dir / ".bashrc"
-            bashrc_path.write_text("# test bashrc\n", encoding="utf-8")
+            legacy_bin_dir = home_dir / ".dormammu" / "bin"
+            bashrc_path.write_text(
+                f'# test bashrc\n# dormammu\nexport PATH="{legacy_bin_dir}:$PATH"\n',
+                encoding="utf-8",
+            )
 
             codex_path = self._write_fake_tool(fake_tools_dir, "codex")
             self._write_fake_tool(fake_tools_dir, "cline")
@@ -60,19 +65,22 @@ class InstallScriptTests(unittest.TestCase):
             bin_dir = install_root / "bin"
             config_path = install_root / "config"
             binary = bin_dir / "dormammu"
+            launcher = launcher_dir / "dormammu"
             agents_dir = install_root / "agents"
             self.assertTrue(binary.exists())
+            self.assertTrue(launcher.exists())
             self.assertTrue(config_path.exists())
             self.assertTrue((agents_dir / "AGENTS.md").exists())
             self.assertIn("Installed dormammu into", first_result.stdout)
             self.assertIn(str(config_path), first_result.stdout)
             self.assertIn(str(bin_dir), first_result.stdout)
+            self.assertIn(str(launcher_dir), first_result.stdout)
             self.assertIn(str(agents_dir), first_result.stdout)
             self.assertIn(str(codex_path), first_result.stdout)
-            self.assertIn("Updated", second_result.stdout)
+            self.assertIn("source ~/.bashrc", second_result.stdout)
 
             help_result = subprocess.run(
-                [str(binary), "--help"],
+                [str(launcher), "--help"],
                 cwd=ROOT,
                 env=env,
                 capture_output=True,
@@ -234,9 +242,27 @@ class InstallScriptTests(unittest.TestCase):
                 ["-y", "--verbose", "--timeout", "1200"],
             )
 
-            export_line = f'export PATH="{bin_dir}:$PATH"'
+            export_line = f'export PATH="{launcher_dir}:$PATH"'
             bashrc_contents = bashrc_path.read_text(encoding="utf-8")
             self.assertEqual(bashrc_contents.count(export_line), 1)
+            self.assertNotIn(f'export PATH="{legacy_bin_dir}:$PATH"', bashrc_contents)
+            self.assertIn("# dormammu", bashrc_contents)
+            self.assertIn(
+                f"Removed legacy {bin_dir} PATH entry from {bashrc_path}: yes",
+                first_result.stdout,
+            )
+            self.assertIn(
+                f"Added {launcher_dir} PATH entry to {bashrc_path}: yes",
+                first_result.stdout,
+            )
+            self.assertIn(
+                f"Removed legacy {bin_dir} PATH entry from {bashrc_path}: no",
+                second_result.stdout,
+            )
+            self.assertIn(
+                f"Added {launcher_dir} PATH entry to {bashrc_path}: no",
+                second_result.stdout,
+            )
 
     def _write_fake_tool(self, directory: Path, name: str) -> Path:
         path = directory / name

@@ -6,6 +6,7 @@ DEFAULT_DORMAMMU_HOME="${HOME}/.dormammu"
 DEFAULT_INSTALL_ROOT="${DEFAULT_DORMAMMU_HOME}"
 INSTALL_ROOT="${DORMAMMU_INSTALL_ROOT:-${DEFAULT_INSTALL_ROOT}}"
 BIN_DIR="${DORMAMMU_BIN_DIR:-${DEFAULT_DORMAMMU_HOME}/bin}"
+LAUNCHER_DIR="${DORMAMMU_LAUNCHER_DIR:-${HOME}/.local/bin}"
 CONFIG_PATH="${DORMAMMU_CONFIG_PATH:-${DEFAULT_DORMAMMU_HOME}/config}"
 BASHRC_PATH="${DORMAMMU_BASHRC_PATH:-${HOME}/.bashrc}"
 VENV_DIR="${INSTALL_ROOT}/venv"
@@ -204,6 +205,15 @@ link_binary() {
   ln -sf "${VENV_DIR}/bin/dormammu" "${BIN_DIR}/dormammu"
 }
 
+install_launcher() {
+  mkdir -p "${LAUNCHER_DIR}"
+  cat > "${LAUNCHER_DIR}/dormammu" <<EOF
+#!/usr/bin/env bash
+exec "${VENV_DIR}/bin/dormammu" "\$@"
+EOF
+  chmod 755 "${LAUNCHER_DIR}/dormammu"
+}
+
 install_agents_bundle() {
   local agents_dir="${INSTALL_ROOT}/agents"
   "${VENV_DIR}/bin/python" - "${agents_dir}" <<'PY'
@@ -223,24 +233,91 @@ shutil.copytree(source_dir, target_dir)
 PY
 }
 
-ensure_bashrc_path() {
+path_contains_dir() {
+  local target_dir="$1"
+  case ":${PATH}:" in
+    *":${target_dir}:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+update_bashrc_path_entries() {
   mkdir -p "$(dirname "${BASHRC_PATH}")"
   touch "${BASHRC_PATH}"
 
-  local export_line="export PATH=\"${BIN_DIR}:\$PATH\""
-  if grep -Fqs "${BIN_DIR}" "${BASHRC_PATH}"; then
-    return 1
+  local legacy_export_line="export PATH=\"${BIN_DIR}:\$PATH\""
+  local launcher_export_line="export PATH=\"${LAUNCHER_DIR}:\$PATH\""
+  local should_add_launcher="yes"
+
+  if path_contains_dir "${LAUNCHER_DIR}"; then
+    should_add_launcher="no"
   fi
 
-  printf '\n# dormammu\n%s\n' "${export_line}" >> "${BASHRC_PATH}"
-  return 0
+  "${PYTHON_BIN}" - "${BASHRC_PATH}" "${legacy_export_line}" "${launcher_export_line}" "${should_add_launcher}" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+bashrc_path = Path(sys.argv[1])
+legacy_export_line = sys.argv[2]
+launcher_export_line = sys.argv[3]
+should_add_launcher = sys.argv[4] == "yes"
+
+lines = bashrc_path.read_text(encoding="utf-8").splitlines()
+updated_lines: list[str] = []
+legacy_removed = False
+launcher_present = False
+i = 0
+
+while i < len(lines):
+    line = lines[i]
+    next_line = lines[i + 1] if i + 1 < len(lines) else None
+
+    if line == "# dormammu" and next_line == legacy_export_line:
+        legacy_removed = True
+        i += 2
+        continue
+
+    if line == legacy_export_line:
+        legacy_removed = True
+        i += 1
+        continue
+
+    if line == "# dormammu" and next_line == launcher_export_line:
+        launcher_present = True
+        updated_lines.append(line)
+        updated_lines.append(next_line)
+        i += 2
+        continue
+
+    if line == launcher_export_line:
+        launcher_present = True
+
+    updated_lines.append(line)
+    i += 1
+
+launcher_added = False
+if should_add_launcher and not launcher_present:
+    if updated_lines and updated_lines[-1] != "":
+        updated_lines.append("")
+    updated_lines.append("# dormammu")
+    updated_lines.append(launcher_export_line)
+    launcher_added = True
+
+bashrc_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+print(json.dumps({"legacy_removed": legacy_removed, "launcher_added": launcher_added}))
+PY
 }
 
-source_bashrc() {
-  if [[ -f "${BASHRC_PATH}" ]]; then
-    # shellcheck disable=SC1090
-    source "${BASHRC_PATH}" || true
+source_command_for_guidance() {
+  if [[ "${BASHRC_PATH}" == "${HOME}/.bashrc" ]]; then
+    printf 'source ~/.bashrc'
+    return 0
   fi
+
+  printf 'source %q' "${BASHRC_PATH}"
 }
 
 main() {
@@ -274,6 +351,7 @@ main() {
   fi
 
   link_binary
+  install_launcher
   install_agents_bundle
   local active_agent_cli=""
   if active_agent_cli="$(detect_active_agent_cli)"; then
@@ -283,24 +361,46 @@ main() {
   fi
   write_runtime_config "${active_agent_cli}"
 
-  local bashrc_updated="no"
-  if ensure_bashrc_path; then
-    bashrc_updated="yes"
-  fi
-  source_bashrc
+  local bashrc_update_json
+  local legacy_path_removed
+  local launcher_path_added
+  bashrc_update_json="$(update_bashrc_path_entries)"
+  legacy_path_removed="$("${PYTHON_BIN}" - "${bashrc_update_json}" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+print("yes" if payload["legacy_removed"] else "no")
+PY
+)"
+  launcher_path_added="$("${PYTHON_BIN}" - "${bashrc_update_json}" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+print("yes" if payload["launcher_added"] else "no")
+PY
+)"
 
   cat <<EOF
 Installed dormammu into ${INSTALL_ROOT}
 Config file: ${CONFIG_PATH}
 Binary directory: ${BIN_DIR}
+Launcher directory: ${LAUNCHER_DIR}
 Agents directory: ${INSTALL_ROOT}/agents
 Active agent CLI: ${active_agent_cli:-not set}
-Updated ${BASHRC_PATH}: ${bashrc_updated}
+Removed legacy ${BIN_DIR} PATH entry from ${BASHRC_PATH}: ${legacy_path_removed}
+Added ${LAUNCHER_DIR} PATH entry to ${BASHRC_PATH}: ${launcher_path_added}
 
 Next steps:
-  ${BIN_DIR}/dormammu doctor
-  ${BIN_DIR}/dormammu init-state
-  ${BIN_DIR}/dormammu run --prompt "Inspect the repo and implement the requested change."
+  $(source_command_for_guidance)
+  dormammu doctor
+  dormammu init-state
+  dormammu run --prompt "Inspect the repo and implement the requested change."
 EOF
 }
 

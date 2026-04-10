@@ -2,50 +2,43 @@
 
 ## Actual Progress
 
-- Goal: Update `dormammu` so omitted `--cwd` work defaults to the current
-  directory, and add a repo-level `.session` marker that links `run` and
-  `resume` to the same session automatically.
-- Prompt-driven scope: Default agent workdir resolution to `Path.cwd()`,
-  create and maintain a repo `.session` marker, make `run` reuse that marker
-  or start a new session when it is missing, and make `resume` honor the same
-  marker before the root `.dev` active-session index.
+- Goal: Migrate `install.sh` from direct `~/.dormammu/bin` PATH injection to
+  a `~/.local/bin/dormammu` launcher flow with explicit shell reload guidance.
+- Prompt-driven scope: Create a `~/.local/bin` launcher, remove installer-managed
+  legacy `~/.dormammu/bin` PATH exports from `.bashrc`, add a `~/.local/bin`
+  PATH export only when the current shell `PATH` does not already include it,
+  and update installer regression coverage.
 - Active roadmap focus:
-- Phase 3. Agent CLI Adapter and Single-Run Execution
-- Phase 4. Supervisor Validation, Continuation Loop, and Resume
 - Phase 5. CLI Operator Experience and Progress Visibility
+- Phase 6. Installer, Commands, and Environment Diagnostics
 - Current workflow phase: test_and_review
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The `.session` marker and current-directory workdir slice is
-  implemented and validated. Resume from commit preparation or from follow-up
-  operator docs around the new session marker flow.
+- Resume point: The installer launcher migration is implemented and validated.
+  Resume from commit preparation or from follow-up installer docs.
 
 ## In Progress
 
-- `run-once`, `run`, and `inspect-cli` now resolve external agent workdir to
-  the current shell directory when users do not pass `--workdir`.
-- `run`, `resume`, `init-state`, `start-session`, and `restore-session` now
-  write the active session id to a repo-level `.session` file.
-- `run` now starts a fresh session when `.session` is absent instead of
-  silently reusing the root `.dev` active session, while `resume` prefers the
-  repo marker before the root session index.
+- `install.sh` now installs a `~/.local/bin/dormammu` launcher that execs the
+  venv-managed binary instead of expecting `~/.dormammu/bin` to stay on
+  `PATH`.
+- The installer now removes the installer-managed legacy
+  `export PATH="~/.dormammu/bin:$PATH"` equivalent from `.bashrc`, and only
+  appends the `~/.local/bin` export when the current shell `PATH` is missing it.
+- Final install guidance now tells operators to run `source ~/.bashrc` before
+  using `dormammu` from a newly bootstrapped shell PATH.
 
 ## Progress Notes
 
-- The CLI now keeps the repo-local `.session` file aligned whenever the active
-  session changes through bootstrap, session switching, or run/resume flows.
-- Focused automated validation passed for `tests.test_agent_cli_adapter` and
-  `tests.test_cli`.
-- Added regression tests for default current-directory `cwd` forwarding, repo
-  `.session` creation and reuse, new-session creation when the marker is
-  missing, and `resume` preferring `.session` over the root `.dev` index.
+- Focused automated validation passed for `tests.test_install_script`.
+- Added regression coverage for launcher creation, legacy PATH cleanup,
+  conditional `~/.local/bin` PATH bootstrapping, and the explicit shell reload
+  guidance.
 
 ## Risks And Watchpoints
 
-- The repo `.session` file now becomes part of the operator-facing state, so
-  we may want to document or ignore it explicitly if local session markers
-  should stay untracked.
-- Existing runs now persist the resolved current directory into loop request
-  state, which changes the forwarded `--cwd` behavior for tools such as
-  `cline` when `--workdir` was omitted previously.
+- The installer still targets `.bashrc`; shells that rely on `.zshrc`,
+  `.profile`, or other startup files remain outside this automation path.
+- Legacy cleanup removes the installer-managed export line shape, not arbitrary
+  custom shell snippets that happen to reference `~/.dormammu/bin`.
