@@ -107,6 +107,29 @@ class CliAdapterTests(unittest.TestCase):
                 [str(fake_cli), "exec", "--skip-git-repo-check"],
             )
 
+    def test_run_once_applies_skip_git_repo_check_when_only_exec_help_advertises_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_codex_cli(
+                root,
+                include_skip_git_repo_check=True,
+                skip_git_repo_check_in_exec_help_only=True,
+            )
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    run_label="phase-7-codex-exec-help-skip-git-check",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("--skip-git-repo-check", result.command)
+
     def test_run_once_does_not_duplicate_explicit_skip_git_repo_check_for_codex(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -462,11 +485,15 @@ class CliAdapterTests(unittest.TestCase):
         *,
         name: str = "codex",
         include_skip_git_repo_check: bool = False,
+        skip_git_repo_check_in_exec_help_only: bool = False,
     ) -> Path:
         script = root / name
-        skip_git_repo_check_line = ""
+        main_help_skip_git_repo_check_line = ""
+        exec_help_skip_git_repo_check_line = ""
+        if include_skip_git_repo_check and not skip_git_repo_check_in_exec_help_only:
+            main_help_skip_git_repo_check_line = 'print("  --skip-git-repo-check")'
         if include_skip_git_repo_check:
-            skip_git_repo_check_line = 'print("  --skip-git-repo-check")'
+            exec_help_skip_git_repo_check_line = 'print("  --skip-git-repo-check")'
         script.write_text(
             textwrap.dedent(
                 f"""\
@@ -476,10 +503,15 @@ class CliAdapterTests(unittest.TestCase):
                 def main() -> int:
                     args = sys.argv[1:]
                     if "--help" in args:
+                        if args[:2] == ["exec", "--help"]:
+                            print("Run Codex non-interactively")
+                            print("Usage: codex exec [OPTIONS] [PROMPT]")
+                            {exec_help_skip_git_repo_check_line}
+                            return 0
                         print("Usage: codex [OPTIONS] [PROMPT]")
                         print("  codex exec [OPTIONS] [PROMPT]")
                         print("  --full-auto")
-                        {skip_git_repo_check_line}
+                        {main_help_skip_git_repo_check_line}
                         return 0
 
                     if args and args[0] == "exec":

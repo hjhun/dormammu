@@ -568,8 +568,8 @@ def _prepare_run_session_scope(
     return _scoped_session_repository(config, session_id)
 
 
-def _resolve_runtime_workdir(workdir: Path | None) -> Path:
-    return (workdir or Path.cwd()).resolve()
+def _resolve_runtime_workdir(workdir: Path | None, *, repo_root: Path) -> Path:
+    return (workdir or repo_root).resolve()
 
 
 def _prompt_with_default(prompt: str, default: str) -> str:
@@ -813,7 +813,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
         )
         config, repository = _resolve_runtime_session_scope(config, repository)
         _write_session_marker(config.repo_root, _active_session_id(repository))
-        workdir = _resolve_runtime_workdir(args.workdir)
+        workdir = _resolve_runtime_workdir(args.workdir, repo_root=config.repo_root)
         repository.persist_input_prompt(
             prompt_text=prompt_text,
             source_path=prompt_source_path,
@@ -892,7 +892,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
             roadmap_phases=roadmap_phases,
             default_phase="phase_4",
         )
-        workdir = _resolve_runtime_workdir(args.workdir)
+        workdir = _resolve_runtime_workdir(args.workdir, repo_root=config.repo_root)
         repository.persist_input_prompt(
             prompt_text=prompt_text,
             source_path=prompt_source_path,
@@ -993,7 +993,7 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
 
 def _handle_inspect_cli(args: argparse.Namespace) -> int:
     config, _ = _load_state_scope(args.repo_root)
-    workdir = _resolve_runtime_workdir(args.workdir)
+    workdir = _resolve_runtime_workdir(args.workdir, repo_root=config.repo_root)
     try:
         agent_cli = _resolve_agent_cli(config, args.agent_cli)
     except ValueError as exc:

@@ -78,20 +78,46 @@ class CliAdapter:
         env["HOME"] = str(self.config.home_dir)
         return env
 
+    def _run_help_command(
+        self,
+        argv: list[str],
+        *,
+        cwd: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            argv,
+            cwd=cwd,
+            env=self._subprocess_env(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
     def inspect_capabilities(self, cli_path: Path, *, cwd: Path) -> CliCapabilities:
         try:
-            completed = subprocess.run(
-                [str(cli_path), "--help"],
-                cwd=cwd,
-                env=self._subprocess_env(),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            completed = self._run_help_command([str(cli_path), "--help"], cwd=cwd)
         except FileNotFoundError as exc:
             raise RuntimeError(f"CLI executable was not found: {cli_path}") from exc
 
-        help_text = completed.stdout or completed.stderr
+        help_text_parts = [completed.stdout or completed.stderr]
+        base_capabilities = parse_help_text(
+            help_text_parts[0],
+            executable_name=cli_path.name,
+            help_exit_code=completed.returncode,
+        )
+        if base_capabilities.command_prefix:
+            try:
+                prefixed = self._run_help_command(
+                    [str(cli_path), *base_capabilities.command_prefix, "--help"],
+                    cwd=cwd,
+                )
+            except FileNotFoundError as exc:
+                raise RuntimeError(f"CLI executable was not found: {cli_path}") from exc
+            prefixed_help_text = prefixed.stdout or prefixed.stderr
+            if prefixed_help_text:
+                help_text_parts.append(prefixed_help_text)
+
+        help_text = "\n".join(part for part in help_text_parts if part)
         return parse_help_text(
             help_text,
             executable_name=cli_path.name,

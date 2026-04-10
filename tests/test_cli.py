@@ -743,6 +743,36 @@ class CliTests(unittest.TestCase):
             self.assertIn("Configured CLI prompt", stdout_text)
             self.assertIn("Follow the guidance files below before making changes.", stdout_text)
 
+    def test_run_once_defaults_workdir_to_repo_root_when_invoked_elsewhere(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_root = Path(tmpdir)
+            root = temp_root / "repo"
+            root.mkdir()
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            outside_cwd = temp_root / "outside"
+            outside_cwd.mkdir()
+
+            stdout = io.StringIO()
+            with contextlib.chdir(outside_cwd), contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Repo-root workdir prompt",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["workdir"], str(root.resolve()))
+            stdout_text = Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8")
+            self.assertIn("Repo-root workdir prompt", stdout_text)
+
     def test_run_once_uses_custom_guidance_file_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
