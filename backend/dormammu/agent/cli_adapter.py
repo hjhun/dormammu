@@ -152,6 +152,7 @@ class CliAdapter:
 
         run_cwd = effective_workdir
         capabilities = self.inspect_capabilities(request.cli_path, cwd=run_cwd)
+        request = self._apply_default_preset_extra_args(request, capabilities)
         command_plan = build_command_plan(request, capabilities, prompt_path=prompt_path)
 
         started_at = _iso_now()
@@ -276,7 +277,6 @@ class CliAdapter:
 
         prompt_flag = request.prompt_flag or override.prompt_flag
         extra_args = tuple(override.extra_args) + tuple(request.extra_args)
-        extra_args = self._merge_default_preset_extra_args(cli_path, extra_args)
         return replace(
             request,
             cli_path=cli_path,
@@ -285,20 +285,27 @@ class CliAdapter:
             extra_args=extra_args,
         )
 
-    def _merge_default_preset_extra_args(
+    def _apply_default_preset_extra_args(
         self,
-        cli_path: Path,
-        extra_args: tuple[str, ...],
-    ) -> tuple[str, ...]:
-        preset = preset_for_executable_name(cli_path.name)
+        request: AgentRunRequest,
+        capabilities: CliCapabilities,
+    ) -> AgentRunRequest:
+        preset = preset_for_executable_name(request.cli_path.name)
         if preset is None or not preset.default_extra_args:
-            return extra_args
+            return request
 
+        if preset.key == "codex" and "--skip-git-repo-check" not in capabilities.help_text.lower():
+            return request
+
+        extra_args = tuple(request.extra_args)
         normalized_args = {arg.strip().lower() for arg in extra_args if arg.strip()}
         if any(flag.lower() in normalized_args for flag in preset.suppress_default_extra_args_when_present):
-            return extra_args
+            return request
 
-        return tuple(preset.default_extra_args) + extra_args
+        return replace(
+            request,
+            extra_args=tuple(preset.default_extra_args) + extra_args,
+        )
 
     def _resolve_cli_override(self, cli_path: Path) -> CliInvocationConfig | None:
         overrides = self.config.cli_overrides or {}

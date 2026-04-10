@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T11:52:16+09:00",
+  "updated_at": "2026-04-10T14:55:32+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -43,8 +43,9 @@
   },
   "roadmap": {
     "active_phase_ids": [
+      "phase_3",
       "phase_5",
-      "phase_6"
+      "phase_7"
     ],
     "priority_order": [
       "phase_1",
@@ -60,11 +61,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The local installer repair scope is complete: scripts/install.sh now creates a ~/.local/bin launcher for the repository venv binary, conditionally adds ~/.local/bin to .bashrc when the current PATH is missing it, and focused installer validation plus a launcher smoke check passed."
+    "reason": "The Codex trusted-directory repair scope is complete: dormammu now adds --skip-git-repo-check only when the installed codex exec help output advertises that flag, avoids duplicating an explicit operator-provided skip flag, and focused adapter plus broader CLI/config validation passed."
   },
   "bootstrap": {
-    "goal": "Repair scripts/install.sh so Ubuntu local installs expose a usable dormammu command with launcher and shell guidance.",
-    "captured_at": "2026-04-10T11:52:16+09:00",
+    "goal": "Repair Codex CLI execution so dormammu can run outside trusted directories by applying --skip-git-repo-check when supported.",
+    "captured_at": "2026-04-10T14:55:32+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -87,7 +88,7 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume after the local installer repair slice. scripts/install.sh now creates a ~/.local/bin/dormammu launcher, adds ~/.local/bin to .bashrc only when the current shell PATH is missing it, prints source ~/.bashrc guidance, passes python3 -m unittest tests.test_install_script, and the launcher smoke test succeeds.",
+      "resume_checkpoint": "Resume after the Codex trusted-directory repair slice. dormammu now adds --skip-git-repo-check for Codex only when codex exec --help advertises the flag, avoids duplicating an explicit operator-provided skip flag, passes the focused adapter/help/parser suite plus the broader CLI/config suite, and the manual codex exec reproduction confirms the trusted-directory guard is cleared when that flag is present.",
       "total_tasks": 4,
       "completed_tasks": 4,
       "pending_tasks": 0,
@@ -95,26 +96,26 @@
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Reproduce the Ubuntu local install flow for scripts/install.sh and identify why the installed command is not usable",
+          "text": "Phase 1. Reproduce the Codex trusted-directory failure and confirm which codex exec flag clears the startup guard",
           "completed": true
         },
         {
-          "text": "Phase 2. Update the local install script to expose a runnable ~/.local/bin/dormammu launcher backed by the repository .venv",
+          "text": "Phase 2. Update the Codex preset path so dormammu adds --skip-git-repo-check only when the installed CLI advertises support",
           "completed": true
         },
         {
-          "text": "Phase 3. Add idempotent .bashrc PATH bootstrapping and explicit shell reload guidance for the local install flow",
+          "text": "Phase 3. Add regression coverage for the supported-flag path and for explicit no-duplication behavior",
           "completed": true
         },
         {
-          "text": "Phase 4. Add and run regression coverage plus a local launcher smoke check for the repaired installer",
+          "text": "Phase 4. Run focused validation across the agent adapter, command builder, CLI, and config surfaces",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-10T11:52:16+09:00"
+      "synced_at": "2026-04-10T14:55:32+09:00"
     }
   },
-  "next_action": "Prepare a commit for the validated local installer repair, or extend the local install docs around the ~/.local/bin shell bootstrap flow.",
+  "next_action": "Prepare a commit for the validated Codex trusted-directory repair, or extend operator documentation around Codex compatibility flags and trusted-directory behavior.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -123,11 +124,12 @@
     "PLAN.md should list prompt-derived development items in `[ ] Phase N. <title>` format.",
     "The installed guidance bundle and packaged asset copy should stay synchronized.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "This slice targets the scripts/install.sh local install path on Ubuntu-like shells.",
-    "The local installer now creates a ~/.local/bin/dormammu launcher that execs the repository venv binary.",
-    "The local installer only appends ~/.local/bin to .bashrc when the current shell PATH does not already include that directory.",
-    "Focused validation passed through `python3 -m unittest tests.test_install_script`.",
-    "Manual smoke verification passed by running ~/.local/bin/dormammu --help after installation."
+    "This slice targets Codex CLI invocation compatibility when dormammu runs in non-trusted directories.",
+    "The Codex preset now adds --skip-git-repo-check only when codex exec --help advertises the flag.",
+    "Codex-specific default flags are now applied after capability inspection so dormammu can gate compatibility behavior on the installed CLI version.",
+    "Focused validation passed through `python3 -m unittest tests.test_agent_cli_adapter tests.test_command_builder tests.test_help_parser`.",
+    "Broader CLI/config validation passed through `python3 -m unittest tests.test_cli tests.test_config`.",
+    "Manual reproduction confirmed codex exec fails without --skip-git-repo-check and proceeds past the trusted-directory guard when the flag is present."
   ],
   "loop": {
     "status": "idle",

@@ -2,44 +2,47 @@
 
 ## Actual Progress
 
-- Goal: Repair `scripts/install.sh` so a local Ubuntu install is usable
-  immediately after installation.
-- Prompt-driven scope: Make the local installer create a runnable
-  `~/.local/bin/dormammu` launcher, add shell PATH bootstrap guidance, and add
-  regression coverage for the local install path.
+- Goal: Repair `codex` CLI execution so dormammu can run in non-trusted
+  working directories without failing before the agent starts.
+- Prompt-driven scope: Diagnose the `Not inside a trusted directory and
+  --skip-git-repo-check was not specified.` failure, update the Codex preset to
+  pass the skip flag only when supported, and add regression coverage.
 - Active roadmap focus:
+- Phase 3. Agent CLI Adapter and Single-Run Execution
 - Phase 5. CLI Operator Experience and Progress Visibility
-- Phase 6. Installer, Commands, and Environment Diagnostics
+- Phase 7. Hardening, Multi-Session, and Productization
 - Current workflow phase: test_and_review
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The local installer fix is implemented and validated. Resume
-  from commit preparation or from follow-up installer documentation.
+- Resume point: The Codex trusted-directory fix is implemented and validated.
+  Resume from commit preparation or from broader Codex compatibility follow-up.
 
 ## In Progress
 
-- `scripts/install.sh` now installs the editable package into the repository
-  `.venv`, creates `~/.local/bin/dormammu`, and points that launcher at the
-  venv-managed CLI.
-- The local installer now appends the `~/.local/bin` PATH export to `.bashrc`
-  only when the current shell PATH is missing that directory.
-- Final local install guidance now tells operators to run `source ~/.bashrc`
-  before using the plain `dormammu` command in a new shell.
+- The Codex preset now injects `--skip-git-repo-check` only when the installed
+  `codex` binary advertises support for that flag in `codex exec --help`.
+- Default preset arguments are now applied after CLI capability inspection so
+  dormammu can gate Codex-specific compatibility flags on the real installed
+  CLI version.
+- Regression coverage now verifies both the supported-flag path and the
+  explicit no-duplication path for Codex invocations.
 
 ## Progress Notes
 
 - Focused automated validation passed for `python3 -m unittest
-  tests.test_install_script`.
-- Added regression coverage for the local installer launcher creation,
-  idempotent `.bashrc` PATH bootstrapping, and launcher execution via
-  `--help`.
-- Manual Ubuntu-style smoke verification passed by installing with a temporary
-  `HOME`, then executing `~/.local/bin/dormammu --help`.
+  tests.test_agent_cli_adapter tests.test_command_builder tests.test_help_parser`.
+- Broader CLI/config regression validation passed for `python3 -m unittest
+  tests.test_cli tests.test_config`.
+- Manual Codex reproduction confirmed the failure without
+  `--skip-git-repo-check` and confirmed that `codex exec --skip-git-repo-check`
+  proceeds past the trusted-directory guard.
 
 ## Risks And Watchpoints
 
-- The local installer still targets `.bashrc`; shells that rely on `.zshrc`,
-  `.profile`, or other startup files remain outside this automation path.
-- The local installer intentionally manages only the launcher PATH bootstrap; it
-  does not attempt the root installer's broader global config bootstrap.
+- Older Codex builds that do not advertise `--skip-git-repo-check` still run
+  through the legacy path because dormammu now gates that flag on the help
+  output instead of assuming universal support.
+- This slice fixes the startup guard only; any later Codex runtime warnings
+  from local user state such as OAuth/keyring or state DB migration issues
+  remain outside dormammu's command-building layer.

@@ -85,6 +85,48 @@ class CliAdapterTests(unittest.TestCase):
             self.assertIsNotNone(result.capabilities.auto_approve)
             self.assertEqual(result.capabilities.auto_approve.candidates[0].value, "--full-auto")
 
+    def test_run_once_applies_skip_git_repo_check_for_supported_codex_exec(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_codex_cli(root, include_skip_git_repo_check=True)
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    run_label="phase-7-codex-skip-git-check",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(
+                list(result.command[:3]),
+                [str(fake_cli), "exec", "--skip-git-repo-check"],
+            )
+
+    def test_run_once_does_not_duplicate_explicit_skip_git_repo_check_for_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_codex_cli(root, include_skip_git_repo_check=True)
+
+            config = AppConfig.load(repo_root=root)
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    extra_args=("--skip-git-repo-check",),
+                    run_label="phase-7-codex-explicit-skip-git-check",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.command.count("--skip-git-repo-check"), 1)
+
     def test_run_once_falls_back_across_configured_clis_when_token_limit_is_hit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -414,8 +456,17 @@ class CliAdapterTests(unittest.TestCase):
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
         return script
 
-    def _write_fake_codex_cli(self, root: Path, *, name: str = "codex") -> Path:
+    def _write_fake_codex_cli(
+        self,
+        root: Path,
+        *,
+        name: str = "codex",
+        include_skip_git_repo_check: bool = False,
+    ) -> Path:
         script = root / name
+        skip_git_repo_check_line = ""
+        if include_skip_git_repo_check:
+            skip_git_repo_check_line = 'print("  --skip-git-repo-check")'
         script.write_text(
             textwrap.dedent(
                 f"""\
@@ -428,6 +479,7 @@ class CliAdapterTests(unittest.TestCase):
                         print("Usage: codex [OPTIONS] [PROMPT]")
                         print("  codex exec [OPTIONS] [PROMPT]")
                         print("  --full-auto")
+                        {skip_git_repo_check_line}
                         return 0
 
                     if args and args[0] == "exec":

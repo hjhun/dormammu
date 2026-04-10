@@ -34,6 +34,8 @@ KNOWN_CLI_PRESETS: tuple[KnownCliPreset, ...] = (
         help_hints=("codex exec", "--full-auto", "--dangerously-bypass-approvals-and-sandbox"),
         command_prefix=("exec",),
         prompt_positional=True,
+        default_extra_args=("--skip-git-repo-check",),
+        suppress_default_extra_args_when_present=("--skip-git-repo-check",),
         auto_approve_candidates=(
             PresetAutoApproveCandidate(
                 value="--full-auto",
