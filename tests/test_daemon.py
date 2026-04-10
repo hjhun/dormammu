@@ -270,6 +270,42 @@ class DaemonQueueTests(unittest.TestCase):
 
 
 class DaemonRunnerTests(unittest.TestCase):
+    def test_run_forever_emits_startup_banner_with_detection_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            daemon_config_path = self._write_daemon_config(root, fake_cli)
+            daemon_config = load_daemon_config(daemon_config_path, app_config=AppConfig.load(repo_root=root))
+
+            class InterruptingWatcher:
+                backend_name = "polling"
+
+                def start(self) -> None:
+                    return None
+
+                def close(self) -> None:
+                    return None
+
+                def wait_for_changes(self) -> list[Path]:
+                    raise KeyboardInterrupt()
+
+            config = AppConfig.load(repo_root=root)
+            stderr = io.StringIO()
+            runner = DaemonRunner(config, daemon_config, progress_stream=stderr, watcher=InterruptingWatcher())
+
+            with self.assertRaises(KeyboardInterrupt):
+                runner.run_forever()
+
+            progress = stderr.getvalue()
+            self.assertIn("=== dormammu daemonize ===", progress)
+            self.assertIn(f"daemon config: {daemon_config.config_path}", progress)
+            self.assertIn(f"prompt path: {daemon_config.prompt_path}", progress)
+            self.assertIn("watcher: polling", progress)
+            self.assertIn("prompt detection: hidden_files=ignore, extensions=.md", progress)
+            self.assertIn("skip_when_result_exists=yes", progress)
+            self.assertIn("child cli output: stdout+stderr are mirrored live to parent stderr", progress)
+
     def test_run_pending_once_processes_existing_prompts_in_sorted_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -296,6 +332,34 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertFalse((daemon_config.prompt_path / "b-second.md").exists())
             stderr_text = stderr.getvalue()
             self.assertLess(stderr_text.index("001-first.md"), stderr_text.index("b-second.md"))
+
+    def test_run_pending_once_logs_prompt_detection_and_phase_launch_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            daemon_config_path = self._write_daemon_config(root, fake_cli)
+            daemon_config = load_daemon_config(daemon_config_path, app_config=AppConfig.load(repo_root=root))
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            (daemon_config.prompt_path / "001-first.md").write_text("First prompt\n", encoding="utf-8")
+
+            config = AppConfig.load(repo_root=root)
+            stderr = io.StringIO()
+            processed = DaemonRunner(config, daemon_config, progress_stream=stderr).run_pending_once(
+                watcher_backend="polling"
+            )
+
+            self.assertEqual(processed, 1)
+            progress = stderr.getvalue()
+            self.assertIn("daemon prompt detected: 001-first.md", progress)
+            self.assertIn("sort_key=(0, 1, '001-first.md')", progress)
+            self.assertIn("daemon phase plan: launching CLI", progress)
+            self.assertIn("prompt_mode=file", progress)
+            self.assertIn("command:", progress)
+            self.assertIn("stdout artifact:", progress)
+            self.assertIn("stderr artifact:", progress)
+            self.assertIn("daemon phase commit: exit_code=0", progress)
 
     def test_run_pending_once_skips_prompts_with_existing_result_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

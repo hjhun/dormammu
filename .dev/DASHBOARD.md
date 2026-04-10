@@ -2,11 +2,12 @@
 
 ## Actual Progress
 
-- Goal: Clarify the Dormammu CLI so operators can discover `daemonize` and
-  understand how JSON config is injected without reading the source.
-- Prompt-driven scope: Make `--help`, `README.md`, and `docs/GUIDE.md` explain
-  the command groups, the `daemonize --config` entry point, and the runtime
-  config resolution path for `dormammu.json`.
+- Goal: Improve `daemonize` runtime visibility so operators can tell how prompt
+  files are detected and where child CLI output is surfaced when the queue
+  worker starts.
+- Prompt-driven scope: Add startup and execution logs that explain prompt
+  detection rules, watcher settings, and stdout/stderr behavior for daemonized
+  CLI runs.
 - Active roadmap focus:
 - Phase 5. CLI Operator Experience and Progress Visibility
 - Phase 6. Installer, Commands, and Environment Diagnostics
@@ -14,32 +15,38 @@
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The CLI help and docs clarification slice is implemented and
-  validated. Resume from commit preparation or optional follow-up UX polish
-  around typo recovery and command aliasing.
+- Resume point: The daemonize visibility slice is implemented and validated.
+  Resume from optional commit preparation or a docs follow-up if the startup
+  logs should also be documented.
 
 ## In Progress
 
-- The top-level CLI help now groups commands by use case and explicitly calls
-  out the two config entry points: runtime config versus daemon queue config.
-- `show-config` and `daemonize --help` now explain where JSON config is loaded
-  from and include concrete invocation examples.
-- `README.md` and `docs/GUIDE.md` now surface `show-config` earlier and
-  document how `dormammu.json`, `DORMAMMU_CONFIG_PATH`, and `daemonize.json`
-  fit together.
+- `daemonize` now emits a startup banner that shows the repo root, daemon
+  config path, watched prompt/result directories, resolved watcher backend, and
+  prompt detection rules.
+- Each detected prompt now logs its queue sort key, and each phase launch logs
+  the CLI path, workdir, concrete command, and prompt/stdout/stderr artifacts
+  before execution.
+- The runtime messaging explicitly states that child CLI stdout and stderr are
+  mirrored live to parent `stderr` and also archived under `.dev/logs/`.
 
 ## Progress Notes
 
-- Validation passed for `python3 -m unittest tests.test_cli`.
-- Focused coverage now asserts that top-level help mentions runtime and daemon
-  config entry points, and that `daemonize --help` retains the split-config
-  guidance.
+- Runtime inspection shows prompt candidates are discovered from `prompt_path`,
+  filtered by `queue.allowed_extensions` and `ignore_hidden_files`, skipped when
+  a matching result file already exists, and delayed by `watch.settle_seconds`
+  before execution.
+- Prompt processing order is already deterministic: leading numeric prefixes are
+  processed first, then alphabetic prefixes, then the remaining names.
+- Focused validation passed for `python3 -m unittest tests.test_daemon`.
+- Regression coverage now asserts both the startup banner content and the
+  prompt/phase execution logs written to stderr.
 
 ## Risks And Watchpoints
 
-- Operators can still type `demonize` by habit, so help text clarity reduces
-  confusion but does not yet provide typo-tolerant aliases.
-- The guide and README are aligned for English documentation, but localized
-  docs may still need a follow-up pass if parity is required.
-- Config behavior is now documented more clearly, so future changes to
-  resolution order should update help text and docs together.
+- New progress logs need to stay faithful to runtime behavior, otherwise the
+  daemon could become more confusing rather than less.
+- Startup messaging should help operators quickly, but it should avoid flooding
+  stderr on every idle poll loop.
+- If prompt detection rules change later, the new banner text and regression
+  tests will need to be updated together.

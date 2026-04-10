@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import shlex
 import sys
 from typing import TextIO
 
@@ -43,6 +44,7 @@ class DaemonRunner:
         self.daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
         self.daemon_config.result_path.mkdir(parents=True, exist_ok=True)
         watcher = self.watcher or build_watcher(self.daemon_config.prompt_path, self.daemon_config.watch)
+        self._emit_startup_banner(watcher_backend=watcher.backend_name)
         watcher.start()
         try:
             while True:
@@ -86,11 +88,55 @@ class DaemonRunner:
             candidates.append(path)
         return candidates
 
+    def _emit_startup_banner(self, *, watcher_backend: str) -> None:
+        print("=== dormammu daemonize ===", file=self.progress_stream)
+        print(f"repo root: {self.app_config.repo_root.resolve()}", file=self.progress_stream)
+        print(f"daemon config: {self.daemon_config.config_path}", file=self.progress_stream)
+        print(f"prompt path: {self.daemon_config.prompt_path}", file=self.progress_stream)
+        print(f"result path: {self.daemon_config.result_path}", file=self.progress_stream)
+        print(
+            "watcher: "
+            f"{watcher_backend} (requested={self.daemon_config.watch.backend}, "
+            f"poll_interval={self.daemon_config.watch.poll_interval_seconds}s, "
+            f"settle={self.daemon_config.watch.settle_seconds}s)",
+            file=self.progress_stream,
+        )
+        print(
+            "prompt detection: "
+            f"hidden_files={'ignore' if self.daemon_config.queue.ignore_hidden_files else 'include'}, "
+            f"extensions={self._describe_allowed_extensions()}, "
+            "skip_when_result_exists=yes, "
+            "order=numeric-prefix -> alpha-prefix -> remaining-name",
+            file=self.progress_stream,
+        )
+        print(
+            "child cli output: stdout+stderr are mirrored live to parent stderr and archived under .dev/logs",
+            file=self.progress_stream,
+        )
+        print(
+            "prompt lifecycle: accepted prompts are processed sequentially and removed after a final result report is written",
+            file=self.progress_stream,
+        )
+        self.progress_stream.flush()
+
+    def _describe_allowed_extensions(self) -> str:
+        if not self.daemon_config.queue.allowed_extensions:
+            return "any"
+        return ",".join(self.daemon_config.queue.allowed_extensions)
+
+    def _log(self, message: str) -> None:
+        print(message, file=self.progress_stream)
+        self.progress_stream.flush()
+
     def _process_prompt(self, prompt_path: Path, *, watcher_backend: str) -> DaemonPromptResult:
         self._in_progress.add(prompt_path)
         started_at = _iso_now()
         sort_key = prompt_sort_key(prompt_path.name)
         result_path = self._result_path_for_prompt(prompt_path)
+        self._log(
+            "daemon prompt detected: "
+            f"{prompt_path.name} (sort_key={sort_key}, watcher={watcher_backend}, result={result_path.name})"
+        )
         session_id: str | None = None
         phase_results: list[PhaseExecutionResult] = []
         status = "completed"
@@ -248,10 +294,24 @@ class DaemonRunner:
         def _handle_started(started: AgentRunStarted) -> None:
             started_ref["value"] = started
             session_repository.record_current_run(started)
+            self._log(
+                f"daemon phase {phase_config.phase_name}: launching CLI "
+                f"(prompt={prompt_path.name}, run_id={started.run_id}, prompt_mode={started.prompt_mode})"
+            )
+            self._log(f"  cli path: {started.cli_path}")
+            self._log(f"  workdir: {started.workdir}")
+            self._log(f"  command: {shlex.join(started.command)}")
+            self._log(f"  prompt artifact: {started.prompt_path}")
+            self._log(f"  stdout artifact: {started.stdout_path}")
+            self._log(f"  stderr artifact: {started.stderr_path}")
 
         try:
             result = adapter.run_once(request, on_started=_handle_started)
             session_repository.record_latest_run(result)
+            self._log(
+                f"daemon phase {phase_config.phase_name}: exit_code={result.exit_code} "
+                f"(prompt={prompt_path.name}, run_id={result.run_id})"
+            )
             return PhaseExecutionResult(
                 phase_name=phase_config.phase_name,
                 cli_path=phase_config.agent_cli.path,
@@ -268,6 +328,10 @@ class DaemonRunner:
             )
         except Exception as exc:
             started = started_ref.get("value")
+            self._log(
+                f"daemon phase {phase_config.phase_name}: failed before completion "
+                f"(prompt={prompt_path.name}, run_id={started.run_id if started else 'n/a'}): {exc}"
+            )
             return PhaseExecutionResult(
                 phase_name=phase_config.phase_name,
                 cli_path=phase_config.agent_cli.path,

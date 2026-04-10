@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T21:27:01+09:00",
+  "updated_at": "2026-04-10T22:16:00+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -60,11 +60,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The CLI help and docs clarification slice is implemented and validated: top-level help now exposes runtime versus daemon config entry points, and README/GUIDE explain how dormammu.json, DORMAMMU_CONFIG_PATH, and daemonize.json fit together."
+    "reason": "The daemonize visibility slice is implemented and validated. Startup logs now describe prompt detection, child CLI output mirroring, and per-phase launch details."
   },
   "bootstrap": {
-    "goal": "Clarify the Dormammu CLI so operators can discover daemonize and understand JSON config injection from help text and docs.",
-    "captured_at": "2026-04-10T17:29:42+09:00",
+    "goal": "Improve daemonize runtime visibility so operators can see how prompt files are detected and where child CLI output is surfaced during queue processing.",
+    "captured_at": "2026-04-10T22:05:00+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -87,7 +87,7 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume after the CLI help and documentation clarification slice. The next step is optional commit preparation or any follow-up UX polish around typo recovery or command aliases.",
+      "resume_checkpoint": "Resume after the validated daemonize visibility slice. The next step is optional documentation polish or commit preparation for the new startup and phase logs.",
       "total_tasks": 5,
       "completed_tasks": 5,
       "pending_tasks": 0,
@@ -95,30 +95,30 @@
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Inspect the current CLI help text, command surface, and config loading behavior to identify why `daemonize` and JSON config entry points are hard to discover",
+          "text": "Phase 1. Inspect the current `daemonize` runtime logging path to confirm whether child CLI stdout and stderr are mirrored live and where prompt queue detection rules are enforced",
           "completed": true
         },
         {
-          "text": "Phase 2. Redesign the top-level and subcommand help text so general runtime config and daemon JSON config usage are explicit in `--help`",
+          "text": "Phase 2. Design clearer `daemonize` startup progress output that explains config paths, watcher behavior, prompt candidate rules, and where child CLI output is mirrored and archived",
           "completed": true
         },
         {
-          "text": "Phase 3. Update `README.md` with a clearer command chooser, `show-config` usage, and side-by-side examples for `dormammu.json` and `daemonize.json`",
+          "text": "Phase 3. Implement startup and per-phase progress logs for `daemonize` without changing prompt processing semantics or artifact capture",
           "completed": true
         },
         {
-          "text": "Phase 4. Update `docs/GUIDE.md` so operators can quickly distinguish runtime config resolution from daemon queue config injection",
+          "text": "Phase 4. Add focused regression tests that capture `daemonize` stderr and verify the new startup visibility and phase execution logs",
           "completed": true
         },
         {
-          "text": "Phase 5. Add focused CLI help regression tests and run targeted validation for the new help and documentation surface",
+          "text": "Phase 5. Run targeted daemon tests and confirm the new operator-facing output matches the actual runtime behavior",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-10T21:27:01+09:00"
+      "synced_at": "2026-04-10T22:16:00+09:00"
     }
   },
-  "next_action": "Prepare a commit for the CLI help and documentation clarification slice, or consider a small UX follow-up such as typo-tolerant aliases for daemonize.",
+  "next_action": "Prepare a commit for the validated daemonize visibility slice, or add a docs follow-up if the new stderr messaging should be documented.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -133,7 +133,9 @@
     "The feature request requires separating dormammu workflow skills from per-phase external agent CLI command configuration.",
     "The daemonize design is captured in docs/daemonize-design.md and has been implemented in the new backend/dormammu/daemon package.",
     "A follow-up request asked for clearer command discovery and explicit JSON config injection guidance in help text and docs.",
-    "Focused validation passed through python3 -m unittest tests.test_cli."
+    "Focused validation passed through python3 -m unittest tests.test_cli.",
+    "The current user request is a new daemonize visibility slice centered on startup logging and prompt detection transparency.",
+    "Focused validation passed through python3 -m unittest tests.test_daemon."
   ],
   "loop": {
     "status": "idle",
