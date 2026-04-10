@@ -1,129 +1,321 @@
 # DORMAMMU Guide
 
-`dormammu` is a CLI-first workflow loop engine for coding agents. It runs an
-external agent CLI, saves machine and human-readable state under `.dev/`, lets
-a supervisor validate outcomes, and helps you resume safely after interruption.
+`dormammu` is a CLI-first workflow loop orchestrator for coding agents. It
+wraps an external agent CLI with state management, supervision, resumability,
+and operator-visible artifacts.
 
-## What DORMAMMU Does
+If you want the fast overview, read the main [README.md](../README.md) first.
 
-At a high level, `dormammu` helps you manage repeated agent work in a safer
-way.
+## What DORMAMMU Is Good At
 
-It gives you:
+`dormammu` is designed for repositories where agent runs need to be:
 
-- a terminal-only workflow surface
-- resumable state saved under `.dev/`
-- supervisor checks for required files and worktree changes
-- continuation prompts when the first run is not enough
-- fallback CLI support when the primary backend hits quota or token limits
+- repeatable
+- inspectable
+- resumable
+- safe to supervise
+- easy to operate from a terminal
 
-## Core Ideas
+Instead of treating an agent call as a black box, `dormammu` keeps the prompt,
+logs, session state, and validation context together under `.dev/`.
 
-### 1. CLI-first architecture
+## Core Features
 
-The important workflows work from Python modules and CLI entrypoints first and
-only.
+- External CLI orchestration for coding agents
+- Single-run execution and supervised retry loops
+- Resume support after interruption
+- Session bootstrap, archival, listing, and restoration
+- Markdown plus JSON state tracking under `.dev/`
+- Guidance-file embedding for repository-specific operating rules
+- Fallback agent CLIs for quota or token exhaustion
+- CLI inspection for prompt mode, workdir support, and risky approval flags
+- Environment diagnostics through `doctor`
 
-### 2. Saved state under `.dev/`
+## Supported Agent CLI Patterns
 
-`dormammu` writes both human-readable and machine-readable state into `.dev/`
-so a run can be inspected and resumed later.
+`dormammu` includes preset-aware behavior for common coding-agent CLIs:
 
-### 3. Supervisor-driven validation
+- `codex`
+- `claude`
+- `gemini`
+- `cline`
+- `aider`
 
-After a run finishes, the supervisor checks whether the expected result exists.
-If not, `dormammu` can prepare continuation work instead of pretending the job
-is done.
+Preset support helps `dormammu` infer prompt style, command prefix, workdir
+flags, and common approval-related options. You can inspect the resolved view
+with:
 
-### 4. Resume instead of restart
-
-If a process is interrupted, you can continue from saved state rather than
-throwing away the whole session.
-
-## Repository Layout
-
-```text
-backend/     Python package, loop engine, adapters, supervisor
-agents/      Distributable workflow and skill guidance bundle
-templates/   Bootstrap templates for .dev state
-docs/        Project documentation
-scripts/     Install and developer convenience scripts
-tests/       Runtime and workflow validation
+```bash
+dormammu inspect-cli --repo-root . --agent-cli codex
 ```
 
 ## Installation
+
+### Install from the repository release script
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
 ```
 
-Or for local development:
+### Install from a local clone
 
 ```bash
 ./scripts/install.sh
 ```
 
+### Install for development
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+```
+
+`dormammu` requires Python `3.10+`.
+
 ## Quick Start
+
+### 1. Verify the environment
 
 ```bash
 dormammu doctor --repo-root . --agent-cli codex
-dormammu init-state
+```
+
+This checks Python, the agent CLI path, repository writability, and whether
+the repository contains an agent workspace directory such as `.agents`.
+
+### 2. Create or merge `.dev` bootstrap state
+
+```bash
+dormammu init-state \
+  --repo-root . \
+  --goal "Implement the requested repository task."
+```
+
+This initializes or refreshes state such as:
+
+- `.dev/DASHBOARD.md`
+- `.dev/PLAN.md`
+- `.dev/session.json`
+- `.dev/workflow_state.json`
+
+### 3. Inspect how an external CLI will be driven
+
+```bash
+dormammu inspect-cli --repo-root . --agent-cli cline
+```
+
+This is especially useful when you want to confirm prompt handling, workdir
+support, or approval-skipping hints before using a real run.
+
+### 4. Execute one agent call
+
+```bash
+dormammu run-once \
+  --repo-root . \
+  --agent-cli codex \
+  --prompt "Read the repo guidance and summarize the next implementation step."
+```
+
+Use `run-once` when you want one bounded agent execution with artifact capture
+but without a supervised retry loop.
+
+### 5. Execute the supervised loop
+
+```bash
 dormammu run \
   --repo-root . \
   --agent-cli codex \
-  --prompt "Inspect the repo and implement the requested change." \
-  --required-path README.md
+  --prompt-file PROMPT.md \
+  --required-path README.md \
+  --require-worktree-changes \
+  --max-retries 2
 ```
 
-What each step does:
+Use `run` when you want `dormammu` to:
 
-1. `doctor` checks whether your environment is ready.
-2. `init-state` creates or merges the bootstrap `.dev` files.
-3. `run` starts a supervised retry loop around the external agent CLI.
+- execute the external agent
+- validate the result
+- generate continuation context when the result is incomplete
+- retry according to your loop settings
 
-## Understanding The `.dev` Directory
+### 6. Resume later
 
-These files matter most:
+```bash
+dormammu resume --repo-root .
+```
 
-- `.dev/DASHBOARD.md`: the operator-facing view of what is actually in progress now
-- `.dev/PLAN.md`: the prompt-derived checklist of development items to work through
-- `.dev/workflow_state.json`
-- `.dev/session.json`
-- `.dev/logs/`
+`resume` continues from the saved loop state instead of restarting the whole
+workflow from the beginning.
 
-They keep the workflow inspectable, automatable, and resumable.
-
-## Guidance Files
-
-`dormammu` can reference rule or agent Markdown files during bootstrap and run
-commands.
-
-- Pass `--guidance-file path/to/file.md` more than once to use explicit
-  guidance files for a command.
-- When explicit files are missing or empty, `dormammu` falls back to repository
-  guidance such as `AGENTS.md` or `agents/AGENTS.md`.
-- If the repository does not provide guidance, `dormammu` falls back to the
-  installed bundle under `~/.dormammu/agents` and then to packaged guidance
-  assets.
-
-For `run` and `run-once`, the selected guidance files are embedded into the
-prompt that is sent to the external coding-agent CLI.
-
-## The Main Commands
-
-### `dormammu run`
-
-Runs the supervised loop around your external agent CLI.
-
-### `dormammu resume`
-
-Resumes the most recent supervised loop from saved state.
+## Understanding The Main Commands
 
 ### `dormammu doctor`
 
-Checks whether the current environment is ready to run `dormammu`.
+Checks:
+
+- Python version
+- agent CLI availability
+- `.agent` or `.agents` workspace presence
+- repository write access
+
+### `dormammu init-state`
+
+Creates or merges bootstrap state for the active repository. This is the
+simplest way to prepare `.dev/` before the first real run.
+
+### `dormammu run-once`
+
+Runs one external agent invocation and stores:
+
+- the prompt artifact
+- stdout and stderr logs
+- metadata about the command and detected CLI capabilities
+- the latest run reference in workflow state
+
+### `dormammu run`
+
+Runs the supervised loop. Common options include:
+
+- `--required-path`
+- `--require-worktree-changes`
+- `--max-retries`
+- `--workdir`
+- `--extra-arg`
+- `--guidance-file`
+
+### `dormammu resume`
+
+Reloads saved loop state and continuation context, then restarts the standard
+recovery path.
 
 ### `dormammu inspect-cli`
 
-Inspects how an external CLI handles prompts and whether it shows risky
-approval-skipping hints.
+Prints JSON describing:
+
+- detected prompt mode
+- known preset match
+- command prefix
+- workdir flag support
+- approval-related hints
+
+### Session commands
+
+`dormammu` also supports:
+
+- `start-session`
+- `sessions`
+- `restore-session`
+
+These are useful when you want to branch workflow history or return to an older
+saved session snapshot.
+
+## The `.dev` Directory
+
+`dormammu` uses `.dev/` as the shared control surface for humans and tooling.
+
+The most important files are:
+
+- `.dev/DASHBOARD.md`: operator-facing current status
+- `.dev/PLAN.md`: prompt-derived implementation checklist
+- `.dev/workflow_state.json`: machine-readable workflow truth
+- `.dev/session.json`: active session metadata
+- `.dev/logs/`: run artifacts and log files
+
+`DORMAMMU.log` at the repository root captures command-level execution banners
+and mirrored stderr output for `run`, `run-once`, and `resume`.
+
+## Guidance File Behavior
+
+Guidance files let you inject repository-specific operating rules into runs.
+
+You can pass them explicitly:
+
+```bash
+dormammu run \
+  --repo-root . \
+  --agent-cli codex \
+  --guidance-file AGENTS.md \
+  --guidance-file docs/agent-rules.md \
+  --prompt "Implement the requested change."
+```
+
+Resolution order is:
+
+1. explicit `--guidance-file`
+2. repository guidance such as `AGENTS.md` or `agents/AGENTS.md`
+3. installed fallback guidance under `~/.dormammu/agents`
+4. packaged fallback guidance assets
+
+## Working Directory And CLI Overrides
+
+When you pass `--workdir`, `dormammu` always uses that directory as the process
+working directory for the external CLI. If the adapter knows the CLI's workdir
+flag, it forwards the value there too.
+
+For example, the Cline preset supports:
+
+- positional prompts
+- `-y`
+- default `--verbose`
+- `--cwd <path>`
+
+Example:
+
+```bash
+dormammu run-once \
+  --repo-root . \
+  --agent-cli cline \
+  --workdir ./subproject \
+  --prompt "Inspect this subproject and summarize the next step."
+```
+
+## Fallback Agent CLIs
+
+If the primary backend runs into token or quota problems, `dormammu` can try
+another configured CLI. Without an explicit config, the fallback order is:
+
+- `codex`
+- `claude`
+- `gemini`
+
+Example config:
+
+```json
+{
+  "active_agent_cli": "/home/you/.local/bin/codex",
+  "fallback_agent_clis": [
+    "claude",
+    {
+      "path": "aider",
+      "extra_args": ["--yes"]
+    }
+  ],
+  "cli_overrides": {
+    "cline": {
+      "extra_args": ["-y", "--verbose"]
+    }
+  }
+}
+```
+
+## Typical Operator Flow
+
+```bash
+dormammu doctor --repo-root . --agent-cli codex
+dormammu init-state --repo-root . --goal "Ship the requested change safely"
+dormammu inspect-cli --repo-root . --agent-cli codex
+dormammu run --repo-root . --agent-cli codex --prompt-file PROMPT.md --required-path README.md
+dormammu resume --repo-root .
+```
+
+## Repository Layout
+
+```text
+backend/     Python package, loop engine, adapters, state, supervisor
+agents/      Distributable workflow and skill guidance bundle
+templates/   Bootstrap templates for `.dev`
+docs/        Documentation
+scripts/     Install and developer helper scripts
+tests/       Runtime and workflow validation
+```
