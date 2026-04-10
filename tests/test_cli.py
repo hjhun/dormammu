@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import stat
@@ -149,6 +150,82 @@ class CliTests(unittest.TestCase):
             self.assertIn(".dev/sessions/", payload["logs_dir"])
             root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
             self.assertIn("active_session_id", root_index)
+
+    def test_init_state_sets_active_agent_cli_from_highest_priority_available_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_root = Path(tmpdir)
+            root = temp_root / "repo"
+            root.mkdir()
+            self._seed_repo(root)
+            home_dir = temp_root / "home"
+            home_dir.mkdir()
+            bin_dir = temp_root / "bin"
+            bin_dir.mkdir()
+            claude_path = self._write_path_tool(bin_dir, "claude")
+            self._write_path_tool(bin_dir, "gemini")
+            self._write_path_tool(bin_dir, "cline")
+
+            stdout = io.StringIO()
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "HOME": str(home_dir),
+                        "PATH": str(bin_dir),
+                    },
+                    clear=False,
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                exit_code = main(["init-state", "--repo-root", str(root)])
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["active_agent_cli"], str(claude_path))
+            config_path = home_dir / ".dormammu" / "config"
+            config_payload = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(config_payload["active_agent_cli"], str(claude_path))
+
+    def test_init_state_updates_existing_active_agent_cli_to_available_higher_priority_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_root = Path(tmpdir)
+            root = temp_root / "repo"
+            root.mkdir()
+            self._seed_repo(root)
+            home_dir = temp_root / "home"
+            home_dir.mkdir()
+            config_dir = home_dir / ".dormammu"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_path = config_dir / "config"
+            config_path.write_text(
+                json.dumps({"active_agent_cli": "/tmp/missing-cline", "token_exhaustion_patterns": ["quota exceeded"]}),
+                encoding="utf-8",
+            )
+            bin_dir = temp_root / "bin"
+            bin_dir.mkdir()
+            codex_path = self._write_path_tool(bin_dir, "codex")
+            self._write_path_tool(bin_dir, "cline")
+
+            stdout = io.StringIO()
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "HOME": str(home_dir),
+                        "PATH": str(bin_dir),
+                    },
+                    clear=False,
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                exit_code = main(["init-state", "--repo-root", str(root)])
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["active_agent_cli"], str(codex_path))
+            config_payload = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(config_payload["active_agent_cli"], str(codex_path))
+            self.assertEqual(config_payload["token_exhaustion_patterns"], ["quota exceeded"])
 
     def test_init_state_prompts_for_bootstrap_inputs_on_first_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -636,6 +713,132 @@ class CliTests(unittest.TestCase):
             self.assertEqual(resume_payload["status"], "completed")
             self.assertTrue((root / "done.txt").exists())
 
+    def test_run_defaults_to_fifty_total_iterations_when_budget_is_not_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["status"], "completed")
+            self.assertEqual(payload["attempts_completed"], 1)
+            self.assertEqual(payload["max_iterations"], 50)
+            self.assertEqual(payload["max_retries"], 49)
+
+    def test_run_accepts_explicit_max_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                        "--max-iterations",
+                        "1",
+                        "--required-path",
+                        "done.txt",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["status"], "failed")
+            self.assertEqual(payload["attempts_completed"], 1)
+            self.assertEqual(payload["max_iterations"], 1)
+
+    def test_resume_accepts_max_iterations_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                first_exit = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                        "--max-iterations",
+                        "1",
+                        "--required-path",
+                        "done.txt",
+                    ]
+                )
+
+            self.assertEqual(first_exit, 1)
+
+            resume_stdout = io.StringIO()
+            with contextlib.redirect_stdout(resume_stdout):
+                resume_exit = main(
+                    [
+                        "resume",
+                        "--repo-root",
+                        str(root),
+                        "--max-iterations",
+                        "2",
+                    ]
+                )
+
+            self.assertEqual(resume_exit, 0)
+            payload = json.loads(resume_stdout.getvalue())
+            self.assertEqual(payload["status"], "completed")
+            self.assertEqual(payload["max_iterations"], 2)
+
+    def test_run_rejects_combining_max_iterations_and_max_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                        "--max-iterations",
+                        "5",
+                        "--max-retries",
+                        "4",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("Use either --max-iterations or --max-retries", stderr.getvalue())
+
     def test_run_once_emits_runtime_banner_and_live_agent_output_to_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1099,6 +1302,12 @@ class CliTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_path_tool(self, directory: Path, name: str) -> Path:
+        script = directory / name
+        script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
         return script
 

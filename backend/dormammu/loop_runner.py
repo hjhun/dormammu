@@ -33,6 +33,12 @@ class LoopRunRequest:
     require_worktree_changes: bool = False
     expected_roadmap_phase_id: str | None = "phase_4"
 
+    @property
+    def max_iterations(self) -> int:
+        if self.max_retries == -1:
+            return -1
+        return self.max_retries + 1
+
     def as_agent_run_request(self, prompt_text: str) -> AgentRunRequest:
         return AgentRunRequest(
             cli_path=self.cli_path,
@@ -56,6 +62,7 @@ class LoopRunRequest:
             "extra_args": list(self.extra_args),
             "run_label": self.run_label,
             "max_retries": self.max_retries,
+            "max_iterations": self.max_iterations,
             "required_paths": list(self.required_paths),
             "require_worktree_changes": self.require_worktree_changes,
             "expected_roadmap_phase_id": self.expected_roadmap_phase_id,
@@ -86,6 +93,7 @@ class LoopRunResult:
     attempts_completed: int
     retries_used: int
     max_retries: int
+    max_iterations: int
     latest_run_id: str | None
     supervisor_verdict: str
     report_path: Path | None
@@ -97,6 +105,7 @@ class LoopRunResult:
             "attempts_completed": self.attempts_completed,
             "retries_used": self.retries_used,
             "max_retries": self.max_retries,
+            "max_iterations": self.max_iterations,
             "latest_run_id": self.latest_run_id,
             "supervisor_verdict": self.supervisor_verdict,
             "report_path": str(self.report_path) if self.report_path else None,
@@ -217,6 +226,7 @@ class LoopRunner:
                     attempts_completed=attempt_number,
                     retries_used=retries_used,
                     max_retries=request.max_retries,
+                    max_iterations=request.max_iterations,
                     latest_run_id=result.run_id,
                     supervisor_verdict="blocked",
                     report_path=report_path,
@@ -251,6 +261,7 @@ class LoopRunner:
                     attempts_completed=attempt_number,
                     retries_used=retries_used,
                     max_retries=request.max_retries,
+                    max_iterations=request.max_iterations,
                     latest_run_id=result.run_id,
                     supervisor_verdict=report.verdict,
                     report_path=report_path,
@@ -275,6 +286,7 @@ class LoopRunner:
                     attempts_completed=attempt_number,
                     retries_used=retries_used,
                     max_retries=request.max_retries,
+                    max_iterations=request.max_iterations,
                     latest_run_id=result.run_id,
                     supervisor_verdict=report.verdict,
                     report_path=report_path,
@@ -309,6 +321,7 @@ class LoopRunner:
                     attempts_completed=attempt_number,
                     retries_used=retries_used,
                     max_retries=request.max_retries,
+                    max_iterations=request.max_iterations,
                     latest_run_id=result.run_id,
                     supervisor_verdict=report.verdict,
                     report_path=report_path,
@@ -342,6 +355,7 @@ class LoopRunner:
             "=== dormammu loop attempt ===",
             f"attempt: {attempt_number}",
             f"retries used: {retries_used}/{request.max_retries if request.max_retries != -1 else 'infinite'}",
+            f"max iterations: {request.max_iterations if request.max_iterations != -1 else 'infinite'}",
             f"target project: {request.repo_root.resolve()}",
             f"session: {repository.session_id or 'active-root'}",
             f"cli: {request.cli_path}",
@@ -417,6 +431,7 @@ class LoopRunner:
             "attempts_completed": attempts_completed,
             "retries_used": retries_used,
             "max_retries": request.max_retries,
+            "max_iterations": request.max_iterations,
             "required_paths": list(request.required_paths),
             "require_worktree_changes": request.require_worktree_changes,
             "expected_roadmap_phase_id": request.expected_roadmap_phase_id,

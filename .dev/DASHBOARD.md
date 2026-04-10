@@ -2,46 +2,44 @@
 
 ## Actual Progress
 
-- Goal: Make external agent CLI execution honor the resolved `HOME` directory
-  so tools like `cline` can discover `~/`-anchored configuration and
-  credentials when run through Dormammu.
-- Prompt-driven scope: Align runtime config, child CLI launches, and operator
-  diagnostics around one explicit `HOME` contract instead of relying on
-  implicit subprocess inheritance alone.
+- Goal: Add user-facing max-iteration loop control, default it to 50 total
+  attempts, and stop Dormammu as soon as development is approved.
+- Prompt-driven scope: Add `--max-iterations` for run and resume, keep loop
+  completion eager, and validate the behavior with both automated and local
+  smoke tests.
 - Active roadmap focus:
 - Phase 3. Agent CLI Adapter and Single-Run Execution
+- Phase 4. Supervisor Validation, Continuation Loop, and Resume
 - Phase 6. Installer, Commands, and Environment Diagnostics
 - Current workflow phase: test_and_review
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The `HOME`-anchored execution slice is implemented and
-  validated. Resume only if we want richer environment diagnostics or
-  supporting documentation for the new doctor output.
+- Resume point: The max-iteration loop-control slice is implemented and
+  validated. Resume from commit preparation or from follow-up loop UX work if
+  we want richer operator controls.
 
 ## In Progress
 
-- The config model now resolves a canonical `home_dir` and shares it with
-  runtime consumers.
-- The CLI adapter now passes the resolved `HOME` explicitly to capability
-  inspection and real child CLI runs.
-- The doctor report now shows the effective home directory and validates that
-  it exists as a usable directory before an agent run starts.
+- `run` and `resume` now accept a user-facing `--max-iterations` budget.
+- When users do not provide a loop budget, Dormammu now defaults to 50 total
+  attempts instead of a single attempt.
+- Resume now refuses to spend iterations beyond the total configured budget,
+  while successful supervisor approval still exits immediately.
 
 ## Progress Notes
 
-- The previous `cline` API-key report suggests that the current execution
-  context is too implicit for troubleshooting, even though subprocesses inherit
-  the parent environment by default.
-- This slice keeps the existing Cline preset behavior intact and focuses only
-  on making `HOME`-based execution deterministic and visible.
-- Focused config, doctor, CLI, and adapter tests now cover the new execution
-  contract instead of leaving it implicit.
+- Loop result payloads and progress logs now surface both retries and total
+  iteration limits so operators can see the active budget directly.
+- Focused validation passed for `tests.test_cli`, `tests.test_loop_runner`,
+  `tests.test_config`, and `tests.test_install_script`.
+- Local smoke validation passed in
+  `~/samba/test/dormammu-max-iterations-smoke` for both default-50 eager exit
+  and `run`/`resume` with explicit iteration budgets.
 
 ## Risks And Watchpoints
 
-- Passing an explicit `HOME` to all child CLIs affects every supported adapter,
-  so validation needs to cover both normal runs and `doctor`.
-- If a local `cline` command depends on a shell wrapper or login-shell setup
-  that mutates credentials outside the home-directory contract, this fix may
-  need a follow-up diagnostic path.
+- `--max-iterations` and `--max-retries` overlap semantically, so the CLI now
+  rejects using both at the same time.
+- Older saved loop state still serializes retry budgets; resume logic must keep
+  honoring those states while applying any new total-iteration overrides.

@@ -102,6 +102,10 @@ dormammu init-state \
 - `.dev/session.json`
 - `.dev/workflow_state.json`
 
+또한 로컬 머신에서 지원되는 coding-agent CLI를 조사하고, 다음 우선순위로
+가장 먼저 발견된 명령을 `active_agent_cli`로 갱신합니다:
+`codex`, `claude`, `gemini`, `cline`.
+
 ### 3. 외부 CLI 어댑터 동작 확인
 
 ```bash
@@ -132,7 +136,7 @@ dormammu run \
   --prompt-file PROMPT.md \
   --required-path README.md \
   --require-worktree-changes \
-  --max-retries 2
+  --max-iterations 50
 ```
 
 `run`은 다음 흐름이 필요할 때 사용합니다.
@@ -141,6 +145,10 @@ dormammu run \
 - 결과 검증
 - 결과가 불완전할 때 continuation 맥락 생성
 - 설정된 정책에 따라 재시도
+
+`--max-iterations`와 `--max-retries`를 모두 주지 않으면 Dormammu는 총
+`50`회 시도를 기본값으로 사용합니다. 그보다 먼저 supervisor가 작업을
+승인하면 남은 budget을 소진하지 않고 즉시 종료합니다.
 
 ### 6. 나중에 이어서 실행
 
@@ -165,7 +173,9 @@ dormammu resume --repo-root .
 ### `dormammu init-state`
 
 활성 저장소를 위한 bootstrap 상태를 생성하거나 병합합니다. 실제 실행 전에
-`.dev/`를 준비하는 가장 간단한 방법입니다.
+`.dev/`를 준비하는 가장 간단한 방법입니다. bootstrap 과정에서 지원되는 CLI를
+다시 확인하고 `active_agent_cli`를 우선순위 `codex`, `claude`, `gemini`,
+`cline` 순으로 사용 가능한 값으로 갱신합니다.
 
 ### `dormammu run-once`
 
@@ -180,6 +190,7 @@ dormammu resume --repo-root .
 
 supervised loop를 실행합니다. 자주 쓰는 옵션은 다음과 같습니다.
 
+- `--max-iterations`
 - `--required-path`
 - `--require-worktree-changes`
 - `--max-retries`

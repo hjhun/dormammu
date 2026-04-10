@@ -75,6 +75,7 @@ class RecoveryManager:
                 attempts_completed=int(loop_state.get("attempts_completed", 0)),
                 retries_used=int(loop_state.get("retries_used", 0)),
                 max_retries=request.max_retries,
+                max_iterations=request.max_iterations,
                 latest_run_id=workflow_state.get("latest_run", {}).get("run_id"),
                 supervisor_verdict=report.verdict,
                 report_path=report_path,
@@ -92,6 +93,18 @@ class RecoveryManager:
             prompt_text = Path(prompt_artifact).read_text(encoding="utf-8")
 
         attempts_completed = int(loop_state.get("attempts_completed", 0))
+        if request.max_iterations != -1 and attempts_completed >= request.max_iterations:
+            return LoopRunResult(
+                status="failed",
+                attempts_completed=attempts_completed,
+                retries_used=int(loop_state.get("retries_used", 0)),
+                max_retries=request.max_retries,
+                max_iterations=request.max_iterations,
+                latest_run_id=workflow_state.get("latest_run", {}).get("run_id"),
+                supervisor_verdict=report.verdict,
+                report_path=report_path,
+                continuation_prompt_path=Path(prompt_path) if prompt_path else None,
+            )
         return self.loop_runner.run(
             request,
             start_attempt=attempts_completed + 1,

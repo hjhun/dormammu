@@ -194,6 +194,65 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertEqual(result.status, "completed")
             self.assertEqual(result.attempts_completed, 3)
             self.assertEqual(result.retries_used, 2)
+            self.assertEqual(result.max_iterations, -1)
+
+    def test_run_stops_after_first_success_even_when_max_iteration_budget_is_large(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="early-exit-on-approval",
+                    max_retries=49,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.attempts_completed, 1)
+            self.assertEqual(result.max_iterations, 50)
+            self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "1")
+
+    def test_resume_does_not_run_again_when_total_iteration_budget_is_already_exhausted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            runner = LoopRunner(config, repository=repository)
+            first_result = runner.run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="max-iteration-stop",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(first_result.status, "failed")
+            resumed = RecoveryManager(
+                config,
+                repository=repository,
+                loop_runner=runner,
+            ).resume(max_retries_override=0)
+
+            self.assertEqual(resumed.status, "failed")
+            self.assertEqual(resumed.attempts_completed, 1)
+            self.assertEqual(resumed.max_iterations, 1)
+            self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "1")
 
     def test_run_uses_fallback_cli_without_consuming_retry_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

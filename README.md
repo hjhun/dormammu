@@ -79,6 +79,10 @@ dormammu init-state \
   --goal "Implement the requested repository change safely."
 ```
 
+During bootstrap, `init-state` also probes the local machine for supported
+coding-agent CLIs and updates `active_agent_cli` to the highest-priority
+available command in this order: `codex`, `claude`, `gemini`, `cline`.
+
 ### 3. Inspect the external CLI adapter
 
 ```bash
@@ -103,8 +107,12 @@ dormammu run \
   --prompt-file PROMPT.md \
   --required-path README.md \
   --require-worktree-changes \
-  --max-retries 2
+  --max-iterations 50
 ```
+
+If you do not set a loop budget explicitly, `dormammu run` now defaults to
+`50` total attempts. As soon as the supervisor approves the work, Dormammu
+exits immediately instead of consuming the remaining budget.
 
 ### 6. Resume later if needed
 

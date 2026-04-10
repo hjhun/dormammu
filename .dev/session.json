@@ -1,29 +1,29 @@
 {
   "session_id": "bootstrap-20260407-235000-kst",
   "created_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T08:55:00+09:00",
+  "updated_at": "2026-04-10T10:43:28+09:00",
   "run_type": "bootstrap",
   "status": "active",
   "state_schema_version": 5,
   "active_phase": "test_and_review",
   "active_roadmap_phase_ids": [
-    "phase_7"
+    "phase_3",
+    "phase_4",
+    "phase_6"
   ],
-  "resume_token": "test_and_review:prompt-plan-bootstrap",
+  "resume_token": "test_and_review:max-iteration-loop-control",
   "last_safe_checkpoint": {
     "phase": "test_and_review",
-    "timestamp": "2026-04-10T08:55:00+09:00",
-    "description": "Validated prompt-driven PLAN bootstrap, prompt persistence, and resume compatibility."
+    "timestamp": "2026-04-10T10:43:28+09:00",
+    "description": "Validated max-iteration loop control, default 50-attempt behavior, and eager exit on supervisor approval."
   },
   "bootstrap": {
-    "goal": "Make dormammu bootstrap new runs from PROMPT.md, generate DASHBOARD.md and PLAN.md, persist prompt copies per session, and resume the previous session from saved state.",
-    "captured_at": "2026-04-10T08:05:00+09:00",
+    "goal": "Add user-facing max-iteration loop control, default it to 50 total attempts, and stop Dormammu as soon as development is approved.",
+    "captured_at": "2026-04-10T10:43:28+09:00",
     "state_root": ".dev/sessions/bootstrap-20260407-235000-kst",
     "repo_guidance": {
       "rule_files": [
-        "AGENTS.md",
-        ".dev/PROJECT.md",
-        ".dev/ROADMAP.md"
+        "AGENTS.md"
       ],
       "workflow_files": [
         ".github/workflows/release.yml"
@@ -32,7 +32,7 @@
   },
   "task_sync": {
     "source": ".dev/PLAN.md",
-    "resume_checkpoint": "Prompt-driven PLAN bootstrap validation is complete. Resume from optional docs cleanup, commit preparation, or the next scope.",
+    "resume_checkpoint": "Max-iteration loop-control validation is complete. Resume from commit preparation or the next scope.",
     "total_tasks": 5,
     "completed_tasks": 5,
     "pending_tasks": 0,
@@ -40,34 +40,36 @@
     "next_pending_task": null,
     "items": [
       {
-        "text": "Phase 1. Replace legacy `TASKS.md` bootstrap output with `PLAN.md`",
+        "text": "Phase 1. Review loop-run and resume semantics to map a user-facing max-iteration budget onto the existing retry model safely",
         "completed": true
       },
       {
-        "text": "Phase 2. Generate initial `DASHBOARD.md` and `PLAN.md` from the incoming user prompt",
+        "text": "Phase 2. Add --max-iterations to loop commands and default the total attempt budget to 50 when users do not set a loop budget explicitly",
         "completed": true
       },
       {
-        "text": "Phase 3. Persist `PROMPT.md` into the active session and mirror it under `~/.dormammu/sessions/<session id>/.dev/`",
+        "text": "Phase 3. Preserve immediate Dormammu exit on supervisor approval and prevent resume from running again after the total iteration budget is spent",
         "completed": true
       },
       {
-        "text": "Phase 4. Keep `resume` bound to the saved active session while remaining compatible with explicitly targeted sessions",
+        "text": "Phase 4. Add focused tests and docs for default budget, explicit iteration limits, resume overrides, and early exit on completion",
         "completed": true
       },
       {
-        "text": "Phase 5. Validate the prompt-driven PLAN bootstrap flow with automated tests",
+        "text": "Phase 5. Run automated validation and a local smoke test under ~/samba/test/dormammu-max-iterations-smoke",
         "completed": true
       }
     ],
-    "synced_at": "2026-04-10T08:55:00+09:00"
+    "synced_at": "2026-04-10T10:43:28+09:00"
   },
-  "next_action": "Prepare an optional cleanup or commit for the validated prompt-driven PLAN bootstrap updates, or begin the next user-directed scope.",
+  "next_action": "Prepare a commit for the validated max-iteration loop-control change, or begin the next user-directed scope.",
   "notes": [
-    "Resume from the validated PLAN bootstrap slice unless a new higher-priority roadmap slice overrides it.",
+    "Resume from the validated max-iteration loop-control slice unless a new higher-priority roadmap slice overrides it.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "Prompt copies now persist both inside the active session and under ~/.dormammu/sessions/<session id>/.dev/.",
-    "Validation passed through targeted unit tests covering state repository, CLI, loop runner, supervisor, CLI adapter, and config behavior."
+    "Loop commands now support a total iteration budget through --max-iterations and default to 50 total attempts when not configured explicitly.",
+    "Supervisor approval still exits Dormammu immediately instead of consuming the remaining loop budget.",
+    "Validation passed through targeted unit tests covering CLI, loop runner, config, and install behavior.",
+    "Local smoke validation passed in ~/samba/test/dormammu-max-iterations-smoke."
   ],
   "loop": {
     "status": "idle",

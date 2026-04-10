@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
+import shutil
 from typing import Any, Mapping
 
 
@@ -13,6 +14,7 @@ DEFAULT_GLOBAL_HOME_DIRNAME = ".dormammu"
 DEFAULT_GLOBAL_CONFIG_FILENAME = "config"
 VALID_INPUT_MODES = {"auto", "file", "arg", "stdin", "positional"}
 DEFAULT_FALLBACK_AGENT_CLIS = ("codex", "claude", "gemini")
+DEFAULT_ACTIVE_AGENT_CLI_PRIORITY = ("codex", "claude", "gemini", "cline")
 DEFAULT_TOKEN_EXHAUSTION_PATTERNS = (
     "usage limit",
     "quota exceeded",
@@ -60,6 +62,16 @@ def _default_global_config_path(env: Mapping[str, str]) -> Path:
     return _global_home_dir(env) / DEFAULT_GLOBAL_CONFIG_FILENAME
 
 
+def detect_available_agent_cli(env: Mapping[str, str] | None = None) -> Path | None:
+    values = env or os.environ
+    search_path = values.get("PATH")
+    for cli_name in DEFAULT_ACTIVE_AGENT_CLI_PRIORITY:
+        resolved = shutil.which(cli_name, path=search_path)
+        if resolved:
+            return Path(os.path.abspath(resolved))
+    return None
+
+
 def _resolve_config_file(root: Path, env: Mapping[str, str]) -> Path | None:
     explicit_path = env.get("DORMAMMU_CONFIG_PATH")
     if explicit_path:
@@ -91,6 +103,15 @@ def _load_config_payload(path: Path | None) -> dict[str, Any]:
     if not isinstance(raw_payload, Mapping):
         raise RuntimeError(f"Dormammu config file must contain a JSON object: {path}")
     return dict(raw_payload)
+
+
+def write_active_agent_cli_config(config: "AppConfig", cli_path: Path) -> Path:
+    config_path = config.config_file or (config.global_home_dir / DEFAULT_GLOBAL_CONFIG_FILENAME)
+    payload = _load_config_payload(config_path if config_path.exists() else None)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    payload["active_agent_cli"] = str(cli_path)
+    config_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+    return config_path
 
 
 def _resolve_cli_path(raw_path: str, *, config_dir: Path | None) -> Path:

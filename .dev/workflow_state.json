@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-11T00:08:00+09:00",
+  "updated_at": "2026-04-10T10:43:28+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -44,8 +44,7 @@
     "active_phase_ids": [
       "phase_3",
       "phase_4",
-      "phase_6",
-      "phase_7"
+      "phase_6"
     ],
     "priority_order": [
       "phase_1",
@@ -61,18 +60,15 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The new user request changes scope to HOME-anchored CLI execution, and the next correct step is a development slice that makes runtime behavior and diagnostics explicit."
+    "reason": "The new scope is complete: run and resume now support a total iteration budget, default loop runs to 50 total attempts, and focused plus local smoke validation passed."
   },
   "bootstrap": {
-    "goal": "Make external agent CLI execution honor the resolved HOME directory so HOME-anchored tool state such as ~/.cline is discoverable through Dormammu.",
-    "captured_at": "2026-04-11T00:05:00+09:00",
+    "goal": "Add user-facing max-iteration loop control, default it to 50 total attempts, and stop Dormammu as soon as development is approved.",
+    "captured_at": "2026-04-10T10:43:28+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
-        "AGENTS.md",
-        "agents/AGENTS.md",
-        ".dev/PROJECT.md",
-        ".dev/ROADMAP.md"
+        "AGENTS.md"
       ],
       "workflow_files": [
         ".github/workflows/release.yml"
@@ -91,7 +87,7 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume after the HOME execution-contract slice. The runtime passes the resolved HOME into child CLI runs, doctor exposes it, and focused validation passed.",
+      "resume_checkpoint": "Resume after the max-iteration loop-control slice. Dormammu now supports a 50-attempt default budget, explicit max-iteration overrides, eager exit on approval, and guarded resume behavior when the budget is exhausted.",
       "total_tasks": 5,
       "completed_tasks": 5,
       "pending_tasks": 0,
@@ -99,30 +95,30 @@
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Review how Dormammu resolves home directories, global config, and external CLI subprocess execution",
+          "text": "Phase 1. Review loop-run and resume semantics to map a user-facing max-iteration budget onto the existing retry model safely",
           "completed": true
         },
         {
-          "text": "Phase 2. Design a single resolved `HOME` contract that can be shared by config loading, runtime subprocesses, and operator diagnostics",
+          "text": "Phase 2. Add --max-iterations to loop commands and default the total attempt budget to 50 when users do not set a loop budget explicitly",
           "completed": true
         },
         {
-          "text": "Phase 3. Update the runtime config and CLI adapter so external tools run with the resolved `HOME`",
+          "text": "Phase 3. Preserve immediate Dormammu exit on supervisor approval and prevent resume from running again after the total iteration budget is spent",
           "completed": true
         },
         {
-          "text": "Phase 4. Extend `doctor` output and tests so the effective home-directory context is visible before agent execution",
+          "text": "Phase 4. Add focused tests and docs for default budget, explicit iteration limits, resume overrides, and early exit on completion",
           "completed": true
         },
         {
-          "text": "Phase 5. Run focused unit and integration checks for the new `HOME` behavior and note any remaining gaps",
+          "text": "Phase 5. Run automated validation and a local smoke test under ~/samba/test/dormammu-max-iterations-smoke",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-11T00:08:00+09:00"
+      "synced_at": "2026-04-10T10:43:28+09:00"
     }
   },
-  "next_action": "Decide whether to stop after the HOME execution fix or add a follow-up diagnostic command that reports key environment-variable presence without exposing secrets.",
+  "next_action": "Prepare a commit for the validated max-iteration loop-control change, or extend the operator UX around loop-budget reporting and resume guidance.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -131,10 +127,11 @@
     "PLAN.md should list prompt-derived development items in `[ ] Phase N. <title>` format.",
     "The installed guidance bundle and packaged asset copy should stay synchronized.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "This slice targets HOME-anchored external CLI execution behavior instead of documentation.",
-    "The runtime should resolve a canonical home directory once and use it consistently for config, subprocess execution, and diagnostics.",
-    "The main motivating case is tools such as cline that expect credentials or settings under ~/.",
-    "Focused validation passed through `python3 -m unittest tests.test_config tests.test_doctor tests.test_cli tests.test_agent_cli_adapter`."
+    "This slice targets loop-control behavior across run and resume.",
+    "Loop commands now accept --max-iterations, and run defaults to 50 total attempts when no loop budget is provided.",
+    "Supervisor approval still exits Dormammu immediately even when remaining iteration budget exists.",
+    "Focused validation passed through `python3 -m unittest tests.test_cli`, `python3 -m unittest tests.test_loop_runner`, `python3 -m unittest tests.test_config`, and `python3 -m unittest tests.test_install_script`.",
+    "Local smoke validation passed in `~/samba/test/dormammu-max-iterations-smoke` for default-50 eager exit and explicit run/resume iteration control."
   ],
   "loop": {
     "status": "idle",

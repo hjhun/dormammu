@@ -11,7 +11,7 @@ from typing import Iterator, Sequence, TextIO
 
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.agent.models import AgentRunStarted
-from dormammu.config import AppConfig
+from dormammu.config import AppConfig, detect_available_agent_cli, write_active_agent_cli_config
 from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt, resolve_guidance_files
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
@@ -308,9 +308,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_loop.add_argument(
+        "--max-iterations",
+        type=int,
+        default=None,
+        help="Maximum total attempts including the first run. Defaults to 50. Use -1 for infinite retries.",
+    )
+    run_loop.add_argument(
         "--max-retries",
         type=int,
-        default=0,
+        default=None,
         help="Additional retries after the first attempt. Use -1 for infinite retries.",
     )
     run_loop.add_argument(
@@ -341,6 +347,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resume the most recent supervised loop run from saved .dev state.",
     )
     resume_loop.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    resume_loop.add_argument(
+        "--max-iterations",
+        type=int,
+        default=None,
+        help="Override the saved maximum total attempts including the first run. Use -1 for infinite retries.",
+    )
     resume_loop.add_argument(
         "--max-retries",
         type=int,
@@ -455,6 +467,30 @@ def _prompt_with_default(prompt: str, default: str) -> str:
     return value or default
 
 
+def _resolve_loop_retry_budget(
+    *,
+    max_iterations: int | None,
+    max_retries: int | None,
+    default_max_iterations: int = 50,
+) -> int:
+    if max_iterations is not None and max_retries is not None:
+        raise ValueError("Use either --max-iterations or --max-retries, not both.")
+
+    if max_iterations is not None:
+        if max_iterations == -1:
+            return -1
+        if max_iterations < 1:
+            raise ValueError("max_iterations must be -1 or greater than 0.")
+        return max_iterations - 1
+
+    if max_retries is not None:
+        if max_retries < -1:
+            raise ValueError("max_retries must be -1 or greater.")
+        return max_retries
+
+    return default_max_iterations - 1
+
+
 def _resolve_bootstrap_inputs(
     *,
     repository: StateRepository,
@@ -496,6 +532,14 @@ def _handle_show_config(args: argparse.Namespace) -> int:
 def _handle_init_state(args: argparse.Namespace) -> int:
     config, repository = _load_state_scope(args.repo_root)
     config = _with_guidance_overrides(config, args.guidance_files)
+    detected_cli = detect_available_agent_cli()
+    config_path = None
+    if detected_cli is not None:
+        config_path = write_active_agent_cli_config(config, detected_cli)
+        config = config.with_overrides(
+            config_file=config_path,
+            active_agent_cli=detected_cli,
+        )
     repository = StateRepository(config, session_id=repository.session_id)
     goal, roadmap_phases = _resolve_bootstrap_inputs(
         repository=repository,
@@ -507,7 +551,10 @@ def _handle_init_state(args: argparse.Namespace) -> int:
         goal=goal,
         active_roadmap_phase_ids=roadmap_phases,
     )
-    print(json.dumps(artifacts.to_dict(), indent=2, ensure_ascii=True))
+    payload = artifacts.to_dict()
+    payload["active_agent_cli"] = str(detected_cli) if detected_cli is not None else None
+    payload["config_file"] = str(config_path) if config_path is not None else None
+    print(json.dumps(payload, indent=2, ensure_ascii=True))
     return 0
 
 
@@ -737,6 +784,14 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
+        try:
+            max_retries = _resolve_loop_retry_budget(
+                max_iterations=args.max_iterations,
+                max_retries=args.max_retries,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         _emit_runtime_banner(
             command_name="run",
             repo_root=config.repo_root,
@@ -758,7 +813,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
             prompt_flag=args.prompt_flag,
             extra_args=tuple(args.extra_args or ()),
             run_label=args.run_label,
-            max_retries=args.max_retries,
+            max_retries=max_retries,
             required_paths=tuple(args.required_paths or ()),
             require_worktree_changes=args.require_worktree_changes,
             expected_roadmap_phase_id=(roadmap_phases[0] if roadmap_phases else "phase_4"),
@@ -798,8 +853,16 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
             )
 
         try:
+            max_retries_override = (
+                _resolve_loop_retry_budget(
+                    max_iterations=args.max_iterations,
+                    max_retries=args.max_retries,
+                )
+                if (args.max_iterations is not None or args.max_retries is not None)
+                else None
+            )
             result = RecoveryManager(config, repository=repository).resume(
-                max_retries_override=args.max_retries,
+                max_retries_override=max_retries_override,
                 session_id=None,
             )
         except (RuntimeError, ValueError, OSError) as exc:

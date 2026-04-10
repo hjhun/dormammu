@@ -99,6 +99,10 @@ This initializes or refreshes state such as:
 - `.dev/session.json`
 - `.dev/workflow_state.json`
 
+It also probes the local machine for supported coding-agent CLIs and updates
+`active_agent_cli` to the highest-priority available command in this order:
+`codex`, `claude`, `gemini`, `cline`.
+
 ### 3. Inspect how an external CLI will be driven
 
 ```bash
@@ -129,7 +133,7 @@ dormammu run \
   --prompt-file PROMPT.md \
   --required-path README.md \
   --require-worktree-changes \
-  --max-retries 2
+  --max-iterations 50
 ```
 
 Use `run` when you want `dormammu` to:
@@ -138,6 +142,10 @@ Use `run` when you want `dormammu` to:
 - validate the result
 - generate continuation context when the result is incomplete
 - retry according to your loop settings
+
+If you do not set either `--max-iterations` or `--max-retries`, Dormammu
+defaults to `50` total attempts. If the supervisor approves the work before
+that limit, Dormammu exits immediately.
 
 ### 6. Resume later
 
@@ -162,7 +170,9 @@ Checks:
 ### `dormammu init-state`
 
 Creates or merges bootstrap state for the active repository. This is the
-simplest way to prepare `.dev/` before the first real run.
+simplest way to prepare `.dev/` before the first real run. During bootstrap it
+also refreshes `active_agent_cli` to the highest-priority available supported
+CLI: `codex`, `claude`, `gemini`, then `cline`.
 
 ### `dormammu run-once`
 
@@ -177,6 +187,7 @@ Runs one external agent invocation and stores:
 
 Runs the supervised loop. Common options include:
 
+- `--max-iterations`
 - `--required-path`
 - `--require-worktree-changes`
 - `--max-retries`
