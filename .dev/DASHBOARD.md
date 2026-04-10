@@ -2,48 +2,46 @@
 
 ## Actual Progress
 
-- Goal: Refresh the public documentation so `README.md`, `docs/GUIDE.md`, and
-  `docs/ko/GUIDE.md` better present Dormammu's supported features and fast
-  execution paths.
-- Prompt-driven scope: Rework the docs to look more like a polished open source
-  project landing surface with highlights, quick start, supported CLIs,
-  operator flows, and practical command examples.
+- Goal: Make external agent CLI execution honor the resolved `HOME` directory
+  so tools like `cline` can discover `~/`-anchored configuration and
+  credentials when run through Dormammu.
+- Prompt-driven scope: Align runtime config, child CLI launches, and operator
+  diagnostics around one explicit `HOME` contract instead of relying on
+  implicit subprocess inheritance alone.
 - Active roadmap focus:
 - Phase 3. Agent CLI Adapter and Single-Run Execution
-- Phase 5. CLI Operator Experience and Progress Visibility
 - Phase 6. Installer, Commands, and Environment Diagnostics
 - Current workflow phase: test_and_review
-- Last completed workflow phase: test_authoring
+- Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The documentation refresh is implemented and command references
-  have been checked against the current CLI surface. Resume from review only if
-  another pass on wording, screenshots, or release-readiness polish is needed.
+- Resume point: The `HOME`-anchored execution slice is implemented and
+  validated. Resume only if we want richer environment diagnostics or
+  supporting documentation for the new doctor output.
 
 ## In Progress
 
-- The top-level README now emphasizes product value, supported workflows, quick
-  start, CLI compatibility notes, configuration, and common operator patterns.
-- The English and Korean guides now explain the main commands, `.dev` state,
-  guidance-file behavior, fallback CLIs, workdir handling, and typical usage
-  flows in more practical detail.
-- The docs now surface recent Cline support details such as default
-  `--verbose` behavior and `--cwd <path>` forwarding when `--workdir` is used.
+- The config model now resolves a canonical `home_dir` and shares it with
+  runtime consumers.
+- The CLI adapter now passes the resolved `HOME` explicitly to capability
+  inspection and real child CLI runs.
+- The doctor report now shows the effective home directory and validates that
+  it exists as a usable directory before an agent run starts.
 
 ## Progress Notes
 
-- README, English guide, and Korean guide were rewritten to better match an
-  open-source project entry experience instead of a minimal internal note set.
-- Command names and feature references were checked against the current parser
-  and implementation, including `run-once`, `run`, `resume`, `inspect-cli`,
-  session commands, fallback CLI config, and guidance resolution behavior.
-- A parser-level sanity check confirmed the documented core subcommands exist in
-  the current CLI surface.
+- The previous `cline` API-key report suggests that the current execution
+  context is too implicit for troubleshooting, even though subprocesses inherit
+  the parent environment by default.
+- This slice keeps the existing Cline preset behavior intact and focuses only
+  on making `HOME`-based execution deterministic and visible.
+- Focused config, doctor, CLI, and adapter tests now cover the new execution
+  contract instead of leaving it implicit.
 
 ## Risks And Watchpoints
 
-- The docs were checked against the current code surface, but not against a
-  packaged release install on a fresh machine during this pass.
-- The CLI help text did not render usefully through the current module
-  invocation path, so command accuracy was confirmed from parser definitions and
-  code inspection instead of relying on captured help output alone.
+- Passing an explicit `HOME` to all child CLIs affects every supported adapter,
+  so validation needs to cover both normal runs and `doctor`.
+- If a local `cline` command depends on a shell wrapper or login-shell setup
+  that mutates credentials outside the home-directory contract, this fix may
+  need a follow-up diagnostic path.

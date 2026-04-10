@@ -921,8 +921,10 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["home_dir"], str(Path.home()))
             checks = {item["name"]: item for item in payload["checks"]}
             self.assertTrue(checks["python_version"]["ok"])
+            self.assertTrue(checks["home_directory"]["ok"])
             self.assertTrue(checks["agent_cli"]["ok"])
             self.assertTrue(checks["agent_directory"]["ok"])
             self.assertTrue(checks["repo_writable"]["ok"])
@@ -948,7 +950,9 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["status"], "issues_found")
+            self.assertEqual(payload["home_dir"], str((root / "home").expanduser()))
             checks = {item["name"]: item for item in payload["checks"]}
+            self.assertFalse(checks["home_directory"]["ok"])
             self.assertFalse(checks["agent_cli"]["ok"])
             self.assertFalse(checks["agent_directory"]["ok"])
 
@@ -970,6 +974,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
             checks = {item["name"]: item for item in payload["checks"]}
+            self.assertTrue(checks["home_directory"]["ok"])
             self.assertTrue(checks["agent_cli"]["ok"])
 
     def _seed_repo(self, root: Path) -> None:

@@ -838,6 +838,7 @@ def _handle_doctor(args: argparse.Namespace) -> int:
     config, _ = _load_state_scope(args.repo_root)
     report = run_doctor(
         repo_root=config.repo_root,
+        home_dir=config.home_dir,
         agent_cli=args.agent_cli or config.active_agent_cli,
     )
     print(json.dumps(report.to_dict(), indent=2, ensure_ascii=True))

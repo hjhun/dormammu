@@ -45,11 +45,15 @@ def _config_value(payload: Mapping[str, Any], key: str, default: Any) -> Any:
     return default if value is None else value
 
 
-def _global_home_dir(env: Mapping[str, str]) -> Path:
+def _resolve_home_dir(env: Mapping[str, str]) -> Path:
     home_value = env.get("HOME")
     if home_value:
-        return Path(home_value).expanduser() / DEFAULT_GLOBAL_HOME_DIRNAME
-    return Path.home() / DEFAULT_GLOBAL_HOME_DIRNAME
+        return Path(home_value).expanduser()
+    return Path.home()
+
+
+def _global_home_dir(env: Mapping[str, str]) -> Path:
+    return _resolve_home_dir(env) / DEFAULT_GLOBAL_HOME_DIRNAME
 
 
 def _default_global_config_path(env: Mapping[str, str]) -> Path:
@@ -305,6 +309,7 @@ def _parse_cli_overrides(
 class AppConfig:
     app_name: str
     repo_root: Path
+    home_dir: Path
     global_home_dir: Path
     base_dev_dir: Path
     dev_dir: Path
@@ -345,6 +350,7 @@ class AppConfig:
         return cls(
             app_name=str(values.get("DORMAMMU_APP_NAME", _config_value(config_payload, "app_name", "dormammu"))),
             repo_root=root,
+            home_dir=_resolve_home_dir(values),
             global_home_dir=_global_home_dir(values),
             base_dev_dir=base_dev_dir,
             dev_dir=dev_dir,
@@ -377,6 +383,7 @@ class AppConfig:
         return {
             "app_name": self.app_name,
             "repo_root": str(self.repo_root),
+            "home_dir": str(self.home_dir),
             "global_home_dir": str(self.global_home_dir),
             "base_dev_dir": str(self.base_dev_dir),
             "dev_dir": str(self.dev_dir),

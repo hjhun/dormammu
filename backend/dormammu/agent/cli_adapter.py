@@ -71,11 +71,19 @@ class CliAdapter:
         self.config = config
         self.live_output_stream = sys.stderr
 
+    def _subprocess_env(self) -> dict[str, str]:
+        env = dict(os.environ)
+        # Keep child CLIs anchored to the resolved HOME contract so ~/.foo
+        # lookups behave consistently under dormammu.
+        env["HOME"] = str(self.config.home_dir)
+        return env
+
     def inspect_capabilities(self, cli_path: Path, *, cwd: Path) -> CliCapabilities:
         try:
             completed = subprocess.run(
                 [str(cli_path), "--help"],
                 cwd=cwd,
+                env=self._subprocess_env(),
                 capture_output=True,
                 text=True,
                 check=False,
@@ -168,6 +176,7 @@ class CliAdapter:
             process = subprocess.Popen(
                 list(command_plan.argv),
                 cwd=run_cwd,
+                env=self._subprocess_env(),
                 stdin=subprocess.PIPE if command_plan.stdin_input is not None else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

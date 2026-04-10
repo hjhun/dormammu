@@ -35,11 +35,21 @@ class DoctorTests(unittest.TestCase):
             (root / ".agents").mkdir()
 
             with patch.object(doctor.sys, "version_info", (3, 10, 1, "final", 0)):
-                report = doctor.run_doctor(repo_root=root, agent_cli=None)
+                report = doctor.run_doctor(repo_root=root, home_dir=root, agent_cli=None)
 
         checks = {item.name: item for item in report.checks}
         self.assertTrue(checks["python_version"].ok)
+        self.assertTrue(checks["home_directory"].ok)
         self.assertFalse(checks["agent_cli"].ok)
+
+    def test_home_directory_check_reports_missing_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_home = Path(tmpdir) / "missing-home"
+
+            check = doctor._check_home_directory(missing_home)
+
+        self.assertFalse(check.ok)
+        self.assertIn("does not exist", check.summary)
 
 
 if __name__ == "__main__":

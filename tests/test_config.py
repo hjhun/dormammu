@@ -38,6 +38,7 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(config.app_name, "custom-app")
             self.assertEqual(config.repo_root, root)
+            self.assertEqual(config.home_dir, Path.home())
             self.assertEqual(config.base_dev_dir, root / ".dev")
             self.assertEqual(config.dev_dir, root / ".dev")
 
@@ -116,6 +117,7 @@ class ConfigTests(unittest.TestCase):
             )
 
             self.assertEqual(config.config_file, config_path.resolve())
+            self.assertEqual(config.home_dir, home_dir)
             self.assertEqual(config.active_agent_cli, Path("/opt/tools/codex"))
             self.assertEqual(config.cli_overrides["cline"].extra_args, ("-y", "--verbose"))
 

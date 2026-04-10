@@ -31,25 +31,34 @@ class DoctorCheck:
 class DoctorReport:
     status: str
     repo_root: Path
+    home_dir: Path
     checks: tuple[DoctorCheck, ...]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "repo_root": str(self.repo_root),
+            "home_dir": str(self.home_dir),
             "checks": [check.to_dict() for check in self.checks],
         }
 
 
-def run_doctor(*, repo_root: Path, agent_cli: Path | None = None) -> DoctorReport:
+def run_doctor(*, repo_root: Path, home_dir: Path | None = None, agent_cli: Path | None = None) -> DoctorReport:
+    resolved_home_dir = (
+        home_dir
+        or Path(os.environ.get("HOME", "")).expanduser()
+        if os.environ.get("HOME")
+        else Path.home()
+    )
     checks = (
         _check_python_version(),
+        _check_home_directory(resolved_home_dir),
         _check_agent_cli(agent_cli),
         _check_agent_directory(repo_root),
         _check_repo_writable(repo_root),
     )
     status = "ok" if all(check.ok for check in checks) else "issues_found"
-    return DoctorReport(status=status, repo_root=repo_root, checks=checks)
+    return DoctorReport(status=status, repo_root=repo_root, home_dir=resolved_home_dir, checks=checks)
 
 
 def _check_python_version() -> DoctorCheck:
@@ -71,6 +80,30 @@ def _check_python_version() -> DoctorCheck:
             "current": ".".join(str(value) for value in current),
             "required_minimum": ".".join(str(value) for value in MINIMUM_PYTHON),
             "executable": sys.executable,
+        },
+    )
+
+
+def _check_home_directory(home_dir: Path) -> DoctorCheck:
+    expanded = home_dir.expanduser()
+    exists = expanded.exists()
+    is_dir = expanded.is_dir()
+    ok = exists and is_dir
+    if ok:
+        summary = f"HOME resolves to a usable directory: {expanded}."
+    elif not exists:
+        summary = f"HOME directory does not exist: {expanded}."
+    else:
+        summary = f"HOME path is not a directory: {expanded}."
+
+    return DoctorCheck(
+        name="home_directory",
+        ok=ok,
+        summary=summary,
+        details={
+            "path": str(expanded),
+            "exists": exists,
+            "is_directory": is_dir,
         },
     )
 
