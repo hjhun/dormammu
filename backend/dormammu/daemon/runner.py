@@ -109,6 +109,18 @@ class DaemonRunner:
                 if isinstance(candidate, str) and candidate.strip():
                     session_id = candidate
                     break
+            self._write_result_report(
+                prompt_path=prompt_path,
+                result_path=result_path,
+                status="in_progress",
+                started_at=started_at,
+                completed_at=None,
+                watcher_backend=watcher_backend,
+                sort_key=sort_key,
+                session_id=session_id,
+                phase_results=phase_results,
+                error=None,
+            )
             session_repository = StateRepository(self.app_config, session_id=session_id)
             scoped_config = self.app_config.with_overrides(
                 dev_dir=session_repository.dev_dir,
@@ -125,6 +137,18 @@ class DaemonRunner:
                     prompt_path=prompt_path,
                 )
                 phase_results.append(phase_result)
+                self._write_result_report(
+                    prompt_path=prompt_path,
+                    result_path=result_path,
+                    status="in_progress",
+                    started_at=started_at,
+                    completed_at=None,
+                    watcher_backend=watcher_backend,
+                    sort_key=sort_key,
+                    session_id=session_id,
+                    phase_results=phase_results,
+                    error=None,
+                )
                 if phase_result.exit_code != 0:
                     status = "failed"
                     error = phase_result.error or f"Phase {phase_name} exited with code {phase_result.exit_code}."
@@ -146,13 +170,46 @@ class DaemonRunner:
                 phase_results=tuple(phase_results),
                 error=error,
             )
-            result_path.write_text(render_result_markdown(prompt_result), encoding="utf-8")
+            self._write_result_report_from_result(prompt_result)
+            if prompt_path.exists():
+                prompt_path.unlink()
             if status == "completed":
                 self._processed_successes.add(prompt_path)
             self._in_progress.discard(prompt_path)
             print(f"daemon prompt {prompt_path.name}: {status} -> {result_path}", file=self.progress_stream)
             self.progress_stream.flush()
             return prompt_result
+
+    def _write_result_report(
+        self,
+        *,
+        prompt_path: Path,
+        result_path: Path,
+        status: str,
+        started_at: str,
+        completed_at: str | None,
+        watcher_backend: str,
+        sort_key: tuple[int, object, str],
+        session_id: str | None,
+        phase_results: list[PhaseExecutionResult],
+        error: str | None,
+    ) -> None:
+        prompt_result = DaemonPromptResult(
+            prompt_path=prompt_path,
+            result_path=result_path,
+            status=status,
+            started_at=started_at,
+            completed_at=completed_at,
+            watcher_backend=watcher_backend,
+            sort_key=sort_key,
+            session_id=session_id,
+            phase_results=tuple(phase_results),
+            error=error,
+        )
+        self._write_result_report_from_result(prompt_result)
+
+    def _write_result_report_from_result(self, prompt_result: DaemonPromptResult) -> None:
+        prompt_result.result_path.write_text(render_result_markdown(prompt_result), encoding="utf-8")
 
     def _run_phase(
         self,

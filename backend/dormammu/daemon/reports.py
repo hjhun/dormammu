@@ -18,6 +18,8 @@ def render_result_markdown(result: DaemonPromptResult) -> str:
         f"- Completed at: `{result.completed_at or 'not completed'}`",
         f"- Queue sort key: `{result.sort_key}`",
     ]
+    if result.status == "in_progress":
+        lines.append("- Processing state: `active`")
     if result.error:
         lines.extend(["", "## Error", "", result.error])
     lines.extend(["", "## Phases", ""])

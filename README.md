@@ -131,6 +131,10 @@ dormammu daemonize --repo-root . --config daemonize.json
 Use [daemonize.json.example](daemonize.json.example) as the starting point for
 the daemon config file.
 
+Each queued prompt writes its result report early into `result_path` while the
+workflow is still running, and the source prompt file is removed from
+`prompt_path` after that prompt run finishes.
+
 Additional daemon config examples are also available:
 
 - [daemonize.json.example](daemonize.json.example): explicit installed

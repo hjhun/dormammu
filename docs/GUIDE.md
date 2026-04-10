@@ -239,7 +239,10 @@ loop:
 - sort prompt files by leading numeric prefix first, then alphabetic prefix,
   then plain filename
 - execute configured workflow phases for each prompt
-- write one result report per prompt to `result_path`
+- write an in-progress result report to `result_path` before phase execution
+  completes, then finalize that report when processing ends
+- remove the processed prompt file from `prompt_path` after the prompt run
+  finishes
 
 Use [daemonize.json.example](../daemonize.json.example) as the starting point
 for the config.

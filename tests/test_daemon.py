@@ -198,6 +198,8 @@ class DaemonRunnerTests(unittest.TestCase):
             second_result = (daemon_config.result_path / "b-second_RESULT.md").read_text(encoding="utf-8")
             self.assertIn("Status: `completed`", first_result)
             self.assertIn("Status: `completed`", second_result)
+            self.assertFalse((daemon_config.prompt_path / "001-first.md").exists())
+            self.assertFalse((daemon_config.prompt_path / "b-second.md").exists())
             stderr_text = stderr.getvalue()
             self.assertLess(stderr_text.index("001-first.md"), stderr_text.index("b-second.md"))
 
@@ -219,6 +221,62 @@ class DaemonRunnerTests(unittest.TestCase):
 
             self.assertEqual(processed, 0)
 
+    def test_run_pending_once_writes_in_progress_result_before_phase_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            result_path = root / "queue" / "results" / "001-first_RESULT.md"
+            fake_cli = self._write_result_asserting_cli(root)
+            daemon_config_path = self._write_daemon_config(
+                root,
+                fake_cli,
+                extra_args_by_phase={
+                    phase_name: ["--result-path", str(result_path), "--phase", phase_name]
+                    for phase_name in (
+                        "plan",
+                        "design",
+                        "develop",
+                        "build_and_deploy",
+                        "test_and_review",
+                        "commit",
+                    )
+                },
+            )
+            daemon_config = load_daemon_config(daemon_config_path, app_config=AppConfig.load(repo_root=root))
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+
+            config = AppConfig.load(repo_root=root)
+            processed = DaemonRunner(config, daemon_config).run_pending_once(watcher_backend="polling")
+
+            self.assertEqual(processed, 1)
+            result_text = result_path.read_text(encoding="utf-8")
+            self.assertIn("Status: `completed`", result_text)
+            self.assertIn("### commit", result_text)
+            self.assertFalse(prompt_path.exists())
+
+    def test_run_pending_once_removes_prompt_after_failed_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_failing_cli(root)
+            daemon_config_path = self._write_daemon_config(root, fake_cli)
+            daemon_config = load_daemon_config(daemon_config_path, app_config=AppConfig.load(repo_root=root))
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+
+            config = AppConfig.load(repo_root=root)
+            processed = DaemonRunner(config, daemon_config).run_pending_once(watcher_backend="polling")
+
+            self.assertEqual(processed, 1)
+            result_text = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
+            self.assertIn("Status: `failed`", result_text)
+            self.assertFalse(prompt_path.exists())
+
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
         templates = root / "templates" / "dev"
@@ -226,7 +284,13 @@ class DaemonRunnerTests(unittest.TestCase):
         (templates / "dashboard.md.tmpl").write_text("# DASHBOARD\n\n- Goal: ${goal}\n", encoding="utf-8")
         (templates / "plan.md.tmpl").write_text("# PLAN\n\n${task_items}\n", encoding="utf-8")
 
-    def _write_daemon_config(self, root: Path, fake_cli: Path) -> Path:
+    def _write_daemon_config(
+        self,
+        root: Path,
+        fake_cli: Path,
+        *,
+        extra_args_by_phase: dict[str, list[str]] | None = None,
+    ) -> Path:
         config_path = root / "daemonize.json"
         config_path.write_text(
             json.dumps(
@@ -249,7 +313,12 @@ class DaemonRunnerTests(unittest.TestCase):
                             "agent_cli": {
                                 "path": str(fake_cli),
                                 "input_mode": "file",
-                                "extra_args": ["--phase", phase_name],
+                                "prompt_flag": "--prompt-file",
+                                "extra_args": (
+                                    extra_args_by_phase.get(phase_name, ["--phase", phase_name])
+                                    if extra_args_by_phase is not None
+                                    else ["--phase", phase_name]
+                                ),
                             },
                         }
                         for phase_name in (
@@ -307,6 +376,85 @@ class DaemonRunnerTests(unittest.TestCase):
                     print(f"PHASE::{{phase}}")
                     print(f"PROMPT::{{prompt.strip()}}")
                     return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_result_asserting_cli(self, root: Path) -> Path:
+        script = root / "fake-agent-result-check"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                from pathlib import Path
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print(
+                            "usage: fake-agent-result-check [--prompt-file PATH] "
+                            "[--result-path PATH] [--phase NAME]"
+                        )
+                        return 0
+
+                    result_path = None
+                    if "--result-path" in args:
+                        index = args.index("--result-path")
+                        result_path = Path(args[index + 1])
+
+                    if "--prompt-file" in args:
+                        index = args.index("--prompt-file")
+                        Path(args[index + 1]).read_text(encoding="utf-8")
+
+                    if result_path is None or not result_path.exists():
+                        print("missing result artifact", file=sys.stderr)
+                        return 9
+
+                    result_text = result_path.read_text(encoding="utf-8")
+                    if "Status: `in_progress`" not in result_text:
+                        print("result artifact is not marked in progress", file=sys.stderr)
+                        return 10
+
+                    if "Completed at: `not completed`" not in result_text:
+                        print("result artifact already looks final", file=sys.stderr)
+                        return 11
+
+                    phase = "unknown"
+                    if "--phase" in args:
+                        index = args.index("--phase")
+                        phase = args[index + 1]
+
+                    print(f"PHASE::{{phase}}")
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_failing_cli(self, root: Path) -> Path:
+        script = root / "fake-agent-fail"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: fake-agent-fail [--prompt-file PATH] [--phase NAME]")
+                        return 0
+                    return 7
 
                 raise SystemExit(main())
                 """

@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T18:05:00+09:00",
+  "updated_at": "2026-04-10T20:37:00+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -60,7 +60,7 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The daemonize feature is implemented and validated: the CLI now supports daemonize mode, daemon JSON config parsing, prompt queue ordering, inotify-first watcher selection with polling fallback, per-phase external CLI execution, result report generation, and focused tests all passed."
+    "reason": "The daemonize lifecycle adjustment is implemented and validated: prompt runs now emit an in-progress result report before phase completion, finalize that report at the end, and remove the source prompt file after the run finishes."
   },
   "bootstrap": {
     "goal": "Add a daemonize mode that watches prompt files from JSON configuration and executes dormammu loops in sorted queue order.",
@@ -87,7 +87,7 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume after the daemonize feature implementation and focused validation. The next step is commit preparation or optional follow-up hardening for daemon lifecycle behavior.",
+      "resume_checkpoint": "Resume after the daemonize lifecycle adjustment and focused validation. The next step is optional commit preparation or follow-up hardening around retry policy for prompts that already have a finalized result report.",
       "total_tasks": 5,
       "completed_tasks": 5,
       "pending_tasks": 0,
@@ -95,30 +95,30 @@
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Define the `daemonize` operating model, JSON schema, queue ordering rules, and the separation between built-in workflow skills and external phase-specific agent CLI commands",
+          "text": "Phase 1. Confirm the current `daemonize` prompt and result artifact lifecycle, including when prompt files are read, when result files are written, and how the active `.dev` state should resume",
           "completed": true
         },
         {
-          "text": "Phase 2. Add configuration loading and CLI entrypoints for daemon mode, including schema validation and defaults for inotify-first monitoring with a 60-second polling fallback",
+          "text": "Phase 2. Define the revised `daemonize` lifecycle so prompt files are consumed from `prompt_path`, result files are written to `result_path` before processing completes, and successful runs remove the source prompt",
           "completed": true
         },
         {
-          "text": "Phase 3. Implement the daemon watcher, prompt queue ordering, per-prompt loop execution, and result artifact generation based on the configured prompt and result directories",
+          "text": "Phase 3. Implement the runner changes for eager in-progress result emission and successful prompt-file cleanup without regressing failure reporting",
           "completed": true
         },
         {
-          "text": "Phase 4. Wire phase execution so plan, design, develop, build/deploy, test/review, and commit can each resolve skill instructions separately from the configured external agent CLI command",
+          "text": "Phase 4. Add or update unit and integration coverage for the revised prompt consumption and result writing semantics",
           "completed": true
         },
         {
-          "text": "Phase 5. Add unit and integration coverage for config parsing, watcher behavior, queue sorting, fallback polling, and end-to-end daemon processing",
+          "text": "Phase 5. Update operator-facing docs and `.dev` workflow state, then run focused validation for the active daemonize slice",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-10T17:52:40+09:00"
+      "synced_at": "2026-04-10T20:37:00+09:00"
     }
   },
-  "next_action": "Prepare a commit for the daemonize implementation, or continue with follow-up hardening such as config reload, archival semantics, or richer daemon lifecycle management.",
+  "next_action": "Prepare a commit for the daemonize lifecycle adjustment, or harden retry behavior for prompts that already have a finalized result report.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -132,9 +132,8 @@
     "Daemon mode needs inotify-first monitoring with a 60-second polling fallback where inode-backed watching is unavailable.",
     "The feature request requires separating dormammu workflow skills from per-phase external agent CLI command configuration.",
     "The daemonize design is captured in docs/daemonize-design.md and has been implemented in the new backend/dormammu/daemon package.",
-    "Focused validation passed through python3 -m unittest tests.test_daemon.",
-    "Focused validation passed through python3 -m unittest tests.test_cli.",
-    "Focused validation passed through python3 -m unittest tests.test_agent_cli_adapter tests.test_loop_runner."
+    "A follow-up request changed daemon prompt/result lifecycle semantics after the initial implementation was validated.",
+    "Focused validation passed through python3 -m unittest tests.test_daemon."
   ],
   "loop": {
     "status": "idle",
@@ -150,7 +149,7 @@
   "latest_continuation_prompt": null,
   "current_run": null,
   "latest_commit": {
-    "hash": "pending-amend",
+    "hash": "pending",
     "summary": "pending"
   }
 }

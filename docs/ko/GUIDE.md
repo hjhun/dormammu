@@ -240,7 +240,9 @@ dormammu daemonize --repo-root . --config daemonize.json
 - 파일명 앞의 숫자 prefix 우선, 그다음 알파벳 prefix 우선, 마지막으로 일반
   파일명 순서로 정렬
 - 각 프롬프트마다 설정된 phase를 순서대로 실행
-- `result_path`에 프롬프트별 결과 리포트 생성
+- phase 실행이 끝나기 전부터 `result_path`에 진행 중 결과 리포트 생성 후,
+  처리 종료 시 최종 결과로 갱신
+- 프롬프트 처리 종료 후 `prompt_path`의 원본 프롬프트 파일 제거
 
 시작점으로는 [daemonize.json.example](../../daemonize.json.example)를
 사용하면 됩니다.
