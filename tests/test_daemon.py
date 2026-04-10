@@ -8,6 +8,8 @@ import stat
 import sys
 import tempfile
 import textwrap
+import threading
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,8 +19,10 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.config import AppConfig
 from dormammu.daemon.config import load_daemon_config
+from dormammu.daemon.models import WatchConfig
 from dormammu.daemon.queue import prompt_sort_key
 from dormammu.daemon.runner import DaemonRunner
+from dormammu.daemon.watchers import InotifyWatcher
 
 
 class DaemonConfigTests(unittest.TestCase):
@@ -370,6 +374,78 @@ class DaemonQueueTests(unittest.TestCase):
             ordered,
             ["002-plan.md", "010-build.md", "A-design.md", "b-task.md", "_scratch.md"],
         )
+
+
+@unittest.skipUnless(InotifyWatcher.is_available(), "inotify is only available on Linux")
+class InotifyWatcherTests(unittest.TestCase):
+    def test_wait_for_changes_blocks_until_write_close_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_dir = Path(tmpdir)
+            watcher = InotifyWatcher(
+                prompt_dir,
+                WatchConfig(
+                    backend="inotify",
+                    poll_interval_seconds=60,
+                    settle_seconds=0,
+                ),
+            )
+            watcher.start()
+            try:
+                writer_started = threading.Event()
+
+                def writer() -> None:
+                    prompt_path = prompt_dir / "001-first.md"
+                    with prompt_path.open("w", encoding="utf-8") as handle:
+                        writer_started.set()
+                        handle.write("First prompt\n")
+                        handle.flush()
+                        time.sleep(0.3)
+
+                thread = threading.Thread(target=writer, daemon=True)
+                start = time.monotonic()
+                thread.start()
+                self.assertTrue(writer_started.wait(timeout=1.0))
+
+                changed_paths = watcher.wait_for_changes()
+                elapsed = time.monotonic() - start
+                thread.join(timeout=1.0)
+
+                self.assertGreaterEqual(elapsed, 0.25)
+                self.assertEqual(changed_paths, [prompt_dir / "001-first.md"])
+            finally:
+                watcher.close()
+
+    def test_wait_for_changes_reports_files_moved_into_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_dir = Path(tmpdir) / "queue"
+            staging_dir = Path(tmpdir) / "staging"
+            prompt_dir.mkdir(parents=True, exist_ok=True)
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            watcher = InotifyWatcher(
+                prompt_dir,
+                WatchConfig(
+                    backend="inotify",
+                    poll_interval_seconds=60,
+                    settle_seconds=0,
+                ),
+            )
+            watcher.start()
+            try:
+                staged_path = staging_dir / "001-first.md"
+                staged_path.write_text("First prompt\n", encoding="utf-8")
+
+                def mover() -> None:
+                    time.sleep(0.1)
+                    staged_path.rename(prompt_dir / staged_path.name)
+
+                thread = threading.Thread(target=mover, daemon=True)
+                thread.start()
+                changed_paths = watcher.wait_for_changes()
+                thread.join(timeout=1.0)
+
+                self.assertEqual(changed_paths, [prompt_dir / "001-first.md"])
+            finally:
+                watcher.close()
 
 
 class DaemonRunnerTests(unittest.TestCase):

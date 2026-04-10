@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T22:16:00+09:00",
+  "updated_at": "2026-04-10T23:10:00+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -28,7 +28,7 @@
     "task_sync_source": ".dev/PLAN.md"
   },
   "workflow": {
-    "active_phase": "commit",
+    "active_phase": "test_and_review",
     "last_completed_phase": "test_and_review",
     "allowed_sequence": [
       "plan",
@@ -60,11 +60,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The daemonize visibility slice is implemented and validated. Startup logs now describe prompt detection, child CLI output mirroring, and per-phase launch details."
+    "reason": "The daemonize watcher root cause is fixed and validated. Linux now prioritizes IN_CLOSE_WRITE and IN_MOVED_TO for prompt readiness."
   },
   "bootstrap": {
-    "goal": "Improve daemonize runtime visibility so operators can see how prompt files are detected and where child CLI output is surfaced during queue processing.",
-    "captured_at": "2026-04-10T22:05:00+09:00",
+    "goal": "Fix daemonize so Linux inotify reliably detects prompts after write-close and prioritizes inode readiness events over early create notifications.",
+    "captured_at": "2026-04-10T23:05:00+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -87,7 +87,7 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume after the validated daemonize visibility slice. The next step is optional documentation polish or commit preparation for the new startup and phase logs.",
+      "resume_checkpoint": "Resume from commit preparation only if this validated Linux inotify watcher fix should be versioned now; otherwise the next work can start from a new daemon slice.",
       "total_tasks": 5,
       "completed_tasks": 5,
       "pending_tasks": 0,
@@ -95,30 +95,30 @@
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Inspect the current `daemonize` runtime logging path to confirm whether child CLI stdout and stderr are mirrored live and where prompt queue detection rules are enforced",
+          "text": "Phase 1. Inspect the current `daemonize` watcher flow and identify why Linux `inotify` can miss a prompt after the writer closes the file",
           "completed": true
         },
         {
-          "text": "Phase 2. Design clearer `daemonize` startup progress output that explains config paths, watcher behavior, prompt candidate rules, and where child CLI output is mirrored and archived",
+          "text": "Phase 2. Design a Linux-first watcher adjustment that prioritizes inode readiness events over early create notifications while preserving moved-in prompt detection",
           "completed": true
         },
         {
-          "text": "Phase 3. Implement startup and per-phase progress logs for `daemonize` without changing prompt processing semantics or artifact capture",
+          "text": "Phase 3. Implement the `inotify` watcher fix so `daemonize` relies on `IN_CLOSE_WRITE` and `IN_MOVED_TO` as the primary readiness signals",
           "completed": true
         },
         {
-          "text": "Phase 4. Add focused regression tests that capture `daemonize` stderr and verify the new startup visibility and phase execution logs",
+          "text": "Phase 4. Add focused regression tests that reproduce delayed close-write behavior and atomic move-in behavior on Linux",
           "completed": true
         },
         {
-          "text": "Phase 5. Run targeted daemon tests and confirm the new operator-facing output matches the actual runtime behavior",
+          "text": "Phase 5. Run targeted daemon validation and sync `.dev` state with the results and any remaining watch-mode risks",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-10T22:16:00+09:00"
+      "synced_at": "2026-04-10T23:10:00+09:00"
     }
   },
-  "next_action": "Prepare a commit for the validated daemonize visibility slice, or add a docs follow-up if the new stderr messaging should be documented.",
+  "next_action": "Prepare a commit for the validated Linux inotify watcher fix if requested; otherwise treat the daemon slice as complete.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -132,10 +132,10 @@
     "Daemon mode needs inotify-first monitoring with a 60-second polling fallback where inode-backed watching is unavailable.",
     "The feature request requires separating dormammu workflow skills from per-phase external agent CLI command configuration.",
     "The daemonize design is captured in docs/daemonize-design.md and has been implemented in the new backend/dormammu/daemon package.",
-    "A follow-up request asked for clearer command discovery and explicit JSON config injection guidance in help text and docs.",
-    "Focused validation passed through python3 -m unittest tests.test_cli.",
-    "The current user request is a new daemonize visibility slice centered on startup logging and prompt detection transparency.",
-    "Focused validation passed through python3 -m unittest tests.test_daemon."
+    "The current user request is a Linux inotify watcher fix for daemonize write-close prompt detection.",
+    "Root cause: IN_CREATE caused the watcher to drain readiness events too early when settle_seconds skipped the fresh file.",
+    "The fix now prefers IN_CLOSE_WRITE and IN_MOVED_TO as the Linux readiness signals for prompt detection.",
+    "Focused validation passed through python3 -m unittest tests.test_daemon.InotifyWatcherTests tests.test_daemon.DaemonRunnerTests tests.test_daemon.DaemonConfigTests."
   ],
   "loop": {
     "status": "idle",

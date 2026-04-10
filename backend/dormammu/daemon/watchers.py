@@ -46,9 +46,9 @@ class InotifyWatcher:
     _EVENT_STRUCT = struct.Struct("iIII")
     _IN_NONBLOCK = 0x800
     _IN_CLOEXEC = 0x80000
-    _IN_CREATE = 0x00000100
     _IN_MOVED_TO = 0x00000080
     _IN_CLOSE_WRITE = 0x00000008
+    _READY_MASK = _IN_MOVED_TO | _IN_CLOSE_WRITE
 
     def __init__(self, prompt_dir: Path, watch_config: WatchConfig) -> None:
         self.prompt_dir = prompt_dir
@@ -67,7 +67,10 @@ class InotifyWatcher:
             err = ctypes.get_errno()
             raise OSError(err, os.strerror(err))
         self._fd = fd
-        mask = self._IN_CREATE | self._IN_MOVED_TO | self._IN_CLOSE_WRITE
+        # Prefer inode events that mean a prompt is fully materialized in the
+        # watched directory: either the writer closed the file after writing or
+        # an already-complete file was atomically moved into place.
+        mask = self._READY_MASK
         watch_descriptor = self._libc.inotify_add_watch(
             fd,
             os.fsencode(str(self.prompt_dir)),
@@ -105,12 +108,12 @@ class InotifyWatcher:
             paths: list[Path] = []
             offset = 0
             while offset + self._EVENT_STRUCT.size <= len(payload):
-                _, _, _, name_len = self._EVENT_STRUCT.unpack_from(payload, offset)
+                _, mask, _, name_len = self._EVENT_STRUCT.unpack_from(payload, offset)
                 offset += self._EVENT_STRUCT.size
                 name_bytes = payload[offset : offset + name_len]
                 offset += name_len
                 filename = name_bytes.rstrip(b"\0").decode("utf-8", errors="ignore")
-                if filename:
+                if filename and mask & self._READY_MASK:
                     paths.append(self.prompt_dir / filename)
             return paths
 
