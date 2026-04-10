@@ -48,7 +48,7 @@ def _recorded_cli_path(cli_path: Path) -> Path:
     return cli_path
 
 
-CLI_RETRY_DELAY_SECONDS = 5.0
+CLI_RETRY_DELAY_SECONDS = 1.0
 CLI_RETRY_DELAY_MESSAGE = (
     f"Taking a short break for {int(CLI_RETRY_DELAY_SECONDS)} seconds before the next agent CLI call."
 )

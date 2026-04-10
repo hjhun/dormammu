@@ -2,43 +2,38 @@
 
 ## Actual Progress
 
-- Goal: Simplify `daemonize` so queued prompts run through the normal
-  `dormammu run --prompt-file` loop instead of a separate phase-by-phase CLI
-  pipeline.
-- Prompt-driven scope: Remove phase-specific daemon CLI config, reuse the
-  existing supervised run loop for queued prompts, and keep prompt cleanup plus
-  result creation aligned with loop completion.
+- Goal: Reduce the inter-agent CLI retry delay used by Dormammu when invoking
+  coding agent CLIs.
+- Prompt-driven scope: Change the retry pause from 5 seconds to 1 second and
+  confirm the existing CLI adapter regressions still pass.
 - Active roadmap focus:
 - Phase 5. CLI Operator Experience and Progress Visibility
-- Phase 4. Supervisor Validation, Continuation Loop, and Resume
-- Current workflow phase: commit
+- Current workflow phase: test_and_review
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
-- Escalation status: `approved`
-- Resume point: The daemonize simplification is implemented and validated.
-  Resume from commit preparation only if a follow-up requests version-control
+- Escalation status: `not_needed`
+- Resume point: The CLI adapter delay reduction is implemented and validated.
+  Resume from commit preparation only if a follow-up asks for version-control
   finalization.
 
 ## In Progress
 
-- `daemonize.json` now only controls prompt watching and queue behavior.
-- Each queued prompt now starts a normal supervised Dormammu run-loop session,
-  writes its result report only after terminal completion, and then removes the
-  processed prompt file.
-- Examples, README, English guide, Korean guide, and daemon regression tests
-  were updated together to remove stale phase-specific daemon CLI guidance.
+- `CliAdapter` now waits 1 second instead of 5 seconds before back-to-back
+  agent CLI invocations.
+- Targeted CLI adapter regression coverage passed for the updated timing
+  constant.
 
 ## Progress Notes
 
-- The daemon runner no longer maintains a separate per-phase execution graph.
-- The coding agent now comes from the normal runtime config via
-  `active_agent_cli`.
-- Validation passed with `python3 -m unittest tests.test_daemon` and
-  `python3 -m unittest tests.test_cli tests.test_loop_runner`.
+- The first CLI call still starts immediately; only subsequent calls are
+  throttled by the shared retry-delay guard.
+- The user requested a timing reduction only, so no command-shape or fallback
+  policy changes are planned.
+- Validation passed with `python3 -m unittest tests.test_agent_cli_adapter`.
 
 ## Risks And Watchpoints
 
-- Example filenames still reflect the old naming history, so the docs now frame
-  them as watch/queue presets instead of skill or per-phase CLI presets.
-- Commit preparation is still outstanding because the user asked for the
-  implementation change, not a commit.
+- Tests patch out `time.sleep`, so validation confirms control flow and the
+  configured delay value rather than wall-clock timing.
+- Daemon polling and settle-window sleeps are unrelated to this change and
+  remain untouched.
