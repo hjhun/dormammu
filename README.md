@@ -185,8 +185,9 @@ dormammu restore-session --repo-root . --session-id your-session-id
 - `claude`: uses print-mode style invocation and permission-mode detection.
 - `gemini`: supports prompt flags, approval-mode defaults, and include-dir
   configuration.
-- `cline`: supports positional prompts with `-y`, default `--verbose`, and
-  `--cwd <path>` forwarding when `--workdir` is set.
+- `cline`: supports positional prompts with `-y`, default `--verbose`,
+  default `--timeout 1200`, and `--cwd <path>` forwarding when `--workdir`
+  is set.
 - `aider`: supports message-style prompt flags.
 
 Use `dormammu inspect-cli` before real runs if you want to confirm prompt mode,
@@ -214,7 +215,7 @@ Example `dormammu.json`:
   ],
   "cli_overrides": {
     "cline": {
-      "extra_args": ["-y", "--verbose"]
+      "extra_args": ["-y", "--verbose", "--timeout", "1200"]
     }
   },
   "token_exhaustion_patterns": [

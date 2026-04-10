@@ -158,7 +158,7 @@ class CommandBuilderTests(unittest.TestCase):
                 prompt_text="inspect the repository",
                 repo_root=Path(tmpdir),
                 workdir=workdir,
-                extra_args=("-y", "--verbose"),
+                extra_args=("-y", "--verbose", "--timeout", "1200"),
             )
             capabilities = CliCapabilities(
                 help_flag="--help",
@@ -175,7 +175,16 @@ class CommandBuilderTests(unittest.TestCase):
             self.assertEqual(plan.prompt_mode, "positional")
             self.assertEqual(
                 list(plan.argv),
-                ["/tmp/cline", "--cwd", str(workdir), "-y", "--verbose", "inspect the repository"],
+                [
+                    "/tmp/cline",
+                    "--cwd",
+                    str(workdir),
+                    "-y",
+                    "--verbose",
+                    "--timeout",
+                    "1200",
+                    "inspect the repository",
+                ],
             )
             self.assertIsNone(plan.stdin_input)
 

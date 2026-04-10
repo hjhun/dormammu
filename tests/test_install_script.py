@@ -229,7 +229,10 @@ class InstallScriptTests(unittest.TestCase):
 
             config_payload = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(config_payload["active_agent_cli"], str(codex_path))
-            self.assertEqual(config_payload["cli_overrides"]["cline"]["extra_args"], ["-y", "--verbose"])
+            self.assertEqual(
+                config_payload["cli_overrides"]["cline"]["extra_args"],
+                ["-y", "--verbose", "--timeout", "1200"],
+            )
 
             export_line = f'export PATH="{bin_dir}:$PATH"'
             bashrc_contents = bashrc_path.read_text(encoding="utf-8")

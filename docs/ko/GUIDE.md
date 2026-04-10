@@ -271,6 +271,7 @@ dormammu run \
 - positional prompt
 - `-y`
 - 기본 `--verbose`
+- 기본 `--timeout 1200`
 - `--cwd <path>`
 
 예시:
@@ -307,7 +308,7 @@ dormammu run-once \
   ],
   "cli_overrides": {
     "cline": {
-      "extra_args": ["-y", "--verbose"]
+      "extra_args": ["-y", "--verbose", "--timeout", "1200"]
     }
   }
 }

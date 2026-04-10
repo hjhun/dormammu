@@ -107,11 +107,11 @@ KNOWN_CLI_PRESETS: tuple[KnownCliPreset, ...] = (
         key="cline",
         label="Cline",
         executable_names=("cline",),
-        help_hints=("-y", "--verbose", "--cwd", "cline"),
+        help_hints=("-y", "--verbose", "--cwd", "--timeout", "cline"),
         prompt_positional=True,
         workdir_flag="--cwd",
-        default_extra_args=("--verbose",),
-        suppress_default_extra_args_when_present=("--verbose",),
+        default_extra_args=("--verbose", "--timeout", "1200"),
+        suppress_default_extra_args_when_present=("--verbose", "--timeout"),
         auto_approve_candidates=(
             PresetAutoApproveCandidate(
                 value="-y",

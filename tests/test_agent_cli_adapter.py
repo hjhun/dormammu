@@ -139,7 +139,7 @@ class CliAdapterTests(unittest.TestCase):
                     {
                         "cli_overrides": {
                             "cline": {
-                                "extra_args": ["-y", "--verbose"],
+                                "extra_args": ["-y", "--verbose", "--timeout", "1200"],
                             }
                         }
                     }
@@ -162,7 +162,16 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(result.prompt_mode, "positional")
             self.assertEqual(
                 list(result.command),
-                [str(fake_cli), "--cwd", str(workdir), "-y", "--verbose", "Summarize the repository."],
+                [
+                    str(fake_cli),
+                    "--cwd",
+                    str(workdir),
+                    "-y",
+                    "--verbose",
+                    "--timeout",
+                    "1200",
+                    "Summarize the repository.",
+                ],
             )
             self.assertIn(
                 "PROMPT::Summarize the repository.",
@@ -171,6 +180,7 @@ class CliAdapterTests(unittest.TestCase):
             self.assertIn("YOLO::yes", result.stdout_path.read_text(encoding="utf-8"))
             self.assertIn(f"CWD::{workdir}", result.stdout_path.read_text(encoding="utf-8"))
             self.assertIn("VERBOSE::yes", result.stdout_path.read_text(encoding="utf-8"))
+            self.assertIn("TIMEOUT::1200", result.stdout_path.read_text(encoding="utf-8"))
 
     def test_run_once_applies_default_no_approval_mode_for_claude(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -449,12 +459,17 @@ class CliAdapterTests(unittest.TestCase):
                         print("-y")
                         print("--verbose")
                         print("--cwd")
+                        print("--timeout")
                         return 0
 
                     cwd = ""
+                    timeout = ""
                     if "--cwd" in args:
                         index = args.index("--cwd")
                         cwd = args[index + 1]
+                    if "--timeout" in args:
+                        index = args.index("--timeout")
+                        timeout = args[index + 1]
                     filtered_args = []
                     skip_next = False
                     for arg in args:
@@ -462,6 +477,9 @@ class CliAdapterTests(unittest.TestCase):
                             skip_next = False
                             continue
                         if arg == "--cwd":
+                            skip_next = True
+                            continue
+                        if arg == "--timeout":
                             skip_next = True
                             continue
                         if arg in ("-y", "--verbose"):
@@ -477,6 +495,7 @@ class CliAdapterTests(unittest.TestCase):
                     print(f"YOLO::{{'yes' if '-y' in args else 'no'}}")
                     print(f"CWD::{{cwd}}")
                     print(f"VERBOSE::{{'yes' if '--verbose' in args else 'no'}}")
+                    print(f"TIMEOUT::{{timeout}}")
                     return 0
 
                 raise SystemExit(main())

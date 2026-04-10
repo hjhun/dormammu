@@ -269,6 +269,7 @@ For example, the Cline preset supports:
 - positional prompts
 - `-y`
 - default `--verbose`
+- default `--timeout 1200`
 - `--cwd <path>`
 
 Example:
@@ -304,7 +305,7 @@ Example config:
   ],
   "cli_overrides": {
     "cline": {
-      "extra_args": ["-y", "--verbose"]
+      "extra_args": ["-y", "--verbose", "--timeout", "1200"]
     }
   }
 }
