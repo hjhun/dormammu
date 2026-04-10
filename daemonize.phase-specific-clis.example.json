@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "prompt_path": "./queue/prompts",
+  "result_path": "./queue/results",
+  "watch": {
+    "backend": "polling",
+    "poll_interval_seconds": 60,
+    "settle_seconds": 0
+  },
+  "queue": {
+    "allowed_extensions": [".md"],
+    "ignore_hidden_files": true
+  },
+  "phases": {
+    "plan": {
+      "skill_name": "planning-agent",
+      "agent_cli": {
+        "path": "codex",
+        "input_mode": "auto",
+        "prompt_flag": null,
+        "extra_args": []
+      }
+    },
+    "design": {
+      "skill_name": "designing-agent",
+      "agent_cli": {
+        "path": "claude",
+        "input_mode": "auto",
+        "prompt_flag": null,
+        "extra_args": []
+      }
+    },
+    "develop": {
+      "skill_name": "developing-agent",
+      "agent_cli": {
+        "path": "codex",
+        "input_mode": "auto",
+        "prompt_flag": null,
+        "extra_args": ["--full-auto"]
+      }
+    },
+    "build_and_deploy": {
+      "skill_name": "building-and-deploying",
+      "agent_cli": {
+        "path": "cline",
+        "input_mode": "positional",
+        "prompt_flag": null,
+        "extra_args": ["-y", "--verbose", "--timeout", "1200"]
+      }
+    },
+    "test_and_review": {
+      "skill_name": "testing-and-reviewing",
+      "agent_cli": {
+        "path": "gemini",
+        "input_mode": "auto",
+        "prompt_flag": null,
+        "extra_args": ["--approval-mode", "auto_edit"]
+      }
+    },
+    "commit": {
+      "skill_name": "committing-agent",
+      "agent_cli": {
+        "path": "codex",
+        "input_mode": "auto",
+        "prompt_flag": null,
+        "extra_args": []
+      }
+    }
+  }
+}

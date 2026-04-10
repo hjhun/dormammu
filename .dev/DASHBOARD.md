@@ -2,46 +2,49 @@
 
 ## Actual Progress
 
-- Goal: Keep the supervised loop running until the prompt-derived `PLAN.md`
-  checklist is actually completed.
-- Prompt-driven scope: Require supervisor approval to respect `PLAN.md`
-  completion, ensure loop sessions initialize `PLAN.md` from the active user
-  request, and keep loop and CLI regressions aligned with the stricter exit
-  rule.
+- Goal: Add a `daemonize` mode that reads a JSON config file and runs an
+  inode-event-driven prompt queue for dormammu.
+- Prompt-driven scope: Accept `daemonize` plus a JSON config file, watch a
+  prompt directory, sort queued prompt files by leading number or alphabetic
+  prefix, run the loop for each prompt, and emit `<PROMPT FILENAME>_RESULT.md`
+  files into the configured result directory.
 - Active roadmap focus:
-- Phase 4. Supervisor Validation, Continuation Loop, and Resume
+- Phase 5. CLI Operator Experience and Progress Visibility
 - Phase 7. Hardening, Multi-Session, and Productization
-- Current workflow phase: test_and_review
+- Current workflow phase: commit
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The `PLAN.md` completion gate is implemented and validated.
-  Resume from commit preparation or from follow-up tuning if we want finer
-  control over which PLAN items are allowed to remain open at approval time.
+- Resume point: The daemonize implementation and focused validation are
+  complete. Resume from post-push hardening if we want richer daemon lifecycle
+  features such as config reload or prompt archiving.
 
 ## In Progress
 
-- Supervisor now refuses approval while prompt-derived PLAN tasks remain
-  unchecked, and reports the next pending PLAN item in its failure details.
-- Loop runner bootstrap now seeds session state from the active request prompt
-  so `PLAN.md` reflects the actual run goal instead of a generic bootstrap
-  checklist.
-- Loop and CLI fake agents used in regression tests now mark PLAN items
-  complete on successful attempts so the stricter loop exit rule is exercised
-  end-to-end.
+- Implemented the new `daemonize` subcommand, daemon-specific JSON config
+  loader, queue ordering rules, watcher abstraction, per-phase runner, and
+  Markdown result reporting.
+- Added a new `backend/dormammu/daemon/` package with dedicated `config`,
+  `queue`, `watchers`, `runner`, `reports`, and `models` modules plus an
+  example config file at `daemonize.json.example`.
+- Added focused validation for daemon config parsing, filename ordering,
+  prompt processing, result-file skipping, and CLI error handling.
 
 ## Progress Notes
 
-- Focused supervisor validation passed for `python3 -m unittest
-  tests.test_supervisor`.
-- Loop runner regression validation passed for `python3 -m unittest
+- Validation passed for `python3 -m unittest tests.test_daemon`.
+- Validation passed for `python3 -m unittest tests.test_cli`.
+- Validation passed for `python3 -m unittest tests.test_agent_cli_adapter
   tests.test_loop_runner`.
-- CLI regression validation passed for `python3 -m unittest tests.test_cli`.
 
 ## Risks And Watchpoints
 
-- `PLAN.md` is now part of the hard approval gate, so agent workflows that make
-  progress but forget to check off PLAN items will keep retrying until they
-  update the checklist.
-- If we later want softer behavior for validation-only checklist items, that
-  should be a deliberate policy change rather than an accidental early exit.
+- Linux-friendly inotify support needs a portable fallback path for platforms
+  where inode-backed watching is unavailable; the requested fallback cadence is
+  60-second polling.
+- Sorting semantics must be deterministic when mixed filenames do not start
+  with a number or alphabetic prefix, or the queue will be hard to reason
+  about during long-running daemon sessions.
+- The current daemon milestone does not yet persist a dedicated daemon queue
+  journal across process restarts; it rebuilds from the prompt and result
+  directories on startup.

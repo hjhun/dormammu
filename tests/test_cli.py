@@ -80,6 +80,26 @@ class CliTests(unittest.TestCase):
                 ["codex", "claude", "gemini"],
             )
 
+    def test_daemonize_returns_error_when_config_file_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = main(
+                    [
+                        "daemonize",
+                        "--repo-root",
+                        str(root),
+                        "--config",
+                        str(root / "missing-daemon.json"),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("Daemon config file was not found", stderr.getvalue())
+
     def test_init_state_uses_packaged_templates_when_repo_has_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

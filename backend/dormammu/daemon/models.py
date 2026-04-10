@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+PHASE_SEQUENCE = (
+    "plan",
+    "design",
+    "develop",
+    "build_and_deploy",
+    "test_and_review",
+    "commit",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PhaseCliConfig:
+    path: Path
+    input_mode: str = "auto"
+    prompt_flag: str | None = None
+    extra_args: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PhaseExecutionConfig:
+    phase_name: str
+    skill_name: str | None
+    skill_path: Path
+    agent_cli: PhaseCliConfig
+
+
+@dataclass(frozen=True, slots=True)
+class WatchConfig:
+    backend: str = "auto"
+    poll_interval_seconds: int = 60
+    settle_seconds: int = 2
+
+
+@dataclass(frozen=True, slots=True)
+class QueueConfig:
+    allowed_extensions: tuple[str, ...] = ()
+    ignore_hidden_files: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class DaemonConfig:
+    schema_version: int
+    config_path: Path
+    prompt_path: Path
+    result_path: Path
+    watch: WatchConfig
+    queue: QueueConfig
+    phases: dict[str, PhaseExecutionConfig]
+
+
+@dataclass(frozen=True, slots=True)
+class QueuedPrompt:
+    path: Path
+    filename: str
+    sort_key: tuple[int, object, str]
+    detected_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class PhaseExecutionResult:
+    phase_name: str
+    cli_path: Path
+    exit_code: int
+    run_id: str | None
+    started_at: str | None
+    completed_at: str | None
+    stdout_path: Path | None
+    stderr_path: Path | None
+    prompt_path: Path | None
+    metadata_path: Path | None
+    command: tuple[str, ...] = ()
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phase_name": self.phase_name,
+            "cli_path": str(self.cli_path),
+            "exit_code": self.exit_code,
+            "run_id": self.run_id,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "stdout_path": str(self.stdout_path) if self.stdout_path else None,
+            "stderr_path": str(self.stderr_path) if self.stderr_path else None,
+            "prompt_path": str(self.prompt_path) if self.prompt_path else None,
+            "metadata_path": str(self.metadata_path) if self.metadata_path else None,
+            "command": list(self.command),
+            "error": self.error,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DaemonPromptResult:
+    prompt_path: Path
+    result_path: Path
+    status: str
+    started_at: str
+    completed_at: str | None
+    watcher_backend: str
+    sort_key: tuple[int, object, str]
+    session_id: str | None
+    phase_results: tuple[PhaseExecutionResult, ...] = field(default_factory=tuple)
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "prompt_path": str(self.prompt_path),
+            "result_path": str(self.result_path),
+            "status": self.status,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "watcher_backend": self.watcher_backend,
+            "sort_key": list(self.sort_key),
+            "session_id": self.session_id,
+            "phase_results": [item.to_dict() for item in self.phase_results],
+            "error": self.error,
+        }

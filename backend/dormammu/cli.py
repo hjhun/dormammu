@@ -12,6 +12,7 @@ from typing import Iterator, Sequence, TextIO
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.agent.models import AgentRunStarted
 from dormammu.config import AppConfig, detect_available_agent_cli, write_active_agent_cli_config
+from dormammu.daemon import DaemonRunner, load_daemon_config
 from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt, resolve_guidance_files
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
@@ -410,6 +411,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the external coding-agent CLI to validate.",
     )
     doctor.set_defaults(handler=_handle_doctor)
+
+    daemonize = subparsers.add_parser(
+        "daemonize",
+        help="Watch a prompt directory from JSON config and process prompts sequentially.",
+    )
+    daemonize.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    daemonize.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Path to the daemon JSON config file.",
+    )
+    daemonize.add_argument(
+        "--guidance-file",
+        dest="guidance_files",
+        action="append",
+        type=Path,
+        default=None,
+        help="Repeatable Markdown guidance file to embed into daemon phase prompts when it has content.",
+    )
+    daemonize.set_defaults(handler=_handle_daemonize)
 
     return parser
 
@@ -1024,3 +1046,22 @@ def _handle_doctor(args: argparse.Namespace) -> int:
     )
     print(json.dumps(report.to_dict(), indent=2, ensure_ascii=True))
     return 0 if report.status == "ok" else 1
+
+
+def _handle_daemonize(args: argparse.Namespace) -> int:
+    config = _with_guidance_overrides(_load_config(args.repo_root), args.guidance_files)
+    try:
+        daemon_config = load_daemon_config(args.config, app_config=config)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    with _project_log_capture(config.repo_root, "daemonize"):
+        try:
+            return DaemonRunner(config, daemon_config).run_forever()
+        except KeyboardInterrupt:
+            print("daemonize interrupted", file=sys.stderr)
+            return 130
+        except (RuntimeError, ValueError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2

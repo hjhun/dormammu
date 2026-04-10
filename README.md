@@ -32,6 +32,8 @@ documentation is available at [docs/ko/GUIDE.md](docs/ko/GUIDE.md).
 
 - `run-once`: invoke an external agent CLI a single time and persist artifacts.
 - `run`: execute a supervised retry loop around an agent CLI.
+- `daemonize`: watch a prompt directory from JSON config and process queued
+  prompts sequentially.
 - `resume`: continue the latest supervised run from saved state.
 - `inspect-cli`: detect prompt mode, workdir support, and risky approval flags.
 - `doctor`: verify Python, agent CLI availability, repository writability, and
@@ -119,6 +121,33 @@ exits immediately instead of consuming the remaining budget.
 ```bash
 dormammu resume --repo-root .
 ```
+
+### 7. Run daemonized prompt watching
+
+```bash
+dormammu daemonize --repo-root . --config daemonize.json
+```
+
+Use [daemonize.json.example](daemonize.json.example) as the starting point for
+the daemon config file.
+
+Additional daemon config examples are also available:
+
+- [daemonize.json.example](daemonize.json.example): explicit installed
+  `skill_path` values under `~/.dormammu/agents`
+- [daemonize.named-skill.example.json](daemonize.named-skill.example.json):
+  portable `skill_name`-based config
+- [daemonize.mixed-skill-resolution.example.json](daemonize.mixed-skill-resolution.example.json):
+  mix repository-local `skill_path`, installed `skill_path`, and `skill_name`
+- [daemonize.phase-specific-clis.example.json](daemonize.phase-specific-clis.example.json):
+  different external agent CLIs per phase
+
+Quick chooser:
+
+- installed bundle and explicit paths -> `daemonize.json.example`
+- portable named-skill config -> `daemonize.named-skill.example.json`
+- mix standard and custom skills -> `daemonize.mixed-skill-resolution.example.json`
+- different CLIs by phase -> `daemonize.phase-specific-clis.example.json`
 
 ## What Gets Written
 
@@ -230,6 +259,24 @@ Example `dormammu.json`:
 
 By default, the global config path is `~/.dormammu/config` when no repository
 local `dormammu.json` is present.
+
+For `daemonize` configs, each phase should use either:
+
+- `skill_name`, resolved from `agents/skills/<name>/SKILL.md` in the repo
+  first and then from `~/.dormammu/agents/skills/<name>/SKILL.md`
+- `skill_path`, which points at one explicit skill file
+
+Common installed skill paths under `~/.dormammu/agents` are:
+
+- `~/.dormammu/agents/skills/planning-agent/SKILL.md`
+- `~/.dormammu/agents/skills/designing-agent/SKILL.md`
+- `~/.dormammu/agents/skills/developing-agent/SKILL.md`
+- `~/.dormammu/agents/skills/building-and-deploying/SKILL.md`
+- `~/.dormammu/agents/skills/testing-and-reviewing/SKILL.md`
+- `~/.dormammu/agents/skills/committing-agent/SKILL.md`
+
+See [docs/GUIDE.md](docs/GUIDE.md) for the full `daemonize` skill resolution
+rules.
 
 ## Repository Layout
 
