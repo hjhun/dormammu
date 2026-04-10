@@ -5,7 +5,8 @@ from pathlib import Path
 import shlex
 import re
 import sys
-from typing import TextIO
+import time
+from typing import Mapping, TextIO
 
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.agent.models import AgentRunStarted
@@ -13,7 +14,7 @@ from dormammu.config import AppConfig
 from dormammu.daemon.models import DaemonConfig, DaemonPromptResult, PHASE_SEQUENCE, PhaseExecutionConfig, PhaseExecutionResult
 from dormammu.daemon.queue import is_prompt_candidate, prompt_sort_key
 from dormammu.daemon.reports import render_result_markdown
-from dormammu.daemon.watchers import PromptWatcher, build_watcher
+from dormammu.daemon.watchers import EFFECTIVE_POLL_INTERVAL_SECONDS, PromptWatcher, build_watcher
 from dormammu.guidance import build_guidance_prompt
 from dormammu.state import StateRepository
 from dormammu.state.models import summarize_prompt_goal
@@ -43,11 +44,16 @@ class DaemonRunner:
         self.watcher = watcher
         self._processed_successes: set[Path] = set()
         self._in_progress: set[Path] = set()
+        self._waiting_for_plan_completion: set[Path] = set()
 
     def run_forever(self) -> int:
         self.daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
         self.daemon_config.result_path.mkdir(parents=True, exist_ok=True)
-        watcher = self.watcher or build_watcher(self.daemon_config.prompt_path, self.daemon_config.watch)
+        watcher = self.watcher or build_watcher(
+            self.daemon_config.prompt_path,
+            self.daemon_config.watch,
+            event_logger=self._log,
+        )
         self._emit_startup_banner(watcher_backend=watcher.backend_name)
         watcher.start()
         try:
@@ -62,44 +68,82 @@ class DaemonRunner:
         self.daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
         self.daemon_config.result_path.mkdir(parents=True, exist_ok=True)
         processed = 0
-        for prompt_path in self._ready_prompt_paths():
-            self._process_prompt(
-                prompt_path,
-                watcher_backend=watcher_backend or self.daemon_config.watch.backend,
-            )
-            processed += 1
-        return processed
+        while True:
+            ready_prompt_paths, retry_after_seconds = self._scan_prompt_queue()
+            if not ready_prompt_paths:
+                if processed == 0 and retry_after_seconds is not None:
+                    self._log(
+                        "daemon queue scan: waiting for prompt settle window "
+                        f"before retry ({retry_after_seconds:.2f}s)"
+                    )
+                    time.sleep(retry_after_seconds)
+                    continue
+                return processed
+            for prompt_path in ready_prompt_paths:
+                self._process_prompt(
+                    prompt_path,
+                    watcher_backend=watcher_backend or self.daemon_config.watch.backend,
+                )
+                processed += 1
+            if retry_after_seconds is None:
+                return processed
 
-    def _ready_prompt_paths(self) -> list[Path]:
+    def _scan_prompt_queue(self) -> tuple[list[Path], float | None]:
         candidates: list[Path] = []
+        retry_after_seconds: float | None = None
         settle_seconds = self.daemon_config.watch.settle_seconds
         now = datetime.now(timezone.utc).timestamp()
         for path in sorted(self.daemon_config.prompt_path.iterdir(), key=lambda item: prompt_sort_key(item.name)):
-            if path in self._processed_successes or path in self._in_progress:
+            if (
+                path in self._processed_successes
+                or path in self._in_progress
+                or path in self._waiting_for_plan_completion
+            ):
+                if path in self._waiting_for_plan_completion:
+                    self._log(f"daemon queue scan: preserving {path.name} while waiting for PLAN completion")
                 continue
             if not is_prompt_candidate(path, self.daemon_config.queue):
+                self._log(f"daemon queue scan: skipping non-candidate {path.name}")
                 continue
             result_path = self._result_path_for_prompt(path)
             if result_path.exists():
-                if self._existing_result_is_completed(result_path):
-                    self._processed_successes.add(path)
+                existing_status = self._existing_result_status(result_path)
+                if existing_status == "completed":
+                    result_path.unlink()
+                    self._processed_successes.discard(path)
+                    self._log(
+                        "daemon queue scan: removing stale completed result for "
+                        f"{path.name} and reprocessing prompt"
+                    )
+                if existing_status == "waiting_for_plan":
+                    self._waiting_for_plan_completion.add(path)
+                    self._log(f"daemon queue scan: preserving {path.name} because PLAN completion is still pending")
                     continue
             try:
                 stat_result = path.stat()
             except FileNotFoundError:
                 continue
             if settle_seconds > 0 and now - stat_result.st_mtime < settle_seconds:
+                remaining = settle_seconds - (now - stat_result.st_mtime)
+                if retry_after_seconds is None or remaining < retry_after_seconds:
+                    retry_after_seconds = max(remaining, 0.0)
+                self._log(
+                    "daemon queue scan: deferring "
+                    f"{path.name} until settle window expires ({max(remaining, 0.0):.2f}s remaining)"
+                )
                 continue
             candidates.append(path)
-        return candidates
+        return candidates, retry_after_seconds
 
-    def _existing_result_is_completed(self, result_path: Path) -> bool:
+    def _existing_result_status(self, result_path: Path) -> str | None:
         try:
             text = result_path.read_text(encoding="utf-8")
         except OSError:
-            return False
+            return None
         match = _RESULT_STATUS_RE.search(text)
-        return match is not None and match.group(1).strip() == "completed"
+        if match is None:
+            return None
+        return match.group(1).strip()
 
     def _emit_startup_banner(self, *, watcher_backend: str) -> None:
         print("=== dormammu daemonize ===", file=self.progress_stream)
@@ -110,7 +154,7 @@ class DaemonRunner:
         print(
             "watcher: "
             f"{watcher_backend} (requested={self.daemon_config.watch.backend}, "
-            f"poll_interval={self.daemon_config.watch.poll_interval_seconds}s, "
+            f"poll_interval={self._watcher_poll_interval_seconds(watcher_backend)}s, "
             f"settle={self.daemon_config.watch.settle_seconds}s)",
             file=self.progress_stream,
         )
@@ -118,7 +162,7 @@ class DaemonRunner:
             "prompt detection: "
             f"hidden_files={'ignore' if self.daemon_config.queue.ignore_hidden_files else 'include'}, "
             f"extensions={self._describe_allowed_extensions()}, "
-            "skip_when_completed_result_exists=yes, "
+            "replace_completed_result_on_requeued_prompt=yes, "
             "order=numeric-prefix -> alpha-prefix -> remaining-name",
             file=self.progress_stream,
         )
@@ -127,10 +171,15 @@ class DaemonRunner:
             file=self.progress_stream,
         )
         print(
-            "prompt lifecycle: accepted prompts are processed sequentially and removed after a final result report is written",
+            "prompt lifecycle: accepted prompts are processed sequentially and removed only after a completed result with PLAN.md fully marked [O]",
             file=self.progress_stream,
         )
         self.progress_stream.flush()
+
+    def _watcher_poll_interval_seconds(self, watcher_backend: str) -> int:
+        if watcher_backend == "polling":
+            return self.daemon_config.watch.poll_interval_seconds
+        return EFFECTIVE_POLL_INTERVAL_SECONDS
 
     def _describe_allowed_extensions(self) -> str:
         if not self.daemon_config.queue.allowed_extensions:
@@ -151,9 +200,13 @@ class DaemonRunner:
             f"{prompt_path.name} (sort_key={sort_key}, watcher={watcher_backend}, result={result_path.name})"
         )
         session_id: str | None = None
+        session_repository: StateRepository | None = None
         phase_results: list[PhaseExecutionResult] = []
-        status = "completed"
+        status = "failed"
         error: str | None = None
+        plan_all_completed: bool | None = None
+        next_pending_task: str | None = None
+        interrupted = False
         try:
             prompt_text = prompt_path.read_text(encoding="utf-8")
             goal = summarize_prompt_goal(prompt_text, fallback=f"Process daemon prompt {prompt_path.name}")
@@ -179,6 +232,8 @@ class DaemonRunner:
                 session_id=session_id,
                 phase_results=phase_results,
                 error=None,
+                plan_all_completed=None,
+                next_pending_task=None,
             )
             session_repository = StateRepository(self.app_config, session_id=session_id)
             scoped_config = self.app_config.with_overrides(
@@ -196,6 +251,7 @@ class DaemonRunner:
                     prompt_path=prompt_path,
                 )
                 phase_results.append(phase_result)
+                plan_all_completed, next_pending_task = self._sync_plan_state(session_repository)
                 self._write_result_report(
                     prompt_path=prompt_path,
                     result_path=result_path,
@@ -207,11 +263,37 @@ class DaemonRunner:
                     session_id=session_id,
                     phase_results=phase_results,
                     error=None,
+                    plan_all_completed=plan_all_completed,
+                    next_pending_task=next_pending_task,
                 )
                 if phase_result.exit_code != 0:
                     status = "failed"
                     error = phase_result.error or f"Phase {phase_name} exited with code {phase_result.exit_code}."
                     break
+            else:
+                if plan_all_completed:
+                    status = "completed"
+                else:
+                    status = "waiting_for_plan"
+                    pending_suffix = (
+                        f" Next pending task: {next_pending_task}."
+                        if isinstance(next_pending_task, str) and next_pending_task.strip()
+                        else ""
+                    )
+                    error = (
+                        "All daemon phases exited successfully, but the session PLAN.md still contains "
+                        f"incomplete items.{pending_suffix}"
+                    )
+                    self._waiting_for_plan_completion.add(prompt_path)
+                    self._log(
+                        f"daemon prompt {prompt_path.name}: waiting for PLAN completion"
+                        + (f" ({next_pending_task})" if next_pending_task else "")
+                    )
+        except KeyboardInterrupt:
+            interrupted = True
+            status = "interrupted"
+            error = "Interrupted by user."
+            self._log(f"daemon prompt {prompt_path.name}: interrupted by user; preserving source prompt file")
         except Exception as exc:
             status = "failed"
             error = str(exc)
@@ -228,15 +310,20 @@ class DaemonRunner:
                 session_id=session_id,
                 phase_results=tuple(phase_results),
                 error=error,
+                plan_all_completed=plan_all_completed,
+                next_pending_task=next_pending_task,
             )
             self._write_result_report_from_result(prompt_result)
             if status == "completed" and prompt_path.exists():
                 prompt_path.unlink()
+                self._waiting_for_plan_completion.discard(prompt_path)
             if status == "completed":
                 self._processed_successes.add(prompt_path)
             self._in_progress.discard(prompt_path)
             print(f"daemon prompt {prompt_path.name}: {status} -> {result_path}", file=self.progress_stream)
             self.progress_stream.flush()
+            if interrupted:
+                raise KeyboardInterrupt()
             return prompt_result
 
     def _write_result_report(
@@ -252,6 +339,8 @@ class DaemonRunner:
         session_id: str | None,
         phase_results: list[PhaseExecutionResult],
         error: str | None,
+        plan_all_completed: bool | None,
+        next_pending_task: str | None,
     ) -> None:
         prompt_result = DaemonPromptResult(
             prompt_path=prompt_path,
@@ -264,11 +353,25 @@ class DaemonRunner:
             session_id=session_id,
             phase_results=tuple(phase_results),
             error=error,
+            plan_all_completed=plan_all_completed,
+            next_pending_task=next_pending_task,
         )
         self._write_result_report_from_result(prompt_result)
 
     def _write_result_report_from_result(self, prompt_result: DaemonPromptResult) -> None:
         prompt_result.result_path.write_text(render_result_markdown(prompt_result), encoding="utf-8")
+
+    def _sync_plan_state(self, session_repository: StateRepository) -> tuple[bool | None, str | None]:
+        session_repository.sync_operator_state()
+        session_state = session_repository.read_session_state()
+        task_sync = session_state.get("task_sync")
+        if not isinstance(task_sync, Mapping):
+            return None, None
+        all_completed_raw = task_sync.get("all_completed")
+        next_pending_raw = task_sync.get("next_pending_task")
+        all_completed = bool(all_completed_raw) if all_completed_raw is not None else None
+        next_pending_task = next_pending_raw.strip() if isinstance(next_pending_raw, str) and next_pending_raw.strip() else None
+        return all_completed, next_pending_task
 
     def _run_phase(
         self,

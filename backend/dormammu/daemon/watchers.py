@@ -8,9 +8,12 @@ from pathlib import Path
 import select
 import struct
 import time
-from typing import Protocol
+from typing import Callable, Final, Protocol
 
 from dormammu.daemon.models import WatchConfig
+
+
+EFFECTIVE_POLL_INTERVAL_SECONDS: Final[int] = 60
 
 
 class PromptWatcher(Protocol):
@@ -26,9 +29,16 @@ class PromptWatcher(Protocol):
 class PollingWatcher:
     backend_name = "polling"
 
-    def __init__(self, prompt_dir: Path, watch_config: WatchConfig) -> None:
+    def __init__(
+        self,
+        prompt_dir: Path,
+        watch_config: WatchConfig,
+        *,
+        event_logger: Callable[[str], None] | None = None,
+    ) -> None:
         self.prompt_dir = prompt_dir
         self.watch_config = watch_config
+        self._event_logger = event_logger
 
     def start(self) -> None:
         return None
@@ -38,7 +48,14 @@ class PollingWatcher:
 
     def wait_for_changes(self) -> list[Path]:
         time.sleep(self.watch_config.poll_interval_seconds)
-        return list(self.prompt_dir.iterdir()) if self.prompt_dir.exists() else []
+        paths = list(self.prompt_dir.iterdir()) if self.prompt_dir.exists() else []
+        if self._event_logger is not None:
+            self._event_logger(
+                "daemon watcher event: backend=polling "
+                f"interval={self.watch_config.poll_interval_seconds}s "
+                f"candidates={len(paths)}"
+            )
+        return paths
 
 
 class InotifyWatcher:
@@ -48,11 +65,29 @@ class InotifyWatcher:
     _IN_CLOEXEC = 0x80000
     _IN_MOVED_TO = 0x00000080
     _IN_CLOSE_WRITE = 0x00000008
+    _IN_CREATE = 0x00000100
+    _IN_DELETE = 0x00000200
+    _IN_ATTRIB = 0x00000004
     _READY_MASK = _IN_MOVED_TO | _IN_CLOSE_WRITE
+    _WATCH_MASK = _READY_MASK | _IN_CREATE | _IN_DELETE | _IN_ATTRIB
+    _MASK_NAMES = {
+        _IN_CREATE: "IN_CREATE",
+        _IN_CLOSE_WRITE: "IN_CLOSE_WRITE",
+        _IN_MOVED_TO: "IN_MOVED_TO",
+        _IN_DELETE: "IN_DELETE",
+        _IN_ATTRIB: "IN_ATTRIB",
+    }
 
-    def __init__(self, prompt_dir: Path, watch_config: WatchConfig) -> None:
+    def __init__(
+        self,
+        prompt_dir: Path,
+        watch_config: WatchConfig,
+        *,
+        event_logger: Callable[[str], None] | None = None,
+    ) -> None:
         self.prompt_dir = prompt_dir
         self.watch_config = watch_config
+        self._event_logger = event_logger
         self._fd: int | None = None
         libc_name = ctypes.util.find_library("c") or "libc.so.6"
         self._libc = ctypes.CDLL(libc_name, use_errno=True)
@@ -67,20 +102,20 @@ class InotifyWatcher:
             err = ctypes.get_errno()
             raise OSError(err, os.strerror(err))
         self._fd = fd
-        # Prefer inode events that mean a prompt is fully materialized in the
-        # watched directory: either the writer closed the file after writing or
-        # an already-complete file was atomically moved into place.
-        mask = self._READY_MASK
         watch_descriptor = self._libc.inotify_add_watch(
             fd,
             os.fsencode(str(self.prompt_dir)),
-            ctypes.c_uint32(mask),
+            ctypes.c_uint32(self._WATCH_MASK),
         )
         if watch_descriptor < 0:
             err = ctypes.get_errno()
             os.close(fd)
             self._fd = None
             raise OSError(err, os.strerror(err))
+        self._log_event(
+            "daemon watcher event: backend=inotify "
+            f"watching={self.prompt_dir} mask={self._format_mask(self._WATCH_MASK)}"
+        )
 
     def close(self) -> None:
         if self._fd is not None:
@@ -113,20 +148,41 @@ class InotifyWatcher:
                 name_bytes = payload[offset : offset + name_len]
                 offset += name_len
                 filename = name_bytes.rstrip(b"\0").decode("utf-8", errors="ignore")
+                path = self.prompt_dir / filename if filename else self.prompt_dir
+                self._log_event(
+                    "daemon watcher event: backend=inotify "
+                    f"mask={self._format_mask(mask)} path={path}"
+                )
                 if filename and mask & self._READY_MASK:
-                    paths.append(self.prompt_dir / filename)
-            return paths
+                    paths.append(path)
+            if paths:
+                return paths
+
+    def _format_mask(self, mask: int) -> str:
+        names = [name for bit, name in self._MASK_NAMES.items() if mask & bit]
+        if not names:
+            return hex(mask)
+        return "|".join(names)
+
+    def _log_event(self, message: str) -> None:
+        if self._event_logger is not None:
+            self._event_logger(message)
 
 
-def build_watcher(prompt_dir: Path, watch_config: WatchConfig) -> PromptWatcher:
+def build_watcher(
+    prompt_dir: Path,
+    watch_config: WatchConfig,
+    *,
+    event_logger: Callable[[str], None] | None = None,
+) -> PromptWatcher:
     if watch_config.backend == "polling":
-        return PollingWatcher(prompt_dir, watch_config)
+        return PollingWatcher(prompt_dir, watch_config, event_logger=event_logger)
     if watch_config.backend == "inotify":
         if not InotifyWatcher.is_available():
             raise RuntimeError("Inotify backend is not available on this platform.")
-        return InotifyWatcher(prompt_dir, watch_config)
+        return InotifyWatcher(prompt_dir, watch_config, event_logger=event_logger)
     if watch_config.backend == "auto":
         if InotifyWatcher.is_available():
-            return InotifyWatcher(prompt_dir, watch_config)
-        return PollingWatcher(prompt_dir, watch_config)
+            return InotifyWatcher(prompt_dir, watch_config, event_logger=event_logger)
+        return PollingWatcher(prompt_dir, watch_config, event_logger=event_logger)
     raise RuntimeError(f"Unsupported watcher backend: {watch_config.backend}")

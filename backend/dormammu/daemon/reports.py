@@ -20,6 +20,10 @@ def render_result_markdown(result: DaemonPromptResult) -> str:
     ]
     if result.status == "in_progress":
         lines.append("- Processing state: `active`")
+    if result.plan_all_completed is not None:
+        lines.append(f"- PLAN complete: `{'yes' if result.plan_all_completed else 'no'}`")
+    if result.next_pending_task:
+        lines.append(f"- Next pending PLAN task: `{result.next_pending_task}`")
     if result.error:
         lines.extend(["", "## Error", "", result.error])
     lines.extend(["", "## Phases", ""])

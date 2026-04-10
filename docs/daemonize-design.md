@@ -10,8 +10,7 @@ Add a `daemonize` execution mode to Dormammu that:
   numeric or alphabetic prefix in the filename
 - runs Dormammu workflow phases for each queued prompt
 - writes one result report per prompt as `<PROMPT FILENAME>_RESULT.md`
-- prefers inode-event-based monitoring and falls back to 60-second polling when
-  such monitoring is unavailable
+- uses a fixed 60-second polling loop for prompt discovery
 
 ## Scope
 
@@ -154,8 +153,10 @@ The daemon config must be a JSON object with the following shape:
 
 - `prompt_path`: directory watched for prompt files
 - `result_path`: directory where result reports are written
-- `watch.backend`: one of `auto`, `inotify`, `polling`
-- `watch.poll_interval_seconds`: required fallback interval, default `60`
+- `watch.backend`: one of `auto`, `inotify`, `polling`, but runtime behavior is
+  normalized to polling for compatibility
+- `watch.poll_interval_seconds`: compatibility field that is accepted but the
+  runtime loop still uses a fixed `60` second scan interval
 - `watch.settle_seconds`: delay used to avoid reading a file before the writer
   is finished, default `2`
 - `queue.allowed_extensions`: optional filter for prompt files
@@ -264,25 +265,11 @@ Create a dedicated daemon package:
 
 ### Backend selection
 
-- `auto`:
-  - use inotify-backed monitoring when available on the current platform
-  - fall back to polling otherwise
-- `inotify`:
-  - fail fast if the backend is unavailable
-- `polling`:
-  - always use directory scanning with a 60-second interval by default
-
-### Inotify implementation strategy
-
-Preferred order:
-
-1. stdlib-compatible lightweight Linux implementation if practical
-2. optional package-backed watcher if explicitly added as a dependency
-3. fallback to polling
-
-The current repository has no watcher dependency yet, so implementation should
-initially favor minimal dependency growth. The design keeps the backend behind a
-small interface so a dependency can be added later without changing the runner.
+- `auto`, `inotify`, and `polling` remain accepted in config files
+- the runtime watcher is normalized to the polling implementation so operators
+  get the same 60-second scan behavior regardless of legacy config values
+- startup logs should show both the requested backend and the effective polling
+  interval to make that normalization explicit
 
 ### Watcher interface
 
@@ -553,5 +540,6 @@ Implement in this order:
 1. daemon config loader and validation
 2. queue sort key and startup scan
 3. polling watcher backend and integration tests
-4. inotify backend behind the same watcher interface
+4. polling-only runtime watcher behavior with compatibility parsing for legacy
+   backend values
 5. result report rendering and CLI wiring

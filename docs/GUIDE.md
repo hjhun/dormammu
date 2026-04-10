@@ -280,13 +280,14 @@ Use `daemonize` when you want Dormammu to behave like a long-running operator
 loop:
 
 - watch `prompt_path` for incoming prompt files
+- rescan `prompt_path` every 60 seconds using the daemon polling loop
 - sort prompt files by leading numeric prefix first, then alphabetic prefix,
   then plain filename
 - execute configured workflow phases for each prompt
 - write an in-progress result report to `result_path` before phase execution
   completes, then finalize that report when processing ends
-- remove the processed prompt file from `prompt_path` after the prompt run
-  finishes
+- remove the processed prompt file from `prompt_path` only after the prompt run
+  finishes with `PLAN.md` fully completed
 
 Use [daemonize.json.example](../daemonize.json.example) as the starting point
 for the config. This daemon file is separate from the general runtime config

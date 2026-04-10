@@ -107,6 +107,8 @@ class DaemonPromptResult:
     session_id: str | None
     phase_results: tuple[PhaseExecutionResult, ...] = field(default_factory=tuple)
     error: str | None = None
+    plan_all_completed: bool | None = None
+    next_pending_task: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -120,4 +122,6 @@ class DaemonPromptResult:
             "session_id": self.session_id,
             "phase_results": [item.to_dict() for item in self.phase_results],
             "error": self.error,
+            "plan_all_completed": self.plan_all_completed,
+            "next_pending_task": self.next_pending_task,
         }

@@ -2,51 +2,62 @@
 
 ## Actual Progress
 
-- Goal: Fix `daemonize` prompt watching so Linux `inotify` reliably notices a
-  prompt once the writer closes it, with inode-backed readiness events as the
-  primary mechanism.
-- Prompt-driven scope: Root-cause the missed write-close detection, correct the
-  watcher behavior, and add regression coverage for both close-write and
-  move-into-place prompt delivery.
+- Goal: Restore `daemonize` prompt discovery to `inotify`, add event-level
+  watcher logs, preserve prompt files on `Ctrl+C`, gate completion on session
+  `PLAN.md`, and allow requeued prompt filenames to replace stale completed
+  result files.
+- Prompt-driven scope: Revert the watcher back to `inotify` with per-event
+  logging, fix the settle-window retry gap, preserve user prompts during
+  interruption, expose `PLAN.md` completion in daemon result reports, and
+  reprocess prompts when a matching completed result file already exists.
 - Active roadmap focus:
 - Phase 4. Supervisor Validation, Continuation Loop, and Resume
 - Phase 5. CLI Operator Experience and Progress Visibility
-- Current workflow phase: test_and_review
+- Phase 7. Hardening, Multi-Session, and Productization
+- Current workflow phase: commit
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The Linux `inotify` watcher fix is implemented and validated.
-  Resume from commit preparation only if this daemon slice should be versioned
-  now.
+- Resume point: The `inotify`-based daemonize fix is implemented and validated.
+  Resume from commit preparation and push for this daemon slice.
 
 ## In Progress
 
-- `backend/dormammu/daemon/watchers.py` now watches only readiness events on
-  Linux instead of waking early on `IN_CREATE`.
-- The inotify event parser now filters emitted paths through the same readiness
-  mask so only fully materialized prompts are surfaced to the runner.
-- Focused validation passed with
-  `python3 -m unittest tests.test_daemon.InotifyWatcherTests
-  tests.test_daemon.DaemonRunnerTests tests.test_daemon.DaemonConfigTests`.
+- `backend/dormammu/daemon/watchers.py` now uses `inotify` again for
+  `auto`/`inotify` watcher selection on Linux, logs each raw watcher event,
+  and keeps polling as the explicit compatibility fallback.
+- `backend/dormammu/daemon/runner.py` now retries prompt scans after the
+  settle window expires, replaces stale completed result files when the same
+  prompt filename is requeued, keeps `PLAN.md` completion as the final
+  completion gate, and preserves the source prompt file on `KeyboardInterrupt`.
+- Focused validation passed with:
+  `python3 -m unittest tests.test_daemon tests.test_tasks
+  tests.test_supervisor`.
+- Additional smoke validation passed with a real daemonize run under
+  `~/samba/test/dormammu-daemonize-smoke`, including prompt detection,
+  event-log output, settle-window retry, completed-result replacement, and
+  `Ctrl+C` exit code `130`.
 
 ## Progress Notes
 
-- Root cause: the watcher subscribed to `IN_CREATE`, `IN_MOVED_TO`, and
-  `IN_CLOSE_WRITE`, but `wait_for_changes()` drained all queued events at once
-  and returned immediately on creation. When `settle_seconds` was still active,
-  the runner skipped the too-new file and then blocked again after the already
-  consumed close-write event, leaving the prompt stranded until some unrelated
-  future filesystem event arrived.
-- Fix direction: Linux now prioritizes inode readiness signals only,
-  specifically `IN_CLOSE_WRITE` for directly written files and `IN_MOVED_TO`
-  for atomically renamed files.
-- Targeted daemon validation now proves the watcher blocks until
-  `IN_CLOSE_WRITE` and still accepts `IN_MOVED_TO` for atomically staged
-  prompts.
+- Runtime watcher selection again prefers `inotify` on Linux when
+  `watch.backend` is `auto`, and startup logs now report
+  `replace_completed_result_on_requeued_prompt=yes`.
+- Settle-window handling no longer deadlocks after `IN_CLOSE_WRITE`. When a
+  prompt is too fresh, the daemon logs the defer reason, sleeps for the
+  remaining window, and retries without requiring another filesystem event.
+- Prompt completion is still not implied by phase exit codes alone. A daemon
+  prompt is only marked `completed` when all configured phases exit cleanly and
+  the synced session `PLAN.md` summary reports `all_completed=true`.
+- A `Ctrl+C` raised during prompt processing now writes an `interrupted` result
+  report, leaves the source prompt file in place, clears the in-progress
+  marker, and re-raises so the CLI still exits with code `130`.
 
 ## Risks And Watchpoints
 
-- The new regression coverage is Linux-specific by design because the product
-  explicitly runs on Linux, so non-Linux watcher semantics remain out of scope.
-- Polling fallback behavior is unchanged; any future prompt-staleness issues in
-  polling mode should be treated as a separate slice from this inode-event fix.
+- Requeued prompts with the same filename now overwrite any stale completed
+  result report before processing starts, so operators should not rely on the
+  old result file remaining available once a replacement prompt is dropped.
+- `waiting_for_plan` results are preserved in place so operators can inspect
+  the pending PLAN task before deciding whether to rerun or continue the work
+  manually.

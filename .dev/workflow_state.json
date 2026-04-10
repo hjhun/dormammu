@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 5,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T23:10:00+09:00",
+  "updated_at": "2026-04-10T23:02:30+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -28,7 +28,7 @@
     "task_sync_source": ".dev/PLAN.md"
   },
   "workflow": {
-    "active_phase": "test_and_review",
+    "active_phase": "commit",
     "last_completed_phase": "test_and_review",
     "allowed_sequence": [
       "plan",
@@ -60,11 +60,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The daemonize watcher root cause is fixed and validated. Linux now prioritizes IN_CLOSE_WRITE and IN_MOVED_TO for prompt readiness."
+    "reason": "The inotify daemonize restore, settle retry, prompt preservation, PLAN gating, and stale-result replacement changes are implemented and validated."
   },
   "bootstrap": {
-    "goal": "Fix daemonize so Linux inotify reliably detects prompts after write-close and prioritizes inode readiness events over early create notifications.",
-    "captured_at": "2026-04-10T23:05:00+09:00",
+    "goal": "Restore daemonize to inotify-based watching, preserve prompt files on Ctrl+C, gate completion on PLAN.md, and reprocess prompts when a stale completed result file already exists.",
+    "captured_at": "2026-04-10T23:02:30+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -87,7 +87,7 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Resume from commit preparation only if this validated Linux inotify watcher fix should be versioned now; otherwise the next work can start from a new daemon slice.",
+      "resume_checkpoint": "Resume from commit preparation and push for the validated `inotify` daemonize fix; otherwise the next daemon scope can begin from this requeue-safe baseline.",
       "total_tasks": 5,
       "completed_tasks": 5,
       "pending_tasks": 0,
@@ -95,30 +95,30 @@
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Inspect the current `daemonize` watcher flow and identify why Linux `inotify` can miss a prompt after the writer closes the file",
+          "text": "Phase 1. Refresh `.dev` state for the restored `inotify`-based `daemonize` scope and replace the stale polling-only narrative",
           "completed": true
         },
         {
-          "text": "Phase 2. Design a Linux-first watcher adjustment that prioritizes inode readiness events over early create notifications while preserving moved-in prompt detection",
+          "text": "Phase 2. Restore `inotify` watcher selection with event-level logging and keep polling as the explicit fallback path",
           "completed": true
         },
         {
-          "text": "Phase 3. Implement the `inotify` watcher fix so `daemonize` relies on `IN_CLOSE_WRITE` and `IN_MOVED_TO` as the primary readiness signals",
+          "text": "Phase 3. Preserve user prompt files on `Ctrl+C`, gate daemon prompt completion on the session `PLAN.md` reaching all `[O]`, and retry after the settle window without waiting for another watcher event",
           "completed": true
         },
         {
-          "text": "Phase 4. Add focused regression tests that reproduce delayed close-write behavior and atomic move-in behavior on Linux",
+          "text": "Phase 4. Reprocess requeued prompt filenames by removing stale completed result files before execution starts",
           "completed": true
         },
         {
-          "text": "Phase 5. Run targeted daemon validation and sync `.dev` state with the results and any remaining watch-mode risks",
+          "text": "Phase 5. Add regression coverage and run automated plus real daemon smoke validation for the restored `inotify` workflow",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-10T23:10:00+09:00"
+      "synced_at": "2026-04-10T23:02:30+09:00"
     }
   },
-  "next_action": "Prepare a commit for the validated Linux inotify watcher fix if requested; otherwise treat the daemon slice as complete.",
+  "next_action": "Prepare a commit and push for the validated inotify daemonize fix.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -129,13 +129,12 @@
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
     "A new prompt-driven scope now targets daemonized prompt watching from JSON configuration.",
     "The repository does not currently contain .dev/PROJECT.md or .dev/ROADMAP.md, so planning is grounded in the direct request, AGENTS.md, current code, and machine state.",
-    "Daemon mode needs inotify-first monitoring with a 60-second polling fallback where inode-backed watching is unavailable.",
+    "Daemon mode again prefers inotify on Linux for auto watch mode and logs watcher events as they arrive.",
     "The feature request requires separating dormammu workflow skills from per-phase external agent CLI command configuration.",
     "The daemonize design is captured in docs/daemonize-design.md and has been implemented in the new backend/dormammu/daemon package.",
-    "The current user request is a Linux inotify watcher fix for daemonize write-close prompt detection.",
-    "Root cause: IN_CREATE caused the watcher to drain readiness events too early when settle_seconds skipped the fresh file.",
-    "The fix now prefers IN_CLOSE_WRITE and IN_MOVED_TO as the Linux readiness signals for prompt detection.",
-    "Focused validation passed through python3 -m unittest tests.test_daemon.InotifyWatcherTests tests.test_daemon.DaemonRunnerTests tests.test_daemon.DaemonConfigTests."
+    "The current user request restores inotify-driven watching, keeps prompt preservation on Ctrl+C, and requires stale completed results to be replaced on requeue.",
+    "Daemon prompt completion now depends on the synced session PLAN summary reporting all tasks complete.",
+    "Focused validation passed through python3 -m unittest tests.test_daemon tests.test_tasks tests.test_supervisor."
   ],
   "loop": {
     "status": "idle",

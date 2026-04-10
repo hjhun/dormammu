@@ -1,24 +1,24 @@
 {
   "session_id": "bootstrap-20260407-235000-kst",
   "created_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T22:16:00+09:00",
+  "updated_at": "2026-04-10T23:02:30+09:00",
   "run_type": "bootstrap",
   "status": "active",
   "state_schema_version": 5,
   "active_phase": "commit",
   "active_roadmap_phase_ids": [
     "phase_5",
-    "phase_6"
+    "phase_7"
   ],
-  "resume_token": "commit:daemonize-startup-visibility",
+  "resume_token": "commit:daemonize-inotify-requeue",
   "last_safe_checkpoint": {
     "phase": "commit",
-    "timestamp": "2026-04-10T21:27:01+09:00",
-    "description": "Completed the prior CLI help and docs clarification slice before starting the new daemonize visibility request."
+    "timestamp": "2026-04-10T23:02:30+09:00",
+    "description": "Validated the inotify daemonize fix with settle-window retry, prompt preservation, PLAN gating, and stale-result replacement."
   },
   "bootstrap": {
-    "goal": "Improve daemonize runtime visibility so operators can see how prompt files are detected and where child CLI output is surfaced during queue processing.",
-    "captured_at": "2026-04-10T22:05:00+09:00",
+    "goal": "Restore daemonize to inotify-based watching, preserve prompt files on Ctrl+C, gate completion on PLAN.md, and reprocess prompts when a stale completed result file already exists.",
+    "captured_at": "2026-04-10T23:02:30+09:00",
     "state_root": ".dev/sessions/bootstrap-20260407-235000-kst",
     "repo_guidance": {
       "rule_files": [
@@ -31,7 +31,7 @@
   },
   "task_sync": {
     "source": ".dev/PLAN.md",
-    "resume_checkpoint": "Resume after the validated daemonize visibility slice. The next step is optional documentation polish or commit preparation for the new startup and phase logs.",
+    "resume_checkpoint": "Resume from commit preparation and push for the validated `inotify` daemonize fix; otherwise the next daemon scope can begin from this requeue-safe baseline.",
     "total_tasks": 5,
     "completed_tasks": 5,
     "pending_tasks": 0,
@@ -39,37 +39,36 @@
     "next_pending_task": null,
     "items": [
       {
-        "text": "Phase 1. Inspect the current `daemonize` runtime logging path to confirm whether child CLI stdout and stderr are mirrored live and where prompt queue detection rules are enforced",
+        "text": "Phase 1. Refresh `.dev` state for the restored `inotify`-based `daemonize` scope and replace the stale polling-only narrative",
         "completed": true
       },
       {
-        "text": "Phase 2. Design clearer `daemonize` startup progress output that explains config paths, watcher behavior, prompt candidate rules, and where child CLI output is mirrored and archived",
+        "text": "Phase 2. Restore `inotify` watcher selection with event-level logging and keep polling as the explicit fallback path",
         "completed": true
       },
       {
-        "text": "Phase 3. Implement startup and per-phase progress logs for `daemonize` without changing prompt processing semantics or artifact capture",
+        "text": "Phase 3. Preserve user prompt files on `Ctrl+C`, gate daemon prompt completion on the session `PLAN.md` reaching all `[O]`, and retry after the settle window without waiting for another watcher event",
         "completed": true
       },
       {
-        "text": "Phase 4. Add focused regression tests that capture `daemonize` stderr and verify the new startup visibility and phase execution logs",
+        "text": "Phase 4. Reprocess requeued prompt filenames by removing stale completed result files before execution starts",
         "completed": true
       },
       {
-        "text": "Phase 5. Run targeted daemon tests and confirm the new operator-facing output matches the actual runtime behavior",
+        "text": "Phase 5. Add regression coverage and run automated plus real daemon smoke validation for the restored `inotify` workflow",
         "completed": true
       }
     ],
-    "synced_at": "2026-04-10T22:16:00+09:00"
+    "synced_at": "2026-04-10T23:02:30+09:00"
   },
-  "next_action": "Prepare a commit for the validated daemonize visibility slice, or add a docs follow-up if the new stderr messaging should be documented.",
+  "next_action": "Prepare a commit and push for the validated inotify daemonize slice.",
   "notes": [
-    "Resume from the active daemonize startup-visibility slice unless a new higher-priority request overrides it.",
+    "Resume from the active daemonize polling slice unless a new higher-priority request overrides it.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "Top-level help now groups commands and explicitly distinguishes general runtime config from daemon queue config.",
-    "README and GUIDE now show show-config earlier and document dormammu.json, DORMAMMU_CONFIG_PATH, and daemonize.json together.",
-    "Validation passed through targeted CLI tests in tests.test_cli.",
-    "This session has re-entered planning for a new user-directed daemonize runtime visibility scope.",
-    "Focused validation passed through python3 -m unittest tests.test_daemon."
+    "Daemonize again prefers inotify on Linux for auto watch mode and logs each watcher event as it arrives.",
+    "Daemon prompt completion now depends on the synced session PLAN summary reporting all tasks complete.",
+    "A fresh prompt with the same filename now removes any stale completed result file and is reprocessed immediately.",
+    "Focused validation passed through python3 -m unittest tests.test_daemon tests.test_tasks tests.test_supervisor."
   ],
   "loop": {
     "status": "idle",
