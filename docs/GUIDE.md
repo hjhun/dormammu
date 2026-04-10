@@ -49,6 +49,40 @@ with:
 dormammu inspect-cli --repo-root . --agent-cli codex
 ```
 
+## Config Entry Points At A Glance
+
+Dormammu uses two different JSON config entry points:
+
+- general runtime config for commands like `run`, `run-once`, `resume`,
+  `doctor`, and `inspect-cli`
+- daemon queue config for `dormammu daemonize`
+
+General runtime config resolution order is:
+
+1. `DORMAMMU_CONFIG_PATH`
+2. `<repo-root>/dormammu.json`
+3. `~/.dormammu/config`
+
+Use this to verify the resolved runtime config:
+
+```bash
+dormammu show-config --repo-root .
+```
+
+Use this to start a daemon queue worker:
+
+```bash
+dormammu daemonize --repo-root . --config daemonize.json
+```
+
+If you need both at once, set the runtime config explicitly and pass the daemon
+workflow file separately:
+
+```bash
+DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json \
+  dormammu daemonize --repo-root . --config ./ops/daemonize.prod.json
+```
+
 ## Installation
 
 ### Install from the repository release script
@@ -111,6 +145,16 @@ dormammu inspect-cli --repo-root . --agent-cli cline
 
 This is especially useful when you want to confirm prompt handling, workdir
 support, or approval-skipping hints before using a real run.
+
+### 3a. Confirm which runtime JSON config Dormammu resolved
+
+```bash
+dormammu show-config --repo-root .
+```
+
+This prints the resolved config as JSON, including the `config_file` path when
+Dormammu loaded `dormammu.json`, `DORMAMMU_CONFIG_PATH`, or the global
+`~/.dormammu/config`.
 
 ### 4. Execute one agent call
 
@@ -245,7 +289,15 @@ loop:
   finishes
 
 Use [daemonize.json.example](../daemonize.json.example) as the starting point
-for the config.
+for the config. This daemon file is separate from the general runtime config
+used by `show-config`, `run`, `run-once`, and `resume`.
+
+The combined pattern looks like:
+
+```bash
+DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json \
+  dormammu daemonize --repo-root . --config ./ops/daemonize.prod.json
+```
 
 For known interactive CLIs, `daemonize` also injects non-interactive defaults
 when a phase leaves `agent_cli.extra_args` empty:
@@ -300,6 +352,13 @@ Resolution order is:
 
 - `dormammu.json` remains the general Dormammu runtime config
 - `daemonize.json` describes one watched prompt-processing workflow
+
+That distinction is easy to miss, so a good operator check is:
+
+```bash
+dormammu show-config --repo-root .
+dormammu daemonize --help
+```
 
 The most important fields are:
 

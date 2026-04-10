@@ -2,45 +2,44 @@
 
 ## Actual Progress
 
-- Goal: Adjust the `daemonize` prompt and result artifact lifecycle so prompt
-  files are consumed from `prompt_path`, result files appear in `result_path`
-  before processing finishes, and processed prompts are removed afterward.
-- Prompt-driven scope: Read the queued prompt file from `prompt_path`, emit an
-  in-progress `<PROMPT FILENAME>_RESULT.md` report before the workflow phases
-  complete, and delete the source prompt file after the prompt run finishes.
+- Goal: Clarify the Dormammu CLI so operators can discover `daemonize` and
+  understand how JSON config is injected without reading the source.
+- Prompt-driven scope: Make `--help`, `README.md`, and `docs/GUIDE.md` explain
+  the command groups, the `daemonize --config` entry point, and the runtime
+  config resolution path for `dormammu.json`.
 - Active roadmap focus:
 - Phase 5. CLI Operator Experience and Progress Visibility
-- Phase 7. Hardening, Multi-Session, and Productization
+- Phase 6. Installer, Commands, and Environment Diagnostics
 - Current workflow phase: commit
 - Last completed workflow phase: test_and_review
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The daemonize lifecycle adjustment is implemented and
-  validated. Resume from commit preparation or follow-up hardening around retry
-  behavior for prompts that already have a finalized result report.
+- Resume point: The CLI help and docs clarification slice is implemented and
+  validated. Resume from commit preparation or optional follow-up UX polish
+  around typo recovery and command aliasing.
 
 ## In Progress
 
-- The daemon runner now writes an `in_progress` result report as soon as the
-  prompt is loaded, rewrites that report as phase results accumulate, and
-  finalizes it at the end of the run.
-- Prompt runs now remove their source prompt file after the final result is
-  written.
-- Focused tests and docs were updated for the revised result timing and prompt
-  cleanup behavior.
+- The top-level CLI help now groups commands by use case and explicitly calls
+  out the two config entry points: runtime config versus daemon queue config.
+- `show-config` and `daemonize --help` now explain where JSON config is loaded
+  from and include concrete invocation examples.
+- `README.md` and `docs/GUIDE.md` now surface `show-config` earlier and
+  document how `dormammu.json`, `DORMAMMU_CONFIG_PATH`, and `daemonize.json`
+  fit together.
 
 ## Progress Notes
 
-- Validation passed for `python3 -m unittest tests.test_daemon`.
-- Focused coverage now asserts that a prompt's result file exists with
-  `in_progress` status before phase completion and that processed runs remove
-  the source prompt file.
+- Validation passed for `python3 -m unittest tests.test_cli`.
+- Focused coverage now asserts that top-level help mentions runtime and daemon
+  config entry points, and that `daemonize --help` retains the split-config
+  guidance.
 
 ## Risks And Watchpoints
 
-- The result file now needs to be durable both before and after completion,
-  without leaving an ambiguous final status when a phase crashes mid-run.
-- Prompt cleanup now happens after the final result is written, so retry
-  behavior depends on re-queueing with a fresh prompt file.
-- Existing result-file skip logic depends on result-path existence, so the
-  in-progress report must still behave correctly across retries and restarts.
+- Operators can still type `demonize` by habit, so help text clarity reduces
+  confusion but does not yet provide typo-tolerant aliases.
+- The guide and README are aligned for English documentation, but localized
+  docs may still need a follow-up pass if parity is required.
+- Config behavior is now documented more clearly, so future changes to
+  resolution order should update help text and docs together.

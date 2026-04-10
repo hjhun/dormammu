@@ -22,6 +22,27 @@ from dormammu.cli import build_parser, main
 
 
 class CliTests(unittest.TestCase):
+    def test_top_level_help_mentions_runtime_and_daemon_config_entry_points(self) -> None:
+        parser = build_parser()
+
+        help_text = parser.format_help()
+
+        self.assertIn("Config injection:", help_text)
+        self.assertIn("./dormammu.json", help_text)
+        self.assertIn("$DORMAMMU_CONFIG_PATH", help_text)
+        self.assertIn("dormammu daemonize --config daemonize.json", help_text)
+
+    def test_daemonize_help_mentions_runtime_and_daemon_config_files(self) -> None:
+        stdout = io.StringIO()
+        with self.assertRaises(SystemExit) as raised, contextlib.redirect_stdout(stdout):
+            build_parser().parse_args(["daemonize", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        help_text = stdout.getvalue()
+        self.assertIn("--config daemonize.json", help_text)
+        self.assertIn("./dormammu.json", help_text)
+        self.assertIn("$DORMAMMU_CONFIG_PATH", help_text)
+
     def test_show_config_prints_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

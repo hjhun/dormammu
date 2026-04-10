@@ -41,6 +41,20 @@ documentation is available at [docs/ko/GUIDE.md](docs/ko/GUIDE.md).
 - `init-state`, `start-session`, `sessions`, `restore-session`: bootstrap and
   manage `.dev` state over time.
 
+If you are not sure which config file a command uses, start with:
+
+```bash
+dormammu --help
+dormammu show-config --repo-root .
+dormammu daemonize --help
+```
+
+The two config entry points are:
+
+- General runtime config: `./dormammu.json`, or `DORMAMMU_CONFIG_PATH`, or
+  `~/.dormammu/config`
+- Daemon queue config: `dormammu daemonize --config daemonize.json`
+
 ## Installation
 
 ### Quick Install
@@ -91,6 +105,16 @@ available command in this order: `codex`, `claude`, `gemini`, `cline`.
 dormammu inspect-cli --repo-root . --agent-cli cline
 ```
 
+### 3a. Confirm which JSON config Dormammu will load
+
+```bash
+dormammu show-config --repo-root .
+```
+
+Use this before real runs when you want to verify whether Dormammu is reading
+`./dormammu.json`, `DORMAMMU_CONFIG_PATH`, or the global
+`~/.dormammu/config`.
+
 ### 4. Run one agent pass
 
 ```bash
@@ -129,7 +153,15 @@ dormammu daemonize --repo-root . --config daemonize.json
 ```
 
 Use [daemonize.json.example](daemonize.json.example) as the starting point for
-the daemon config file.
+the daemon config file. `daemonize --config` is separate from the general
+runtime config in `dormammu.json`.
+
+If you want both files at once, the pattern is:
+
+```bash
+DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json \
+  dormammu daemonize --repo-root . --config ./ops/daemonize.prod.json
+```
 
 Each queued prompt writes its result report early into `result_path` while the
 workflow is still running, and the source prompt file is removed from
@@ -271,6 +303,19 @@ Example `dormammu.json`:
 
 By default, the global config path is `~/.dormammu/config` when no repository
 local `dormammu.json` is present.
+
+Runtime config resolution order is:
+
+1. `DORMAMMU_CONFIG_PATH`
+2. `<repo-root>/dormammu.json`
+3. `~/.dormammu/config`
+
+Quick examples:
+
+```bash
+dormammu show-config --repo-root .
+DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json dormammu run --repo-root . --prompt-file PROMPT.md
+```
 
 For `daemonize` configs, each phase should use either:
 

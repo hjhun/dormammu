@@ -61,12 +61,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dormammu",
         description=(
-            "CLI for running dormammu sessions, one-off agent executions, and supervised retries."
+            "CLI for running dormammu sessions, one-off agent executions, supervised retries, "
+            "and daemonized prompt queues."
         ),
         epilog=(
+            "Common command groups:\n"
+            "  Runtime config: show-config, doctor, inspect-cli\n"
+            "  One-shot / loop runs: run-once, run, resume\n"
+            "  Long-running queue worker: daemonize\n"
+            "  Session state: init-state, start-session, sessions, restore-session\n"
+            "\n"
+            "Config injection:\n"
+            "  General runtime config is loaded from ./dormammu.json, or from\n"
+            "  $DORMAMMU_CONFIG_PATH, or from ~/.dormammu/config.\n"
+            "  Daemon queue runs use a separate JSON file passed with:\n"
+            "  dormammu daemonize --config daemonize.json\n"
+            "\n"
             "Prompt input examples:\n"
             "  dormammu run-once --agent-cli codex --prompt \"Summarize this repo\"\n"
             "  dormammu run --agent-cli codex --prompt-file PROMPT.md\n"
+            "  dormammu daemonize --repo-root . --config daemonize.json\n"
             "\n"
             "Use `dormammu <command> --help` for command-specific options."
         ),
@@ -74,7 +88,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    show_config = subparsers.add_parser("show-config", help="Print resolved runtime configuration.")
+    show_config = subparsers.add_parser(
+        "show-config",
+        help="Print resolved runtime configuration and the config file source.",
+        description=(
+            "Print the resolved Dormammu runtime configuration as JSON.\n"
+            "Config resolution order is:\n"
+            "  1. $DORMAMMU_CONFIG_PATH\n"
+            "  2. <repo-root>/dormammu.json\n"
+            "  3. ~/.dormammu/config"
+        ),
+        epilog=(
+            "Example:\n"
+            "  dormammu show-config --repo-root .\n"
+            "  DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json dormammu show-config --repo-root ."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     show_config.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
     show_config.add_argument(
         "--guidance-file",
@@ -415,6 +445,24 @@ def build_parser() -> argparse.ArgumentParser:
     daemonize = subparsers.add_parser(
         "daemonize",
         help="Watch a prompt directory from JSON config and process prompts sequentially.",
+        description=(
+            "Watch a prompt directory from a daemon JSON config and process queued prompts "
+            "sequentially.\n"
+            "Use this for long-running operator flows where prompt files arrive in "
+            "prompt_path and result reports are written to result_path."
+        ),
+        epilog=(
+            "Config files used by daemonize:\n"
+            "  --config daemonize.json        Required daemon workflow config\n"
+            "  ./dormammu.json               Optional general runtime config\n"
+            "  $DORMAMMU_CONFIG_PATH         Optional override for the runtime config above\n"
+            "\n"
+            "Examples:\n"
+            "  dormammu daemonize --repo-root . --config daemonize.json\n"
+            "  DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json dormammu daemonize \\\n"
+            "    --repo-root . --config ./ops/daemonize.prod.json"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     daemonize.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
     daemonize.add_argument(

@@ -1,25 +1,24 @@
 {
   "session_id": "bootstrap-20260407-235000-kst",
   "created_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-10T10:43:28+09:00",
+  "updated_at": "2026-04-10T21:27:01+09:00",
   "run_type": "bootstrap",
   "status": "active",
   "state_schema_version": 5,
-  "active_phase": "test_and_review",
+  "active_phase": "commit",
   "active_roadmap_phase_ids": [
-    "phase_3",
-    "phase_4",
+    "phase_5",
     "phase_6"
   ],
-  "resume_token": "test_and_review:max-iteration-loop-control",
+  "resume_token": "commit:cli-help-and-doc-clarification",
   "last_safe_checkpoint": {
     "phase": "test_and_review",
-    "timestamp": "2026-04-10T10:43:28+09:00",
-    "description": "Validated max-iteration loop control, default 50-attempt behavior, and eager exit on supervisor approval."
+    "timestamp": "2026-04-10T21:27:01+09:00",
+    "description": "Validated CLI help and docs updates that clarify daemonize discovery and JSON config injection."
   },
   "bootstrap": {
-    "goal": "Add user-facing max-iteration loop control, default it to 50 total attempts, and stop Dormammu as soon as development is approved.",
-    "captured_at": "2026-04-10T10:43:28+09:00",
+    "goal": "Clarify the Dormammu CLI so operators can discover daemonize and understand JSON config injection from help text and docs.",
+    "captured_at": "2026-04-10T21:27:01+09:00",
     "state_root": ".dev/sessions/bootstrap-20260407-235000-kst",
     "repo_guidance": {
       "rule_files": [
@@ -32,7 +31,7 @@
   },
   "task_sync": {
     "source": ".dev/PLAN.md",
-    "resume_checkpoint": "Max-iteration loop-control validation is complete. Resume from commit preparation or the next scope.",
+    "resume_checkpoint": "Resume after the CLI help and documentation clarification slice. The next step is optional commit preparation or any follow-up UX polish around typo recovery or command aliases.",
     "total_tasks": 5,
     "completed_tasks": 5,
     "pending_tasks": 0,
@@ -40,36 +39,35 @@
     "next_pending_task": null,
     "items": [
       {
-        "text": "Phase 1. Review loop-run and resume semantics to map a user-facing max-iteration budget onto the existing retry model safely",
+        "text": "Phase 1. Inspect the current CLI help text, command surface, and config loading behavior to identify why `daemonize` and JSON config entry points are hard to discover",
         "completed": true
       },
       {
-        "text": "Phase 2. Add --max-iterations to loop commands and default the total attempt budget to 50 when users do not set a loop budget explicitly",
+        "text": "Phase 2. Redesign the top-level and subcommand help text so general runtime config and daemon JSON config usage are explicit in `--help`",
         "completed": true
       },
       {
-        "text": "Phase 3. Preserve immediate Dormammu exit on supervisor approval and prevent resume from running again after the total iteration budget is spent",
+        "text": "Phase 3. Update `README.md` with a clearer command chooser, `show-config` usage, and side-by-side examples for `dormammu.json` and `daemonize.json`",
         "completed": true
       },
       {
-        "text": "Phase 4. Add focused tests and docs for default budget, explicit iteration limits, resume overrides, and early exit on completion",
+        "text": "Phase 4. Update `docs/GUIDE.md` so operators can quickly distinguish runtime config resolution from daemon queue config injection",
         "completed": true
       },
       {
-        "text": "Phase 5. Run automated validation and a local smoke test under ~/samba/test/dormammu-max-iterations-smoke",
+        "text": "Phase 5. Add focused CLI help regression tests and run targeted validation for the new help and documentation surface",
         "completed": true
       }
     ],
-    "synced_at": "2026-04-10T10:43:28+09:00"
+    "synced_at": "2026-04-10T21:27:01+09:00"
   },
-  "next_action": "Prepare a commit for the validated max-iteration loop-control change, or begin the next user-directed scope.",
+  "next_action": "Prepare a commit for the validated CLI help and docs clarification change, or begin the next user-directed scope.",
   "notes": [
-    "Resume from the validated max-iteration loop-control slice unless a new higher-priority roadmap slice overrides it.",
+    "Resume from the validated CLI help and docs clarification slice unless a new higher-priority roadmap slice overrides it.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "Loop commands now support a total iteration budget through --max-iterations and default to 50 total attempts when not configured explicitly.",
-    "Supervisor approval still exits Dormammu immediately instead of consuming the remaining loop budget.",
-    "Validation passed through targeted unit tests covering CLI, loop runner, config, and install behavior.",
-    "Local smoke validation passed in ~/samba/test/dormammu-max-iterations-smoke."
+    "Top-level help now groups commands and explicitly distinguishes general runtime config from daemon queue config.",
+    "README and GUIDE now show show-config earlier and document dormammu.json, DORMAMMU_CONFIG_PATH, and daemonize.json together.",
+    "Validation passed through targeted CLI tests in tests.test_cli."
   ],
   "loop": {
     "status": "idle",
@@ -85,7 +83,7 @@
   "latest_continuation_prompt": null,
   "current_run": null,
   "latest_commit": {
-    "hash": "pending-amend",
-    "summary": "Refine workflow and commit guidance for test authoring"
+    "hash": "pending",
+    "summary": "pending"
   }
 }
