@@ -139,6 +139,8 @@ class CliAdapter:
         on_started: Callable[[AgentRunStarted], None] | None = None,
     ) -> AgentRunResult:
         self.config.logs_dir.mkdir(parents=True, exist_ok=True)
+        effective_workdir = (request.workdir or Path.cwd()).resolve()
+        request = replace(request, workdir=effective_workdir)
 
         run_id = _run_id(request.run_label)
         prompt_path = self.config.logs_dir / f"{run_id}.prompt.txt"
@@ -148,7 +150,7 @@ class CliAdapter:
 
         prompt_path.write_text(request.prompt_text, encoding="utf-8")
 
-        run_cwd = (request.workdir or request.repo_root).resolve()
+        run_cwd = effective_workdir
         capabilities = self.inspect_capabilities(request.cli_path, cwd=run_cwd)
         command_plan = build_command_plan(request, capabilities, prompt_path=prompt_path)
 

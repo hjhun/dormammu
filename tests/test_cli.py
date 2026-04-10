@@ -151,6 +151,47 @@ class CliTests(unittest.TestCase):
             root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
             self.assertIn("active_session_id", root_index)
 
+    def test_init_state_creates_gitignore_entry_for_session_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            gitignore_path = root / ".gitignore"
+            self.assertFalse(gitignore_path.exists())
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = main(["init-state", "--repo-root", str(root)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(gitignore_path.read_text(encoding="utf-8"), ".session\n")
+
+    def test_session_marker_updates_gitignore_without_duplicate_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            gitignore_path = root / ".gitignore"
+            gitignore_path.write_text(".venv/\n", encoding="utf-8")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                first_exit = main(["init-state", "--repo-root", str(root)])
+                second_exit = main(
+                    [
+                        "start-session",
+                        "--repo-root",
+                        str(root),
+                        "--goal",
+                        "Next session",
+                        "--session-id",
+                        "session-two",
+                    ]
+                )
+
+            self.assertEqual(first_exit, 0)
+            self.assertEqual(second_exit, 0)
+            self.assertEqual(
+                gitignore_path.read_text(encoding="utf-8"),
+                ".venv/\n.session\n",
+            )
+
     def test_init_state_sets_active_agent_cli_from_highest_priority_available_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)
@@ -411,6 +452,96 @@ class CliTests(unittest.TestCase):
                 workflow_state["latest_run"]["artifacts"]["stdout"],
             )
 
+    def test_run_creates_repo_session_marker_and_reuses_it_on_next_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+
+            first_stdout = io.StringIO()
+            with contextlib.redirect_stdout(first_stdout):
+                first_exit = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                    ]
+                )
+
+            self.assertEqual(first_exit, 0)
+            marker_path = root / ".session"
+            self.assertTrue(marker_path.exists())
+            session_id = marker_path.read_text(encoding="utf-8").strip()
+            self.assertTrue(session_id)
+
+            (root / ".attempt-count").unlink()
+            (root / "done.txt").unlink()
+            second_stdout = io.StringIO()
+            with contextlib.redirect_stdout(second_stdout):
+                second_exit = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file again.",
+                    ]
+                )
+
+            self.assertEqual(second_exit, 0)
+            second_payload = json.loads(second_stdout.getvalue())
+            self.assertIn(f".dev/sessions/{session_id}", second_payload["report_path"])
+            self.assertEqual(marker_path.read_text(encoding="utf-8").strip(), session_id)
+
+    def test_run_starts_a_new_session_when_marker_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(
+                    [
+                        "start-session",
+                        "--repo-root",
+                        str(root),
+                        "--goal",
+                        "Existing session",
+                        "--session-id",
+                        "existing-session",
+                        "--roadmap-phase",
+                        "phase_4",
+                    ]
+                )
+
+            (root / ".session").unlink()
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            session_id = (root / ".session").read_text(encoding="utf-8").strip()
+            self.assertNotEqual(session_id, "existing-session")
+            self.assertIn(f".dev/sessions/{session_id}", payload["report_path"])
+
     def test_resume_can_target_a_saved_session_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -486,6 +617,67 @@ class CliTests(unittest.TestCase):
             resume_payload = json.loads(resume_stdout.getvalue())
             self.assertEqual(resume_payload["status"], "completed")
             self.assertTrue((root / "done.txt").exists())
+
+    def test_resume_uses_repo_session_marker_before_active_root_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            first_stdout = io.StringIO()
+            with contextlib.redirect_stdout(first_stdout):
+                first_exit = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Create the required marker file.",
+                        "--max-retries",
+                        "0",
+                        "--required-path",
+                        "done.txt",
+                    ]
+                )
+
+            self.assertEqual(first_exit, 1)
+            marked_session_id = (root / ".session").read_text(encoding="utf-8").strip()
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(
+                    [
+                        "start-session",
+                        "--repo-root",
+                        str(root),
+                        "--goal",
+                        "Different active session",
+                        "--session-id",
+                        "session-b",
+                        "--roadmap-phase",
+                        "phase_7",
+                    ]
+                )
+
+            (root / ".session").write_text(f"{marked_session_id}\n", encoding="utf-8")
+            resume_stdout = io.StringIO()
+            with contextlib.redirect_stdout(resume_stdout):
+                resume_exit = main(
+                    [
+                        "resume",
+                        "--repo-root",
+                        str(root),
+                        "--max-retries",
+                        "1",
+                    ]
+                )
+
+            self.assertEqual(resume_exit, 0)
+            resume_payload = json.loads(resume_stdout.getvalue())
+            self.assertEqual(resume_payload["status"], "completed")
+            self.assertTrue((root / "done.txt").exists())
+            self.assertEqual((root / ".session").read_text(encoding="utf-8").strip(), marked_session_id)
 
     def test_run_once_executes_external_cli_and_prints_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

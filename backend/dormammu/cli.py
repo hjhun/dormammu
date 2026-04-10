@@ -445,8 +445,11 @@ def _load_state_scope(
     config = _load_config(repo_root)
     resolved_session_id = session_id
     if resolved_session_id is None and prefer_active_session:
+        marker_session_id = _read_session_marker(config.repo_root)
+        if marker_session_id is not None:
+            resolved_session_id = marker_session_id
         session_path = config.base_dev_dir / "session.json"
-        if session_path.exists():
+        if resolved_session_id is None and session_path.exists():
             try:
                 payload = json.loads(session_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
@@ -460,6 +463,113 @@ def _load_state_scope(
         config = config.with_overrides(dev_dir=repository.dev_dir, logs_dir=repository.logs_dir)
         repository = StateRepository(config, session_id=resolved_session_id)
     return config, repository
+
+
+def _session_marker_path(repo_root: Path) -> Path:
+    return repo_root / ".session"
+
+
+def _ensure_gitignore_entry(repo_root: Path, entry: str) -> None:
+    gitignore_path = repo_root / ".gitignore"
+    if gitignore_path.exists():
+        lines = gitignore_path.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = []
+    if entry in lines:
+        return
+
+    if lines:
+        gitignore_path.write_text(
+            "\n".join([*lines, entry]) + "\n",
+            encoding="utf-8",
+        )
+        return
+
+    gitignore_path.write_text(f"{entry}\n", encoding="utf-8")
+
+
+def _read_session_marker(repo_root: Path) -> str | None:
+    marker_path = _session_marker_path(repo_root)
+    if not marker_path.exists():
+        return None
+    value = marker_path.read_text(encoding="utf-8").strip()
+    return value or None
+
+
+def _write_session_marker(repo_root: Path, session_id: str) -> None:
+    _ensure_gitignore_entry(repo_root, ".session")
+    _session_marker_path(repo_root).write_text(f"{session_id}\n", encoding="utf-8")
+
+
+def _active_session_id(repository: StateRepository) -> str:
+    session_state = repository.read_session_state()
+    session_id = session_state.get("session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise RuntimeError("No active session id is available.")
+    return session_id
+
+
+def _scoped_session_repository(
+    config: AppConfig,
+    session_id: str,
+) -> tuple[AppConfig, StateRepository]:
+    session_repository = StateRepository(config, session_id=session_id)
+    scoped_config = config.with_overrides(
+        dev_dir=session_repository.dev_dir,
+        logs_dir=session_repository.logs_dir,
+    )
+    return scoped_config, StateRepository(scoped_config, session_id=session_id)
+
+
+def _ensure_resume_session_scope(
+    config: AppConfig,
+    repository: StateRepository,
+) -> tuple[AppConfig, StateRepository]:
+    if repository.session_id is None:
+        repository.ensure_bootstrap_state()
+        config, repository = _resolve_runtime_session_scope(config, repository)
+    else:
+        StateRepository(config).restore_session(repository.session_id)
+        config, repository = _scoped_session_repository(config, repository.session_id)
+    _write_session_marker(config.repo_root, _active_session_id(repository))
+    return config, repository
+
+
+def _prepare_run_session_scope(
+    config: AppConfig,
+    *,
+    requested_session_id: str | None,
+    goal: str | None,
+    prompt_text: str,
+    roadmap_phases: Sequence[str] | None,
+    default_phase: str,
+) -> tuple[AppConfig, StateRepository]:
+    root_repository = StateRepository(config)
+    active_roadmap_phases = list(roadmap_phases or [default_phase])
+
+    if requested_session_id is None:
+        root_repository.start_new_session(
+            goal=goal,
+            prompt_text=prompt_text,
+            active_roadmap_phase_ids=active_roadmap_phases,
+        )
+        session_id = _active_session_id(root_repository)
+    else:
+        session_repository = StateRepository(config, session_id=requested_session_id)
+        session_repository.ensure_bootstrap_state(
+            goal=goal,
+            prompt_text=prompt_text,
+            active_roadmap_phase_ids=active_roadmap_phases,
+        )
+        root_repository.restore_session(requested_session_id)
+        session_id = requested_session_id
+
+    _write_session_marker(config.repo_root, session_id)
+    return _scoped_session_repository(config, session_id)
+
+
+def _resolve_runtime_workdir(workdir: Path | None) -> Path:
+    return (workdir or Path.cwd()).resolve()
 
 
 def _prompt_with_default(prompt: str, default: str) -> str:
@@ -551,6 +661,7 @@ def _handle_init_state(args: argparse.Namespace) -> int:
         goal=goal,
         active_roadmap_phase_ids=roadmap_phases,
     )
+    _write_session_marker(config.repo_root, _active_session_id(repository))
     payload = artifacts.to_dict()
     payload["active_agent_cli"] = str(detected_cli) if detected_cli is not None else None
     payload["config_file"] = str(config_path) if config_path is not None else None
@@ -580,6 +691,7 @@ def _handle_start_session(args: argparse.Namespace) -> int:
         return 2
 
     payload = artifacts.to_dict()
+    _write_session_marker(config.repo_root, _active_session_id(repository))
     payload["session"] = repository.read_session_state()
     print(json.dumps(payload, indent=2, ensure_ascii=True))
     return 0
@@ -604,6 +716,7 @@ def _handle_restore_session(args: argparse.Namespace) -> int:
         return 2
 
     payload = artifacts.to_dict()
+    _write_session_marker(config.repo_root, _active_session_id(repository))
     payload["session"] = repository.read_session_state()
     print(json.dumps(payload, indent=2, ensure_ascii=True))
     return 0
@@ -699,6 +812,8 @@ def _handle_run_once(args: argparse.Namespace) -> int:
             active_roadmap_phase_ids=roadmap_phases or ["phase_3"],
         )
         config, repository = _resolve_runtime_session_scope(config, repository)
+        _write_session_marker(config.repo_root, _active_session_id(repository))
+        workdir = _resolve_runtime_workdir(args.workdir)
         repository.persist_input_prompt(
             prompt_text=prompt_text,
             source_path=prompt_source_path,
@@ -713,7 +828,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
             repo_root=config.repo_root,
             repository=repository,
             cli_path=agent_cli,
-            workdir=args.workdir,
+            workdir=workdir,
         )
 
         request = AgentRunRequest(
@@ -724,7 +839,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
                 repo_root=config.repo_root,
             ),
             repo_root=config.repo_root,
-            workdir=args.workdir,
+            workdir=workdir,
             input_mode=args.input_mode,
             prompt_flag=args.prompt_flag,
             extra_args=tuple(args.extra_args or ()),
@@ -753,28 +868,31 @@ def _handle_run_once(args: argparse.Namespace) -> int:
 
 
 def _handle_run_loop(args: argparse.Namespace) -> int:
-    config, repository = _load_state_scope(
-        args.repo_root,
-        session_id=args.session_id,
-        prefer_active_session=True,
-    )
+    config = _load_config(args.repo_root)
     config = _with_guidance_overrides(config, args.guidance_files)
-    repository = StateRepository(config, session_id=repository.session_id)
     prompt_text, prompt_source_path = _read_prompt_input(args)
     with _project_log_capture(config.repo_root, "run"):
+        requested_session_id = args.session_id or _read_session_marker(config.repo_root)
         goal, roadmap_phases = _resolve_bootstrap_inputs(
-            repository=repository,
+            repository=(
+                StateRepository(config, session_id=requested_session_id)
+                if requested_session_id is not None
+                else StateRepository(config)
+            ),
             goal=args.goal,
             roadmap_phases=args.roadmap_phases,
             default_phase="phase_4",
             prompt_text_provided=True,
         )
-        repository.ensure_bootstrap_state(
+        config, repository = _prepare_run_session_scope(
+            config,
+            requested_session_id=requested_session_id,
             goal=goal,
             prompt_text=prompt_text,
-            active_roadmap_phase_ids=roadmap_phases or ["phase_4"],
+            roadmap_phases=roadmap_phases,
+            default_phase="phase_4",
         )
-        config, repository = _resolve_runtime_session_scope(config, repository)
+        workdir = _resolve_runtime_workdir(args.workdir)
         repository.persist_input_prompt(
             prompt_text=prompt_text,
             source_path=prompt_source_path,
@@ -797,7 +915,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
             repo_root=config.repo_root,
             repository=repository,
             cli_path=agent_cli,
-            workdir=args.workdir,
+            workdir=workdir,
         )
 
         request = LoopRunRequest(
@@ -808,7 +926,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
                 repo_root=config.repo_root,
             ),
             repo_root=config.repo_root,
-            workdir=args.workdir,
+            workdir=workdir,
             input_mode=args.input_mode,
             prompt_flag=args.prompt_flag,
             extra_args=tuple(args.extra_args or ()),
@@ -838,18 +956,18 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
     config = _with_guidance_overrides(config, args.guidance_files)
     repository = StateRepository(config, session_id=repository.session_id)
     with _project_log_capture(config.repo_root, "resume"):
-        repository.ensure_bootstrap_state()
-        config, repository = _resolve_runtime_session_scope(config, repository)
+        config, repository = _ensure_resume_session_scope(config, repository)
 
         loop_state = repository.read_workflow_state().get("loop", {})
         cli_path_text = loop_state.get("request", {}).get("cli_path")
+        workdir_text = loop_state.get("request", {}).get("workdir")
         if isinstance(cli_path_text, str) and cli_path_text.strip():
             _emit_runtime_banner(
                 command_name="resume",
                 repo_root=config.repo_root,
                 repository=repository,
                 cli_path=Path(cli_path_text),
-                workdir=None,
+                workdir=Path(workdir_text) if isinstance(workdir_text, str) and workdir_text.strip() else None,
             )
 
         try:
@@ -875,7 +993,7 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
 
 def _handle_inspect_cli(args: argparse.Namespace) -> int:
     config, _ = _load_state_scope(args.repo_root)
-    workdir = (args.workdir or config.repo_root).resolve()
+    workdir = _resolve_runtime_workdir(args.workdir)
     try:
         agent_cli = _resolve_agent_cli(config, args.agent_cli)
     except ValueError as exc:

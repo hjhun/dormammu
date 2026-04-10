@@ -182,6 +182,33 @@ class CliAdapterTests(unittest.TestCase):
             self.assertIn("VERBOSE::yes", result.stdout_path.read_text(encoding="utf-8"))
             self.assertIn("TIMEOUT::1200", result.stdout_path.read_text(encoding="utf-8"))
 
+    def test_run_once_defaults_workdir_to_current_directory_when_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cline_cli(root)
+            subdir = root / "workspace" / "feature"
+            subdir.mkdir(parents=True, exist_ok=True)
+
+            config = AppConfig.load(repo_root=root)
+            with contextlib.chdir(subdir):
+                result = CliAdapter(config).run_once(
+                    AgentRunRequest(
+                        cli_path=fake_cli,
+                        prompt_text="Summarize the repository.",
+                        repo_root=root,
+                        run_label="cwd-default",
+                    )
+                )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.workdir, subdir)
+            self.assertEqual(
+                list(result.command[:3]),
+                [str(fake_cli), "--cwd", str(subdir)],
+            )
+            self.assertIn(f"CWD::{subdir}", result.stdout_path.read_text(encoding="utf-8"))
+
     def test_run_once_applies_default_no_approval_mode_for_claude(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

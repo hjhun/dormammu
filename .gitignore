@@ -8,3 +8,4 @@ dist/
 .ruff_cache/
 frontend/dist/
 .dev/
+.session
