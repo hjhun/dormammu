@@ -5,8 +5,8 @@
 - Goal: Write daemonize debug progress logs to a progress directory beside the
   configured result directory and reset the log for each new prompt session.
 - Prompt-driven scope: Update `daemonize --debug` so it writes
-  `DORMAMMU.log` to `<result_path>/../progress`, truncates it on each new
-  session, and keeps regression coverage plus docs aligned.
+  `<prompt>_progress.log` to `<result_path>/../progress`, keeps one log per
+  prompt, and keeps regression coverage plus docs aligned.
 - Active roadmap focus:
 - Phase 5. CLI Operator Experience and Progress Visibility
 - Current workflow phase: commit
@@ -21,13 +21,15 @@
 
 - `daemonize --debug` now routes stderr mirroring through a session-scoped log
   stream instead of the repository-root log capture path.
-- Each daemon prompt session recreates
-  `<result_path>/../progress/DORMAMMU.log` before writing fresh progress.
+- Each daemon prompt session recreates its own
+  `<result_path>/../progress/<prompt>_progress.log` before writing fresh
+  progress.
 
 ## Progress Notes
 
 - Added regression coverage for the daemon progress-log location and reset
-  behavior, plus kept operator docs in English and Korean in sync.
+  behavior, including checks that the prompt-specific file is actually written,
+  plus kept operator docs in English and Korean in sync.
 - Validation passed with `python3 -m unittest tests.test_daemon tests.test_cli`.
 
 ## Risks And Watchpoints

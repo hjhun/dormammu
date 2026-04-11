@@ -266,8 +266,9 @@ dormammu daemonize --repo-root . --config daemonize.json
 
 `run`, `run-once`, `resume`은 `--debug`와 함께 실행할 때만 저장소 루트에
 `DORMAMMU.log`를 남깁니다. 반면 `daemonize --debug`는
-`<result_path>/../progress/DORMAMMU.log`에 기록하고, 새 프롬프트 세션이
-시작될 때마다 파일을 다시 만들어 처음부터 stderr 진행 로그를 남깁니다.
+`<result_path>/../progress/<prompt>_progress.log`에 기록하고, 새 프롬프트
+세션이 시작될 때마다 파일을 다시 만들어 처음부터 stderr 진행 로그를
+남깁니다.
 
 ## Guidance 파일 동작 방식
 

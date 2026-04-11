@@ -496,7 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
     daemonize.add_argument(
         "--debug",
         action="store_true",
-        help="Mirror daemon stderr into <result_path>/../progress/DORMAMMU.log and reset it for each new prompt session.",
+        help="Mirror daemon stderr into <result_path>/../progress/<prompt>_progress.log and reset it for each new prompt session.",
     )
     daemonize.set_defaults(handler=_handle_daemonize)
 

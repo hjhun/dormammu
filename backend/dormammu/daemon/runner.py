@@ -202,7 +202,7 @@ class DaemonRunner:
 
     def _process_prompt(self, prompt_path: Path, *, watcher_backend: str) -> DaemonPromptResult:
         if isinstance(self.progress_stream, SessionProgressLogStream):
-            log_path = self._session_progress_log_path()
+            log_path = self._session_progress_log_path(prompt_path)
             self.progress_stream.reset_session_log(log_path)
             for line in self._startup_banner_lines(watcher_backend=watcher_backend):
                 self._log(line)
@@ -385,5 +385,5 @@ class DaemonRunner:
     def _result_path_for_prompt(self, prompt_path: Path) -> Path:
         return self.daemon_config.result_path / f"{prompt_path.stem}_RESULT.md"
 
-    def _session_progress_log_path(self) -> Path:
-        return self.daemon_config.result_path.parent / "progress" / "DORMAMMU.log"
+    def _session_progress_log_path(self, prompt_path: Path) -> Path:
+        return self.daemon_config.result_path.parent / "progress" / f"{prompt_path.stem}_progress.log"

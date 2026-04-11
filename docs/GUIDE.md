@@ -318,8 +318,9 @@ The most important files are:
 
 `run`, `run-once`, and `resume` write `DORMAMMU.log` at the repository root
 only when started with `--debug`. `daemonize --debug` instead writes
-`<result_path>/../progress/DORMAMMU.log`, recreates that file for each new
-prompt session, and mirrors daemon stderr there while the session runs.
+`<result_path>/../progress/<prompt>_progress.log`, recreates that file for
+each new prompt session, and mirrors daemon stderr there while the session
+runs.
 
 ## Guidance File Behavior
 

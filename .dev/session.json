@@ -1,7 +1,7 @@
 {
   "session_id": "bootstrap-20260407-235000-kst",
   "created_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-11T20:22:10+09:00",
+  "updated_at": "2026-04-11T20:56:10+09:00",
   "run_type": "bootstrap",
   "status": "active",
   "state_schema_version": 7,
@@ -9,15 +9,15 @@
   "active_roadmap_phase_ids": [
     "phase_5"
   ],
-  "resume_token": "commit:daemon-progress-log-reset",
+  "resume_token": "commit:daemon-prompt-progress-log",
   "last_safe_checkpoint": {
     "phase": "final_verification",
-    "timestamp": "2026-04-11T20:22:10+09:00",
-    "description": "Validated daemonize progress-log relocation, per-session reset behavior, and the updated operator docs."
+    "timestamp": "2026-04-11T20:56:10+09:00",
+    "description": "Validated prompt-specific daemon progress logs, per-prompt reset behavior, and the updated operator docs."
   },
   "bootstrap": {
     "goal": "Write daemonize debug progress logs to a progress directory beside the configured result directory and reset the log for each new prompt session.",
-    "captured_at": "2026-04-11T20:22:10+09:00",
+    "captured_at": "2026-04-11T20:56:10+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -30,7 +30,7 @@
   },
   "task_sync": {
     "source": ".dev/PLAN.md",
-    "resume_checkpoint": "Implementation and targeted validation are complete. Resume from commit preparation unless a follow-up changes daemon log placement or rotation rules.",
+    "resume_checkpoint": "Implementation and targeted validation are complete. Resume from commit preparation unless a follow-up changes prompt-specific daemon log placement or rotation rules.",
     "total_tasks": 3,
     "completed_tasks": 3,
     "pending_tasks": 0,
@@ -38,11 +38,11 @@
     "next_pending_task": null,
     "items": [
       {
-        "text": "Phase 1. Route `daemonize --debug` progress logs to `<result_path>/../progress/DORMAMMU.log`",
+        "text": "Phase 1. Route `daemonize --debug` progress logs to `<result_path>/../progress/<prompt>_progress.log`",
         "completed": true
       },
       {
-        "text": "Phase 2. Reset the daemon progress log whenever a new prompt session starts",
+        "text": "Phase 2. Reset each prompt-specific progress log whenever its prompt session starts",
         "completed": true
       },
       {
@@ -50,13 +50,13 @@
         "completed": true
       }
     ],
-    "synced_at": "2026-04-11T20:22:10+09:00"
+    "synced_at": "2026-04-11T20:56:10+09:00"
   },
-  "next_action": "Await direction on whether to prepare a commit for the daemon progress-log relocation and reset behavior.",
+  "next_action": "Await direction on whether to prepare a commit for the prompt-specific daemon progress-log naming change.",
   "notes": [
     "Resume from commit preparation unless a higher-priority daemon logging change is requested.",
-    "Daemonize debug logging now writes to <result_path>/../progress/DORMAMMU.log instead of the repository root.",
-    "Each daemon prompt session recreates the progress log before writing fresh stderr progress.",
+    "Daemonize debug logging now writes to <result_path>/../progress/<prompt>_progress.log instead of a shared progress filename.",
+    "Each daemon prompt session recreates its own prompt-specific progress log before writing fresh stderr progress.",
     "Validation passed for tests.test_daemon and tests.test_cli."
   ],
   "loop": {

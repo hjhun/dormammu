@@ -187,7 +187,7 @@ queue presets:
 - `.dev/logs/`: prompt, stdout, stderr, and metadata artifacts
 - `DORMAMMU.log`: project-level execution log for `run`, `run-once`, and
   `resume` when started with `--debug`
-- `<result_path>/../progress/DORMAMMU.log`: daemon progress log for
+- `<result_path>/../progress/<prompt>_progress.log`: daemon progress log for
   `daemonize --debug`, recreated for each new prompt session
 
 ## Common Usage Patterns
