@@ -258,6 +258,35 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertTrue((root / "done.txt").exists())
             self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "2")
 
+    def test_run_completes_when_agent_marks_active_root_plan_mirror(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(
+                root,
+                success_attempt=1,
+                plan_completion_attempt=1,
+                mark_root_plan=True,
+            )
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file and finish the plan.",
+                    repo_root=root,
+                    run_label="root-plan-mirror-completion",
+                    max_retries=3,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.attempts_completed, 1)
+            self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "1")
+
     def test_failed_final_verification_sets_resume_phase_to_develop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -468,6 +497,7 @@ class LoopRunnerTests(unittest.TestCase):
         success_attempt: int,
         plan_completion_attempt: int | None = None,
         name: str = "fake-loop-agent",
+        mark_root_plan: bool = False,
     ) -> Path:
         script = root / name
         effective_plan_completion_attempt = (
@@ -483,11 +513,23 @@ class LoopRunnerTests(unittest.TestCase):
                 ROOT = Path({str(root)!r})
                 SUCCESS_ATTEMPT = {success_attempt}
                 PLAN_COMPLETION_ATTEMPT = {effective_plan_completion_attempt}
+                MARK_ROOT_PLAN = {mark_root_plan!r}
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
                 SESSION_PATH = ROOT / ".dev" / "session.json"
 
                 def mark_plan_complete() -> None:
+                    if MARK_ROOT_PLAN:
+                        plan_path = ROOT / ".dev" / "PLAN.md"
+                        if not plan_path.exists():
+                            return
+                        lines = plan_path.read_text(encoding="utf-8").splitlines()
+                        rewritten = [
+                            line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                            for line in lines
+                        ]
+                        plan_path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+                        return
                     if not SESSION_PATH.exists():
                         return
                     import json

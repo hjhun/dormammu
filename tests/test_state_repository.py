@@ -151,7 +151,8 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(current_session["run_type"], "session")
             root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
             self.assertEqual(root_index["active_session_id"], "phase7-multi-session")
-            self.assertFalse((root / ".dev" / "DASHBOARD.md").exists())
+            self.assertTrue((root / ".dev" / "DASHBOARD.md").exists())
+            self.assertTrue((root / ".dev" / "PLAN.md").exists())
 
             archived_dir = root / ".dev" / "sessions" / original_session
             self.assertTrue((archived_dir / "session.json").exists())
@@ -216,6 +217,35 @@ class StateRepositoryTests(unittest.TestCase):
             root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
             self.assertEqual(root_index["active_session_id"], original_session)
             self.assertFalse((root / ".dev" / "supervisor_report.md").exists())
+
+    def test_sync_operator_state_imports_newer_active_root_plan_mirror(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Mirror root PLAN state")
+
+            session_id = repository.read_session_state()["session_id"]
+            session_plan = root / ".dev" / "sessions" / session_id / "PLAN.md"
+            root_plan = root / ".dev" / "PLAN.md"
+            self.assertTrue(root_plan.exists())
+
+            root_plan.write_text(
+                root_plan.read_text(encoding="utf-8").replace("- [ ] ", "- [O] "),
+                encoding="utf-8",
+            )
+            session_mtime_ns = session_plan.stat().st_mtime_ns
+            bumped_mtime = (session_mtime_ns + 5_000_000) / 1_000_000_000
+            os.utime(root_plan, (bumped_mtime, bumped_mtime))
+
+            repository.sync_operator_state()
+
+            self.assertEqual(root_plan.read_text(encoding="utf-8"), session_plan.read_text(encoding="utf-8"))
+            task_sync = repository.read_session_state()["task_sync"]
+            self.assertTrue(task_sync["all_completed"])
+            self.assertEqual(task_sync["pending_tasks"], 0)
 
     def test_session_scoped_bootstrap_keeps_active_root_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

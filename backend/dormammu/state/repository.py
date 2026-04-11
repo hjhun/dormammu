@@ -71,6 +71,10 @@ class StateRepository:
         "supervisor_report.md",
         "continuation_prompt.txt",
     )
+    ROOT_OPERATOR_MIRROR_FILENAMES = (
+        "DASHBOARD.md",
+        "PLAN.md",
+    )
 
     def __init__(self, config: AppConfig, session_id: str | None = None) -> None:
         self.config = config
@@ -384,6 +388,7 @@ class StateRepository:
         if self.session_id is None:
             self._active_session_repository().sync_operator_state(timestamp=timestamp)
             return
+        self._sync_active_root_operator_mirrors_into_session()
         sync_time = timestamp or _iso_now()
         self._sync_operator_state(
             session_path=self.state_file("session.json"),
@@ -717,6 +722,7 @@ class StateRepository:
         active_session_id = self._read_active_session_id()
         if active_session_id != self.session_id:
             return
+        self._sync_active_root_operator_mirrors_into_session()
         self._write_root_index_for_session(
             session_repository=self,
             timestamp=timestamp or _iso_now(),
@@ -804,6 +810,43 @@ class StateRepository:
         root_workflow["current_session"] = workflow_defaults["current_session"]
         root_workflow["sessions"] = self.list_sessions()
         self._write_json(self.base_dev_dir / "workflow_state.json", root_workflow)
+        session_repository._sync_root_operator_mirrors()
+
+    def _sync_root_operator_mirrors(self) -> None:
+        if self.session_id is None:
+            return
+        if self._read_active_session_id() != self.session_id:
+            return
+        self.base_dev_dir.mkdir(parents=True, exist_ok=True)
+        for filename in self.ROOT_OPERATOR_MIRROR_FILENAMES:
+            source = self.state_file(filename)
+            target = self.base_dev_dir / filename
+            if source.exists():
+                shutil.copy2(source, target)
+            elif target.exists():
+                target.unlink()
+
+    def _sync_active_root_operator_mirrors_into_session(self) -> None:
+        if self.session_id is None:
+            return
+        if self._read_active_session_id() != self.session_id:
+            return
+        for filename in self.ROOT_OPERATOR_MIRROR_FILENAMES:
+            root_path = self.base_dev_dir / filename
+            session_path = self.state_file(filename)
+            if not root_path.exists():
+                continue
+            if not session_path.exists():
+                shutil.copy2(root_path, session_path)
+                continue
+            root_stat = root_path.stat()
+            session_stat = session_path.stat()
+            if root_stat.st_mtime_ns <= session_stat.st_mtime_ns:
+                continue
+            root_text = root_path.read_text(encoding="utf-8")
+            session_text = session_path.read_text(encoding="utf-8")
+            if root_text != session_text:
+                shutil.copy2(root_path, session_path)
 
     def _copy_state_snapshot(self, source_dir: Path, target_dir: Path) -> None:
         target_dir.mkdir(parents=True, exist_ok=True)

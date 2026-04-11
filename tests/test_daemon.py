@@ -117,6 +117,29 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIn("Supervisor verdict: `approved`", result_text)
             self.assertFalse(prompt_path.exists())
 
+    def test_run_pending_once_completes_when_agent_marks_active_root_plan_mirror(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            loop_cli = self._write_loop_cli(root, success_attempt=1, mark_root_plan=True)
+            self._write_active_cli_config(root, loop_cli)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(self._write_daemon_config(root), app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("Finish the plan from the active root mirror\n", encoding="utf-8")
+
+            processed = DaemonRunner(app_config, daemon_config).run_pending_once(watcher_backend="polling")
+
+            self.assertEqual(processed, 1)
+            result_text = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
+            self.assertIn("Status: `completed`", result_text)
+            self.assertIn("PLAN complete: `yes`", result_text)
+            self.assertIn("Supervisor verdict: `approved`", result_text)
+            self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "1")
+            self.assertFalse(prompt_path.exists())
+
     def test_run_pending_once_uses_active_agent_cli_from_dormammu_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -339,6 +362,7 @@ class DaemonRunnerTests(unittest.TestCase):
         success_attempt: int,
         plan_completion_attempt: int | None = None,
         name: str = "fake-loop-agent",
+        mark_root_plan: bool = False,
     ) -> Path:
         script = root / name
         effective_plan_completion_attempt = success_attempt if plan_completion_attempt is None else plan_completion_attempt
@@ -354,12 +378,24 @@ class DaemonRunnerTests(unittest.TestCase):
                 ROOT = Path({str(root)!r})
                 SUCCESS_ATTEMPT = {success_attempt}
                 PLAN_COMPLETION_ATTEMPT = {effective_plan_completion_attempt}
+                MARK_ROOT_PLAN = {mark_root_plan!r}
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
                 SESSION_PATH = ROOT / ".dev" / "session.json"
                 MARKER_PATH = ROOT / {marker_path.name!r}
 
                 def mark_plan_complete() -> None:
+                    if MARK_ROOT_PLAN:
+                        plan_path = ROOT / ".dev" / "PLAN.md"
+                        if not plan_path.exists():
+                            return
+                        lines = plan_path.read_text(encoding="utf-8").splitlines()
+                        rewritten = [
+                            line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                            for line in lines
+                        ]
+                        plan_path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+                        return
                     if not SESSION_PATH.exists():
                         return
                     payload = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
