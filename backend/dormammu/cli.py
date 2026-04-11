@@ -12,7 +12,7 @@ from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.agent.models import AgentRunStarted
 from dormammu.config import AppConfig, detect_available_agent_cli, write_active_agent_cli_config
-from dormammu.daemon import DaemonRunner, load_daemon_config
+from dormammu.daemon import DaemonRunner, SessionProgressLogStream, load_daemon_config
 from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt, resolve_guidance_files
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
@@ -496,7 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
     daemonize.add_argument(
         "--debug",
         action="store_true",
-        help="Mirror command stderr into a repository-root DORMAMMU.log file.",
+        help="Mirror daemon stderr into <result_path>/../progress/DORMAMMU.log and reset it for each new prompt session.",
     )
     daemonize.set_defaults(handler=_handle_daemonize)
 
@@ -1123,9 +1123,13 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    with _project_log_capture(config.repo_root, "daemonize", enabled=args.debug):
+    progress_stream: TextIO = sys.stderr
+    with contextlib.ExitStack() as stack:
+        if args.debug:
+            progress_stream = SessionProgressLogStream(sys.stderr)
+            stack.enter_context(contextlib.redirect_stderr(progress_stream))
         try:
-            return DaemonRunner(config, daemon_config).run_forever()
+            return DaemonRunner(config, daemon_config, progress_stream=progress_stream).run_forever()
         except KeyboardInterrupt:
             print("daemonize interrupted", file=sys.stderr)
             return 130

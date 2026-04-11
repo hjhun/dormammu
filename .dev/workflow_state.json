@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 7,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-11T10:25:53+09:00",
+  "updated_at": "2026-04-11T20:22:10+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -44,7 +44,7 @@
   },
   "roadmap": {
     "active_phase_ids": [
-      "phase_4"
+      "phase_5"
     ],
     "priority_order": [
       "phase_1",
@@ -60,11 +60,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "The supervisor now runs a final verification gate, emits a recommended resume phase on failure, and the supporting workflow guidance plus regression coverage are aligned."
+    "reason": "Daemonize debug runs now mirror stderr into <result_path>/../progress/DORMAMMU.log, reset that file on each new prompt session, and keep regression coverage plus docs aligned."
   },
   "bootstrap": {
-    "goal": "Extend the supervisor workflow with a final verification gate that can route failed work back through development.",
-    "captured_at": "2026-04-11T10:25:53+09:00",
+    "goal": "Write daemonize debug progress logs to a progress directory beside the configured result directory and reset the log for each new prompt session.",
+    "captured_at": "2026-04-11T20:22:10+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -87,7 +87,7 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Implementation and targeted validation are complete. Resume from commit preparation unless a follow-up asks to deepen the final verification mechanism.",
+      "resume_checkpoint": "Implementation and targeted validation are complete. Resume from commit preparation unless a follow-up changes daemon log placement or rotation rules.",
       "total_tasks": 3,
       "completed_tasks": 3,
       "pending_tasks": 0,
@@ -95,22 +95,22 @@
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Add a final verification stage to the supervisor workflow and state model before commit preparation",
+          "text": "Phase 1. Route `daemonize --debug` progress logs to `<result_path>/../progress/DORMAMMU.log`",
           "completed": true
         },
         {
-          "text": "Phase 2. Teach supervisor reports and continuation prompts to identify the root cause of final verification failures and recommend the return phase",
+          "text": "Phase 2. Reset the daemon progress log whenever a new prompt session starts",
           "completed": true
         },
         {
-          "text": "Phase 3. Update workflow guidance plus regression coverage for the new final verification loop",
+          "text": "Phase 3. Lock the new daemon logging behavior with regression tests and documentation updates",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-11T10:25:53+09:00"
+      "synced_at": "2026-04-11T20:22:10+09:00"
     }
   },
-  "next_action": "Await direction on whether to prepare a commit for the supervisor final-verification enhancement.",
+  "next_action": "Await direction on whether to prepare a commit for the daemon progress-log relocation and reset behavior.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -119,9 +119,9 @@
     "PLAN.md should list prompt-derived development items in `[ ] Phase N. <title>` format.",
     "The installed guidance bundle and packaged asset copy should stay synchronized.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "Final verification now sits between `test_and_review` and `commit` in the allowed workflow sequence.",
-    "Supervisor rework reports now recommend the phase that should resume next, defaulting implementation problems back to `develop`.",
-    "Validation completed successfully for tests.test_supervisor, tests.test_loop_runner, and tests.test_state_repository."
+    "Daemonize debug logging now writes to <result_path>/../progress/DORMAMMU.log instead of the repository root log path.",
+    "Each daemon prompt session truncates and recreates the progress log before emitting fresh loop output.",
+    "Validation completed successfully for tests.test_daemon and tests.test_cli."
   ],
   "loop": {
     "status": "idle",
@@ -138,6 +138,6 @@
   "current_run": null,
   "latest_commit": {
     "hash": "pending",
-    "summary": "Enhance supervisor final verification"
+    "summary": "Adjust daemonize debug progress logging"
   }
 }

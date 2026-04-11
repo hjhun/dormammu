@@ -2,40 +2,39 @@
 
 ## Actual Progress
 
-- Goal: Extend the supervisor workflow with a final verification gate that can
-  route failed work back through development.
-- Prompt-driven scope: Add a `final_verification` workflow stage, make the
-  supervisor report the root cause plus recommended return phase, and align
-  continuation behavior plus workflow guidance.
+- Goal: Write daemonize debug progress logs to a progress directory beside the
+  configured result directory and reset the log for each new prompt session.
+- Prompt-driven scope: Update `daemonize --debug` so it writes
+  `DORMAMMU.log` to `<result_path>/../progress`, truncates it on each new
+  session, and keeps regression coverage plus docs aligned.
 - Active roadmap focus:
-- Phase 4. Supervisor Validation, Continuation Loop, and Resume
+- Phase 5. CLI Operator Experience and Progress Visibility
 - Current workflow phase: commit
 - Last completed workflow phase: final_verification
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: Final verification is now part of the supervisor flow. Resume
-  from commit preparation unless a follow-up expands the verification model.
+- Resume point: The daemonize progress-log change is implemented and validated.
+  Resume from commit preparation unless a follow-up changes the log layout
+  again.
 
 ## In Progress
 
-- Runtime supervisor validation now emits an explicit
-  `final-operation-verification` check before approval.
-- Failed final verification now recommends a return phase, defaults code-fix
-  cases back to `develop`, and feeds that guidance into continuation prompts
-  and loop state.
+- `daemonize --debug` now routes stderr mirroring through a session-scoped log
+  stream instead of the repository-root log capture path.
+- Each daemon prompt session recreates
+  `<result_path>/../progress/DORMAMMU.log` before writing fresh progress.
 
 ## Progress Notes
 
-- Workflow/state guidance now includes `final_verification` between
-  `test_and_review` and `commit` in the repository bundle and packaged assets.
-- `workflow_state.json` now stores schema version `7` and includes
-  `final_verification` in the allowed workflow sequence.
-- Validation passed with
-  `python3 -m unittest tests.test_supervisor tests.test_loop_runner tests.test_state_repository`.
+- Added regression coverage for the daemon progress-log location and reset
+  behavior, plus kept operator docs in English and Korean in sync.
+- Validation passed with `python3 -m unittest tests.test_daemon tests.test_cli`.
 
 ## Risks And Watchpoints
 
-- The new final verification gate is still evidence-driven; it does not yet run
-  an arbitrary external verification command by itself.
-- Older sessions created before schema version `7` may still show pre-final-
-  verification phase histories until they are refreshed.
+- The daemon debug log path is anchored from `result_path`, so custom layouts
+  that place prompts and results in unrelated trees will still use the result
+  directory as the reference point.
+- `daemonize` startup banners written before the first prompt arrives still go
+  only to stderr because the session log is created when the prompt session
+  starts.

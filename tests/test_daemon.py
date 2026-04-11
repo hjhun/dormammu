@@ -20,7 +20,7 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.config import AppConfig
 from dormammu.daemon.config import load_daemon_config
-from dormammu.daemon.runner import DaemonRunner
+from dormammu.daemon.runner import DaemonRunner, SessionProgressLogStream
 from dormammu.daemon.watchers import InotifyWatcher
 from dormammu.agent import cli_adapter as cli_adapter_module
 
@@ -224,6 +224,37 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertEqual(processed, 1)
             self.assertIn("Status: `completed`", result_path.read_text(encoding="utf-8"))
             self.assertFalse(prompt_path.exists())
+
+    def test_debug_progress_log_is_written_to_progress_dir_and_resets_for_each_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            loop_cli = self._write_loop_cli(root, success_attempt=1)
+            self._write_active_cli_config(root, loop_cli)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(self._write_daemon_config(root), app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            progress_stream = SessionProgressLogStream(io.StringIO())
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=progress_stream)
+            progress_log = root / "queue" / "progress" / "DORMAMMU.log"
+
+            (daemon_config.prompt_path / "001-first.md").write_text("First prompt\n", encoding="utf-8")
+            self.assertEqual(runner.run_pending_once(watcher_backend="polling"), 1)
+
+            self.assertTrue(progress_log.exists())
+            first_log_text = progress_log.read_text(encoding="utf-8")
+            self.assertIn("progress log:", first_log_text)
+            self.assertIn("daemon prompt detected: 001-first.md", first_log_text)
+            self.assertNotIn("002-second.md", first_log_text)
+
+            (daemon_config.prompt_path / "002-second.md").write_text("Second prompt\n", encoding="utf-8")
+            self.assertEqual(runner.run_pending_once(watcher_backend="polling"), 1)
+
+            second_log_text = progress_log.read_text(encoding="utf-8")
+            self.assertIn("daemon prompt detected: 002-second.md", second_log_text)
+            self.assertNotIn("001-first.md", second_log_text)
+            progress_stream.close_log()
 
     def test_run_pending_once_requires_active_agent_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

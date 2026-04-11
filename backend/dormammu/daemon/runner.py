@@ -23,6 +23,38 @@ DEFAULT_DAEMON_MAX_RETRIES = 49
 _RESULT_STATUS_RE = re.compile(r"^- Status: `([^`]+)`$", re.MULTILINE)
 
 
+class SessionProgressLogStream:
+    def __init__(self, terminal_stream: TextIO) -> None:
+        self._terminal_stream = terminal_stream
+        self._log_stream: TextIO | None = None
+        self.encoding = getattr(terminal_stream, "encoding", "utf-8")
+
+    def reset_session_log(self, log_path: Path) -> None:
+        self.close_log()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._log_stream = log_path.open("w", encoding="utf-8")
+
+    def write(self, data: str) -> int:
+        self._terminal_stream.write(data)
+        if self._log_stream is not None:
+            self._log_stream.write(data)
+        return len(data)
+
+    def flush(self) -> None:
+        self._terminal_stream.flush()
+        if self._log_stream is not None:
+            self._log_stream.flush()
+
+    def isatty(self) -> bool:
+        return bool(getattr(self._terminal_stream, "isatty", lambda: False)())
+
+    def close_log(self) -> None:
+        if self._log_stream is None:
+            return
+        self._log_stream.close()
+        self._log_stream = None
+
+
 class DaemonRunner:
     def __init__(
         self,
@@ -57,6 +89,8 @@ class DaemonRunner:
                     watcher.wait_for_changes()
         finally:
             watcher.close()
+            if isinstance(self.progress_stream, SessionProgressLogStream):
+                self.progress_stream.close_log()
 
     def run_pending_once(self, *, watcher_backend: str | None = None) -> int:
         self.daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
@@ -123,31 +157,34 @@ class DaemonRunner:
         return candidates, retry_after_seconds
 
     def _emit_startup_banner(self, *, watcher_backend: str) -> None:
-        print("=== dormammu daemonize ===", file=self.progress_stream)
-        print(f"repo root: {self.app_config.repo_root.resolve()}", file=self.progress_stream)
-        print(f"daemon config: {self.daemon_config.config_path}", file=self.progress_stream)
-        print(f"prompt path: {self.daemon_config.prompt_path}", file=self.progress_stream)
-        print(f"result path: {self.daemon_config.result_path}", file=self.progress_stream)
-        print(
-            "watcher: "
-            f"{watcher_backend} (requested={self.daemon_config.watch.backend}, "
-            f"poll_interval={self._watcher_poll_interval_seconds(watcher_backend)}s, "
-            f"settle={self.daemon_config.watch.settle_seconds}s)",
-            file=self.progress_stream,
-        )
-        print(
-            "prompt detection: "
-            f"hidden_files={'ignore' if self.daemon_config.queue.ignore_hidden_files else 'include'}, "
-            f"extensions={self._describe_allowed_extensions()}, "
-            "replace_completed_result_on_requeued_prompt=yes, "
-            "order=numeric-prefix -> alpha-prefix -> remaining-name",
-            file=self.progress_stream,
-        )
-        print(
-            "prompt lifecycle: each accepted prompt reuses the dormammu run loop and writes its result only after the loop reaches a terminal outcome",
-            file=self.progress_stream,
-        )
+        for line in self._startup_banner_lines(watcher_backend=watcher_backend):
+            print(line, file=self.progress_stream)
         self.progress_stream.flush()
+
+    def _startup_banner_lines(self, *, watcher_backend: str) -> tuple[str, ...]:
+        return (
+            "=== dormammu daemonize ===",
+            f"repo root: {self.app_config.repo_root.resolve()}",
+            f"daemon config: {self.daemon_config.config_path}",
+            f"prompt path: {self.daemon_config.prompt_path}",
+            f"result path: {self.daemon_config.result_path}",
+            (
+                "watcher: "
+                f"{watcher_backend} (requested={self.daemon_config.watch.backend}, "
+                f"poll_interval={self._watcher_poll_interval_seconds(watcher_backend)}s, "
+                f"settle={self.daemon_config.watch.settle_seconds}s)"
+            ),
+            (
+                "prompt detection: "
+                f"hidden_files={'ignore' if self.daemon_config.queue.ignore_hidden_files else 'include'}, "
+                f"extensions={self._describe_allowed_extensions()}, "
+                "replace_completed_result_on_requeued_prompt=yes, "
+                "order=numeric-prefix -> alpha-prefix -> remaining-name"
+            ),
+            (
+                "prompt lifecycle: each accepted prompt reuses the dormammu run loop and writes its result only after the loop reaches a terminal outcome"
+            ),
+        )
 
     def _watcher_poll_interval_seconds(self, watcher_backend: str) -> int:
         if watcher_backend == "polling":
@@ -164,6 +201,12 @@ class DaemonRunner:
         self.progress_stream.flush()
 
     def _process_prompt(self, prompt_path: Path, *, watcher_backend: str) -> DaemonPromptResult:
+        if isinstance(self.progress_stream, SessionProgressLogStream):
+            log_path = self._session_progress_log_path()
+            self.progress_stream.reset_session_log(log_path)
+            for line in self._startup_banner_lines(watcher_backend=watcher_backend):
+                self._log(line)
+            self._log(f"progress log: {log_path}")
         self._in_progress.add(prompt_path)
         started_at = _iso_now()
         sort_key = prompt_sort_key(prompt_path.name)
@@ -341,3 +384,6 @@ class DaemonRunner:
 
     def _result_path_for_prompt(self, prompt_path: Path) -> Path:
         return self.daemon_config.result_path / f"{prompt_path.stem}_RESULT.md"
+
+    def _session_progress_log_path(self) -> Path:
+        return self.daemon_config.result_path.parent / "progress" / "DORMAMMU.log"

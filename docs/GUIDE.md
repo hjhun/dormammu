@@ -316,9 +316,10 @@ The most important files are:
 - `.dev/session.json`: active session metadata
 - `.dev/logs/`: run artifacts and log files
 
-`DORMAMMU.log` at the repository root is written only when `run`, `run-once`,
-`resume`, or `daemonize` is started with `--debug`. In debug mode it captures
-command-level execution banners and mirrored stderr output.
+`run`, `run-once`, and `resume` write `DORMAMMU.log` at the repository root
+only when started with `--debug`. `daemonize --debug` instead writes
+`<result_path>/../progress/DORMAMMU.log`, recreates that file for each new
+prompt session, and mirrors daemon stderr there while the session runs.
 
 ## Guidance File Behavior
 
