@@ -1637,5 +1637,122 @@ class CliTests(unittest.TestCase):
         return script
 
 
+class SetConfigCliTests(unittest.TestCase):
+    def _seed_repo(self, root: Path) -> None:
+        (root / "AGENTS.md").write_text("marker\n", encoding="utf-8")
+
+    def test_set_config_writes_scalar_and_prints_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(["set-config", "--repo-root", str(root), "active_agent_cli", "/usr/bin/claude"])
+
+            self.assertEqual(exit_code, 0)
+            written_path = Path(stdout.getvalue().strip())
+            payload = json.loads(written_path.read_text())
+            self.assertEqual(payload["active_agent_cli"], "/usr/bin/claude")
+
+    def test_set_config_unset_removes_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            config_path = root / "dormammu.json"
+            config_path.write_text(json.dumps({"active_agent_cli": "/old/cli"}), encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(["set-config", "--repo-root", str(root), "active_agent_cli", "--unset"])
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(config_path.read_text())
+            self.assertNotIn("active_agent_cli", payload)
+
+    def test_set_config_add_appends_to_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "set-config", "--repo-root", str(root),
+                    "token_exhaustion_patterns", "--add", "context window exceeded",
+                ])
+
+            self.assertEqual(exit_code, 0)
+            config_path = Path(stdout.getvalue().strip())
+            payload = json.loads(config_path.read_text())
+            self.assertIn("context window exceeded", payload["token_exhaustion_patterns"])
+
+    def test_set_config_remove_drops_from_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps({"token_exhaustion_patterns": ["usage limit", "quota exceeded"]}),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main([
+                    "set-config", "--repo-root", str(root),
+                    "token_exhaustion_patterns", "--remove", "usage limit",
+                ])
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(config_path.read_text())
+            self.assertNotIn("usage limit", payload["token_exhaustion_patterns"])
+            self.assertIn("quota exceeded", payload["token_exhaustion_patterns"])
+
+    def test_set_config_unknown_key_returns_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = main(["set-config", "--repo-root", str(root), "nonexistent_key", "val"])
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("nonexistent_key", stderr.getvalue())
+
+    def test_set_config_global_scope_writes_to_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir()
+            self._seed_repo(root)
+            home_dir = Path(tmpdir) / "home"
+            env_patch = {**os.environ, "HOME": str(home_dir)}
+
+            with mock.patch.dict(os.environ, env_patch, clear=True):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = main([
+                        "set-config", "--repo-root", str(root),
+                        "active_agent_cli", "/usr/bin/codex", "--global",
+                    ])
+
+            self.assertEqual(exit_code, 0)
+            global_config = home_dir / ".dormammu" / "config"
+            self.assertTrue(global_config.exists())
+            payload = json.loads(global_config.read_text())
+            self.assertEqual(payload["active_agent_cli"], "/usr/bin/codex")
+
+    def test_set_config_help_text_shows_settable_keys(self) -> None:
+        stdout = io.StringIO()
+        with self.assertRaises(SystemExit) as raised, contextlib.redirect_stdout(stdout):
+            build_parser().parse_args(["set-config", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        help_text = stdout.getvalue()
+        self.assertIn("active_agent_cli", help_text)
+        self.assertIn("token_exhaustion_patterns", help_text)
+
+
 if __name__ == "__main__":
     unittest.main()

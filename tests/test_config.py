@@ -13,7 +13,7 @@ BACKEND = ROOT / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-from dormammu.config import AppConfig, discover_repo_root
+from dormammu.config import AppConfig, discover_repo_root, set_config_value
 
 
 class ConfigTests(unittest.TestCase):
@@ -195,6 +195,186 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(config.agents_dir, agents_dir.resolve())
             self.assertEqual(config.default_guidance_files, (agents_dir.resolve() / "AGENTS.md",))
+
+
+class SetConfigValueTests(unittest.TestCase):
+    def _make_config(self, root: Path, home_dir: Path | None = None) -> AppConfig:
+        env: dict[str, str] = {k: v for k, v in os.environ.items()}
+        if home_dir is not None:
+            env["HOME"] = str(home_dir)
+        return AppConfig.load(repo_root=root, env=env)
+
+    # --- scalar key: active_agent_cli ---
+
+    def test_set_active_agent_cli_creates_config_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._make_config(root)
+
+            written = set_config_value(config, "active_agent_cli", value="/usr/bin/claude")
+
+            self.assertEqual(written, root / "dormammu.json")
+            payload = json.loads(written.read_text())
+            self.assertEqual(payload["active_agent_cli"], "/usr/bin/claude")
+
+    def test_set_active_agent_cli_updates_existing_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "dormammu.json"
+            config_path.write_text(json.dumps({"active_agent_cli": "/old/cli"}), encoding="utf-8")
+            config = self._make_config(root)
+
+            set_config_value(config, "active_agent_cli", value="/new/cli")
+
+            payload = json.loads(config_path.read_text())
+            self.assertEqual(payload["active_agent_cli"], "/new/cli")
+
+    def test_unset_active_agent_cli_removes_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "dormammu.json"
+            config_path.write_text(json.dumps({"active_agent_cli": "/usr/bin/claude"}), encoding="utf-8")
+            config = self._make_config(root)
+
+            set_config_value(config, "active_agent_cli", unset=True)
+
+            payload = json.loads(config_path.read_text())
+            self.assertNotIn("active_agent_cli", payload)
+
+    def test_set_active_agent_cli_rejects_add_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._make_config(root)
+
+            with self.assertRaises(ValueError, msg="scalar key should reject --add"):
+                set_config_value(config, "active_agent_cli", add="/usr/bin/claude")
+
+    def test_set_global_scope_writes_to_home_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir()
+            home_dir = Path(tmpdir) / "home"
+            config = self._make_config(root, home_dir=home_dir)
+
+            written = set_config_value(config, "active_agent_cli", value="/usr/bin/codex", global_scope=True)
+
+            self.assertEqual(written, home_dir / ".dormammu" / "config")
+            payload = json.loads(written.read_text())
+            self.assertEqual(payload["active_agent_cli"], "/usr/bin/codex")
+
+    # --- list key: token_exhaustion_patterns ---
+
+    def test_add_token_exhaustion_pattern(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._make_config(root)
+
+            set_config_value(config, "token_exhaustion_patterns", add="context window exceeded")
+
+            payload = json.loads((root / "dormammu.json").read_text())
+            self.assertIn("context window exceeded", payload["token_exhaustion_patterns"])
+
+    def test_add_token_exhaustion_pattern_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps({"token_exhaustion_patterns": ["usage limit"]}), encoding="utf-8"
+            )
+            config = self._make_config(root)
+
+            set_config_value(config, "token_exhaustion_patterns", add="usage limit")
+
+            payload = json.loads(config_path.read_text())
+            self.assertEqual(payload["token_exhaustion_patterns"].count("usage limit"), 1)
+
+    def test_remove_token_exhaustion_pattern(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps({"token_exhaustion_patterns": ["usage limit", "quota exceeded"]}),
+                encoding="utf-8",
+            )
+            config = self._make_config(root)
+
+            set_config_value(config, "token_exhaustion_patterns", remove="usage limit")
+
+            payload = json.loads(config_path.read_text())
+            self.assertNotIn("usage limit", payload["token_exhaustion_patterns"])
+            self.assertIn("quota exceeded", payload["token_exhaustion_patterns"])
+
+    def test_remove_absent_pattern_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps({"token_exhaustion_patterns": ["quota exceeded"]}), encoding="utf-8"
+            )
+            config = self._make_config(root)
+
+            set_config_value(config, "token_exhaustion_patterns", remove="nonexistent pattern")
+
+            payload = json.loads(config_path.read_text())
+            self.assertEqual(payload["token_exhaustion_patterns"], ["quota exceeded"])
+
+    def test_set_list_key_with_json_array_replaces_full_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps({"token_exhaustion_patterns": ["old pattern"]}), encoding="utf-8"
+            )
+            config = self._make_config(root)
+
+            set_config_value(
+                config,
+                "token_exhaustion_patterns",
+                value='["new pattern a", "new pattern b"]',
+            )
+
+            payload = json.loads(config_path.read_text())
+            self.assertEqual(payload["token_exhaustion_patterns"], ["new pattern a", "new pattern b"])
+
+    def test_unset_list_key_removes_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps({"token_exhaustion_patterns": ["usage limit"]}), encoding="utf-8"
+            )
+            config = self._make_config(root)
+
+            set_config_value(config, "token_exhaustion_patterns", unset=True)
+
+            payload = json.loads(config_path.read_text())
+            self.assertNotIn("token_exhaustion_patterns", payload)
+
+    # --- error cases ---
+
+    def test_unknown_key_raises_value_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._make_config(root)
+
+            with self.assertRaises(ValueError, msg="unknown key should raise"):
+                set_config_value(config, "nonexistent_key", value="x")
+
+    def test_no_operation_raises_value_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._make_config(root)
+
+            with self.assertRaises(ValueError):
+                set_config_value(config, "active_agent_cli")
+
+    def test_multiple_operations_raises_value_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._make_config(root)
+
+            with self.assertRaises(ValueError):
+                set_config_value(config, "token_exhaustion_patterns", add="a", remove="b")
 
 
 if __name__ == "__main__":

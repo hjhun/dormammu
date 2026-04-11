@@ -105,6 +105,93 @@ def _load_config_payload(path: Path | None) -> dict[str, Any]:
     return dict(raw_payload)
 
 
+SETTABLE_SCALAR_KEYS: frozenset[str] = frozenset({"active_agent_cli"})
+SETTABLE_LIST_KEYS: frozenset[str] = frozenset({"token_exhaustion_patterns", "fallback_agent_clis"})
+
+
+def _resolve_write_target(config: "AppConfig", *, global_scope: bool) -> Path:
+    """Return the config file path that set_config_value should write to.
+
+    For the project scope (``global_scope=False``):
+    - Prefer an explicitly set config file that is not the global default
+      (e.g. set via ``DORMAMMU_CONFIG_PATH`` or a ``dormammu.json`` in the repo).
+    - Fall back to ``<repo_root>/dormammu.json`` when only the global default
+      config was resolved (or no config exists yet).
+    """
+    if global_scope:
+        path = config.global_home_dir / DEFAULT_GLOBAL_CONFIG_FILENAME
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+    global_default = config.global_home_dir / DEFAULT_GLOBAL_CONFIG_FILENAME
+    if config.config_file is not None and config.config_file != global_default:
+        return config.config_file
+    return config.repo_root / DEFAULT_CONFIG_FILENAME
+
+
+def set_config_value(
+    config: "AppConfig",
+    key: str,
+    *,
+    value: str | None = None,
+    add: str | None = None,
+    remove: str | None = None,
+    unset: bool = False,
+    global_scope: bool = False,
+) -> Path:
+    """Write a single config key mutation and persist to the config file.
+
+    Exactly one of ``value``, ``add``, ``remove``, or ``unset`` must be given.
+    Returns the path of the config file that was written.
+    """
+    if key not in SETTABLE_SCALAR_KEYS and key not in SETTABLE_LIST_KEYS:
+        settable = sorted(SETTABLE_SCALAR_KEYS | SETTABLE_LIST_KEYS)
+        raise ValueError(f"Unknown or non-writable config key: {key!r}. Settable keys: {settable}")
+
+    operations = [v for v in (value, add, remove) if v is not None] + ([True] if unset else [])
+    if len(operations) > 1:
+        raise ValueError("Specify at most one of: value, --add, --remove, --unset")
+    if not operations:
+        raise ValueError("Specify one of: value, --add, --remove, --unset")
+
+    config_path = _resolve_write_target(config, global_scope=global_scope)
+    payload = _load_config_payload(config_path if config_path.exists() else None)
+
+    if key in SETTABLE_SCALAR_KEYS:
+        if add is not None or remove is not None:
+            raise ValueError(f"{key!r} is a scalar key; use a plain value or --unset")
+        if unset:
+            payload.pop(key, None)
+        else:
+            payload[key] = value
+    else:
+        if unset:
+            payload.pop(key, None)
+        elif add is not None:
+            current: list[Any] = list(payload.get(key) or [])
+            if add not in current:
+                current.append(add)
+            payload[key] = current
+        elif remove is not None:
+            current = list(payload.get(key) or [])
+            try:
+                current.remove(remove)
+            except ValueError:
+                pass
+            payload[key] = current
+        else:
+            try:
+                parsed: Any = json.loads(value)  # type: ignore[arg-type]
+            except json.JSONDecodeError:
+                parsed = [value]
+            if not isinstance(parsed, list):
+                raise ValueError(f"{key!r} requires a JSON array when replacing the full value")
+            payload[key] = parsed
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+    return config_path
+
+
 def write_active_agent_cli_config(config: "AppConfig", cli_path: Path) -> Path:
     config_path = config.config_file or (config.global_home_dir / DEFAULT_GLOBAL_CONFIG_FILENAME)
     payload = _load_config_payload(config_path if config_path.exists() else None)

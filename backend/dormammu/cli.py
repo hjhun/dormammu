@@ -11,7 +11,12 @@ from typing import Iterator, Sequence, TextIO
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.agent.models import AgentRunStarted
-from dormammu.config import AppConfig, detect_available_agent_cli, write_active_agent_cli_config
+from dormammu.config import (
+    AppConfig,
+    detect_available_agent_cli,
+    set_config_value,
+    write_active_agent_cli_config,
+)
 from dormammu.daemon import DaemonRunner, SessionProgressLogStream, load_daemon_config
 from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt, resolve_guidance_files
@@ -114,6 +119,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Repeatable Markdown guidance file to use instead of repo autodiscovery when it has content.",
     )
     show_config.set_defaults(handler=_handle_show_config)
+
+    set_config = subparsers.add_parser(
+        "set-config",
+        help="Set a config value in the config file.",
+        description=(
+            "Write a configuration value to the dormammu config file.\n"
+            "Config file resolution order (write target):\n"
+            "  1. <repo-root>/dormammu.json (project-level, default)\n"
+            "  2. ~/.dormammu/config (global, use --global)\n"
+            "\n"
+            "Settable keys:\n"
+            "  Scalar: active_agent_cli\n"
+            "  List:   token_exhaustion_patterns, fallback_agent_clis\n"
+        ),
+        epilog=(
+            "Examples:\n"
+            "  dormammu set-config active_agent_cli /usr/local/bin/claude\n"
+            "  dormammu set-config active_agent_cli --unset\n"
+            "  dormammu set-config token_exhaustion_patterns --add 'context window exceeded'\n"
+            "  dormammu set-config token_exhaustion_patterns --remove 'usage limit'\n"
+            "  dormammu set-config fallback_agent_clis --add gemini\n"
+            "  dormammu set-config active_agent_cli /usr/local/bin/claude --global\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    set_config.add_argument("key", help="Config key to set (e.g. active_agent_cli, token_exhaustion_patterns).")
+    set_config.add_argument(
+        "value",
+        nargs="?",
+        default=None,
+        help="Value to assign. For list keys, accepts a JSON array string to replace the full list.",
+    )
+    set_config.add_argument("--add", metavar="VALUE", default=None, help="Append a value to a list key.")
+    set_config.add_argument("--remove", metavar="VALUE", default=None, help="Remove a value from a list key.")
+    set_config.add_argument("--unset", action="store_true", help="Remove the key from the config file.")
+    set_config.add_argument(
+        "--global",
+        action="store_true",
+        dest="global_scope",
+        help="Write to ~/.dormammu/config instead of the project dormammu.json.",
+    )
+    set_config.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    set_config.set_defaults(handler=_handle_set_config)
 
     init_state = subparsers.add_parser("init-state", help="Create or merge the bootstrap .dev state.")
     init_state.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
@@ -725,6 +773,25 @@ def _resolve_bootstrap_inputs(
 def _handle_show_config(args: argparse.Namespace) -> int:
     config = _with_guidance_overrides(_load_config(args.repo_root), args.guidance_files)
     print(json.dumps(config.to_dict(), indent=2, ensure_ascii=True))
+    return 0
+
+
+def _handle_set_config(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    try:
+        config_path = set_config_value(
+            config,
+            args.key,
+            value=args.value,
+            add=args.add,
+            remove=args.remove,
+            unset=args.unset,
+            global_scope=args.global_scope,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(str(config_path))
     return 0
 
 
