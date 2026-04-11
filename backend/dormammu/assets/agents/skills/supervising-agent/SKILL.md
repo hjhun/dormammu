@@ -21,7 +21,8 @@ Use this skill as the top-level controller for the project. It decides which wor
 4. Test authoring
 5. Building and deploying
 6. Testing and reviewing
-7. Committing
+7. Final verification
+8. Committing
 
 Re-enter earlier phases whenever later work exposes missing design, failed validation, or incomplete planning.
 
@@ -38,10 +39,12 @@ Re-enter earlier phases whenever later work exposes missing design, failed valid
    - test authoring -> unit and integration test code exists for the active scope, plus system tests when explicitly requested
    - build/deploy -> requested artifacts or scripts exist
    - test/review -> executed validation has a clear outcome after development is complete
+   - final verification -> the completed slice passes one last operation-focused supervisor gate before commit preparation
    - commit -> diff scope and validation both support versioning
 6. Do not advance from test authoring to test/review on authored tests alone; require executed evidence.
-7. On interruption, preserve the last safe checkpoint and resume from the earliest uncertain step.
-8. Update `.dev/DASHBOARD.md` with the real current phase, verdict, next action, escalation status, and other live progress context that matters for resuming work.
+7. If final verification fails, identify the cause and route back to development when implementation changes are needed.
+8. On interruption, preserve the last safe checkpoint and resume from the earliest uncertain step.
+9. Update `.dev/DASHBOARD.md` with the real current phase, verdict, next action, escalation status, and other live progress context that matters for resuming work.
 
 ## Supervisor Rules
 

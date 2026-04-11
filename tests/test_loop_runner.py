@@ -258,6 +258,40 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertTrue((root / "done.txt").exists())
             self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "2")
 
+    def test_failed_final_verification_sets_resume_phase_to_develop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1, plan_completion_attempt=1)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="final-verification-failure",
+                    max_retries=0,
+                    required_paths=("done.txt", "missing.txt"),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "failed")
+            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+                "active_session_id"
+            ]
+            workflow_state = (
+                root / ".dev" / "sessions" / session_id / "workflow_state.json"
+            ).read_text(encoding="utf-8")
+            payload = json.loads(workflow_state)
+            self.assertEqual(payload["workflow"]["resume_from_phase"], "develop")
+            continuation_text = (
+                root / ".dev" / "sessions" / session_id / "continuation_prompt.txt"
+            ).read_text(encoding="utf-8")
+            self.assertIn("Recommended resume phase: develop", continuation_text)
+
     def test_resume_does_not_run_again_when_total_iteration_budget_is_already_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

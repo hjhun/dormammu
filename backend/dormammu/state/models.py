@@ -7,7 +7,7 @@ import re
 from typing import Any, Sequence
 
 
-STATE_SCHEMA_VERSION = 6
+STATE_SCHEMA_VERSION = 7
 
 PHASE_LABELS = {
     "phase_1": "Phase 1. Core Foundation and Repository Bootstrap",
@@ -468,6 +468,7 @@ def default_workflow_state(
                 "test_authoring",
                 "build_and_deploy",
                 "test_and_review",
+                "final_verification",
                 "commit",
             ],
             "resume_from_phase": "plan",

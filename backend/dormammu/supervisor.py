@@ -209,6 +209,7 @@ class SupervisorReport:
     latest_run_id: str | None
     changed_files: Sequence[str]
     required_paths: Sequence[str]
+    recommended_next_phase: str | None = None
     report_path: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -221,6 +222,7 @@ class SupervisorReport:
             "latest_run_id": self.latest_run_id,
             "changed_files": list(self.changed_files),
             "required_paths": list(self.required_paths),
+            "recommended_next_phase": self.recommended_next_phase,
             "report_path": str(self.report_path) if self.report_path else None,
         }
 
@@ -234,6 +236,7 @@ class SupervisorReport:
             latest_run_id=self.latest_run_id,
             changed_files=self.changed_files,
             required_paths=self.required_paths,
+            recommended_next_phase=self.recommended_next_phase,
             report_path=report_path,
         )
 
@@ -246,6 +249,7 @@ class SupervisorReport:
             f"- Escalation: `{self.escalation}`",
             f"- Summary: {self.summary}",
             f"- Latest run id: {self.latest_run_id or 'none'}",
+            f"- Recommended next phase: {self.recommended_next_phase or 'none'}",
             "",
             "## Checks",
             "",
@@ -526,12 +530,42 @@ class Supervisor:
             )
         )
 
+        final_verification_details: list[str] = []
+        if not tasks_complete_ok:
+            final_verification_details.append("Prompt-derived PLAN work is not complete yet.")
+        if not latest_run_ok:
+            final_verification_details.append("Latest run metadata is missing or mismatched.")
+        if not (artifact_ok and exit_code_ok):
+            final_verification_details.append("Latest run artifacts or exit status do not prove a clean run.")
+        if missing_required_paths:
+            final_verification_details.append("Required output paths are still missing.")
+        if not prompt_alignment_ok:
+            final_verification_details.append("Prompt outcome did not match the expected completion shape.")
+        final_verification_ok = not final_verification_details
+        checks.append(
+            SupervisorCheck(
+                name="final-operation-verification",
+                ok=final_verification_ok,
+                summary=(
+                    "Final operation verification passed."
+                    if final_verification_ok
+                    else "Final operation verification failed and the implementation should be revisited."
+                ),
+                details=(
+                    final_verification_details
+                    if final_verification_details
+                    else ["Latest run evidence, required outputs, and prompt outcome all passed the final gate."]
+                ),
+            )
+        )
+
         verdict, escalation, summary = self._resolve_outcome(
             checks=checks,
             latest_run_present=latest_run_present,
             artifact_ok=artifact_ok,
             git_ok=git_ok,
         )
+        recommended_next_phase = self._recommend_next_phase(checks=checks, verdict=verdict)
         return SupervisorReport(
             generated_at=_iso_now(),
             verdict=verdict,
@@ -541,6 +575,7 @@ class Supervisor:
             latest_run_id=latest_run_id,
             changed_files=tuple(changed_files),
             required_paths=tuple(required_paths),
+            recommended_next_phase=recommended_next_phase,
         )
 
     def _collect_worktree_diff(self) -> tuple[list[str], bool, list[str]]:
@@ -567,7 +602,15 @@ class Supervisor:
         artifact_ok: bool,
         git_ok: bool,
     ) -> tuple[str, str, str]:
-        if not checks[0].ok or not latest_run_present or (checks[4].ok is False and artifact_ok is False):
+        checks_by_name = {check.name: check for check in checks}
+        if (
+            not checks_by_name["bootstrap-files"].ok
+            or not latest_run_present
+            or (
+                not checks_by_name["latest-run-state"].ok
+                and artifact_ok is False
+            )
+        ):
             return (
                 "blocked",
                 "blocked",
@@ -591,3 +634,32 @@ class Supervisor:
             "approved",
             "All deterministic supervisor checks passed.",
         )
+
+    def _recommend_next_phase(
+        self,
+        *,
+        checks: Sequence[SupervisorCheck],
+        verdict: str,
+    ) -> str | None:
+        if verdict == "approved":
+            return "commit"
+        if verdict in {"blocked", "manual_review_needed"}:
+            return None
+
+        phase_by_check = {
+            "bootstrap-files": "plan",
+            "task-sync": "plan",
+            "plan-completion": "develop",
+            "phase-pointer": "plan",
+            "roadmap-focus": "plan",
+            "latest-run-state": "test_and_review",
+            "latest-run-artifacts": "develop",
+            "required-paths": "develop",
+            "worktree-diff": "develop",
+            "prompt-outcome-alignment": "develop",
+            "final-operation-verification": "develop",
+        }
+        for check in checks:
+            if not check.ok:
+                return phase_by_check.get(check.name, "plan")
+        return "plan"

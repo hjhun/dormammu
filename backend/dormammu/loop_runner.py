@@ -338,6 +338,14 @@ class LoopRunner:
             next_action = (
                 f"Retry attempt {attempt_number + 1} is queued because PLAN.md still has unchecked work."
             )
+            if report.recommended_next_phase == "develop":
+                next_action = (
+                    f"Retry attempt {attempt_number + 1} is queued because final verification requires a return to develop."
+                )
+            elif report.recommended_next_phase:
+                next_action = (
+                    f"Retry attempt {attempt_number + 1} is queued because the supervisor wants work to resume from {report.recommended_next_phase}."
+                )
             if isinstance(next_task, str) and next_task.strip():
                 next_action = f"{next_action} Next pending item: {next_task}"
             self._persist_loop_state(
@@ -474,6 +482,9 @@ class LoopRunner:
             workflow_state["supervisor"]["verdict"] = report.verdict
             workflow_state["supervisor"]["escalation"] = report.escalation
             workflow_state["supervisor"]["reason"] = report.summary
+            workflow_state.setdefault("workflow", {})
+            if report.recommended_next_phase:
+                workflow_state["workflow"]["resume_from_phase"] = report.recommended_next_phase
 
         session_state["last_safe_checkpoint"] = {
             "phase": session_state.get("active_phase", "develop"),

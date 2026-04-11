@@ -59,6 +59,7 @@ Use `workflows/build-deploy-test-review.md` when:
 
 - packaging or deployability checks are required
 - executed validation is required after development
+- the completed slice needs one final supervisor verification pass before commit prep
 
 This workflow uses:
 
@@ -70,7 +71,7 @@ This workflow uses:
 Use `workflows/cleanup-commit.md` when:
 
 - unnecessary files in the active scope should be cleaned up
-- the validated scope is ready for staging or commit preparation
+- the final-verified scope is ready for staging or commit preparation
 
 This workflow uses:
 

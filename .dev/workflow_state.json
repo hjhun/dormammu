@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "state_schema_version": 5,
+  "state_schema_version": 7,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-11T16:25:00+09:00",
+  "updated_at": "2026-04-11T10:25:53+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -29,7 +29,7 @@
   },
   "workflow": {
     "active_phase": "commit",
-    "last_completed_phase": "test_and_review",
+    "last_completed_phase": "final_verification",
     "allowed_sequence": [
       "plan",
       "design",
@@ -37,13 +37,13 @@
       "test_authoring",
       "build_and_deploy",
       "test_and_review",
+      "final_verification",
       "commit"
     ],
     "resume_from_phase": "commit"
   },
   "roadmap": {
     "active_phase_ids": [
-      "phase_5",
       "phase_4"
     ],
     "priority_order": [
@@ -60,11 +60,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "Daemonize now reuses dormammu run --prompt-file semantics, examples/docs are aligned, and regression validation passed."
+    "reason": "The supervisor now runs a final verification gate, emits a recommended resume phase on failure, and the supporting workflow guidance plus regression coverage are aligned."
   },
   "bootstrap": {
-    "goal": "Simplify daemonize so queued prompts reuse dormammu run --prompt-file semantics instead of phase-specific daemon CLI config.",
-    "captured_at": "2026-04-10T23:32:00+09:00",
+    "goal": "Extend the supervisor workflow with a final verification gate that can route failed work back through development.",
+    "captured_at": "2026-04-11T10:25:53+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -87,7 +87,7 @@
   "operator_sync": {
     "tasks": {
       "source": ".dev/PLAN.md",
-      "resume_checkpoint": "Implementation and validation are complete. Resume from commit preparation only if a follow-up asks for staging or committing this daemonize simplification.",
+      "resume_checkpoint": "Implementation and targeted validation are complete. Resume from commit preparation unless a follow-up asks to deepen the final verification mechanism.",
       "total_tasks": 3,
       "completed_tasks": 3,
       "pending_tasks": 0,
@@ -95,22 +95,22 @@
       "next_pending_task": null,
       "items": [
         {
-          "text": "Phase 1. Simplify daemonize config so it no longer accepts phase-specific coding agent CLI settings",
+          "text": "Phase 1. Add a final verification stage to the supervisor workflow and state model before commit preparation",
           "completed": true
         },
         {
-          "text": "Phase 2. Rework daemonize to process each queued prompt through the same supervised loop behavior as `dormammu run --prompt-file <path>`",
+          "text": "Phase 2. Teach supervisor reports and continuation prompts to identify the root cause of final verification failures and recommend the return phase",
           "completed": true
         },
         {
-          "text": "Phase 3. Update daemon examples, docs, and regression coverage for the simplified config and run-loop reuse",
+          "text": "Phase 3. Update workflow guidance plus regression coverage for the new final verification loop",
           "completed": true
         }
       ],
-      "synced_at": "2026-04-11T16:25:00+09:00"
+      "synced_at": "2026-04-11T10:25:53+09:00"
     }
   },
-  "next_action": "Await direction on whether to prepare a commit for the validated daemonize simplification.",
+  "next_action": "Await direction on whether to prepare a commit for the supervisor final-verification enhancement.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -119,12 +119,9 @@
     "PLAN.md should list prompt-derived development items in `[ ] Phase N. <title>` format.",
     "The installed guidance bundle and packaged asset copy should stay synchronized.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "A new prompt-driven scope now targets daemonized prompt watching from JSON configuration.",
-    "The repository does not currently contain .dev/PROJECT.md or .dev/ROADMAP.md, so planning is grounded in the direct request, AGENTS.md, current code, and machine state.",
-    "Daemon prompt execution remains serialized so only one prompt file advances at a time and later files remain pending until the active prompt is completed.",
-    "This scope removes the custom daemon phase pipeline in favor of reusing the existing supervised run loop.",
-    "Daemon config examples and docs must move with the schema change so operators no longer configure phase-specific agent CLIs in daemonize.json.",
-    "Validation completed successfully for tests.test_daemon, tests.test_cli, and tests.test_loop_runner."
+    "Final verification now sits between `test_and_review` and `commit` in the allowed workflow sequence.",
+    "Supervisor rework reports now recommend the phase that should resume next, defaulting implementation problems back to `develop`.",
+    "Validation completed successfully for tests.test_supervisor, tests.test_loop_runner, and tests.test_state_repository."
   ],
   "loop": {
     "status": "idle",
@@ -141,6 +138,6 @@
   "current_run": null,
   "latest_commit": {
     "hash": "pending",
-    "summary": "Simplify daemonize prompt execution"
+    "summary": "Enhance supervisor final verification"
   }
 }

@@ -40,7 +40,8 @@ All substantial work should follow this sequence:
 4. Test Authoring
 5. Build and Deploy
 6. Test and Review
-7. Commit
+7. Final Verification
+8. Commit
 
 Use the supervisor skill as the controller for every multi-step implementation
 effort.
@@ -142,7 +143,20 @@ Validation must include, when relevant:
 Run this phase after the developer agent has finished the active implementation
 slice. Do not treat authored test code as executed validation.
 
-### 7. Commit
+### 7. Final Verification
+
+After development and executed validation complete, the supervisor must run one
+final operation verification pass before commit preparation.
+
+Rules:
+
+- verify the completed slice behaves as expected from the supervisor's point of
+  view
+- if this pass fails, identify the cause clearly
+- when the cause requires code changes, route back to Develop and repeat the
+  downstream validation flow
+
+### 8. Commit
 
 Use the committing skill only after the active scope has passed validation or
 the user explicitly asks for commit preparation.

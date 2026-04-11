@@ -68,6 +68,7 @@ def build_continuation_prompt(
             )
 
     task_line = next_task or "Review the latest supervisor report and continue from the saved state."
+    phase_line = report.recommended_next_phase or "manual review"
     lines = [
         "You are continuing a previous coding-agent attempt inside the same repository.",
         "Continue from the saved repository state instead of starting over.",
@@ -92,11 +93,20 @@ def build_continuation_prompt(
         "",
         f"Supervisor verdict: {report.verdict}",
         f"Supervisor summary: {report.summary}",
+        f"Recommended resume phase: {phase_line}",
         "",
         *guidance_lines,
         *([""] if guidance_lines else []),
+        "Investigate the root cause of every failing verification before making more changes.",
         "Address these findings before you finish:",
         *findings,
+        "",
+        (
+            "Return to the Develop phase, repair the implementation, update validation if needed, "
+            "and pass final verification again before you stop."
+            if report.recommended_next_phase == "develop"
+            else "Resume from the recommended phase and keep the workflow state aligned as you progress."
+        ),
         "",
         f"Next unchecked task: {task_line}",
         "",

@@ -156,6 +156,39 @@ class SupervisorTests(unittest.TestCase):
                 any(check.name == "plan-completion" and not check.ok for check in report.checks)
             )
 
+    def test_validate_final_verification_failure_recommends_returning_to_develop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(
+                active_roadmap_phase_ids=["phase_4"],
+                prompt_text="Create the required marker file.",
+            )
+            self._seed_latest_run(
+                root,
+                repository,
+                prompt_text="Create the required marker file.\n",
+                stdout_text="Implemented the change.\n",
+            )
+            self._mark_plan_complete(repository)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(report.verdict, "rework_required")
+            self.assertEqual(report.recommended_next_phase, "develop")
+            self.assertTrue(
+                any(check.name == "final-operation-verification" and not check.ok for check in report.checks)
+            )
+            self.assertIn("Recommended next phase: develop", report.to_markdown())
+
     def _seed_latest_run(
         self,
         root: Path,
