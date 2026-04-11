@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import sys
 from typing import Iterator, Sequence, TextIO
 
+from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.agent.models import AgentRunStarted
 from dormammu.config import AppConfig, detect_available_agent_cli, write_active_agent_cli_config
@@ -18,10 +18,6 @@ from dormammu.guidance import build_guidance_prompt, resolve_guidance_files
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
 from dormammu.recovery import RecoveryManager
 from dormammu.state import StateRepository
-
-
-def _iso_now() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 class _TeeStream:

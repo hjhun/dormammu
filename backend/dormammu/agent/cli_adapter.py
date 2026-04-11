@@ -13,6 +13,7 @@ import time
 from threading import Thread
 from typing import Callable, TextIO
 
+from dormammu._utils import iso_now as _iso_now
 from dormammu.agent.command_builder import build_command_plan
 from dormammu.agent.help_parser import parse_help_text
 from dormammu.agent.models import (
@@ -23,10 +24,6 @@ from dormammu.agent.models import (
 )
 from dormammu.agent.presets import preset_for_executable_name
 from dormammu.config import AppConfig, CliInvocationConfig, FallbackCliConfig
-
-
-def _iso_now() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 def _safe_label(text: str | None) -> str:

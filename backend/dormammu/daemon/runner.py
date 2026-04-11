@@ -7,6 +7,7 @@ import sys
 import time
 from typing import Mapping, TextIO
 
+from dormammu._utils import iso_now as _iso_now
 from dormammu.config import AppConfig
 from dormammu.daemon.models import DaemonConfig, DaemonPromptResult
 from dormammu.daemon.queue import is_prompt_candidate, prompt_sort_key
@@ -20,10 +21,6 @@ from dormammu.state.models import summarize_prompt_goal
 
 DEFAULT_DAEMON_MAX_RETRIES = 49
 _RESULT_STATUS_RE = re.compile(r"^- Status: `([^`]+)`$", re.MULTILINE)
-
-
-def _iso_now() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 class DaemonRunner:

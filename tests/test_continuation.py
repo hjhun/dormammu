@@ -85,3 +85,161 @@ class ContinuationPromptTests(unittest.TestCase):
         self.assertIn("If the original task explicitly requires a specific external system path", continuation.text)
         self.assertIn("such as /proc", continuation.text)
         self.assertIn("Do not inspect or modify unrelated paths outside the repository", continuation.text)
+
+
+class ContinuationPromptEdgeCaseTests(unittest.TestCase):
+    def _make_report(
+        self,
+        *,
+        verdict: str = "rework_required",
+        checks: tuple = (),
+        recommended_next_phase: str | None = None,
+    ) -> "SupervisorReport":
+        return SupervisorReport(
+            generated_at="2026-04-10T09:00:00+09:00",
+            verdict=verdict,
+            escalation=verdict,
+            summary="Supervisor summary.",
+            checks=checks,
+            latest_run_id="run-001",
+            changed_files=(),
+            required_paths=(),
+            report_path=None,
+            recommended_next_phase=recommended_next_phase,
+        )
+
+    def test_empty_original_prompt_falls_back_to_prompt_artifact(self) -> None:
+        """When original_prompt_text is empty, prompt text is loaded from the artifact file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact = Path(tmpdir) / "prompt.txt"
+            artifact.write_text("Original task from artifact.", encoding="utf-8")
+            report = self._make_report()
+
+            continuation = build_continuation_prompt(
+                latest_run={"run_id": "r1", "artifacts": {"prompt": str(artifact)}},
+                report=report,
+                next_task="Do something",
+                original_prompt_text="",
+            )
+
+        self.assertIn("Original task from artifact.", continuation.text)
+
+    def test_missing_prompt_artifact_produces_placeholder(self) -> None:
+        """When no artifact path is given and original_prompt_text is empty, a placeholder is written."""
+        report = self._make_report()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "r2", "artifacts": {}},
+            report=report,
+            next_task="Do something",
+            original_prompt_text="",
+        )
+
+        self.assertIn("(previous prompt artifact was empty)", continuation.text)
+
+    def test_no_failing_checks_produces_fallback_finding(self) -> None:
+        """When all checks pass but a retry is still requested, a default finding is emitted."""
+        report = self._make_report(verdict="rework_required", checks=())
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "r3", "artifacts": {}},
+            report=report,
+            next_task=None,
+            original_prompt_text="Do the work.",
+        )
+
+        self.assertIn("No failing checks were recorded", continuation.text)
+
+    def test_next_task_none_uses_default_task_line(self) -> None:
+        """When next_task is None, a sensible default task line is used."""
+        report = self._make_report()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "r4", "artifacts": {}},
+            report=report,
+            next_task=None,
+            original_prompt_text="Do the work.",
+        )
+
+        self.assertIn("Review the latest supervisor report and continue from the saved state.", continuation.text)
+
+    def test_develop_phase_recommendation_adds_repair_instruction(self) -> None:
+        """When recommended_next_phase is 'develop', the prompt includes a return-to-develop instruction."""
+        report = self._make_report(recommended_next_phase="develop")
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "r5", "artifacts": {}},
+            report=report,
+            next_task="Fix the implementation",
+            original_prompt_text="Build the feature.",
+        )
+
+        self.assertIn("Return to the Develop phase", continuation.text)
+        self.assertIn("Recommended resume phase: develop", continuation.text)
+
+    def test_repo_guidance_rule_files_appear_in_prompt(self) -> None:
+        """When repo_guidance contains rule_files, they are listed in the continuation prompt."""
+        report = self._make_report()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "r6", "artifacts": {}},
+            report=report,
+            next_task="Continue",
+            original_prompt_text="Do the work.",
+            repo_guidance={
+                "rule_files": ["AGENTS.md", "CLAUDE.md"],
+                "workflow_files": [],
+            },
+        )
+
+        self.assertIn("Repository rules:", continuation.text)
+        self.assertIn("AGENTS.md", continuation.text)
+        self.assertIn("CLAUDE.md", continuation.text)
+
+    def test_repo_guidance_workflow_files_appear_in_prompt(self) -> None:
+        """When repo_guidance contains workflow_files, they are listed in the continuation prompt."""
+        report = self._make_report()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "r7", "artifacts": {}},
+            report=report,
+            next_task="Continue",
+            original_prompt_text="Do the work.",
+            repo_guidance={
+                "rule_files": [],
+                "workflow_files": ["agents/workflows/planning-design.md"],
+            },
+        )
+
+        self.assertIn("Repository workflows:", continuation.text)
+        self.assertIn("agents/workflows/planning-design.md", continuation.text)
+
+    def test_source_run_id_matches_latest_run(self) -> None:
+        """The returned ContinuationPrompt.source_run_id matches the run_id in latest_run."""
+        report = self._make_report()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "my-special-run-id", "artifacts": {}},
+            report=report,
+            next_task="Continue",
+            original_prompt_text="Do the work.",
+        )
+
+        self.assertEqual(continuation.source_run_id, "my-special-run-id")
+
+    def test_continuation_prompt_to_dict_has_required_keys(self) -> None:
+        """ContinuationPrompt.to_dict() includes generated_at, text, and source_run_id."""
+        report = self._make_report()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "dict-test", "artifacts": {}},
+            report=report,
+            next_task="Continue",
+            original_prompt_text="Do the work.",
+        )
+        d = continuation.to_dict()
+
+        self.assertIn("generated_at", d)
+        self.assertIn("text", d)
+        self.assertIn("source_run_id", d)
+        self.assertEqual(d["source_run_id"], "dict-test")

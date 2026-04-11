@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 import re
 
+from dormammu._utils import iso_now as _iso_now
 from dormammu.daemon.models import QueueConfig, QueuedPrompt
-
-
-def _iso_now() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 def prompt_sort_key(filename: str) -> tuple[int, object, str]:

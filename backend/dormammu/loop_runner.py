@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 import sys
 from typing import TextIO
 from typing import Any, Sequence
 
+from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.config import AppConfig
 from dormammu.continuation import build_continuation_prompt
 from dormammu.state import StateRepository
 from dormammu.supervisor import Supervisor, SupervisorReport, SupervisorRequest
-
-
-def _iso_now() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
 import subprocess
 from typing import Any, Mapping, Sequence
 
+from dormammu._utils import iso_now as _iso_now
 from dormammu.config import AppConfig
 from dormammu.state import StateRepository
-
-
-def _iso_now() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 def _normalize_task_sync(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -9,10 +8,12 @@ import shutil
 from string import Template
 from typing import Any, Mapping, Sequence
 
+from dormammu._utils import iso_now as _iso_now
 from dormammu.agent.models import AgentRunResult, AgentRunStarted
 from dormammu.config import AppConfig
 from dormammu.guidance import resolve_guidance_files
 from dormammu.state.models import (
+    STATE_SCHEMA_VERSION,
     default_dashboard_context,
     default_plan_context,
     default_session_state,
@@ -22,10 +23,6 @@ from dormammu.state.models import (
     summarize_prompt_goal,
 )
 from dormammu.state.tasks import parse_tasks_document
-
-
-def _iso_now() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 def _deep_merge(defaults: dict[str, Any], current: Mapping[str, Any]) -> dict[str, Any]:
@@ -850,7 +847,7 @@ class StateRepository:
         if session_path.exists():
             session_state = self._read_json(session_path)
             session_state["session_id"] = session_id
-            session_state.setdefault("state_schema_version", 3)
+            session_state.setdefault("state_schema_version", STATE_SCHEMA_VERSION)
             self._write_json(session_path, session_state)
         return session_id
 
