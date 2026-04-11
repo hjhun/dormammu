@@ -12,6 +12,9 @@ license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+telegram = ["python-telegram-bot>=21.0"]
+
 [project.scripts]
 dormammu = "dormammu.cli:main"
 

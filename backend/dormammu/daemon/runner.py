@@ -89,7 +89,7 @@ class DaemonRunner:
                     watcher.wait_for_changes()
         finally:
             watcher.close()
-            if isinstance(self.progress_stream, SessionProgressLogStream):
+            if hasattr(self.progress_stream, "close_log"):
                 self.progress_stream.close_log()
 
     def run_pending_once(self, *, watcher_backend: str | None = None) -> int:
@@ -201,7 +201,7 @@ class DaemonRunner:
         self.progress_stream.flush()
 
     def _process_prompt(self, prompt_path: Path, *, watcher_backend: str) -> DaemonPromptResult:
-        if isinstance(self.progress_stream, SessionProgressLogStream):
+        if hasattr(self.progress_stream, "reset_session_log"):
             log_path = self._session_progress_log_path(prompt_path)
             self.progress_stream.reset_session_log(log_path)
             for line in self._startup_banner_lines(watcher_backend=watcher_backend):

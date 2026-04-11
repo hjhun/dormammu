@@ -311,6 +311,67 @@ print(json.dumps({"legacy_removed": legacy_removed, "launcher_added": launcher_a
 PY
 }
 
+_tty_readable() {
+  # Returns 0 (true) if the user can be prompted interactively.
+  [ -t 0 ] && return 0
+  [ -r /dev/tty ] && [ -w /dev/tty ] && return 0
+  return 1
+}
+
+configure_telegram() {
+  if ! _tty_readable; then
+    return 0
+  fi
+
+  printf '\n=== Telegram Bot Setup (optional) ===\n'
+  printf 'dormammu can receive commands and stream output via a Telegram bot.\n'
+  printf 'You will need a bot token from @BotFather and your Telegram chat ID.\n'
+  printf '\nSet up Telegram bot now? [y/N] '
+  local setup_telegram
+  read -r setup_telegram </dev/tty || return 0
+  case "${setup_telegram}" in
+    [yY]*) ;;
+    *)
+      log ''
+      log 'Skipping Telegram setup. Configure it later with:'
+      log "  dormammu set-config telegram.bot_token <TOKEN> --global"
+      log "  dormammu set-config telegram.allowed_chat_ids --add <CHAT_ID> --global"
+      log "  pip install 'dormammu[telegram]'"
+      return 0
+      ;;
+  esac
+
+  printf 'Bot token (from @BotFather): '
+  local tg_token
+  read -r tg_token </dev/tty || return 0
+  if [[ -z "${tg_token}" ]]; then
+    log 'No token entered. Skipping Telegram setup.'
+    return 0
+  fi
+
+  printf 'Allowed chat ID (your Telegram user or group ID): '
+  local tg_chat_id
+  read -r tg_chat_id </dev/tty || return 0
+  if [[ -z "${tg_chat_id}" ]]; then
+    log 'No chat ID entered. Skipping Telegram setup.'
+    return 0
+  fi
+
+  if ! "${VENV_DIR}/bin/dormammu" set-config telegram.bot_token "${tg_token}" --global; then
+    log 'warning: failed to write telegram.bot_token to config.'
+    return 0
+  fi
+  if ! "${VENV_DIR}/bin/dormammu" set-config telegram.allowed_chat_ids --add "${tg_chat_id}" --global; then
+    log 'warning: failed to write telegram.allowed_chat_ids to config.'
+    return 0
+  fi
+
+  log ''
+  log "Telegram bot configured (stored in ${CONFIG_PATH})."
+  log "Install the Telegram dependency with:"
+  log "  pip install 'dormammu[telegram]'"
+}
+
 source_command_for_guidance() {
   if [[ "${BASHRC_PATH}" == "${HOME}/.bashrc" ]]; then
     printf 'source ~/.bashrc'
@@ -360,6 +421,7 @@ main() {
     log "No supported agent CLI was auto-detected during install."
   fi
   write_runtime_config "${active_agent_cli}"
+  configure_telegram
 
   local bashrc_update_json
   local legacy_path_removed

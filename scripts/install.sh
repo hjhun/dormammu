@@ -6,6 +6,7 @@ VENV_DIR="${ROOT_DIR}/.venv"
 LAUNCHER_DIR="${DORMAMMU_LAUNCHER_DIR:-${HOME}/.local/bin}"
 BASHRC_PATH="${DORMAMMU_BASHRC_PATH:-${HOME}/.bashrc}"
 PYTHON_BIN="${PYTHON:-python3}"
+CONFIG_PATH="${DORMAMMU_CONFIG_PATH:-${HOME}/.dormammu/config}"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -93,6 +94,64 @@ print(json.dumps({"launcher_added": launcher_added}))
 PY
 }
 
+_tty_readable() {
+  [ -t 0 ] && return 0
+  [ -r /dev/tty ] && [ -w /dev/tty ] && return 0
+  return 1
+}
+
+configure_telegram() {
+  if ! _tty_readable; then
+    return 0
+  fi
+
+  printf '\n=== Telegram Bot Setup (optional) ===\n'
+  printf 'dormammu can receive commands and stream output via a Telegram bot.\n'
+  printf 'You will need a bot token from @BotFather and your Telegram chat ID.\n'
+  printf '\nSet up Telegram bot now? [y/N] '
+  local setup_telegram
+  read -r setup_telegram </dev/tty || return 0
+  case "${setup_telegram}" in
+    [yY]*) ;;
+    *)
+      printf '\nSkipping Telegram setup. Configure it later with:\n'
+      printf "  dormammu set-config telegram.bot_token <TOKEN> --global\n"
+      printf "  dormammu set-config telegram.allowed_chat_ids --add <CHAT_ID> --global\n"
+      printf "  pip install 'dormammu[telegram]'\n"
+      return 0
+      ;;
+  esac
+
+  printf 'Bot token (from @BotFather): '
+  local tg_token
+  read -r tg_token </dev/tty || return 0
+  if [[ -z "${tg_token}" ]]; then
+    printf 'No token entered. Skipping Telegram setup.\n'
+    return 0
+  fi
+
+  printf 'Allowed chat ID (your Telegram user or group ID): '
+  local tg_chat_id
+  read -r tg_chat_id </dev/tty || return 0
+  if [[ -z "${tg_chat_id}" ]]; then
+    printf 'No chat ID entered. Skipping Telegram setup.\n'
+    return 0
+  fi
+
+  if ! "${VENV_DIR}/bin/dormammu" set-config telegram.bot_token "${tg_token}" --global; then
+    printf 'warning: failed to write telegram.bot_token to config.\n'
+    return 0
+  fi
+  if ! "${VENV_DIR}/bin/dormammu" set-config telegram.allowed_chat_ids --add "${tg_chat_id}" --global; then
+    printf 'warning: failed to write telegram.allowed_chat_ids to config.\n'
+    return 0
+  fi
+
+  printf '\nTelegram bot configured (stored in %s).\n' "${CONFIG_PATH}"
+  printf "Install the Telegram dependency with:\n"
+  printf "  pip install 'dormammu[telegram]'\n"
+}
+
 source_command_for_guidance() {
   if [[ "${BASHRC_PATH}" == "${HOME}/.bashrc" ]]; then
     printf 'source ~/.bashrc'
@@ -112,6 +171,7 @@ main() {
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
   "${VENV_DIR}/bin/pip" install -e "${ROOT_DIR}"
   install_launcher
+  configure_telegram
 
   local bashrc_update_json
   local launcher_path_added
@@ -130,6 +190,7 @@ PY
   cat <<EOF
 Installed dormammu into ${VENV_DIR}.
 Launcher directory: ${LAUNCHER_DIR}
+Config file: ${CONFIG_PATH}
 Added ${LAUNCHER_DIR} PATH entry to ${BASHRC_PATH}: ${launcher_path_added}
 
 Next steps:

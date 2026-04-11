@@ -7,6 +7,8 @@ from pathlib import Path
 import shutil
 from typing import Any, Mapping
 
+from dormammu.telegram.config import TelegramConfig, parse_telegram_config
+
 
 REPO_MARKERS = ("pyproject.toml", "AGENTS.md", ".dev")
 DEFAULT_CONFIG_FILENAME = "dormammu.json"
@@ -105,8 +107,41 @@ def _load_config_payload(path: Path | None) -> dict[str, Any]:
     return dict(raw_payload)
 
 
-SETTABLE_SCALAR_KEYS: frozenset[str] = frozenset({"active_agent_cli"})
-SETTABLE_LIST_KEYS: frozenset[str] = frozenset({"token_exhaustion_patterns", "fallback_agent_clis"})
+SETTABLE_SCALAR_KEYS: frozenset[str] = frozenset({
+    "active_agent_cli",
+    "telegram.bot_token",
+})
+SETTABLE_LIST_KEYS: frozenset[str] = frozenset({
+    "token_exhaustion_patterns",
+    "fallback_agent_clis",
+    "telegram.allowed_chat_ids",
+})
+
+
+def _navigate_to_leaf(payload: dict[str, Any], key: str) -> tuple[dict[str, Any], str]:
+    """Split a dotted key into (parent dict, leaf key), creating intermediate dicts as needed.
+
+    For a flat key like ``"active_agent_cli"`` returns ``(payload, "active_agent_cli")``.
+    For a nested key like ``"telegram.bot_token"`` returns ``(payload["telegram"], "bot_token")``.
+    """
+    parts = key.split(".", 1)
+    if len(parts) == 1:
+        return payload, key
+    parent_key, child_key = parts
+    if not isinstance(payload.get(parent_key), dict):
+        payload[parent_key] = {}
+    return _navigate_to_leaf(payload[parent_key], child_key)
+
+
+def _prune_empty_parents(payload: dict[str, Any], key: str) -> None:
+    """Remove an empty intermediate dict left behind after unset/remove operations."""
+    parts = key.split(".", 1)
+    if len(parts) == 1:
+        return
+    parent_key = parts[0]
+    child = payload.get(parent_key)
+    if isinstance(child, dict) and not child:
+        del payload[parent_key]
 
 
 def _resolve_write_target(config: "AppConfig", *, global_scope: bool) -> Path:
@@ -156,28 +191,33 @@ def set_config_value(
     config_path = _resolve_write_target(config, global_scope=global_scope)
     payload = _load_config_payload(config_path if config_path.exists() else None)
 
+    target, leaf = _navigate_to_leaf(payload, key)
+
     if key in SETTABLE_SCALAR_KEYS:
         if add is not None or remove is not None:
             raise ValueError(f"{key!r} is a scalar key; use a plain value or --unset")
         if unset:
-            payload.pop(key, None)
+            target.pop(leaf, None)
+            _prune_empty_parents(payload, key)
         else:
-            payload[key] = value
+            target[leaf] = value
     else:
         if unset:
-            payload.pop(key, None)
+            target.pop(leaf, None)
+            _prune_empty_parents(payload, key)
         elif add is not None:
-            current: list[Any] = list(payload.get(key) or [])
+            current: list[Any] = list(target.get(leaf) or [])
             if add not in current:
                 current.append(add)
-            payload[key] = current
+            target[leaf] = current
         elif remove is not None:
-            current = list(payload.get(key) or [])
+            current = list(target.get(leaf) or [])
             try:
                 current.remove(remove)
             except ValueError:
                 pass
-            payload[key] = current
+            target[leaf] = current
+            _prune_empty_parents(payload, key)
         else:
             try:
                 parsed: Any = json.loads(value)  # type: ignore[arg-type]
@@ -185,7 +225,7 @@ def set_config_value(
                 parsed = [value]
             if not isinstance(parsed, list):
                 raise ValueError(f"{key!r} requires a JSON array when replacing the full value")
-            payload[key] = parsed
+            target[leaf] = parsed
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
@@ -431,6 +471,7 @@ class AppConfig:
     token_exhaustion_patterns: tuple[str, ...] = DEFAULT_TOKEN_EXHAUSTION_PATTERNS
     guidance_files: tuple[Path, ...] = ()
     default_guidance_files: tuple[Path, ...] = ()
+    telegram_config: TelegramConfig | None = None
 
     @classmethod
     def load(
@@ -482,6 +523,10 @@ class AppConfig:
             )
             or DEFAULT_TOKEN_EXHAUSTION_PATTERNS,
             default_guidance_files=((agents_dir / "AGENTS.md",) if (agents_dir / "AGENTS.md").exists() else ()),
+            telegram_config=parse_telegram_config(
+                config_payload.get("telegram"),
+                config_path=config_file,
+            ),
         )
 
     def with_overrides(self, **kwargs: object) -> "AppConfig":
@@ -508,4 +553,5 @@ class AppConfig:
             "token_exhaustion_patterns": list(self.token_exhaustion_patterns),
             "guidance_files": [str(path) for path in self.guidance_files],
             "default_guidance_files": [str(path) for path in self.default_guidance_files],
+            "telegram_config": self.telegram_config.to_dict() if self.telegram_config else None,
         }

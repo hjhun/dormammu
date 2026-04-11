@@ -18,6 +18,7 @@ from dormammu.config import (
     write_active_agent_cli_config,
 )
 from dormammu.daemon import DaemonRunner, SessionProgressLogStream, load_daemon_config
+from dormammu.telegram.stream import TelegramProgressStream
 from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt, resolve_guidance_files
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
@@ -130,8 +131,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  2. ~/.dormammu/config (global, use --global)\n"
             "\n"
             "Settable keys:\n"
-            "  Scalar: active_agent_cli\n"
-            "  List:   token_exhaustion_patterns, fallback_agent_clis\n"
+            "  Scalar: active_agent_cli, telegram.bot_token\n"
+            "  List:   token_exhaustion_patterns, fallback_agent_clis, telegram.allowed_chat_ids\n"
         ),
         epilog=(
             "Examples:\n"
@@ -141,6 +142,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  dormammu set-config token_exhaustion_patterns --remove 'usage limit'\n"
             "  dormammu set-config fallback_agent_clis --add gemini\n"
             "  dormammu set-config active_agent_cli /usr/local/bin/claude --global\n"
+            "  dormammu set-config telegram.bot_token 123456:ABC-DEF...\n"
+            "  dormammu set-config telegram.allowed_chat_ids --add 987654321\n"
+            "  dormammu set-config telegram.bot_token --unset\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1193,10 +1197,39 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
     progress_stream: TextIO = sys.stderr
     with contextlib.ExitStack() as stack:
         if args.debug:
-            progress_stream = SessionProgressLogStream(sys.stderr)
-            stack.enter_context(contextlib.redirect_stderr(progress_stream))
+            session_log_stream = SessionProgressLogStream(sys.stderr)
+            stack.enter_context(contextlib.redirect_stderr(session_log_stream))
+            progress_stream = session_log_stream
+
+        if config.telegram_config is not None:
+            tg_stream = TelegramProgressStream(
+                progress_stream,
+                chunk_size=config.telegram_config.chunk_size,
+            )
+            progress_stream = tg_stream
+        else:
+            tg_stream = None
+
+        runner = DaemonRunner(config, daemon_config, progress_stream=progress_stream)
+
+        if tg_stream is not None and config.telegram_config is not None:
+            from dormammu.telegram.bot import TelegramBot
+
+            bot = TelegramBot(
+                config.telegram_config,
+                daemon_config=daemon_config,
+                app_config=config,
+                stream=tg_stream,
+                runner=runner,
+            )
+            try:
+                bot.start()
+                print("Telegram bot started.", file=sys.stderr)
+            except Exception as exc:
+                print(f"warning: Telegram bot failed to start: {exc}", file=sys.stderr)
+
         try:
-            return DaemonRunner(config, daemon_config, progress_stream=progress_stream).run_forever()
+            return runner.run_forever()
         except KeyboardInterrupt:
             print("daemonize interrupted", file=sys.stderr)
             return 130
