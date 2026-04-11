@@ -83,7 +83,8 @@ specific skill:
 ### 1. Plan
 
 - update `.dev/DASHBOARD.md` with the actual in-progress status for the active scope
-- update `.dev/TASKS.md` with prompt-derived development items in `[ ] Phase N. <title>` form
+- update `.dev/PLAN.md` with prompt-derived phase checklist items in `[ ] Phase N. <title>` form
+- update `.dev/TASKS.md` with development work items for the active scope
 - update `.dev/ROADMAP.md` when roadmap slices change
 - record the active phase and next action
 
@@ -166,6 +167,7 @@ the user explicitly asks for commit preparation.
 When a workflow is active, keep these files aligned when they exist:
 
 - `.dev/DASHBOARD.md`
+- `.dev/PLAN.md`
 - `.dev/ROADMAP.md`
 - `.dev/TASKS.md`
 - `.dev/workflow_state.json`
@@ -179,8 +181,11 @@ Use the Markdown files with these roles:
 
 - `.dev/DASHBOARD.md`: show the real current progress, active phase, next action,
   risks, and notable in-progress context for the active scope
-- `.dev/TASKS.md`: list the development work derived from the current user prompt
-  or scope in ordered phase items such as `[ ] Phase 1. <title>`
+- `.dev/PLAN.md`: list the prompt-derived phase checklist for the active scope
+  using `[ ] Phase N. <title>` for pending items and `[O] Phase N. <title>` for
+  completed items
+- `.dev/TASKS.md`: list the development work items derived from the current user
+  prompt or scope
 
 ## Roadmap Alignment
 

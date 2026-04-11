@@ -5,7 +5,7 @@ Use this workflow when the active scope has already passed final verification an
 ## Covers
 
 - Cleanup of unnecessary files in the active scope
-- Phase 7. Commit
+- Phase 8. Commit
 
 ## Skills To Use
 

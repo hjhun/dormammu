@@ -1,3 +1,4 @@
+---
 name: supervising-agent
 description: Orchestrates planning, design, development, test authoring, build, validation, and commit phases for this project. Use when the user asks to monitor or supervise multi-step delivery, resume interrupted work, or decide the next workflow skill to apply.
 ---
@@ -9,7 +10,7 @@ Use this skill as the top-level controller for the project. It decides which wor
 ## Inputs
 
 - The user goal
-- [PROJECT.md](../../../PROJECT.md)
+- [PROJECT.md](../../../.dev/PROJECT.md)
 - Existing `.dev/DASHBOARD.md`, `.dev/PLAN.md`, and `.dev/workflow_state.json`
 - Current repository and git state
 

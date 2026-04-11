@@ -1,3 +1,4 @@
+---
 name: committing-agent
 description: Finalizes scoped changes into intentional git commits for this project. Use when the user asks to prepare a commit, stage completed work, write commit messages, or conclude a validated workflow phase in version control.
 ---

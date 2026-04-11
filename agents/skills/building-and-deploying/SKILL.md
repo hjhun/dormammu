@@ -1,3 +1,4 @@
+---
 name: building-and-deploying
 description: Builds release artifacts, installation flows, and deployment outputs for this project. Use when the user asks to package the tool, create install scripts, prepare releases, or verify deployable outputs.
 ---
@@ -16,7 +17,7 @@ Related skills:
 
 - Current implementation state
 - Build and release phase items from `.dev/PLAN.md`
-- Project packaging requirements from [PROJECT.md](../../../PROJECT.md)
+- Project packaging requirements from [PROJECT.md](../../../.dev/PROJECT.md)
 
 ## Workflow
 

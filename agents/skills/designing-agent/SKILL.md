@@ -1,3 +1,4 @@
+---
 name: designing-agent
 description: Produces implementation-ready designs, interfaces, schemas, and technical decisions for this project. Use when the user asks for architecture, component design, state models, file layout, or design artifacts before coding.
 ---
@@ -14,7 +15,7 @@ Related skills:
 ## Inputs
 
 - The approved plan and active tasks
-- [PROJECT.md](../../../PROJECT.md)
+- [PROJECT.md](../../../.dev/PROJECT.md)
 - Existing source files and `.dev/` state
 
 ## Workflow

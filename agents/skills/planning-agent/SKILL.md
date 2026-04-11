@@ -1,3 +1,4 @@
+---
 name: planning-agent
 description: Creates or updates execution plans, milestones, and prompt-derived phase breakdowns for this project. Use when the user asks to plan work, expand a prompt into actionable phases, initialize `.dev/DASHBOARD.md`, or regenerate `.dev/PLAN.md`.
 ---
@@ -15,7 +16,7 @@ Related skills:
 ## Inputs
 
 - The user goal and constraints
-- [PROJECT.md](../../../PROJECT.md)
+- [PROJECT.md](../../../.dev/PROJECT.md)
 - Existing `.dev/` state if present
 
 ## Workflow

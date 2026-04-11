@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Authoring Workflows"
+  short_description: "Authors unit, integration, and optional system tests for the active implementation scope."
+  default_prompt: "Write automated tests for the active scope, covering unit and integration paths by default."

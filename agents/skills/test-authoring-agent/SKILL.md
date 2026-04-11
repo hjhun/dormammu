@@ -1,3 +1,4 @@
+---
 name: test-authoring-agent
 description: Writes and maintains dedicated automated tests for the active scope. Use after design to author unit tests and integration tests alongside development, and to add system tests only when the user or prompt explicitly requires system-test-level coverage on real device environments.
 ---

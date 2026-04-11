@@ -1,3 +1,4 @@
+---
 name: developing-agent
 description: Implements the active tasks for this project while keeping workflow state current. Use when the user asks to build features, wire components, add automation, or progress the active implementation phase.
 ---
