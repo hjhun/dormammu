@@ -43,7 +43,10 @@ class _TeeStream:
 
 
 @contextlib.contextmanager
-def _project_log_capture(repo_root: Path, command_name: str) -> Iterator[None]:
+def _project_log_capture(repo_root: Path, command_name: str, *, enabled: bool) -> Iterator[None]:
+    if not enabled:
+        yield
+        return
     log_path = repo_root / "DORMAMMU.log"
     started_at = _iso_now()
     with log_path.open("a", encoding="utf-8") as project_log:
@@ -263,6 +266,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Repeatable Markdown guidance file to embed into the run prompt when it has content.",
     )
+    run_once.add_argument(
+        "--debug",
+        action="store_true",
+        help="Mirror command stderr into a repository-root DORMAMMU.log file.",
+    )
     run_once.set_defaults(handler=_handle_run_once)
 
     run_loop = subparsers.add_parser(
@@ -370,6 +378,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Repeatable Markdown guidance file to embed into the run prompt when it has content.",
     )
+    run_loop.add_argument(
+        "--debug",
+        action="store_true",
+        help="Mirror command stderr into a repository-root DORMAMMU.log file.",
+    )
     run_loop.set_defaults(handler=_handle_run_loop)
 
     resume_loop = subparsers.add_parser(
@@ -402,6 +415,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Repeatable Markdown guidance file to refresh bootstrap guidance before resuming.",
+    )
+    resume_loop.add_argument(
+        "--debug",
+        action="store_true",
+        help="Mirror command stderr into a repository-root DORMAMMU.log file.",
     )
     resume_loop.set_defaults(handler=_handle_resume_loop)
 
@@ -478,6 +496,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Repeatable Markdown guidance file to embed into daemon phase prompts when it has content.",
+    )
+    daemonize.add_argument(
+        "--debug",
+        action="store_true",
+        help="Mirror command stderr into a repository-root DORMAMMU.log file.",
     )
     daemonize.set_defaults(handler=_handle_daemonize)
 
@@ -868,7 +891,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
     config = _with_guidance_overrides(config, args.guidance_files)
     repository = StateRepository(config, session_id=repository.session_id)
     prompt_text, prompt_source_path = _read_prompt_input(args)
-    with _project_log_capture(config.repo_root, "run-once"):
+    with _project_log_capture(config.repo_root, "run-once", enabled=args.debug):
         goal, roadmap_phases = _resolve_bootstrap_inputs(
             repository=repository,
             goal=args.goal,
@@ -941,7 +964,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
     config = _load_config(args.repo_root)
     config = _with_guidance_overrides(config, args.guidance_files)
     prompt_text, prompt_source_path = _read_prompt_input(args)
-    with _project_log_capture(config.repo_root, "run"):
+    with _project_log_capture(config.repo_root, "run", enabled=args.debug):
         requested_session_id = args.session_id or _read_session_marker(config.repo_root)
         goal, roadmap_phases = _resolve_bootstrap_inputs(
             repository=(
@@ -1025,7 +1048,7 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
     )
     config = _with_guidance_overrides(config, args.guidance_files)
     repository = StateRepository(config, session_id=repository.session_id)
-    with _project_log_capture(config.repo_root, "resume"):
+    with _project_log_capture(config.repo_root, "resume", enabled=args.debug):
         config, repository = _ensure_resume_session_scope(config, repository)
 
         loop_state = repository.read_workflow_state().get("loop", {})
@@ -1104,7 +1127,7 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    with _project_log_capture(config.repo_root, "daemonize"):
+    with _project_log_capture(config.repo_root, "daemonize", enabled=args.debug):
         try:
             return DaemonRunner(config, daemon_config).run_forever()
         except KeyboardInterrupt:

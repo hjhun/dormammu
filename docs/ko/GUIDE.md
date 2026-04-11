@@ -264,8 +264,9 @@ dormammu daemonize --repo-root . --config daemonize.json
 - `.dev/session.json`: 활성 세션 메타데이터
 - `.dev/logs/`: 실행 아티팩트와 로그
 
-저장소 루트의 `DORMAMMU.log`는 `run`, `run-once`, `resume` 실행 시점의
-배너와 미러링된 stderr 출력을 함께 남깁니다.
+저장소 루트의 `DORMAMMU.log`는 `run`, `run-once`, `resume`, `daemonize`를
+`--debug`와 함께 실행할 때만 생성됩니다. debug 모드에서는 실행 배너와
+미러링된 stderr 출력을 함께 남깁니다.
 
 ## Guidance 파일 동작 방식
 

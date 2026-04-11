@@ -1194,7 +1194,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("ATTEMPT::1", progress)
             self.assertIn("ATTEMPT::2", progress)
 
-    def test_run_once_appends_runtime_output_to_project_log(self) -> None:
+    def test_run_once_does_not_create_project_log_without_debug(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
@@ -1211,6 +1211,36 @@ class CliTests(unittest.TestCase):
                         "run-once",
                         "--repo-root",
                         str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Visible prompt without project log",
+                        "--run-label",
+                        "project-log-disabled",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertFalse((root / "DORMAMMU.log").exists())
+
+    def test_run_once_appends_runtime_output_to_project_log_when_debug_is_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                exit_code = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--debug",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",
@@ -1235,7 +1265,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("TAG::project-log", log_text)
             self.assertIn("=== dormammu run-once finished", log_text)
 
-    def test_run_loop_appends_attempt_progress_to_project_log(self) -> None:
+    def test_run_loop_appends_attempt_progress_to_project_log_when_debug_is_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
@@ -1248,6 +1278,7 @@ class CliTests(unittest.TestCase):
                         "run",
                         "--repo-root",
                         str(root),
+                        "--debug",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",

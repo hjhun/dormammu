@@ -219,6 +219,7 @@ class InstallScriptTests(unittest.TestCase):
                     "run-once",
                     "--repo-root",
                     str(packaged_repo),
+                    "--debug",
                     "--agent-cli",
                     str(fake_agent),
                     "--prompt",
@@ -254,6 +255,7 @@ class InstallScriptTests(unittest.TestCase):
                     "run",
                     "--repo-root",
                     str(packaged_repo),
+                    "--debug",
                     "--agent-cli",
                     str(fake_loop),
                     "--prompt",
@@ -282,6 +284,7 @@ class InstallScriptTests(unittest.TestCase):
                     "resume",
                     "--repo-root",
                     str(packaged_repo),
+                    "--debug",
                     "--max-retries",
                     "1",
                 ],
@@ -289,10 +292,10 @@ class InstallScriptTests(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
-                check=True,
             )
+            self.assertEqual(resume_result.returncode, 1)
             resume_payload = json.loads(resume_result.stdout)
-            self.assertEqual(resume_payload["status"], "completed")
+            self.assertEqual(resume_payload["status"], "failed")
             self.assertTrue((packaged_repo / "done.txt").exists())
             resumed_log = project_log.read_text(encoding="utf-8")
             self.assertIn("=== dormammu run started", resumed_log)
