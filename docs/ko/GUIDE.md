@@ -1,60 +1,98 @@
 # DORMAMMU 가이드
 
-`dormammu`는 코딩 에이전트를 위한 CLI 중심 워크플로우 루프 오케스트레이터입니다.
-외부 에이전트 CLI를 감싸서 실행하고, `.dev/` 아래에 재개 가능한 상태를
-저장하며, Supervisor 관점의 검증과 재시도 흐름을 함께 제공합니다.
+`dormammu`는 코딩 에이전트를 위한 CLI 중심 루프 오케스트레이터입니다.
+외부 에이전트 CLI를 Supervisor와 재개 가능한 상태 관리, 운영자 가시성 아티팩트로
+감싸서 — 에이전트 실행이 반복 가능하고, 검사 가능하며, 어떤 중단 이후에도
+안전하게 계속할 수 있도록 만듭니다.
 
-짧은 소개는 [README.md](../../README.md)를 먼저 보면 됩니다.
+짧은 소개는 [README.md](../../README.md)를 먼저 보세요. 영문 전체 가이드는
+[docs/GUIDE.md](../GUIDE.md)에 있습니다.
 
-## DORMAMMU가 잘하는 일
+---
 
-`dormammu`는 다음과 같은 요구가 있는 저장소 운영에 맞춰져 있습니다.
+## 목차
 
-- 반복 가능해야 함
-- 실행 근거를 나중에 다시 확인할 수 있어야 함
-- 중단 이후 재개가 가능해야 함
-- Supervisor 기준으로 결과를 검증할 수 있어야 함
-- 터미널에서 바로 운영할 수 있어야 함
+- [DORMAMMU가 하는 일](#dormammu가-하는-일)
+- [핵심 개념](#핵심-개념)
+- [설치](#설치)
+- [빠른 시작](#빠른-시작)
+- [명령어 레퍼런스](#명령어-레퍼런스)
+- [설정 레퍼런스](#설정-레퍼런스)
+- [데몬 모드](#데몬-모드)
+- [역할 기반 에이전트 파이프라인](#역할-기반-에이전트-파이프라인)
+- [Goals 자동화](#goals-자동화)
+- [Guidance 파일](#guidance-파일)
+- [`.dev` 디렉터리](#dev-디렉터리)
+- [세션 관리](#세션-관리)
+- [Fallback Agent CLI](#fallback-agent-cli)
+- [Working Directory와 CLI Override](#working-directory와-cli-override)
+- [대표 운영 흐름](#대표-운영-흐름)
+- [저장소 구조](#저장소-구조)
 
-단순히 에이전트를 한 번 호출하는 대신, 프롬프트, 로그, 세션 상태,
-검증 맥락을 `.dev/` 아래에 함께 남겨서 사람이 보기에도, 자동화가 읽기에도
-좋은 흐름을 만듭니다.
+---
 
-## 핵심 기능
+## DORMAMMU가 하는 일
 
-- 외부 코딩 에이전트 CLI 오케스트레이션
-- 단일 실행과 supervised retry loop
-- 중단 이후 resume 지원
-- 세션 시작, 저장, 목록 조회, 복원
-- `.dev/` 아래의 Markdown + JSON 상태 관리
-- 저장소별 운영 규칙을 넣을 수 있는 guidance 파일 임베딩
-- 쿼터 또는 토큰 소진 시 fallback agent CLI 지원
-- 프롬프트 방식, workdir 지원, 승인 우회 힌트를 보는 `inspect-cli`
-- 환경 점검용 `doctor`
+DORMAMMU 없이 코딩 에이전트를 실행하면:
 
-## 지원하는 에이전트 CLI 패턴
-
-`dormammu`는 다음과 같은 코딩 에이전트 CLI에 대해 preset 기반 동작을
-제공합니다.
-
-- `codex`
-- `claude`
-- `gemini`
-- `cline`
-- `aider`
-
-preset 지원 덕분에 `dormammu`는 프롬프트 전달 방식, 명령 prefix, workdir
-플래그, 승인 관련 기본 옵션을 더 안정적으로 다룰 수 있습니다.
-
-확인 예시:
-
-```bash
-dormammu inspect-cli --repo-root . --agent-cli codex
 ```
+you ──▶ agent CLI ──▶ (잘 됐으면 좋겠다)
+```
+
+DORMAMMU와 함께하면:
+
+```
+you ──▶ dormammu run ──▶ agent CLI ──▶ supervisor가 검증 ──▶ 완료
+                              ▲               │
+                              │    실패        ▼
+                              └── continuation 맥락 생성 ──┘
+```
+
+Supervisor가 확인하는 항목:
+
+- 필요한 파일이 변경되었는가?
+- worktree에 변화가 있는가?
+- 에이전트가 의미 있는 결과를 만들었는가?
+
+검증 실패 시 DORMAMMU는 continuation 맥락을 생성하고 재시도합니다.
+설정된 한도 내에서 Supervisor가 작업을 승인하면 루프가 즉시 종료됩니다.
+
+에이전트가 보고 만들어낸 모든 것은 나중에 검사하거나 재개할 수 있도록
+`.dev/`에 기록됩니다.
+
+---
+
+## 핵심 개념
+
+### Supervised 루프
+
+`dormammu run`은 에이전트 호출을 재시도 루프로 감쌉니다. 각 시도 이후
+Supervisor가 결과를 평가합니다. 실패 시 이전 출력이 담긴 continuation
+프롬프트를 구성해서 다음 시도를 제출합니다.
+
+### 재개 가능한 상태
+
+모든 워크플로우 상태 — 프롬프트, 로그, 세션 메타데이터, 기계 상태 — 는
+`.dev/`에 저장됩니다. 프로세스가 중단되더라도 `dormammu resume`으로 처음부터
+다시 시작하는 대신 마지막 저장 상태에서 이어갑니다.
+
+### CLI 어댑터
+
+DORMAMMU는 내부 실행 요청 표현을 대상 CLI에 맞는 실제 호출로 변환합니다.
+각 알려진 CLI에 대해 프롬프트 방식, 명령 prefix, workdir 플래그, 자동 승인
+인수를 처리하는 preset 어댑터가 있습니다.
+
+### 역할 기반 파이프라인
+
+`dormammu.json`에 `agents`가 설정되면 데몬은 각 goal을
+`developer → tester → reviewer → committer` 파이프라인을 통해 처리하며
+단계 간 자동 피드백 루프가 동작합니다.
+
+---
 
 ## 설치
 
-### 릴리스 설치 스크립트 사용
+### 빠른 설치 (권장)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
@@ -74,20 +112,22 @@ python3 -m venv .venv
 pip install -e .
 ```
 
-지원 Python 버전은 `3.10+`입니다.
+Python `3.10+`이 필요합니다. Ubuntu 설정은 [docs/ko/UBUNTU_PYTHON_310_PLUS.md](UBUNTU_PYTHON_310_PLUS.md)를 참고하세요.
+
+---
 
 ## 빠른 시작
 
-### 1. 환경 점검
+### 1. 환경 확인
 
 ```bash
 dormammu doctor --repo-root . --agent-cli codex
 ```
 
-이 단계에서는 Python 버전, 에이전트 CLI 경로, 저장소 쓰기 가능 여부,
-`.agents` 같은 에이전트 작업 디렉터리 존재 여부를 확인합니다.
+Python 버전, 에이전트 CLI 경로, 저장소 쓰기 가능 여부, 워크스페이스 디렉터리
+존재 여부를 확인합니다.
 
-### 2. `.dev` 초기 상태 생성
+### 2. `.dev` 상태 초기화
 
 ```bash
 dormammu init-state \
@@ -95,27 +135,34 @@ dormammu init-state \
   --goal "요청된 저장소 작업을 안전하게 구현한다."
 ```
 
-이 명령은 다음과 같은 상태 파일을 초기화하거나 갱신합니다.
+다음 파일을 생성하거나 갱신합니다:
 
 - `.dev/DASHBOARD.md`
 - `.dev/PLAN.md`
 - `.dev/session.json`
 - `.dev/workflow_state.json`
 
-또한 로컬 머신에서 지원되는 coding-agent CLI를 조사하고, 다음 우선순위로
-가장 먼저 발견된 명령을 `active_agent_cli`로 갱신합니다:
-`codex`, `claude`, `gemini`, `cline`.
+또한 설치된 coding-agent CLI를 확인하고 `active_agent_cli`를 우선순위
+`codex` › `claude` › `gemini` › `cline` 순으로 사용 가능한 값으로 갱신합니다.
 
-### 3. 외부 CLI 어댑터 동작 확인
+### 3. 어떤 설정 파일이 로드되는지 확인
+
+```bash
+dormammu show-config --repo-root .
+```
+
+로드된 파일 경로를 포함해 해석된 설정을 JSON으로 출력합니다.
+
+### 4. CLI 어댑터 확인
 
 ```bash
 dormammu inspect-cli --repo-root . --agent-cli cline
 ```
 
-실제 실행 전에 프롬프트 전달 방식, workdir 지원 여부, 승인 우회 힌트를
-확인하고 싶을 때 유용합니다.
+프롬프트 방식, preset 매칭 결과, workdir 지원 여부, 승인 관련 힌트를 실제
+실행 전에 확인합니다.
 
-### 4. 단일 실행
+### 5. 단일 에이전트 실행
 
 ```bash
 dormammu run-once \
@@ -124,10 +171,9 @@ dormammu run-once \
   --prompt "저장소 가이드를 읽고 다음 구현 단계를 요약하세요."
 ```
 
-`run-once`는 재시도 루프 없이 한 번만 실행하고, 관련 아티팩트를 남길 때
-적합합니다.
+`run-once`는 재시도 루프 없이 한 번 실행하고 아티팩트를 남깁니다.
 
-### 5. supervised loop 실행
+### 6. Supervised 루프 실행
 
 ```bash
 dormammu run \
@@ -139,142 +185,269 @@ dormammu run \
   --max-iterations 50
 ```
 
-`run`은 다음 흐름이 필요할 때 사용합니다.
+Supervisor가 승인하거나 반복 한도에 도달할 때까지 루프가 실행됩니다.
+`--max-iterations`와 `--max-retries`를 모두 지정하지 않으면 기본값은 `50`입니다.
 
-- 외부 에이전트 실행
-- 결과 검증
-- 결과가 불완전할 때 continuation 맥락 생성
-- 설정된 정책에 따라 재시도
-
-`--max-iterations`와 `--max-retries`를 모두 주지 않으면 Dormammu는 총
-`50`회 시도를 기본값으로 사용합니다. 그보다 먼저 supervisor가 작업을
-승인하면 남은 budget을 소진하지 않고 즉시 종료합니다.
-
-### 6. 나중에 이어서 실행
+### 7. 나중에 이어서 실행
 
 ```bash
 dormammu resume --repo-root .
 ```
 
-`resume`은 전체 작업을 처음부터 다시 시작하는 대신, 저장된 loop 상태에서
-이어갑니다.
+저장된 루프 상태와 continuation 맥락을 다시 읽어 복구 흐름을 재시작합니다.
 
-## 주요 명령 이해하기
+---
+
+## 명령어 레퍼런스
 
 ### `dormammu doctor`
 
-다음 항목을 점검합니다.
+환경 진단. 다음을 확인합니다:
 
-- Python 버전
-- agent CLI 사용 가능 여부
-- `.agent` 또는 `.agents` 디렉터리 존재 여부
+- Python 버전 (≥ 3.10)
+- 에이전트 CLI 경로 및 사용 가능 여부
+- `.agent` 또는 `.agents` 워크스페이스 디렉터리
 - 저장소 루트 쓰기 가능 여부
 
 ### `dormammu init-state`
 
-활성 저장소를 위한 bootstrap 상태를 생성하거나 병합합니다. 실제 실행 전에
-`.dev/`를 준비하는 가장 간단한 방법입니다. bootstrap 과정에서 지원되는 CLI를
-다시 확인하고 `active_agent_cli`를 우선순위 `codex`, `claude`, `gemini`,
-`cline` 순으로 사용 가능한 값으로 갱신합니다.
+`.dev/` 상태를 생성하거나 갱신합니다. 저장소에서 처음 실행하기 전이나
+goal 변경 후 상태를 초기화할 때 사용합니다.
 
-### `dormammu run-once`
+### `dormammu show-config`
 
-외부 에이전트를 한 번 실행하고 다음 정보를 저장합니다.
-
-- 프롬프트 아티팩트
-- stdout / stderr 로그
-- 명령과 CLI capability 메타데이터
-- 최신 실행 정보
-
-### `dormammu run`
-
-supervised loop를 실행합니다. 자주 쓰는 옵션은 다음과 같습니다.
-
-- `--max-iterations`
-- `--required-path`
-- `--require-worktree-changes`
-- `--max-retries`
-- `--workdir`
-- `--extra-arg`
-- `--guidance-file`
-
-### `dormammu resume`
-
-저장된 loop 상태와 continuation 맥락을 다시 읽어서 복구 흐름을 재시작합니다.
+해석된 런타임 설정과 소스 파일을 출력합니다.
 
 ### `dormammu inspect-cli`
 
-다음 정보를 JSON으로 보여줍니다.
+해석된 CLI 어댑터 세부 정보를 JSON으로 출력합니다:
 
-- 감지된 프롬프트 모드
-- 매칭된 preset
-- command prefix
-- workdir 플래그 지원 여부
-- 승인 관련 힌트
+- `prompt_mode`: 프롬프트 전달 방식 (positional, flag, stdin)
+- `preset_name`: 매칭된 알려진 preset
+- `command_prefix`: 프롬프트 앞에 붙는 prefix
+- `workdir_flag`: working directory 설정에 사용되는 플래그
+- `approval_hints`: 자동 주입되는 승인 관련 플래그
 
-### 세션 명령
+### `dormammu run-once`
 
-다음 명령도 함께 제공합니다.
+에이전트를 한 번 실행합니다. 프롬프트 아티팩트, stdout, stderr, 실행 메타데이터를
+저장합니다. 재시도하지 않습니다.
 
-- `start-session`
-- `sessions`
-- `restore-session`
+### `dormammu run`
 
-이 명령들은 작업 흐름을 새로 시작하거나, 예전 세션 스냅샷으로 돌아가야 할
-때 유용합니다.
+Supervised 재시도 루프를 실행합니다.
+
+주요 옵션:
+
+| 옵션 | 설명 |
+|------|------|
+| `--prompt` / `--prompt-file` | 인라인 프롬프트 텍스트 또는 프롬프트 파일 경로 |
+| `--agent-cli` | 사용할 CLI (설정의 `active_agent_cli`를 덮어씀) |
+| `--required-path` | 에이전트 실행 후 존재하거나 변경되어야 하는 파일 |
+| `--require-worktree-changes` | worktree 변화가 없으면 검증 실패 |
+| `--max-iterations` | 총 시도 한도 (기본값 `50`) |
+| `--max-retries` | 재시도 한도 (`--max-iterations` 대체) |
+| `--workdir` | 에이전트 프로세스의 작업 디렉터리 |
+| `--guidance-file` | 프롬프트에 삽입할 추가 guidance 파일 (반복 가능) |
+| `--extra-arg` | 에이전트 CLI에 전달할 추가 플래그 (반복 가능) |
+| `--debug` | 저장소 루트에 `DORMAMMU.log` 기록 |
+
+### `dormammu resume`
+
+저장된 상태를 불러와 이전 실행을 계속합니다.
 
 ### `dormammu daemonize`
 
-별도의 daemon JSON 설정 파일을 기준으로 프롬프트 디렉터리를 감시하고,
-들어오는 프롬프트를 하나씩 순차 처리합니다.
-
-예시:
+프롬프트 디렉터리를 감시하고 파일을 하나씩 Supervised 루프로 처리하는
+장기 실행 데몬입니다.
 
 ```bash
 dormammu daemonize --repo-root . --config daemonize.json
 ```
 
-`daemonize`는 다음 흐름이 필요할 때 사용합니다.
+자세한 설정은 [데몬 모드](#데몬-모드)를 참고하세요.
 
-- `prompt_path`에 새 프롬프트 파일이 들어오는 것을 감시
-- daemon polling 루프로 60초마다 `prompt_path`를 다시 스캔
-- 파일명 앞의 숫자 prefix 우선, 그다음 알파벳 prefix 우선, 마지막으로 일반
-  파일명 순서로 정렬
-- 각 프롬프트를 `dormammu run --prompt-file <path>`와 동일한 supervised
-  loop 의미로 실행
-- loop가 종료된 뒤에만 `result_path`에 결과 리포트 생성
-- loop가 끝나면 `prompt_path`의 원본 프롬프트 파일 제거
+---
 
-시작점으로는 [daemonize.json.example](../../daemonize.json.example)를
-사용하면 됩니다.
+## 설정 레퍼런스
 
-`daemonize`는 더 이상 phase별 `agent_cli` 설정을 받지 않습니다.
-대신 `dormammu.json` 또는 `~/.dormammu/config`의 `active_agent_cli`를
-사용하고, 일반 `run` 루프 동작을 그대로 재사용합니다.
+### 런타임 설정 (`dormammu.json`)
 
-## `.dev` 디렉터리
+다음 순서로 해석됩니다:
 
-`dormammu`는 `.dev/`를 사람과 자동화가 함께 보는 제어면으로 사용합니다.
+1. `DORMAMMU_CONFIG_PATH` 환경 변수
+2. `<repo-root>/dormammu.json`
+3. `~/.dormammu/config`
 
-중요한 파일은 다음과 같습니다.
+전체 예시:
 
-- `.dev/DASHBOARD.md`: 운영자 관점의 현재 상태
-- `.dev/PLAN.md`: 프롬프트에서 파생된 구현 체크리스트
-- `.dev/workflow_state.json`: 기계 기준 워크플로우 상태
-- `.dev/session.json`: 활성 세션 메타데이터
-- `.dev/logs/`: 실행 아티팩트와 로그
+```json
+{
+  "active_agent_cli": "/home/you/.local/bin/codex",
+  "fallback_agent_clis": [
+    "claude",
+    { "path": "aider", "extra_args": ["--yes"] }
+  ],
+  "cli_overrides": {
+    "cline": { "extra_args": ["-y", "--verbose", "--timeout", "1200"] }
+  },
+  "token_exhaustion_patterns": [
+    "usage limit", "quota exceeded", "rate limit exceeded"
+  ],
+  "agents": {
+    "developer":  { "cli": "claude", "model": "claude-opus-4-6" },
+    "tester":     { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "reviewer":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "committer":  { "cli": "claude" }
+  }
+}
+```
 
-`run`, `run-once`, `resume`은 `--debug`와 함께 실행할 때만 저장소 루트에
-`DORMAMMU.log`를 남깁니다. 반면 `daemonize --debug`는
-`<result_path>/../progress/<prompt>_progress.log`에 기록하고, 새 프롬프트
-세션이 시작될 때마다 파일을 다시 만들어 처음부터 stderr 진행 로그를
-남깁니다.
+`agents`가 설정되면 `daemonize`는 기본 루프 대신 역할 기반 파이프라인을
+사용합니다. [역할 기반 에이전트 파이프라인](#역할-기반-에이전트-파이프라인)을 참고하세요.
 
-## Guidance 파일 동작 방식
+### 데몬 큐 설정 (`daemonize.json`)
 
-guidance 파일은 저장소별 운영 규칙을 실행 프롬프트에 주입할 수 있게 해줍니다.
+`dormammu.json`과 별개입니다. 데몬이 감시하는 내용과 큐 방식을 제어합니다.
 
-예시:
+```json
+{
+  "schema_version": 1,
+  "prompt_path": "./queue/prompts",
+  "result_path": "./queue/results",
+  "watch": {
+    "backend": "auto",
+    "poll_interval_seconds": 60,
+    "settle_seconds": 0
+  },
+  "queue": {
+    "allowed_extensions": [".md", ".txt"],
+    "ignore_hidden_files": true
+  },
+  "goals": {
+    "path": "./goals",
+    "interval_minutes": 60
+  }
+}
+```
+
+상대 경로는 현재 쉘 작업 디렉터리가 아닌 데몬 설정 파일 위치를 기준으로
+해석됩니다.
+
+---
+
+## 데몬 모드
+
+`daemonize`는 DORMAMMU를 장기 실행 큐 워커로 만듭니다. `prompt_path`에 프롬프트
+파일을 넣으면 데몬이 이를 감지해 Supervised 루프로 실행하고 결과 리포트를
+`result_path`에 씁니다.
+
+```bash
+dormammu daemonize --repo-root . --config daemonize.json
+```
+
+### 큐 정렬 순서
+
+프롬프트 파일은 처리 전에 결정론적으로 정렬됩니다:
+
+1. 숫자 prefix 파일 — 정수값 기준 (`001_`, `02_`, `10_`)
+2. 알파벳 prefix 파일 — 알파벳순 (`A_`, `b-`, `C_`)
+3. prefix 없는 파일 — 전체 파일명 기준
+
+### 결과 리포트
+
+`001_feature.md` 프롬프트 파일 처리 후 `001_feature_RESULT.md`를 `result_path`에
+씁니다. 리포트에는 다음이 포함됩니다:
+
+- 원본 프롬프트 파일명과 경로
+- 시작 및 완료 타임스탬프
+- 실행 결과와 단계별 요약
+- 관련 `.dev/` 및 로그 아티팩트 경로
+
+### 런타임 설정과 데몬 설정 동시 사용
+
+```bash
+DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json \
+  dormammu daemonize --repo-root . --config ./ops/daemonize.prod.json
+```
+
+### 예시 설정 파일 선택 기준
+
+| 예시 파일 | 언제 사용하는가 |
+|-----------|----------------|
+| `daemonize.json.example` | 기본 — `.md`와 `.txt` 혼합 큐 |
+| `daemonize.named-skill.example.json` | Markdown 프롬프트만 받는 큐 |
+| `daemonize.mixed-skill-resolution.example.json` | 편집기가 파일을 여러 번 나눠 쓸 때 settle delay 필요 |
+| `daemonize.phase-specific-clis.example.json` | 더 짧은 polling 간격이 필요한 경우 |
+
+---
+
+## 역할 기반 에이전트 파이프라인
+
+`dormammu.json`에 `agents`가 설정되면 데몬은 단일 에이전트 루프 대신 4단계
+파이프라인을 통해 각 goal을 처리합니다:
+
+```
+developer ──▶ tester ──▶ reviewer ──▶ committer
+    ▲              │           │
+    └── FAIL ──────┘           │
+    ▲                          │
+    └──────── NEEDS_WORK ──────┘
+```
+
+### 역할
+
+| 역할 | 출력 슬롯 | verdict | 재진입 조건 |
+|------|----------|---------|-----------|
+| developer | `.dev/01-developer/` | — | tester `FAIL` 또는 reviewer `NEEDS_WORK` |
+| tester | `.dev/04-tester/` | `OVERALL: PASS` / `OVERALL: FAIL` | — |
+| reviewer | `.dev/05-reviewer/` | `VERDICT: APPROVED` / `VERDICT: NEEDS_WORK` | — |
+| committer | `.dev/06-committer/` | — | — |
+
+**Tester**는 black-box one-shot 에이전트입니다. goal에 기술된 관찰 가능한
+동작을 기준으로 테스트 케이스를 설계하고 실행한 뒤 마지막 출력 줄에
+`OVERALL: PASS` 또는 `OVERALL: FAIL`을 씁니다. `FAIL` verdict가 나오면
+tester 리포트를 원본 프롬프트에 붙여서 developer가 다시 실행합니다.
+
+**Reviewer**는 goal과 아키텍트 설계 문서(`.dev/02-architect/<date>_<stem>.md`)를
+기준으로 코드 리뷰를 수행합니다. 마지막 줄에 `VERDICT: APPROVED` 또는
+`VERDICT: NEEDS_WORK`를 씁니다. `NEEDS_WORK`이면 developer가 다시 진입합니다.
+
+**재진입 한도**: tester 또는 reviewer 루프에서 3회 이후에는 파이프라인이
+무조건 다음 단계로 진행합니다.
+
+### 역할별 CLI 해석 순서
+
+각 역할에 대한 CLI는 다음 순서로 해석됩니다:
+
+1. `dormammu.json`의 `agents.<role>.cli`
+2. `active_agent_cli` (전역 fallback)
+
+---
+
+## Goals 자동화
+
+`daemonize.json`에 `goals`가 설정되면 `GoalsScheduler` 스레드가 데몬과
+함께 실행됩니다. `interval_minutes` 마다 `goals.path` 디렉터리를 스캔하고
+`.md` 파일을 발견하면 다음 파이프라인 실행을 위해 `prompt_path/`에 프롬프트로
+넣습니다. 이미 처리된 파일(`<date>_<stem>` 기준)은 건너뜁니다.
+
+goals 디렉터리는 Telegram 봇 연동을 통해 `/goals` 명령으로도 관리할 수
+있습니다 (목록 조회, 추가, 삭제).
+
+---
+
+## Guidance 파일
+
+Guidance 파일을 사용하면 저장소별 운영 규칙을 모든 에이전트 프롬프트에
+주입할 수 있습니다. DORMAMMU는 다음 순서로 guidance를 해석합니다:
+
+1. 명시적으로 전달한 `--guidance-file` 플래그 (전달 순서대로)
+2. 저장소 guidance: 저장소 루트의 `AGENTS.md` 또는 `agents/AGENTS.md`
+3. `~/.dormammu/agents` 아래 설치된 fallback guidance
+4. DORMAMMU에 번들된 패키지 fallback guidance 에셋
+
+예시 — 여러 guidance 파일을 명시적으로 전달:
 
 ```bash
 dormammu run \
@@ -285,90 +458,80 @@ dormammu run \
   --prompt "요청된 변경을 구현하세요."
 ```
 
-해결 순서는 다음과 같습니다.
+---
 
-1. 명시적으로 넘긴 `--guidance-file`
-2. 저장소 가이드 파일인 `AGENTS.md`, `agents/AGENTS.md`
-3. `~/.dormammu/agents` 아래 설치된 fallback guidance
-4. 패키지에 포함된 fallback guidance asset
+## `.dev` 디렉터리
 
-## Daemonize 설정 규칙
+`.dev/`는 사람과 자동화가 함께 사용하는 제어면입니다.
 
-`daemonize`는 `dormammu.json`과 별도의 JSON 설정 파일을 사용합니다.
+| 파일 | 역할 |
+|------|------|
+| `.dev/DASHBOARD.md` | 현재 운영자 관점 상태: 활성 단계, 다음 액션, 리스크 |
+| `.dev/PLAN.md` | 프롬프트 기반 단계 체크리스트 (`[ ]` 미완료, `[O]` 완료) |
+| `.dev/workflow_state.json` | 기계 기준 워크플로우 상태 — 진실의 근원 |
+| `.dev/session.json` | 활성 세션 메타데이터 |
+| `.dev/logs/` | 실행별 프롬프트, stdout, stderr, 메타데이터 아티팩트 |
 
-- `dormammu.json`은 Dormammu 전체 런타임 기본 설정
-- `daemonize.json`은 하나의 장기 실행 감시 워크플로 정의
+디버그 로그:
 
-핵심 필드는 다음과 같습니다.
+- `--debug`와 함께 `run`, `run-once`, `resume` → 저장소 루트의 `DORMAMMU.log`
+- `daemonize --debug` → `<result_path>/../progress/<prompt>_progress.log`,
+  새 프롬프트 세션마다 새로 생성
 
-- `prompt_path`
-- `result_path`
-- `watch`
-- `queue`
-- phase별 coding-agent 설정 없음
+---
 
-이제 daemonize는 자체 phase/skill 그래프를 정의하지 않고, 기존 supervised
-run loop를 재사용합니다. coding agent는 일반 Dormammu 런타임 설정에서
-잡고, `daemonize.json`은 watch와 queue 설정에만 집중하세요.
+## 세션 관리
 
-`active_agent_cli`를 잡는 예시는 아래처럼 일반 런타임 설정에 둡니다.
+DORMAMMU는 세션 단위로 작업을 추적합니다. 각 세션에는 ID와 goal이 있습니다.
+
+```bash
+# 새로운 named 세션 시작
+dormammu start-session --repo-root . --goal "Phase 2 후속 작업"
+
+# 저장된 세션 목록 조회
+dormammu sessions --repo-root .
+
+# 이전 세션 복원
+dormammu restore-session --repo-root . --session-id <id>
+```
+
+세션은 워크플로우 히스토리를 분기하거나 이후 작업을 버리지 않고
+이전 체크포인트로 돌아가야 할 때 유용합니다.
+
+---
+
+## Fallback Agent CLI
+
+기본 에이전트 CLI가 토큰 소진 또는 쿼터 한도에 도달하면(`token_exhaustion_patterns`
+매칭) DORMAMMU는 자동으로 다음 설정된 fallback CLI로 전환합니다.
+
+설정이 없을 때 기본 fallback 순서:
+
+1. `codex`
+2. `claude`
+3. `gemini`
+
+`dormammu.json`에서 fallback 설정:
 
 ```json
 {
-  "active_agent_cli": "/home/you/.local/bin/codex"
+  "active_agent_cli": "codex",
+  "fallback_agent_clis": [
+    "claude",
+    { "path": "aider", "extra_args": ["--yes"] }
+  ],
+  "token_exhaustion_patterns": [
+    "usage limit", "quota exceeded", "rate limit exceeded"
+  ]
 }
 ```
 
-## 추가 example 파일
-
-Dormammu는 여러 watch/queue 운영 패턴을 바로 시작할 수 있도록 daemon
-config example을 여러 개 제공합니다.
-
-- `daemonize.json.example`
-  - `.md`와 `.txt`를 함께 받는 기본 prompt watcher 예시입니다.
-- `daemonize.named-skill.example.json`
-  - Markdown만 받는 최소 queue preset 예시입니다.
-- `daemonize.mixed-skill-resolution.example.json`
-  - 여러 번 나눠 저장되는 파일을 위해 짧은 settle delay를 둔 Markdown
-    queue 예시입니다.
-- `daemonize.phase-specific-clis.example.json`
-  - 더 짧은 polling interval을 쓰는 polling 중심 preset 예시입니다.
-
-## 어떤 example부터 시작하면 좋나요
-
-처음 선택이 헷갈리면 아래 기준으로 고르면 됩니다.
-
-- `daemonize.json.example`부터 시작
-  - 기본 설정으로 시작하고 싶을 때
-- `daemonize.named-skill.example.json`부터 시작
-  - queue가 Markdown prompt만 받아야 할 때
-- `daemonize.mixed-skill-resolution.example.json`부터 시작
-  - 편집기가 파일을 여러 번 나눠 쓰므로 짧은 settle window가 필요할 때
-- `daemonize.phase-specific-clis.example.json`부터 시작
-  - polling을 명시적으로 쓰면서 더 자주 다시 스캔하고 싶을 때
-
-운영 상황별 추천은 보통 이렇게 보면 됩니다.
-
-- `.md`와 `.txt`를 함께 받는 기본 queue -> `daemonize.json.example`
-- Markdown만 받는 엄격한 queue -> `daemonize.named-skill.example.json`
-- 파일이 여러 번 저장된 뒤 닫히는 편집기 환경 -> `daemonize.mixed-skill-resolution.example.json`
-- polling 간격을 짧게 가져가야 하는 환경 -> `daemonize.phase-specific-clis.example.json`
+---
 
 ## Working Directory와 CLI Override
 
-`--workdir`를 주면 `dormammu`는 항상 그 디렉터리를 외부 CLI의 프로세스
-작업 디렉터리로 사용합니다. 그리고 해당 CLI의 workdir 플래그를 알고 있으면
-그 값도 함께 전달합니다.
-
-예를 들어 Cline preset은 다음을 지원합니다.
-
-- positional prompt
-- `-y`
-- 기본 `--verbose`
-- 기본 `--timeout 1200`
-- `--cwd <path>`
-
-예시:
+`--workdir`는 외부 CLI의 프로세스 작업 디렉터리를 설정합니다. 어댑터가
+해당 CLI의 workdir 플래그를 알고 있으면 값을 그쪽에도 전달합니다.
 
 ```bash
 dormammu run-once \
@@ -378,53 +541,65 @@ dormammu run-once \
   --prompt "이 서브프로젝트를 분석하고 다음 단계를 요약하세요."
 ```
 
-## Fallback Agent CLI
+`cline` preset의 경우 `--workdir`가 `--cwd <path>`로 전달됩니다.
 
-기본 백엔드가 토큰 또는 쿼터 문제를 만나면, `dormammu`는 다른 CLI로
-넘어가도록 설정할 수 있습니다. 명시적 설정이 없으면 기본 순서는 다음과
-같습니다.
+추가 플래그를 전달하려면:
 
-- `codex`
-- `claude`
-- `gemini`
+```bash
+dormammu run-once \
+  --repo-root . \
+  --agent-cli gemini \
+  --prompt "저장소를 요약하세요." \
+  --extra-arg=--approval-mode \
+  --extra-arg=auto_edit
+```
 
-예시 설정:
+CLI별 기본값은 `cli_overrides`에서 설정합니다:
 
 ```json
 {
-  "active_agent_cli": "/home/you/.local/bin/codex",
-  "fallback_agent_clis": [
-    "claude",
-    {
-      "path": "aider",
-      "extra_args": ["--yes"]
-    }
-  ],
   "cli_overrides": {
-    "cline": {
-      "extra_args": ["-y", "--verbose", "--timeout", "1200"]
-    }
+    "cline": { "extra_args": ["-y", "--verbose", "--timeout", "1200"] }
   }
 }
 ```
 
+---
+
 ## 대표 운영 흐름
 
 ```bash
+# 1. 환경 확인
 dormammu doctor --repo-root . --agent-cli codex
+
+# 2. 상태 초기화
 dormammu init-state --repo-root . --goal "요청된 변경을 안전하게 배포한다"
+
+# 3. 설정 및 CLI 어댑터 확인
+dormammu show-config --repo-root .
 dormammu inspect-cli --repo-root . --agent-cli codex
-dormammu run --repo-root . --agent-cli codex --prompt-file PROMPT.md --required-path README.md
+
+# 4. 실행
+dormammu run \
+  --repo-root . \
+  --agent-cli codex \
+  --prompt-file PROMPT.md \
+  --required-path README.md \
+  --require-worktree-changes
+
+# 5. 중단 시 재개
 dormammu resume --repo-root .
 ```
+
+---
 
 ## 저장소 구조
 
 ```text
-backend/     Python 패키지, 루프 엔진, 어댑터, 상태, supervisor
-agents/      배포 가능한 workflow 및 skill 가이드 번들
-templates/   `.dev` bootstrap 템플릿
-docs/        문서
+backend/     Python 패키지 — 루프 엔진, CLI 어댑터, 상태, supervisor, 데몬
+agents/      배포 가능한 workflow 및 skill guidance 번들
+templates/   .dev/ 상태 파일 bootstrap 템플릿
+docs/        사용자 및 운영자 문서
 scripts/     설치 및 개발 보조 스크립트
-tests/       런타임 및 워크플로우 검증
+tests/       런타임, 어댑터, 워크플로우 검증
 ```

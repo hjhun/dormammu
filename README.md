@@ -2,68 +2,119 @@
   <img src="docs/svg/dormammu.svg" alt="DORMAMMU logo" width="180">
 </p>
 
-# DORMAMMU
+<h1 align="center">DORMAMMU</h1>
 
-`dormammu` is a CLI-first workflow loop orchestrator for coding agents. It runs
-an external agent CLI, stores resumable state under `.dev/`, validates the
-result with a supervisor, and helps you continue safely after interruption.
+<p align="center">
+  <strong>A supervised, resumable loop orchestrator for coding agents.</strong>
+</p>
 
-Start with the full guide at [docs/GUIDE.md](docs/GUIDE.md). Korean
-documentation is available at [docs/ko/GUIDE.md](docs/ko/GUIDE.md).
+<p align="center">
+  <a href="https://github.com/hjhun/dormammu/blob/main/LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue.svg"></a>
+  <img alt="Version" src="https://img.shields.io/badge/version-0.4.0-green.svg">
+</p>
+
+<p align="center">
+  <a href="docs/GUIDE.md">Full Guide</a> ·
+  <a href="docs/ko/GUIDE.md">한국어 가이드</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#quick-start">Quick Start</a>
+</p>
+
+---
+
+`dormammu` wraps any external coding-agent CLI — `codex`, `claude`, `gemini`,
+`cline`, `aider`, or your own — in a loop that validates the result, generates
+continuation context, retries on failure, and stores everything under `.dev/`
+so work can be resumed at any point.
+
+## Why DORMAMMU
+
+Coding agents are powerful, but a single agent invocation is fragile:
+
+- The run may be interrupted
+- The result may be incomplete or wrong
+- You may not know which step failed or why
+
+DORMAMMU solves this by adding a **supervisor** layer and a **state machine**
+around the agent call. Every run is logged, validated, and resumable. The
+`.dev/` directory becomes your control surface — readable by humans and
+automation alike.
 
 ## Highlights
 
-- Supervised agent loops: run one-shot agent calls or a retry loop with
-  required-path and worktree-change checks.
-- Resumable execution: keep prompts, logs, session metadata, and machine state
-  under `.dev/` so work can continue instead of restarting from scratch.
-- CLI adapter support: inspect and drive external CLIs such as `codex`,
-  `claude`, `gemini`, `cline`, and `aider` through a unified runtime.
-- Operator-visible state: persist `DASHBOARD.md`, `PLAN.md`,
-  `workflow_state.json`, and run artifacts for both humans and tooling.
-- Guidance-aware prompting: embed repository guidance like `AGENTS.md` or
-  explicit `--guidance-file` Markdown files into agent runs.
-- Fallback backends: move to another configured agent CLI automatically when
-  the primary backend hits quota or token-exhaustion patterns.
-- Session management: start new sessions, list saved sessions, and restore old
-  snapshots into the active `.dev` view.
+| Feature | Description |
+|---------|-------------|
+| **Supervised retry loops** | The supervisor validates each agent result and generates continuation context for the next attempt |
+| **Resumable execution** | Prompts, logs, session metadata, and machine state are persisted under `.dev/` — resume after any interruption |
+| **Multi-CLI adapter** | Drive `codex`, `claude`, `gemini`, `cline`, and `aider` through a unified runtime with preset-aware command building |
+| **Role-based pipeline** | Route goals through a `developer → tester → reviewer → committer` pipeline with automated feedback loops |
+| **Daemonize mode** | Watch a prompt directory, queue incoming files in deterministic order, and run each through the supervised loop |
+| **Goals automation** | Schedule periodic goals that are automatically promoted into the daemon queue; manageable via Telegram |
+| **Fallback CLIs** | Automatically switch to a backup agent CLI when the primary hits quota or token exhaustion |
+| **Guidance injection** | Embed repository guidance (`AGENTS.md`, custom `--guidance-file`) into every agent prompt |
+| **Operator-visible state** | `DASHBOARD.md`, `PLAN.md`, and `workflow_state.json` keep progress visible at a glance |
+| **Session management** | Start named sessions, list saved snapshots, and restore older sessions at any time |
+| **Environment diagnostics** | `doctor` checks Python, CLI availability, repository writability, and workspace structure |
 
-## Supported Workflows
+## Supported Agent CLIs
 
-- `run-once`: invoke an external agent CLI a single time and persist artifacts.
-- `run`: execute a supervised retry loop around an agent CLI.
-- `daemonize`: watch a prompt directory from JSON config and process queued
-  prompts sequentially.
-- `resume`: continue the latest supervised run from saved state.
-- `inspect-cli`: detect prompt mode, workdir support, and risky approval flags.
-- `doctor`: verify Python, agent CLI availability, repository writability, and
-  workspace structure.
-- `init-state`, `start-session`, `sessions`, `restore-session`: bootstrap and
-  manage `.dev` state over time.
+DORMAMMU ships preset-aware adapters for:
 
-If you are not sure which config file a command uses, start with:
+| CLI | Prompt style | Workdir | Auto-approval |
+|-----|-------------|---------|---------------|
+| `codex` | exec + positional | — | `--dangerously-bypass-approvals-and-sandbox` |
+| `claude` | print-mode | — | `--dangerously-skip-permissions` |
+| `gemini` | prompt flag | `--include-directories` | `--approval-mode yolo` |
+| `cline` | positional + `-y` | `--cwd` | `-y` |
+| `aider` | `--message` flag | — | `--yes` |
 
-```bash
-dormammu --help
-dormammu show-config --repo-root .
-dormammu daemonize --help
+Any other CLI can be used with `--extra-arg` pass-through.
+
+## Architecture Overview
+
+```
+dormammu run / daemonize
+        │
+        ▼
+  ┌─────────────────────────────────────────────┐
+  │               Supervisor Loop               │
+  │                                             │
+  │  ┌──────────┐   ┌──────────┐  ┌─────────┐  │
+  │  │  Agent   │──▶│Validator │─▶│Continua-│  │
+  │  │  CLI     │   │(required │  │tion Gen │  │
+  │  │ Adapter  │   │ paths,   │  │         │  │
+  │  └──────────┘   │ worktree │  └────┬────┘  │
+  │                 │ changes) │       │retry  │
+  │                 └──────────┘       ▼       │
+  │                              ┌──────────┐  │
+  │                              │ .dev/ state│ │
+  │                              │ DASHBOARD │  │
+  │                              │ PLAN.md   │  │
+  │                              │ logs/     │  │
+  │                              └──────────┘  │
+  └─────────────────────────────────────────────┘
 ```
 
-The two config entry points are:
+For `daemonize` with role-based pipeline enabled:
 
-- General runtime config: `./dormammu.json`, or `DORMAMMU_CONFIG_PATH`, or
-  `~/.dormammu/config`
-- Daemon queue config: `dormammu daemonize --config daemonize.json`
+```
+goal file ──▶ developer ──▶ tester ──▶ reviewer ──▶ committer
+                  ▲              │           │
+                  └──── FAIL ────┘           │
+                  ▲                          │
+                  └──────── NEEDS_WORK ──────┘
+```
 
 ## Installation
 
-### Quick Install
+### Quick Install (recommended)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
 ```
 
-### Local Repository Install
+### From a Local Clone
 
 ```bash
 ./scripts/install.sh
@@ -77,7 +128,7 @@ python3 -m venv .venv
 pip install -e .
 ```
 
-The supported runtime target is Python `3.10+`.
+Requires Python `3.10+`.
 
 ## Quick Start
 
@@ -87,7 +138,7 @@ The supported runtime target is Python `3.10+`.
 dormammu doctor --repo-root . --agent-cli codex
 ```
 
-### 2. Bootstrap `.dev` state
+### 2. Initialize `.dev` state
 
 ```bash
 dormammu init-state \
@@ -95,36 +146,11 @@ dormammu init-state \
   --goal "Implement the requested repository change safely."
 ```
 
-During bootstrap, `init-state` also probes the local machine for supported
-coding-agent CLIs and updates `active_agent_cli` to the highest-priority
-available command in this order: `codex`, `claude`, `gemini`, `cline`.
+`init-state` also probes for installed coding-agent CLIs and sets
+`active_agent_cli` to the highest-priority available command:
+`codex` › `claude` › `gemini` › `cline`.
 
-### 3. Inspect the external CLI adapter
-
-```bash
-dormammu inspect-cli --repo-root . --agent-cli cline
-```
-
-### 3a. Confirm which JSON config Dormammu will load
-
-```bash
-dormammu show-config --repo-root .
-```
-
-Use this before real runs when you want to verify whether Dormammu is reading
-`./dormammu.json`, `DORMAMMU_CONFIG_PATH`, or the global
-`~/.dormammu/config`.
-
-### 4. Run one agent pass
-
-```bash
-dormammu run-once \
-  --repo-root . \
-  --agent-cli codex \
-  --prompt "Read the repo guidance and summarize the next implementation step."
-```
-
-### 5. Run the supervised loop
+### 3. Run the supervised loop
 
 ```bash
 dormammu run \
@@ -136,61 +162,109 @@ dormammu run \
   --max-iterations 50
 ```
 
-If you do not set a loop budget explicitly, `dormammu run` now defaults to
-`50` total attempts. As soon as the supervisor approves the work, Dormammu
-exits immediately instead of consuming the remaining budget.
-
-### 6. Resume later if needed
+### 4. Resume after interruption
 
 ```bash
 dormammu resume --repo-root .
 ```
 
-### 7. Run daemonized prompt watching
+### 5. Run as a background daemon
 
 ```bash
 dormammu daemonize --repo-root . --config daemonize.json
 ```
 
-Use [daemonize.json.example](daemonize.json.example) as the starting point for
-the daemon config file. `daemonize --config` is separate from the general
-runtime config in `dormammu.json`.
+See [daemonize.json.example](daemonize.json.example) for a starting config.
 
-If you want both files at once, the pattern is:
+## Commands
 
-```bash
-DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json \
-  dormammu daemonize --repo-root . --config ./ops/daemonize.prod.json
+| Command | Description |
+|---------|-------------|
+| `doctor` | Verify environment — Python, CLI path, repo writability, workspace structure |
+| `init-state` | Bootstrap or refresh `.dev/` state for a repository |
+| `run-once` | One bounded agent call with artifact capture, no retry loop |
+| `run` | Full supervised retry loop with validation and continuation |
+| `resume` | Continue a previous `run` from saved loop state |
+| `daemonize` | Long-running daemon that processes a prompt queue |
+| `inspect-cli` | Show resolved CLI adapter details — prompt mode, flags, preset match |
+| `show-config` | Print the resolved runtime config and its source path |
+| `start-session` | Begin a new named session under `.dev/` |
+| `sessions` | List saved session snapshots |
+| `restore-session` | Restore an older session into the active `.dev/` view |
+
+Full reference: `dormammu --help` or `dormammu <command> --help`.
+
+## Configuration
+
+### Runtime config (`dormammu.json`)
+
+Resolved in this order:
+
+1. `DORMAMMU_CONFIG_PATH` env variable
+2. `<repo-root>/dormammu.json`
+3. `~/.dormammu/config`
+
+```json
+{
+  "active_agent_cli": "/home/you/.local/bin/codex",
+  "fallback_agent_clis": [
+    "claude",
+    { "path": "aider", "extra_args": ["--yes"] }
+  ],
+  "cli_overrides": {
+    "cline": { "extra_args": ["-y", "--verbose", "--timeout", "1200"] }
+  },
+  "token_exhaustion_patterns": [
+    "usage limit", "quota exceeded", "rate limit exceeded"
+  ],
+  "agents": {
+    "developer":  { "cli": "claude", "model": "claude-opus-4-6" },
+    "tester":     { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "reviewer":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "committer":  { "cli": "claude" }
+  }
+}
 ```
 
-Each queued prompt now reuses the same supervised loop as
-`dormammu run --prompt-file <path>`. When that loop reaches a terminal
-outcome, daemonize writes the result report into `result_path` and removes the
-source prompt file from `prompt_path`.
+When `agents` is configured, `daemonize` uses the role-based pipeline
+(`developer → tester → reviewer → committer`) instead of the default loop.
 
-Additional daemon config examples are also available for different watch and
-queue presets:
+### Daemon queue config (`daemonize.json`)
 
-- [daemonize.json.example](daemonize.json.example)
-- [daemonize.named-skill.example.json](daemonize.named-skill.example.json)
-- [daemonize.mixed-skill-resolution.example.json](daemonize.mixed-skill-resolution.example.json)
-- [daemonize.phase-specific-clis.example.json](daemonize.phase-specific-clis.example.json)
+Separate from `dormammu.json`. Controls prompt watching and queue behavior.
+
+```json
+{
+  "schema_version": 1,
+  "prompt_path": "./queue/prompts",
+  "result_path": "./queue/results",
+  "watch": { "poll_interval_seconds": 60, "settle_seconds": 0 },
+  "queue": { "allowed_extensions": [".md", ".txt"] },
+  "goals": { "path": "./goals", "interval_minutes": 60 }
+}
+```
+
+Example files for different queue presets are included:
+
+- [`daemonize.json.example`](daemonize.json.example) — default mixed `.md`/`.txt` watcher
+- [`daemonize.named-skill.example.json`](daemonize.named-skill.example.json) — Markdown-only queue
+- [`daemonize.mixed-skill-resolution.example.json`](daemonize.mixed-skill-resolution.example.json) — with file settle delay for editors that write in multiple passes
+- [`daemonize.phase-specific-clis.example.json`](daemonize.phase-specific-clis.example.json) — shorter polling interval
 
 ## What Gets Written
 
-`dormammu` keeps the workflow inspectable and resumable with files such as:
+Every run leaves behind inspectable artifacts:
 
-- `.dev/DASHBOARD.md`: current operator-facing progress view
-- `.dev/PLAN.md`: prompt-derived task checklist
-- `.dev/workflow_state.json`: machine-readable workflow state
-- `.dev/session.json`: active session metadata
-- `.dev/logs/`: prompt, stdout, stderr, and metadata artifacts
-- `DORMAMMU.log`: project-level execution log for `run`, `run-once`, and
-  `resume` when started with `--debug`
-- `<result_path>/../progress/<prompt>_progress.log`: daemon progress log for
-  `daemonize --debug`, recreated for each new prompt session
+| Path | Contents |
+|------|----------|
+| `.dev/DASHBOARD.md` | Operator-facing progress, active phase, next action, risks |
+| `.dev/PLAN.md` | Prompt-derived task checklist (`[ ]` / `[O]` phase items) |
+| `.dev/workflow_state.json` | Machine-readable workflow state (source of truth) |
+| `.dev/session.json` | Active session metadata |
+| `.dev/logs/` | Prompt, stdout, stderr, and run metadata artifacts |
+| `DORMAMMU.log` | Project-level execution log (written with `--debug`) |
 
-## Common Usage Patterns
+## Common Patterns
 
 ### Use repository guidance automatically
 
@@ -201,11 +275,10 @@ dormammu run \
   --prompt "Follow AGENTS.md and implement the requested change."
 ```
 
-`dormammu` will use explicit `--guidance-file` inputs first, then repository
-guidance such as `AGENTS.md` or `agents/AGENTS.md`, then installed fallback
-guidance under `~/.dormammu/agents`, then packaged guidance assets.
+Guidance resolution order: `--guidance-file` flags › `AGENTS.md` / `agents/AGENTS.md` ›
+`~/.dormammu/agents` › packaged fallback assets.
 
-### Run in a specific working directory
+### Run in a subproject directory
 
 ```bash
 dormammu run-once \
@@ -215,10 +288,7 @@ dormammu run-once \
   --prompt "Inspect this subproject and report the failing test surface."
 ```
 
-For supported CLIs, `dormammu` forwards the workdir through the adapter, such
-as Cline's `--cwd <path>`.
-
-### Pass through extra CLI arguments
+### Pass extra flags to the agent CLI
 
 ```bash
 dormammu run-once \
@@ -229,111 +299,30 @@ dormammu run-once \
   --extra-arg=auto_edit
 ```
 
-### Manage multiple sessions
+### Use an environment-specific config
 
 ```bash
-dormammu start-session --repo-root . --goal "Phase 2 follow-up work"
-dormammu sessions --repo-root .
-dormammu restore-session --repo-root . --session-id your-session-id
+DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json \
+  dormammu daemonize --repo-root . --config ./ops/daemonize.prod.json
 ```
-
-## CLI Compatibility Notes
-
-- `codex`: uses the `exec` command prefix and positional prompts.
-- `claude`: uses print-mode style invocation and permission-mode detection.
-- `gemini`: supports prompt flags, approval-mode defaults, and include-dir
-  configuration.
-- `cline`: supports positional prompts with `-y`, default `--verbose`,
-  default `--timeout 1200`, and `--cwd <path>` forwarding when `--workdir`
-  is set.
-- `aider`: supports message-style prompt flags.
-
-Use `dormammu inspect-cli` before real runs if you want to confirm prompt mode,
-workdir support, matched preset, and approval-related hints.
-
-For unattended daemon-style runs, Dormammu applies non-interactive defaults for
-known CLIs when you do not pass explicit approval args:
-
-- `codex`: `--dangerously-bypass-approvals-and-sandbox`, plus
-  `--skip-git-repo-check` when the installed `codex exec` help advertises it
-- `claude`: `--dangerously-skip-permissions`
-- `gemini`: `--approval-mode yolo --include-directories /`
-
-## Configuration
-
-Without an explicit config file, the built-in fallback order is:
-
-- `codex`
-- `claude`
-- `gemini`
-
-Example `dormammu.json`:
-
-```json
-{
-  "active_agent_cli": "/home/you/.local/bin/codex",
-  "fallback_agent_clis": [
-    "claude",
-    {
-      "path": "aider",
-      "extra_args": ["--yes"]
-    }
-  ],
-  "cli_overrides": {
-    "cline": {
-      "extra_args": ["-y", "--verbose", "--timeout", "1200"]
-    }
-  },
-  "token_exhaustion_patterns": [
-    "usage limit",
-    "quota exceeded",
-    "rate limit exceeded",
-    "token limit",
-    "insufficient credits"
-  ]
-}
-```
-
-By default, the global config path is `~/.dormammu/config` when no repository
-local `dormammu.json` is present.
-
-Runtime config resolution order is:
-
-1. `DORMAMMU_CONFIG_PATH`
-2. `<repo-root>/dormammu.json`
-3. `~/.dormammu/config`
-
-Quick examples:
-
-```bash
-dormammu show-config --repo-root .
-DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json dormammu run --repo-root . --prompt-file PROMPT.md
-```
-
-`daemonize` no longer accepts phase-specific agent CLI settings. Configure the
-coding agent once through `dormammu.json` or `~/.dormammu/config` with
-`active_agent_cli`, and daemonize will reuse the same supervised run loop as
-`dormammu run`.
 
 ## Repository Layout
 
 ```text
-backend/     Python package, loop engine, adapters, state, supervisor
+backend/     Python package — loop engine, CLI adapters, state, supervisor, daemon
 agents/      Distributable workflow and skill guidance bundle
-templates/   Bootstrap templates for `.dev` state
+templates/   Bootstrap templates for .dev/ state files
 docs/        User and operator documentation
-docs/svg/    Brand assets
 scripts/     Install and developer convenience scripts
 tests/       Runtime, adapter, and workflow validation
 ```
 
-## Release Packaging
+## Release
 
-`.github/workflows/release.yml` builds wheel and sdist artifacts on `v*` tag
-pushes and on manual workflow dispatch. The release flow publishes `dist/*`
-artifacts plus the root `install.sh`, and the packaged build includes the
-guidance bundle used for installed fallback behavior.
+`v*` tag pushes and manual workflow dispatches build wheel and sdist artifacts
+via `.github/workflows/release.yml`. The packaged build includes the guidance
+bundle used for installed fallback behavior.
 
 ## License
 
-`dormammu` is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+DORMAMMU is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE).
