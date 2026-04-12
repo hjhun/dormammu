@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import signal
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dormammu.config import AppConfig
@@ -28,6 +31,7 @@ _HELP_TEXT = (
     r"📄 /result \[name\] — last \(or named\) result file content" "\n"
     "🗂️ /sessions — recent session list\n"
     "🛑 /stop — send interrupt to the running prompt\n"
+    "🔌 /shutdown — finish current prompt then stop the daemon\n"
     "❓ /help — this message"
 )
 
@@ -47,6 +51,7 @@ _MENU_KEYBOARD = [
     ],
     [
         {"text": "🛑 Stop", "callback_data": "stop"},
+        {"text": "🔌 Shutdown", "callback_data": "shutdown"},
     ],
 ]
 
@@ -179,8 +184,8 @@ class TelegramBot:
                     self._loop,
                 )
                 future.result(timeout=10)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("notify_started: failed to send startup message to chat %s: %s", chat_id, exc)
 
     def _send_message_sync(self, chat_id: int, text: str) -> None:
         """Thread-safe: enqueue a Telegram message from any thread.
@@ -195,8 +200,8 @@ class TelegramBot:
             return
         try:
             self._loop.call_soon_threadsafe(self._put_to_send_queue, chat_id, text)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug("_send_message_sync: could not schedule message (loop closed?): %s", exc)
 
     def _put_to_send_queue(self, chat_id: int, text: str) -> None:
         """Called from within the event loop (via call_soon_threadsafe).
@@ -209,7 +214,7 @@ class TelegramBot:
         try:
             self._send_queue.put_nowait((chat_id, text))
         except asyncio.QueueFull:
-            pass  # shed load rather than block
+            _log.debug("_put_to_send_queue: outgoing queue full; dropping message to chat %s", chat_id)
 
     async def _drain_send_queue(self) -> None:
         """Background asyncio task: send queued messages at a controlled rate.
@@ -227,8 +232,8 @@ class TelegramBot:
             try:
                 if self._app is not None:
                     await self._app.bot.send_message(chat_id=chat_id, text=text)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("_drain_send_queue: send to chat %s failed: %s", chat_id, exc)
             finally:
                 self._send_queue.task_done()
             # Yield control so incoming command handlers can run between sends.
@@ -278,6 +283,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("result", self._cmd_result))
         self._app.add_handler(CommandHandler("sessions", self._cmd_sessions))
         self._app.add_handler(CommandHandler("stop", self._cmd_stop))
+        self._app.add_handler(CommandHandler("shutdown", self._cmd_shutdown))
         self._app.add_handler(CallbackQueryHandler(self._cmd_callback))
         # Record any incoming message so the sender is tracked for broadcasts.
         self._app.add_handler(
@@ -295,6 +301,7 @@ class TelegramBot:
                 BotCommand("result", "📄 last result"),
                 BotCommand("sessions", "🗂️ session list"),
                 BotCommand("stop", "🛑 stop execution"),
+                BotCommand("shutdown", "🔌 graceful daemon shutdown"),
                 BotCommand("help", "❓ help"),
             ])
             await self._app.start()
@@ -407,6 +414,8 @@ class TelegramBot:
             await self._send_sessions(update, context)
         elif data == "stop":
             await self._send_stop(update, context)
+        elif data == "shutdown":
+            await self._send_shutdown(update, context)
 
     async def _cmd_status(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
@@ -414,7 +423,7 @@ class TelegramBot:
         await self._send_status(update, context)
 
     async def _send_status(self, update: Any, context: Any) -> None:
-        in_progress = list(self._runner._in_progress)
+        in_progress = list(self._runner.in_progress_snapshot())
         streaming_id = self._stream.streaming_chat_id
         lines = ["📊 *dormammu daemon status*"]
         if in_progress:
@@ -423,13 +432,14 @@ class TelegramBot:
             lines.append("💤 Active: idle")
         from dormammu.daemon.queue import is_prompt_candidate
 
+        active_snapshot = self._runner.in_progress_snapshot()
         prompt_dir = self._daemon_config.prompt_path
         pending_count = 0
         if prompt_dir.exists():
             pending_count = sum(
                 1
                 for p in prompt_dir.iterdir()
-                if is_prompt_candidate(p, self._daemon_config.queue) and p not in self._runner._in_progress
+                if is_prompt_candidate(p, self._daemon_config.queue) and p not in active_snapshot
             )
         lines.append(f"📋 Queued: {pending_count}")
         lines.append(f"📡 Streaming: {'on (chat ' + str(streaming_id) + ')' if streaming_id else 'off'}")
@@ -588,10 +598,31 @@ class TelegramBot:
         await self._send_stop(update, context)
 
     async def _send_stop(self, update: Any, context: Any) -> None:
-        in_progress = list(self._runner._in_progress)
+        in_progress = list(self._runner.in_progress_snapshot())
         if not in_progress:
             await self._reply(update, "🛑 No active prompt to stop.")
             return
         names = ", ".join(p.name for p in in_progress)
         await self._reply(update, f"🛑 Sending interrupt to active prompt: {names}")
         os.kill(os.getpid(), signal.SIGINT)
+
+    async def _cmd_shutdown(self, update: Any, context: Any) -> None:
+        if not await self._guard(update):
+            return
+        await self._send_shutdown(update, context)
+
+    async def _send_shutdown(self, update: Any, context: Any) -> None:
+        """Request a graceful daemon shutdown after the current prompt finishes."""
+        if self._runner.shutdown_requested:
+            await self._reply(update, "🔌 Shutdown already requested — waiting for current prompt to finish.")
+            return
+        self._runner.request_shutdown()
+        in_progress = list(self._runner.in_progress_snapshot())
+        if in_progress:
+            names = ", ".join(p.name for p in in_progress)
+            await self._reply(
+                update,
+                f"🔌 Graceful shutdown requested.\nWaiting for active prompt to finish: {names}"
+            )
+        else:
+            await self._reply(update, "🔌 Graceful shutdown requested. Daemon will stop shortly.")

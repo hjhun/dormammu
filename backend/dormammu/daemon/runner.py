@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import re
 import sys
+import threading
 import time
 from typing import Mapping, TextIO
+
+
+def _get_pid() -> int:
+    return os.getpid()
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.config import AppConfig
@@ -75,6 +81,33 @@ class DaemonRunner:
         self.progress_stream = progress_stream or sys.stderr
         self.watcher = watcher
         self._in_progress: set[Path] = set()
+        # Guards _in_progress against concurrent reads from the Telegram bot
+        # thread and writes from the main daemon thread.
+        self._in_progress_lock = threading.Lock()
+        # Set by request_shutdown() to signal run_forever() to exit cleanly.
+        self._shutdown_requested = threading.Event()
+        # Path to the heartbeat file written each loop cycle (None = disabled).
+        self._heartbeat_path: Path | None = (
+            self.daemon_config.result_path.parent / "daemon_heartbeat.json"
+        )
+
+    def in_progress_snapshot(self) -> frozenset[Path]:
+        """Return a thread-safe snapshot of the currently-active prompt paths."""
+        with self._in_progress_lock:
+            return frozenset(self._in_progress)
+
+    def request_shutdown(self) -> None:
+        """Ask the daemon loop to stop after the current prompt finishes.
+
+        Safe to call from any thread (e.g. Telegram bot, signal handler).
+        The loop exits cleanly at the next idle check; no in-progress work
+        is interrupted.
+        """
+        self._shutdown_requested.set()
+
+    @property
+    def shutdown_requested(self) -> bool:
+        return self._shutdown_requested.is_set()
 
     def run_forever(self) -> int:
         self.daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
@@ -85,16 +118,24 @@ class DaemonRunner:
             event_logger=self._log,
         )
         self._emit_startup_banner(watcher_backend=watcher.backend_name)
+        self._write_heartbeat(status="idle")
         watcher.start()
         try:
-            while True:
+            while not self._shutdown_requested.is_set():
                 processed = self.run_pending_once(watcher_backend=watcher.backend_name)
+                self._write_heartbeat(
+                    status="busy" if self.in_progress_snapshot() else "idle"
+                )
                 if processed == 0:
+                    if self._shutdown_requested.is_set():
+                        break
                     watcher.wait_for_changes()
         finally:
             watcher.close()
+            self._remove_heartbeat()
             if hasattr(self.progress_stream, "close_log"):
                 self.progress_stream.close_log()
+        self._log("daemon shutdown complete.")
 
     def run_pending_once(self, *, watcher_backend: str | None = None) -> int:
         self.daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
@@ -130,7 +171,7 @@ class DaemonRunner:
         settle_seconds = self.daemon_config.watch.settle_seconds
         now = datetime.now(timezone.utc).timestamp()
         for path in sorted(self.daemon_config.prompt_path.iterdir(), key=lambda item: prompt_sort_key(item.name)):
-            if path in self._in_progress:
+            if path in self.in_progress_snapshot():
                 continue
             if not is_prompt_candidate(path, self.daemon_config.queue):
                 self._log(f"daemon queue scan: skipping non-candidate {path.name}")
@@ -204,6 +245,37 @@ class DaemonRunner:
         print(message, file=self.progress_stream)
         self.progress_stream.flush()
 
+    def _write_heartbeat(self, *, status: str) -> None:
+        """Write a JSON heartbeat file so external monitors can detect hangs.
+
+        The file contains ``pid``, ``status`` ("idle" | "busy"), and ``ts``
+        (ISO-8601 UTC timestamp).  A stale or missing file indicates the daemon
+        has crashed or hung.  The file is removed on clean shutdown.
+        """
+        if self._heartbeat_path is None:
+            return
+        try:
+            import json as _json
+            self._heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+            self._heartbeat_path.write_text(
+                _json.dumps({
+                    "pid": _get_pid(),
+                    "status": status,
+                    "ts": _iso_now(),
+                }),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+    def _remove_heartbeat(self) -> None:
+        """Delete the heartbeat file on clean shutdown."""
+        if self._heartbeat_path is not None:
+            try:
+                self._heartbeat_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def _process_prompt(self, prompt_path: Path, *, watcher_backend: str) -> DaemonPromptResult:
         if hasattr(self.progress_stream, "reset_session_log"):
             log_path = self._session_progress_log_path(prompt_path)
@@ -211,7 +283,8 @@ class DaemonRunner:
             for line in self._startup_banner_lines(watcher_backend=watcher_backend):
                 self._log(line)
             self._log(f"progress log: {log_path}")
-        self._in_progress.add(prompt_path)
+        with self._in_progress_lock:
+            self._in_progress.add(prompt_path)
         started_at = _iso_now()
         sort_key = prompt_sort_key(prompt_path.name)
         result_path = self._result_path_for_prompt(prompt_path)
@@ -293,7 +366,8 @@ class DaemonRunner:
                 self._write_result_report_from_result(prompt_result)
                 if prompt_path.exists():
                     prompt_path.unlink()
-            self._in_progress.discard(prompt_path)
+            with self._in_progress_lock:
+                self._in_progress.discard(prompt_path)
             print(f"daemon prompt {prompt_path.name}: {status} -> {result_path}", file=self.progress_stream)
             self.progress_stream.flush()
             if interrupted:

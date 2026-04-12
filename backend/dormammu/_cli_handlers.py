@@ -13,6 +13,7 @@ import argparse
 import contextlib
 import json
 from pathlib import Path
+import signal
 import sys
 from typing import TextIO
 
@@ -455,6 +456,12 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
 
+        def _on_sigterm(signum: int, frame: object) -> None:
+            print("daemonize: received SIGTERM — requesting graceful shutdown", file=sys.stderr)
+            runner.request_shutdown()
+
+        signal.signal(signal.SIGTERM, _on_sigterm)
+
         try:
             return runner.run_forever()
         except KeyboardInterrupt:
@@ -463,3 +470,5 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
         except (RuntimeError, ValueError, OSError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
+        finally:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
