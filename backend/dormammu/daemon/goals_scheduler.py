@@ -76,6 +76,27 @@ class GoalsScheduler:
         self._stop_event.set()
         self._cancel_timer()
 
+    def trigger_now(self) -> None:
+        """Immediately process goal files and schedule the next timer run.
+
+        Call this on daemon initialisation when goal files are already
+        present so that the first run happens right away rather than
+        waiting for the first timer interval to elapse.  Any previously
+        scheduled timer is cancelled first so that the next interval is
+        measured from *this* run, not from when the daemon started.
+        """
+        if self._stop_event.is_set():
+            return
+        if not self._has_goal_files():
+            return
+        self._log("goals scheduler: goal files detected — triggering immediate run on init")
+        # Cancel any timer that the watcher thread may have already armed
+        # so the next interval starts fresh after this run completes.
+        self._cancel_timer()
+        self._process_goals()
+        # Re-arm the timer for the next scheduled run.
+        self._sync_timer()
+
     # ------------------------------------------------------------------
     # Internal — watcher loop
     # ------------------------------------------------------------------

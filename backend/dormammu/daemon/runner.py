@@ -162,6 +162,7 @@ class DaemonRunner:
             if self._goals_scheduler is not None:
                 self._goals_scheduler.start()
                 self._log("goals scheduler: started")
+                self._goals_scheduler.trigger_now()
             watcher.start()
             try:
                 while not self._shutdown_requested.is_set():

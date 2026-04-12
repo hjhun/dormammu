@@ -359,6 +359,63 @@ class TestGeneratePromptWithAgents:
 
 
 # ---------------------------------------------------------------------------
+# trigger_now — immediate init run
+# ---------------------------------------------------------------------------
+
+
+class TestTriggerNow:
+    def test_no_op_when_no_goal_files(self, tmp_path: Path) -> None:
+        """trigger_now does nothing if the goals directory is empty."""
+        sched, _, prompt_path = _make_scheduler(tmp_path)
+        sched.trigger_now()
+        assert list(prompt_path.glob("*.md")) == []
+        with sched._timer_lock:
+            assert sched._timer is None
+
+    def test_processes_goals_immediately(self, tmp_path: Path) -> None:
+        """trigger_now writes prompt files without waiting for the timer."""
+        sched, goals_dir, prompt_path = _make_scheduler(tmp_path)
+        (goals_dir / "feature.md").write_text("Build something", encoding="utf-8")
+        sched.trigger_now()
+        assert len(list(prompt_path.glob("*.md"))) == 1
+
+    def test_schedules_timer_after_processing(self, tmp_path: Path) -> None:
+        """trigger_now arms the next timer once processing completes."""
+        sched, goals_dir, _ = _make_scheduler(tmp_path)
+        (goals_dir / "feature.md").write_text("Build something", encoding="utf-8")
+        sched.trigger_now()
+        with sched._timer_lock:
+            assert sched._timer is not None
+        sched._cancel_timer()
+
+    def test_cancels_pending_timer_before_processing(self, tmp_path: Path) -> None:
+        """trigger_now resets any already-scheduled timer so the interval
+        restarts from the end of this run, not from daemon startup."""
+        sched, goals_dir, _ = _make_scheduler(tmp_path)
+        (goals_dir / "feature.md").write_text("Build something", encoding="utf-8")
+        # Arm a timer to simulate what _watch_loop would do.
+        sched._sync_timer()
+        with sched._timer_lock:
+            original_timer = sched._timer
+        assert original_timer is not None
+
+        sched.trigger_now()
+
+        # A new timer should have been created (the old one was cancelled).
+        with sched._timer_lock:
+            assert sched._timer is not original_timer
+        sched._cancel_timer()
+
+    def test_no_op_when_stopped(self, tmp_path: Path) -> None:
+        """trigger_now exits immediately if the scheduler has been stopped."""
+        sched, goals_dir, prompt_path = _make_scheduler(tmp_path)
+        (goals_dir / "feature.md").write_text("Build something", encoding="utf-8")
+        sched.stop()
+        sched.trigger_now()
+        assert list(prompt_path.glob("*.md")) == []
+
+
+# ---------------------------------------------------------------------------
 # Start / stop (thread safety)
 # ---------------------------------------------------------------------------
 
