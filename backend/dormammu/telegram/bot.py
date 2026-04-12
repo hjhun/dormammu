@@ -22,7 +22,7 @@ _HELP_TEXT = (
     "📊 /status — daemon status and active prompt\n"
     r"▶️ /run \<prompt\> — queue a new prompt for execution" "\n"
     "📋 /queue — list pending prompts\n"
-    r"📡 /tail \[on\|off\|prompt\] — stream output \(prompt: key info only\)" "\n"
+    r"📡 /tail \[on\|off\|dashboard\] — stream output \(dashboard: plan \+ dashboard info per loop\)" "\n"
     r"📜 /logs \[n\] — last N lines of progress log \(default 50\)" "\n"
     r"📄 /result \[name\] — last \(or named\) result file content" "\n"
     "🗂️ /sessions — recent session list\n"
@@ -37,7 +37,7 @@ _MENU_KEYBOARD = [
     ],
     [
         {"text": "📡 Tail on", "callback_data": "tail_on"},
-        {"text": "📡 Tail prompt", "callback_data": "tail_prompt"},
+        {"text": "📡 Tail dashboard", "callback_data": "tail_dashboard"},
         {"text": "📡 Tail off", "callback_data": "tail_off"},
     ],
     [
@@ -324,8 +324,8 @@ class TelegramBot:
         elif data == "tail_on":
             context.args = ["on"]
             await self._send_tail(update, context)
-        elif data == "tail_prompt":
-            context.args = ["prompt"]
+        elif data == "tail_dashboard":
+            context.args = ["dashboard"]
             await self._send_tail(update, context)
         elif data == "tail_off":
             context.args = ["off"]
@@ -412,12 +412,13 @@ class TelegramBot:
         if mode == "off":
             self._stream.disable_streaming()
             await self._reply(update, "📡 Log streaming disabled.")
-        elif mode == "prompt":
-            self._stream.enable_streaming(chat_id, prompt_only=True)
+        elif mode == "dashboard":
+            self._stream.enable_streaming(chat_id, dashboard=True)
             await self._reply(
                 update,
-                "📡 Prompt-only streaming enabled.\n"
-                "Shows attempt info, agent output, and supervisor verdict.\n"
+                "📡 Dashboard streaming enabled.\n"
+                "Shows loop number, PLAN.md and DASHBOARD.md content per loop,\n"
+                "agent output, and supervisor verdict.\n"
                 "Use /tail off to stop.",
             )
         else:

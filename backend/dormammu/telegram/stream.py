@@ -3,69 +3,92 @@ from __future__ import annotations
 import threading
 from typing import Callable, TextIO
 
-# Section headers whose body content should be suppressed in prompt-only mode.
-_DUMP_SECTION_HEADERS = frozenset(["=== DASHBOARD.md ===", "=== PLAN.md ==="])
+# DASHBOARD.md / PLAN.md section headers shown in dashboard mode.
+_DASHBOARD_SECTION_HEADERS = frozenset(["=== DASHBOARD.md ===", "=== PLAN.md ==="])
+
+# Framework headers that are always shown in dashboard mode.
+_DASHBOARD_PASS_HEADERS = frozenset([
+    "=== dormammu loop attempt ===",
+    "=== dormammu command ===",
+    "=== dormammu supervisor ===",
+    "=== dormammu promise ===",
+    "=== dormammu escalation ===",
+])
+
+# Verbose framework metadata lines suppressed inside known framework sections.
+# Everything else (including agent output) is forwarded.
+_FRAMEWORK_SUPPRESS_PREFIXES = (
+    "workdir:",
+    "cli path:",
+    "cli:",
+    "max iterations:",
+    "target project:",
+    "prompt mode:",
+    "command:",
+    "stdout log:",
+    "stderr log:",
+)
 
 
-class PromptLineFilter:
-    """Stateful line-level filter for TelegramProgressStream prompt-only mode.
+class DashboardLineFilter:
+    """Stateful line-level filter for TelegramProgressStream dashboard mode.
 
-    Passes through dormammu framework header lines and their key metadata
-    (attempt, verdict, run id, summary, …) plus raw agent output, while
-    suppressing verbose DASHBOARD.md and PLAN.md dump sections.
+    Shows DASHBOARD.md / PLAN.md section bodies in full under each loop attempt
+    header, plus agent output and key metadata. Suppresses verbose framework
+    internals (workdir, cli path, max iterations, stdout/stderr log paths),
+    "Taking a short break" banners, empty lines, and unknown section bodies.
 
     Call ``should_include(line)`` with each complete line (including the
     trailing newline) to decide whether it should be forwarded to Telegram.
     """
 
-    # Framework header lines that are always forwarded.
-    _PASS_HEADERS = frozenset([
-        "=== dormammu loop attempt ===",
-        "=== dormammu command ===",
-        "=== dormammu supervisor ===",
-        "=== dormammu promise ===",
-        "=== dormammu escalation ===",
-    ])
-
-    # Metadata keys from framework sections that are worth forwarding.
-    _PASS_KEY_PREFIXES = (
-        "attempt:",
-        "retries used:",
-        "session:",
-        "cli:",
-        "run id:",
-        "prompt mode:",
-        "verdict:",
-        "escalation:",
-        "summary:",
-        "report:",
-        "Agent emitted",
-    )
-
     def __init__(self) -> None:
-        self._in_dump = False
+        self._in_dashboard_section = False   # DASHBOARD.md or PLAN.md — show all
+        self._in_framework_section = False   # known framework section — show most
+        self._in_unknown_section = False     # unknown section — suppress all
 
     def should_include(self, line: str) -> bool:
         stripped = line.rstrip("\n").strip()
 
-        # Any === section header resets dump state.
+        # === section header
         if stripped.startswith("===") and stripped.endswith("==="):
-            if stripped in _DUMP_SECTION_HEADERS:
-                self._in_dump = True
-                return False  # suppress the header itself too
-            self._in_dump = False
-            return stripped in self._PASS_HEADERS
-
-        if self._in_dump:
+            if stripped in _DASHBOARD_SECTION_HEADERS:
+                self._in_dashboard_section = True
+                self._in_framework_section = False
+                self._in_unknown_section = False
+                return True  # include the header for clarity
+            self._in_dashboard_section = False
+            if stripped in _DASHBOARD_PASS_HEADERS:
+                self._in_framework_section = True
+                self._in_unknown_section = False
+                return True
+            # Unknown section — suppress header and body
+            self._in_framework_section = False
+            self._in_unknown_section = True
             return False
 
-        # Always pass key metadata lines from framework sections.
-        lower = stripped.lower()
-        for prefix in self._PASS_KEY_PREFIXES:
-            if lower.startswith(prefix.lower()):
-                return True
+        # Inside an unknown section — suppress everything
+        if self._in_unknown_section:
+            return False
 
-        # Pass raw agent output (non-empty lines that aren't framework noise).
+        # Inside DASHBOARD.md / PLAN.md — show everything
+        if self._in_dashboard_section:
+            return True
+
+        # Inside a known framework section — show agent output and key metadata,
+        # suppress verbose internals (paths, iteration counts, etc.)
+        if self._in_framework_section:
+            if not stripped:
+                return False
+            if stripped.startswith("Taking a short break"):
+                return False
+            lower = stripped.lower()
+            for prefix in _FRAMEWORK_SUPPRESS_PREFIXES:
+                if lower.startswith(prefix.lower()):
+                    return False
+            return True
+
+        # Outside any section: agent stdout lines (non-empty, non-banner)
         if stripped and not stripped.startswith("Taking a short break"):
             return True
 
@@ -106,7 +129,7 @@ class TelegramProgressStream:
         self._buffer_size = 0
         self._closed = False
         self.encoding = getattr(base_stream, "encoding", "utf-8")
-        self._line_filter: PromptLineFilter | None = None
+        self._line_filter: DashboardLineFilter | None = None
         self._line_buf: str = ""  # partial-line accumulator for filter mode
 
         # Delegate session log methods only when the base supports them so that
@@ -143,15 +166,17 @@ class TelegramProgressStream:
         with self._lock:
             self._send_fn = send_fn
 
-    def enable_streaming(self, chat_id: int, *, prompt_only: bool = False) -> None:
+    def enable_streaming(self, chat_id: int, *, dashboard: bool = False) -> None:
         """Start forwarding writes to the given Telegram chat.
 
-        When ``prompt_only`` is True, verbose DASHBOARD.md / PLAN.md dump
-        sections are suppressed and only key metadata and agent output are sent.
+        When ``dashboard`` is True, a line filter is applied that shows
+        DASHBOARD.md / PLAN.md content under each loop attempt header along
+        with key metadata and agent output, while suppressing verbose
+        framework internals.
         """
         with self._lock:
             self._streaming_chat_id = chat_id
-            self._line_filter = PromptLineFilter() if prompt_only else None
+            self._line_filter = DashboardLineFilter() if dashboard else None
             self._line_buf = ""
 
     def disable_streaming(self) -> None:
