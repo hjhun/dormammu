@@ -205,6 +205,36 @@ class LoopRunner:
             )
             runtime_repository.record_latest_run(result)
 
+            if result.exit_code == 0 and self._stdout_has_promise_complete(result.stdout_path):
+                self._write_progress([
+                    "=== dormammu promise ===",
+                    f"attempt: {attempt_number}",
+                    "Agent emitted <promise>COMPLETE</promise> — treating as self-declared completion.",
+                ])
+                next_action = "Agent self-declared all work complete via <promise>COMPLETE</promise>."
+                self._persist_loop_state(
+                    status="completed",
+                    request=request,
+                    attempts_completed=attempt_number,
+                    retries_used=retries_used,
+                    latest_run_id=result.run_id,
+                    report=None,
+                    report_path=report_path,
+                    continuation_prompt_path=continuation_prompt_path,
+                    next_action=next_action,
+                )
+                return LoopRunResult(
+                    status="completed",
+                    attempts_completed=attempt_number,
+                    retries_used=retries_used,
+                    max_retries=request.max_retries,
+                    max_iterations=request.max_iterations,
+                    latest_run_id=result.run_id,
+                    supervisor_verdict="promise_complete",
+                    report_path=report_path,
+                    continuation_prompt_path=continuation_prompt_path,
+                )
+
             if result.exit_code != 0 and result.fallback_trigger is not None:
                 self._persist_loop_state(
                     status="blocked",
@@ -304,6 +334,7 @@ class LoopRunner:
                 next_task=next_task,
                 original_prompt_text=request.prompt_text,
                 repo_guidance=workflow_state.get("bootstrap", {}).get("repo_guidance"),
+                patterns_text=runtime_repository.read_patterns_text(),
             )
             continuation_prompt_path = runtime_repository.write_continuation_prompt(continuation.text)
 
@@ -450,6 +481,17 @@ class LoopRunner:
         if max_retries == -1:
             return True
         return retries_used < max_retries
+
+    @staticmethod
+    def _stdout_has_promise_complete(stdout_path: Path) -> bool:
+        """Return True if the agent stdout contains the self-completion signal."""
+        if not stdout_path.exists():
+            return False
+        try:
+            content = stdout_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        return "<promise>COMPLETE</promise>" in content
 
     def _persist_loop_state(
         self,

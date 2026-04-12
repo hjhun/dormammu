@@ -2,41 +2,54 @@
 
 ## Actual Progress
 
-- Goal: Write daemonize debug progress logs to a progress directory beside the
-  configured result directory and reset the log for each new prompt session.
-- Prompt-driven scope: Update `daemonize --debug` so it writes
-  `<prompt>_progress.log` to `<result_path>/../progress`, keeps one log per
-  prompt, and keeps regression coverage plus docs aligned.
+- Goal: Apply Ralph-inspired improvements to dormammu — Codebase Patterns
+  accumulation, `<promise>COMPLETE</promise>` self-completion signal, PRD agent
+  skill, and Mermaid workflow visualization in the dashboard template.
+- Prompt-driven scope: Internal implementation changes only; no existing CLI
+  commands were added or removed.
 - Active roadmap focus:
 - Phase 5. CLI Operator Experience and Progress Visibility
 - Current workflow phase: commit
 - Last completed workflow phase: final_verification
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: The daemonize progress-log change is implemented and validated.
-  Resume from commit preparation unless a follow-up changes the log layout
-  again.
+- Resume point: All four improvements are implemented and 220 tests pass.
+  Proceed to commit.
+
+## Workflow Phases
+
+```mermaid
+flowchart LR
+    plan([Plan]) --> design([Design])
+    design --> develop([Develop])
+    design --> test_author([Test Author])
+    develop --> test_review([Test & Review])
+    test_author --> test_review
+    test_review --> final_verify([Final Verify])
+    final_verify -->|approved| commit([Commit])
+    final_verify -->|rework| develop
+```
 
 ## In Progress
 
-- `daemonize --debug` now routes stderr mirroring through a session-scoped log
-  stream instead of the repository-root log capture path.
-- Each daemon prompt session recreates its own
-  `<result_path>/../progress/<prompt>_progress.log` before writing fresh
-  progress.
+All implementation complete. Awaiting commit.
 
 ## Progress Notes
 
-- Added regression coverage for the daemon progress-log location and reset
-  behavior, including checks that the prompt-specific file is actually written,
-  plus kept operator docs in English and Korean in sync.
-- Validation passed with `python3 -m unittest tests.test_daemon tests.test_cli`.
+- `templates/dev/patterns.md.tmpl` — new template for `.dev/PATTERNS.md`
+- `StateRepository.read_patterns_text()` / `_ensure_patterns_file()` — bootstrap and read PATTERNS.md
+- `guidance.build_guidance_prompt(patterns_text=...)` — injects patterns into initial prompts
+- `continuation.build_continuation_prompt(patterns_text=...)` — includes patterns + update instruction in retries
+- `loop_runner.LoopRunner._stdout_has_promise_complete()` — detects `<promise>COMPLETE</promise>` in agent stdout
+- `agents/skills/prd-agent/SKILL.md` — new PRD generation skill
+- `templates/dev/dashboard.md.tmpl` — Mermaid workflow diagram added
+- All 220 tests pass.
 
 ## Risks And Watchpoints
 
-- The daemon debug log path is anchored from `result_path`, so custom layouts
-  that place prompts and results in unrelated trees will still use the result
-  directory as the reference point.
-- `daemonize` startup banners written before the first prompt arrives still go
-  only to stderr because the session log is created when the prompt session
-  starts.
+- PATTERNS.md is repo-wide (`.dev/PATTERNS.md`), not session-specific. Multiple
+  concurrent sessions share the same patterns file.
+- `<promise>COMPLETE</promise>` bypasses supervisor validation. Agents should
+  only emit it when all work is genuinely done.
+- Mermaid rendering requires a Markdown viewer that supports Mermaid (GitHub,
+  VS Code with extension, etc.).

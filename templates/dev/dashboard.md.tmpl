@@ -12,6 +12,20 @@ ${active_roadmap_focus}
 - Escalation status: `${escalation_status}`
 - Resume point: ${resume_point}
 
+## Workflow Phases
+
+```mermaid
+flowchart LR
+    plan([Plan]) --> design([Design])
+    design --> develop([Develop])
+    design --> test_author([Test Author])
+    develop --> test_review([Test & Review])
+    test_author --> test_review
+    test_review --> final_verify([Final Verify])
+    final_verify -->|approved| commit([Commit])
+    final_verify -->|rework| develop
+```
+
 ## In Progress
 
 ${next_action}

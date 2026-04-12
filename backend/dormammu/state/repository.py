@@ -140,6 +140,7 @@ class StateRepository:
         if active_session_id is None:
             active_session_id = self._generated_session_id(timestamp)
 
+        self._ensure_patterns_file()
         session_repository = self.for_session(active_session_id)
         artifacts = session_repository._ensure_session_bootstrap_state(
             goal=goal,
@@ -460,6 +461,24 @@ class StateRepository:
         prompt_path.write_text(text, encoding="utf-8")
         self._sync_root_index()
         return prompt_path
+
+    def read_patterns_text(self) -> str:
+        """Return the content of .dev/PATTERNS.md, or empty string if not present."""
+        patterns_path = self.base_dev_dir / "PATTERNS.md"
+        if not patterns_path.exists():
+            return ""
+        content = patterns_path.read_text(encoding="utf-8").strip()
+        return content if content else ""
+
+    def _ensure_patterns_file(self) -> None:
+        """Create .dev/PATTERNS.md from template if it does not exist yet."""
+        patterns_path = self.base_dev_dir / "PATTERNS.md"
+        if patterns_path.exists():
+            return
+        tmpl_path = self.templates_dir / "patterns.md.tmpl"
+        if not tmpl_path.exists():
+            return
+        patterns_path.write_text(tmpl_path.read_text(encoding="utf-8"), encoding="utf-8")
 
     def list_sessions(self) -> list[dict[str, Any]]:
         active_session_id = self._read_active_session_id()

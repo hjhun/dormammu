@@ -227,6 +227,51 @@ class ContinuationPromptEdgeCaseTests(unittest.TestCase):
 
         self.assertEqual(continuation.source_run_id, "my-special-run-id")
 
+    def test_patterns_text_appears_in_continuation_prompt(self) -> None:
+        """When patterns_text is provided, it appears in the continuation prompt."""
+        report = self._make_report()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "p1", "artifacts": {}},
+            report=report,
+            next_task="Continue",
+            original_prompt_text="Do the work.",
+            patterns_text="## Patterns\n\n- Use dataclasses for state models.",
+        )
+
+        self.assertIn("## Patterns", continuation.text)
+        self.assertIn("Use dataclasses for state models", continuation.text)
+        self.assertIn(".dev/PATTERNS.md", continuation.text)
+        self.assertIn("append any new patterns", continuation.text)
+
+    def test_default_placeholder_patterns_are_not_injected(self) -> None:
+        """When patterns file contains only the default placeholder, it is not injected."""
+        report = self._make_report()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "p2", "artifacts": {}},
+            report=report,
+            next_task="Continue",
+            original_prompt_text="Do the work.",
+            patterns_text="# Codebase Patterns\n\n(no patterns recorded yet — add entries as you discover them)\n",
+        )
+
+        self.assertNotIn(".dev/PATTERNS.md", continuation.text)
+
+    def test_none_patterns_text_does_not_add_patterns_section(self) -> None:
+        """When patterns_text is None, no patterns section appears."""
+        report = self._make_report()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "p3", "artifacts": {}},
+            report=report,
+            next_task="Continue",
+            original_prompt_text="Do the work.",
+            patterns_text=None,
+        )
+
+        self.assertNotIn("Codebase patterns accumulated", continuation.text)
+
     def test_continuation_prompt_to_dict_has_required_keys(self) -> None:
         """ContinuationPrompt.to_dict() includes generated_at, text, and source_run_id."""
         report = self._make_report()

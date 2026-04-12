@@ -46,6 +46,7 @@ def build_continuation_prompt(
     next_task: str | None,
     original_prompt_text: str | None = None,
     repo_guidance: Mapping[str, Any] | None = None,
+    patterns_text: str | None = None,
 ) -> ContinuationPrompt:
     prior_prompt = (original_prompt_text or "").strip()
     if not prior_prompt:
@@ -71,6 +72,20 @@ def build_continuation_prompt(
             guidance_lines.append(
                 "Repository workflows: " + ", ".join(str(item) for item in workflow_files)
             )
+
+    _default_placeholder = "(no patterns recorded yet"
+    patterns_section: list[str] = []
+    if patterns_text and patterns_text.strip() and _default_placeholder not in patterns_text:
+        patterns_section = [
+            "",
+            "Codebase patterns accumulated from prior agent runs (.dev/PATTERNS.md):",
+            "Review these patterns before making changes.",
+            "After completing your work, append any new patterns you discovered to .dev/PATTERNS.md.",
+            "",
+            patterns_text.rstrip(),
+            "",
+            "End of codebase patterns.",
+        ]
 
     task_line = next_task or "Review the latest supervisor report and continue from the saved state."
     phase_line = report.recommended_next_phase or "manual review"
@@ -114,6 +129,7 @@ def build_continuation_prompt(
         ),
         "",
         f"Next unchecked task: {task_line}",
+        *patterns_section,
         "",
         "Original prompt:",
         prior_prompt or "(previous prompt artifact was empty)",

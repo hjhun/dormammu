@@ -68,28 +68,45 @@ def build_guidance_prompt(
     *,
     guidance_files: Sequence[Path],
     repo_root: Path,
+    patterns_text: str | None = None,
 ) -> str:
-    if not guidance_files:
+    if not guidance_files and not patterns_text:
         return prompt_text
 
-    sections: list[str] = [
-        "Follow the guidance files below before making changes.",
-        "Treat them as required instructions for this run.",
-        "",
-        "Guidance files:",
-    ]
-    for path in guidance_files:
-        sections.append(f"- {_display_path(path, repo_root=repo_root)}")
+    sections: list[str] = []
 
-    for path in guidance_files:
-        sections.extend(
-            [
+    if guidance_files:
+        sections.extend([
+            "Follow the guidance files below before making changes.",
+            "Treat them as required instructions for this run.",
+            "",
+            "Guidance files:",
+        ])
+        for path in guidance_files:
+            sections.append(f"- {_display_path(path, repo_root=repo_root)}")
+
+        for path in guidance_files:
+            sections.extend(
+                [
+                    "",
+                    f"Begin guidance from {_display_path(path, repo_root=repo_root)}:",
+                    path.read_text(encoding="utf-8").rstrip(),
+                    f"End guidance from {_display_path(path, repo_root=repo_root)}.",
+                ]
+            )
+
+    if patterns_text and patterns_text.strip():
+        _default_placeholder = "(no patterns recorded yet"
+        if _default_placeholder not in patterns_text:
+            sections.extend([
                 "",
-                f"Begin guidance from {_display_path(path, repo_root=repo_root)}:",
-                path.read_text(encoding="utf-8").rstrip(),
-                f"End guidance from {_display_path(path, repo_root=repo_root)}.",
-            ]
-        )
+                "Codebase patterns accumulated from prior agent runs (.dev/PATTERNS.md):",
+                "Review these before making changes, and append any new patterns you discover.",
+                "",
+                patterns_text.rstrip(),
+                "",
+                "End of codebase patterns.",
+            ])
 
     sections.extend(["", "Task prompt:", prompt_text])
     return "\n".join(sections).strip() + "\n"

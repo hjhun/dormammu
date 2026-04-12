@@ -469,6 +469,56 @@ class LoopRunnerTests(unittest.TestCase):
             # live_output_stream.  Verify it landed in our captured stream.
             self.assertIn("ATTEMPT::1", captured.getvalue())
 
+    def test_loop_completes_when_agent_emits_promise_complete_signal(self) -> None:
+        """Agent emitting <promise>COMPLETE</promise> in stdout triggers immediate completion."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_promise_cli(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Implement the feature and signal completion.",
+                    repo_root=root,
+                    run_label="promise-complete-test",
+                    max_retries=0,
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.supervisor_verdict, "promise_complete")
+            self.assertEqual(result.attempts_completed, 1)
+
+    def test_promise_signal_stops_loop_without_supervisor_validation(self) -> None:
+        """Promise signal bypasses supervisor even when required_paths is set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_promise_cli(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Implement the feature.",
+                    repo_root=root,
+                    run_label="promise-bypass-supervisor",
+                    max_retries=5,
+                    required_paths=("never_created.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            # Even though required_paths file was not created, the promise exits the loop.
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.supervisor_verdict, "promise_complete")
+            self.assertEqual(result.attempts_completed, 1)
+
     def test_loop_completes_when_agent_commits_changes(self) -> None:
         """Regression: supervisor prompt-outcome-alignment must count files from recent
         git commits as progress evidence so that an agent that commits its work does not
@@ -552,6 +602,21 @@ class LoopRunnerTests(unittest.TestCase):
                     "## Resume Checkpoint",
                     "",
                     "${resume_checkpoint}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (templates / "patterns.md.tmpl").write_text(
+            "\n".join(
+                [
+                    "# Codebase Patterns",
+                    "",
+                    "This file accumulates reusable patterns discovered during agent runs.",
+                    "",
+                    "## Patterns",
+                    "",
+                    "(no patterns recorded yet — add entries as you discover them)",
                     "",
                 ]
             ),
@@ -645,6 +710,30 @@ class LoopRunnerTests(unittest.TestCase):
                     return 0
 
                 raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_promise_cli(self, root: Path, *, name: str = "fake-promise-agent") -> Path:
+        """Fake CLI that emits <promise>COMPLETE</promise> in stdout to signal self-completion."""
+        script = root / name
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                args = sys.argv[1:]
+                if "--help" in args:
+                    print("usage: {name} [--prompt-file PATH]")
+                    raise SystemExit(0)
+
+                print("Implementing the feature...")
+                print("<promise>COMPLETE</promise>")
+                raise SystemExit(0)
                 """
             ),
             encoding="utf-8",
