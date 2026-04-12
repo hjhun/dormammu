@@ -422,7 +422,9 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
             tg_stream = TelegramProgressStream(
                 progress_stream,
                 chunk_size=config.telegram_config.chunk_size,
+                flush_interval_seconds=config.telegram_config.flush_interval_seconds,
             )
+            stack.callback(tg_stream.close)
             progress_stream = tg_stream
         else:
             tg_stream = None

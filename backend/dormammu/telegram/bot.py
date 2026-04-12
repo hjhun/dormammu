@@ -22,7 +22,7 @@ _HELP_TEXT = (
     "📊 /status — daemon status and active prompt\n"
     r"▶️ /run \<prompt\> — queue a new prompt for execution" "\n"
     "📋 /queue — list pending prompts\n"
-    r"📡 /tail \[on|off\] — stream daemon output to this chat" "\n"
+    r"📡 /tail \[on\|off\] — stream daemon output to this chat" "\n"
     r"📜 /logs \[n\] — last N lines of progress log \(default 50\)" "\n"
     r"📄 /result \[name\] — last \(or named\) result file content" "\n"
     "🗂️ /sessions — recent session list\n"
