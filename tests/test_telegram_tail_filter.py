@@ -492,5 +492,128 @@ class FlushCorrectnessTests(unittest.TestCase):
         self.assertIn("B" * 5, combined, "Second chunk content must not be stripped")
 
 
+# ---------------------------------------------------------------------------
+# 7. Digest mode
+# ---------------------------------------------------------------------------
+
+class DigestModeTests(unittest.TestCase):
+    """Tests for /tail digest — ring-buffer snapshot per loop boundary."""
+
+    def _write_loop(self, stream: TelegramProgressStream, attempt: int, agent_lines: list[str]) -> None:
+        """Write one full loop with the given agent output lines."""
+        stream.write(f"=== dormammu loop attempt ===\n")
+        stream.write(f"attempt: {attempt}\n")
+        stream.write("=== dormammu command ===\n")
+        stream.write("workdir: /tmp/repo\n")
+        stream.write("cli path: /usr/bin/codex\n")
+        for line in agent_lines:
+            stream.write(line + "\n")
+        stream.write("=== dormammu promise ===\n")
+        stream.write("Agent emitted <promise>COMPLETE</promise>\n")
+
+    def test_digest_emits_snapshot_on_loop_boundary(self) -> None:
+        """A snapshot is sent when the next loop boundary is detected."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1, digest=True, digest_lines=10)
+
+        self._write_loop(stream, 1, ["line A", "line B", "line C"])
+        # Boundary for loop 2 triggers snapshot of loop 1
+        stream.write("=== dormammu loop attempt ===\n")
+        stream.flush()
+        stream.disable_streaming()
+
+        combined = "\n".join(sent)
+        self.assertIn("line A", combined)
+        self.assertIn("line B", combined)
+        self.assertIn("line C", combined)
+
+    def test_digest_excludes_verbose_framework_lines(self) -> None:
+        """workdir / cli path lines must not appear in the digest snapshot."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1, digest=True, digest_lines=10)
+
+        self._write_loop(stream, 1, ["real agent output"])
+        stream.write("=== dormammu loop attempt ===\n")
+        stream.flush()
+        stream.disable_streaming()
+
+        combined = "\n".join(sent)
+        self.assertNotIn("workdir:", combined)
+        self.assertNotIn("cli path:", combined)
+
+    def test_digest_respects_maxlines(self) -> None:
+        """Only the last maxlines lines appear in the snapshot."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1, digest=True, digest_lines=3)
+
+        many = [f"line {i}" for i in range(10)]
+        self._write_loop(stream, 1, many)
+        stream.write("=== dormammu loop attempt ===\n")
+        stream.flush()
+        stream.disable_streaming()
+
+        combined = "\n".join(sent)
+        # Only last 3 lines should appear
+        self.assertIn("line 9", combined)
+        self.assertIn("line 8", combined)
+        self.assertIn("line 7", combined)
+        self.assertNotIn("line 0", combined)
+        self.assertNotIn("line 4", combined)
+
+    def test_digest_collect_final_on_disable(self) -> None:
+        """Remaining buffered lines are emitted when disable_streaming() is called."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1, digest=True, digest_lines=10)
+
+        # Write loop 1 without a following loop boundary
+        self._write_loop(stream, 1, ["final output line"])
+        stream.disable_streaming()
+
+        combined = "\n".join(sent)
+        self.assertIn("final output line", combined)
+
+    def test_digest_two_loops_two_snapshots(self) -> None:
+        """Each loop boundary produces its own snapshot."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1, digest=True, digest_lines=10)
+
+        self._write_loop(stream, 1, ["loop1 result"])
+        self._write_loop(stream, 2, ["loop2 result"])
+        stream.disable_streaming()
+
+        combined = "\n".join(sent)
+        self.assertIn("loop1 result", combined)
+        self.assertIn("loop2 result", combined)
+
+    def test_digest_default_lines_is_ten(self) -> None:
+        """enable_streaming with digest=True and no digest_lines defaults to 10."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1, digest=True)  # default maxlines=10
+
+        lines = [f"x{i}" for i in range(15)]
+        self._write_loop(stream, 1, lines)
+        stream.disable_streaming()
+
+        combined = "\n".join(sent)
+        # Last 10 of 15 lines
+        for i in range(5, 15):
+            self.assertIn(f"x{i}", combined)
+        # First 5 dropped
+        for i in range(5):
+            self.assertNotIn(f"x{i}\n", combined + "\n")
+
+    def test_digest_snapshot_format(self) -> None:
+        """Snapshot messages contain the '📡 Agent output' header and code fence."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1, digest=True, digest_lines=10)
+
+        self._write_loop(stream, 1, ["some output"])
+        stream.disable_streaming()
+
+        combined = "\n".join(sent)
+        self.assertIn("📡 Agent output", combined)
+        self.assertIn("```", combined)
+
+
 if __name__ == "__main__":
     unittest.main()

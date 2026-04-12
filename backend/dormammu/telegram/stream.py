@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import threading
+from collections import deque
 from typing import Callable, TextIO
 
 # DASHBOARD.md / PLAN.md section headers shown in dashboard mode.
 _DASHBOARD_SECTION_HEADERS = frozenset(["=== DASHBOARD.md ===", "=== PLAN.md ==="])
+
+# Loop boundary marker — signals the start of a new dormammu loop attempt.
+_LOOP_BOUNDARY = "=== dormammu loop attempt ==="
 
 # Framework headers that are always shown in dashboard mode.
 _DASHBOARD_PASS_HEADERS = frozenset([
@@ -95,6 +99,86 @@ class DashboardLineFilter:
         return False
 
 
+class _AgentCliOutputFilter:
+    """Accept only lines emitted by the CLI agent subprocess itself.
+
+    Tracks the ``=== dormammu command ===`` section (where agent subprocess
+    stdout/stderr appears) and passes through non-verbose lines within it.
+    All dormammu framework headers, metadata, dashboard/plan/supervisor/
+    promise content, and blank lines are rejected.
+    """
+
+    def __init__(self) -> None:
+        self._in_command_section = False
+
+    def should_include(self, line: str) -> bool:
+        stripped = line.rstrip("\n").strip()
+
+        # Section boundary — update state, never include the header itself
+        if stripped.startswith("===") and stripped.endswith("==="):
+            self._in_command_section = (stripped == "=== dormammu command ===")
+            return False
+
+        if not self._in_command_section:
+            return False
+
+        if not stripped:
+            return False
+        if stripped.startswith("Taking a short break"):
+            return False
+        lower = stripped.lower()
+        for prefix in _FRAMEWORK_SUPPRESS_PREFIXES:
+            if lower.startswith(prefix.lower()):
+                return False
+        return True
+
+
+class AgentDigestFilter:
+    """Accumulates CLI agent subprocess output lines into a ring buffer.
+
+    Only lines produced by the CLI agent itself (inside the
+    ``=== dormammu command ===`` section, excluding verbose metadata) are
+    buffered.  All dormammu framework headers, metadata, and
+    supervisor/promise/escalation content are discarded.
+
+    When a loop-boundary line (``=== dormammu loop attempt ===``) is received
+    the buffer is snapshotted and returned so the caller can emit it as a
+    single Telegram message, then the buffer is cleared for the next loop.
+    Call ``collect_final()`` at the end to flush any remaining content.
+    """
+
+    def __init__(self, maxlines: int = 10) -> None:
+        self._buf: deque[str] = deque(maxlen=maxlines)
+        self._inner = _AgentCliOutputFilter()
+
+    def add_line(self, line: str) -> str | None:
+        """Process one complete line.
+
+        Returns a snapshot string when a loop boundary is detected (covering
+        the *previous* loop's buffered output), or ``None`` otherwise.
+        """
+        stripped = line.rstrip("\n").strip()
+
+        if stripped == _LOOP_BOUNDARY:
+            return self._snapshot_and_reset()
+
+        if self._inner.should_include(line):
+            self._buf.append(stripped)
+        return None
+
+    def collect_final(self) -> str | None:
+        """Return remaining buffered lines as a snapshot, or ``None`` if empty."""
+        return self._snapshot_and_reset()
+
+    def _snapshot_and_reset(self) -> str | None:
+        if not self._buf:
+            return None
+        text = "\n".join(self._buf)
+        self._buf.clear()
+        self._inner = _AgentCliOutputFilter()  # reset section state for next loop
+        return text
+
+
 class TelegramProgressStream:
     """TextIO-compatible stream wrapper that optionally forwards output to a Telegram chat.
 
@@ -130,6 +214,7 @@ class TelegramProgressStream:
         self._closed = False
         self.encoding = getattr(base_stream, "encoding", "utf-8")
         self._line_filter: DashboardLineFilter | None = None
+        self._digest_filter: AgentDigestFilter | None = None
         self._line_buf: str = ""  # partial-line accumulator for filter mode
 
         # Delegate session log methods only when the base supports them so that
@@ -166,17 +251,34 @@ class TelegramProgressStream:
         with self._lock:
             self._send_fn = send_fn
 
-    def enable_streaming(self, chat_id: int, *, dashboard: bool = False) -> None:
+    def enable_streaming(
+        self,
+        chat_id: int,
+        *,
+        dashboard: bool = False,
+        digest: bool = False,
+        digest_lines: int = 10,
+    ) -> None:
         """Start forwarding writes to the given Telegram chat.
 
-        When ``dashboard`` is True, a line filter is applied that shows
-        DASHBOARD.md / PLAN.md content under each loop attempt header along
-        with key metadata and agent output, while suppressing verbose
-        framework internals.
+        Modes (mutually exclusive; ``digest`` takes priority):
+
+        * default — forward everything as it arrives (full streaming).
+        * ``dashboard=True`` — filter to DASHBOARD.md / PLAN.md bodies,
+          agent output, and key metadata per loop.
+        * ``digest=True`` — accumulate CLI agent output in a ring buffer of
+          ``digest_lines`` lines and emit one snapshot message per loop
+          boundary (``=== dormammu loop attempt ===``).  Verbose framework
+          internals are excluded from the buffer.
         """
         with self._lock:
             self._streaming_chat_id = chat_id
-            self._line_filter = DashboardLineFilter() if dashboard else None
+            if digest:
+                self._digest_filter = AgentDigestFilter(maxlines=digest_lines)
+                self._line_filter = None
+            else:
+                self._digest_filter = None
+                self._line_filter = DashboardLineFilter() if dashboard else None
             self._line_buf = ""
 
     def disable_streaming(self) -> None:
@@ -186,6 +288,7 @@ class TelegramProgressStream:
         with self._lock:
             self._streaming_chat_id = None
             self._line_filter = None
+            self._digest_filter = None
             self._line_buf = ""
             self._buffer.clear()
             self._buffer_size = 0
@@ -213,7 +316,11 @@ class TelegramProgressStream:
         chunks: list[tuple[int, str]] = []
         with self._lock:
             if self._streaming_chat_id is not None and self._send_fn is not None:
-                if self._line_filter is not None:
+                if self._digest_filter is not None:
+                    self._write_digest_locked(data)
+                    if self._buffer_size >= self._chunk_size:
+                        chunks = self._collect_buffer_locked()
+                elif self._line_filter is not None:
                     self._write_filtered_locked(data)
                     if self._buffer_size >= self._chunk_size:
                         chunks = self._collect_buffer_locked()
@@ -234,6 +341,30 @@ class TelegramProgressStream:
             if self._line_filter is not None and self._line_filter.should_include(full_line):
                 self._buffer.append(full_line)
                 self._buffer_size += len(full_line)
+
+    def _write_digest_locked(self, data: str) -> None:
+        """Feed data into AgentDigestFilter line-by-line.
+
+        On each loop boundary the filter returns a snapshot of the last N
+        agent output lines which is formatted and placed into _buffer for
+        immediate delivery.
+        """
+        self._line_buf += data
+        while "\n" in self._line_buf:
+            line, self._line_buf = self._line_buf.split("\n", 1)
+            full_line = line + "\n"
+            if self._digest_filter is None:
+                return
+            snapshot = self._digest_filter.add_line(full_line)
+            if snapshot is not None:
+                msg = self._format_digest(snapshot)
+                self._buffer.append(msg)
+                self._buffer_size += len(msg)
+
+    @staticmethod
+    def _format_digest(snapshot: str) -> str:
+        n = len(snapshot.splitlines())
+        return f"📡 Agent output (last {n} lines):\n```\n{snapshot}\n```\n"
 
     def flush(self) -> None:
         self._base.flush()
@@ -270,13 +401,28 @@ class TelegramProgressStream:
 
         _line_buf content (partial line without trailing newline) is emitted as-is
         so that in-flight agent output is not lost on explicit flush() or close().
+        For digest mode, any remaining buffered lines are snapshotted and emitted.
         """
         with self._lock:
             if self._streaming_chat_id is None or self._send_fn is None:
                 return []
-            # Drain any partial line from _line_buf into _buffer before collecting.
-            if self._line_buf and self._line_filter is not None:
-                # Treat the partial line as a complete line for flush purposes.
+            if self._digest_filter is not None:
+                # Flush any partial line into the digest filter first.
+                if self._line_buf:
+                    snapshot = self._digest_filter.add_line(self._line_buf + "\n")
+                    if snapshot is not None:
+                        msg = self._format_digest(snapshot)
+                        self._buffer.append(msg)
+                        self._buffer_size += len(msg)
+                    self._line_buf = ""
+                # Emit whatever is left in the digest ring buffer.
+                final = self._digest_filter.collect_final()
+                if final is not None:
+                    msg = self._format_digest(final)
+                    self._buffer.append(msg)
+                    self._buffer_size += len(msg)
+            elif self._line_buf and self._line_filter is not None:
+                # Dashboard mode: treat the partial line as a complete line.
                 if self._line_filter.should_include(self._line_buf + "\n"):
                     self._buffer.append(self._line_buf)
                     self._buffer_size += len(self._line_buf)
