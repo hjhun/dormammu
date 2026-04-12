@@ -13,6 +13,7 @@
   },
   "goals": {
     "path": "./goals",
-    "interval_minutes": 60
+    "interval_minutes": 60,
+    "agent_timeout_seconds": 600
   }
 }

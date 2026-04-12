@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 _MIN_INTERVAL_MINUTES = 1
+DEFAULT_AGENT_TIMEOUT_SECONDS = 600  # 10 minutes
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,15 +15,19 @@ class GoalsConfig:
     ``path`` — directory that contains goal ``.md`` files.
     ``interval_minutes`` — how often (in minutes) to process all goal files
     and emit new prompts.  Minimum 1.
+    ``agent_timeout_seconds`` — per-role-agent subprocess timeout in seconds.
+    Defaults to 600 (10 minutes).
     """
 
     path: Path
     interval_minutes: int
+    agent_timeout_seconds: int = DEFAULT_AGENT_TIMEOUT_SECONDS
 
     def to_dict(self) -> dict[str, object]:
         return {
             "path": str(self.path),
             "interval_minutes": self.interval_minutes,
+            "agent_timeout_seconds": self.agent_timeout_seconds,
         }
 
 
@@ -68,4 +73,20 @@ def parse_goals_config(
             f"goals.interval_minutes must be >= {_MIN_INTERVAL_MINUTES} in {source}"
         )
 
-    return GoalsConfig(path=goals_path, interval_minutes=interval_minutes)
+    timeout_raw = value.get("agent_timeout_seconds", DEFAULT_AGENT_TIMEOUT_SECONDS)
+    try:
+        agent_timeout_seconds = int(timeout_raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"goals.agent_timeout_seconds must be an integer in {source}"
+        ) from exc
+    if agent_timeout_seconds < 1:
+        raise RuntimeError(
+            f"goals.agent_timeout_seconds must be >= 1 in {source}"
+        )
+
+    return GoalsConfig(
+        path=goals_path,
+        interval_minutes=interval_minutes,
+        agent_timeout_seconds=agent_timeout_seconds,
+    )

@@ -312,6 +312,7 @@ class GoalsScheduler:
 
         args: list[str] = [str(cli)]
         stdin_input: str | None = None
+        tmp_path: Path | None = None
 
         if preset is not None:
             args.extend(preset.command_prefix)
@@ -337,13 +338,11 @@ class GoalsScheduler:
         else:
             stdin_input = prompt
 
-        _ROLE_AGENT_TIMEOUT_SECONDS = 300  # 5-minute cap per role agent call
+        _ROLE_AGENT_TIMEOUT_SECONDS = self._goals_config.agent_timeout_seconds
 
         try:
-            self._log(f"goals scheduler: calling {role} agent ({cli.name}) for {stem}")
-            # When the prompt is passed via positional arg or flag (stdin_input is
-            # None), close the subprocess stdin so the CLI cannot block waiting
-            # for interactive input.
+            cmd_display = subprocess.list2cmdline(args)
+            self._log(f"goals scheduler: [{role}] command: {cmd_display}")
             run_kwargs: dict = dict(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -356,12 +355,19 @@ class GoalsScheduler:
             else:
                 run_kwargs["stdin"] = subprocess.DEVNULL
             result = subprocess.run(args, **run_kwargs)
-            if result.returncode != 0:
-                self._log(
-                    f"goals scheduler: {role} agent exited with code {result.returncode}"
-                )
+
+            self._log(
+                f"goals scheduler: [{role}] exit code: {result.returncode}"
+            )
+            if result.stdout.strip():
+                self._log(f"goals scheduler: [{role}] stdout:\n{result.stdout.rstrip()}")
+            else:
+                self._log(f"goals scheduler: [{role}] stdout: (empty)")
             if result.stderr.strip():
-                self._log(f"goals scheduler: {role} agent stderr: {result.stderr.strip()}")
+                self._log(f"goals scheduler: [{role}] stderr:\n{result.stderr.rstrip()}")
+            else:
+                self._log(f"goals scheduler: [{role}] stderr: (empty)")
+
             output = result.stdout or ""
 
             # Persist the agent's output as a role document.
@@ -372,20 +378,20 @@ class GoalsScheduler:
                 f"# {role.capitalize()} — {stem}\n\n{output}",
                 encoding="utf-8",
             )
-            self._log(f"goals scheduler: {role} document written to {doc_path}")
+            self._log(f"goals scheduler: [{role}] document written to {doc_path}")
             return output or None
         except subprocess.TimeoutExpired:
             self._log(
-                f"goals scheduler: {role} agent timed out after "
+                f"goals scheduler: [{role}] timed out after "
                 f"{_ROLE_AGENT_TIMEOUT_SECONDS}s — skipping"
             )
             return None
         except Exception as exc:
-            self._log(f"goals scheduler: {role} agent call failed: {exc}")
+            self._log(f"goals scheduler: [{role}] call failed: {exc}")
             return None
         finally:
-            if "tmp_path" in dir() and tmp_path.exists():  # type: ignore[name-defined]
-                tmp_path.unlink(missing_ok=True)  # type: ignore[name-defined]
+            if tmp_path is not None and tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
 
     @staticmethod
     def _build_prompt(
