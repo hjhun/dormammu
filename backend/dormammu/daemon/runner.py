@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -7,11 +8,22 @@ import re
 import sys
 import threading
 import time
-from typing import Mapping, TextIO
+from typing import Generator, Mapping, TextIO
+
+try:
+    import fcntl as _fcntl
+    _HAS_FCNTL = True
+except ImportError:
+    _fcntl = None  # type: ignore[assignment]
+    _HAS_FCNTL = False
 
 
 def _get_pid() -> int:
     return os.getpid()
+
+
+class DaemonAlreadyRunningError(RuntimeError):
+    """Raised when a second daemon instance tries to start on the same queue."""
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.config import AppConfig
@@ -90,6 +102,11 @@ class DaemonRunner:
         self._heartbeat_path: Path | None = (
             self.daemon_config.result_path.parent / "daemon_heartbeat.json"
         )
+        # PID-file path used to prevent duplicate daemon instances.
+        self._pid_lock_path: Path = (
+            self.daemon_config.result_path.parent / "daemon.pid"
+        )
+        self._pid_lock_file: object = None  # open file handle held while running
 
     def in_progress_snapshot(self) -> frozenset[Path]:
         """Return a thread-safe snapshot of the currently-active prompt paths."""
@@ -112,30 +129,31 @@ class DaemonRunner:
     def run_forever(self) -> int:
         self.daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
         self.daemon_config.result_path.mkdir(parents=True, exist_ok=True)
-        watcher = self.watcher or build_watcher(
-            self.daemon_config.prompt_path,
-            self.daemon_config.watch,
-            event_logger=self._log,
-        )
-        self._emit_startup_banner(watcher_backend=watcher.backend_name)
-        self._write_heartbeat(status="idle")
-        watcher.start()
-        try:
-            while not self._shutdown_requested.is_set():
-                processed = self.run_pending_once(watcher_backend=watcher.backend_name)
-                self._write_heartbeat(
-                    status="busy" if self.in_progress_snapshot() else "idle"
-                )
-                if processed == 0:
-                    if self._shutdown_requested.is_set():
-                        break
-                    watcher.wait_for_changes()
-        finally:
-            watcher.close()
-            self._remove_heartbeat()
-            if hasattr(self.progress_stream, "close_log"):
-                self.progress_stream.close_log()
-        self._log("daemon shutdown complete.")
+        with self._instance_lock():
+            watcher = self.watcher or build_watcher(
+                self.daemon_config.prompt_path,
+                self.daemon_config.watch,
+                event_logger=self._log,
+            )
+            self._emit_startup_banner(watcher_backend=watcher.backend_name)
+            self._write_heartbeat(status="idle")
+            watcher.start()
+            try:
+                while not self._shutdown_requested.is_set():
+                    processed = self.run_pending_once(watcher_backend=watcher.backend_name)
+                    self._write_heartbeat(
+                        status="busy" if self.in_progress_snapshot() else "idle"
+                    )
+                    if processed == 0:
+                        if self._shutdown_requested.is_set():
+                            break
+                        watcher.wait_for_changes()
+            finally:
+                watcher.close()
+                self._remove_heartbeat()
+                if hasattr(self.progress_stream, "close_log"):
+                    self.progress_stream.close_log()
+            self._log("daemon shutdown complete.")
 
     def run_pending_once(self, *, watcher_backend: str | None = None) -> int:
         self.daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
@@ -273,6 +291,62 @@ class DaemonRunner:
         if self._heartbeat_path is not None:
             try:
                 self._heartbeat_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    # ------------------------------------------------------------------
+    # Instance lock (prevents duplicate daemon processes)
+    # ------------------------------------------------------------------
+
+    @contextlib.contextmanager
+    def _instance_lock(self) -> Generator[None, None, None]:
+        """Acquire an exclusive per-queue daemon lock using a PID file.
+
+        Raises :class:`DaemonAlreadyRunningError` immediately if another
+        process already holds the lock (non-blocking attempt).  Falls back to
+        a no-op on platforms that lack ``fcntl`` (e.g. Windows).
+
+        The PID file contains the holding process's PID so operators can
+        identify or kill the existing daemon.
+        """
+        if not _HAS_FCNTL:
+            yield
+            return
+
+        self._pid_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = self._pid_lock_path.open("a+", encoding="utf-8")
+        try:
+            _fcntl.flock(lock_file, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        except OSError:
+            lock_file.close()
+            # Read the existing PID for a helpful error message.
+            try:
+                existing = self._pid_lock_path.read_text(encoding="utf-8").strip()
+                pid_info = f" (existing daemon PID: {existing})" if existing else ""
+            except OSError:
+                pid_info = ""
+            raise DaemonAlreadyRunningError(
+                f"Another dormammu daemon is already running against "
+                f"{self.daemon_config.prompt_path}{pid_info}.\n"
+                "Stop it first or use a different prompt_path."
+            )
+        # Write our PID so operators can identify the process.
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(str(os.getpid()))
+        lock_file.flush()
+        self._pid_lock_file = lock_file
+        try:
+            yield
+        finally:
+            try:
+                _fcntl.flock(lock_file, _fcntl.LOCK_UN)
+            except OSError:
+                pass
+            lock_file.close()
+            self._pid_lock_file = None
+            try:
+                self._pid_lock_path.unlink(missing_ok=True)
             except OSError:
                 pass
 

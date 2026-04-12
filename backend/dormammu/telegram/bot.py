@@ -29,6 +29,7 @@ _HELP_TEXT = (
     r"📡 /tail \[on\|off\|dashboard\] — stream output \(dashboard: plan \+ dashboard info per loop\)" "\n"
     r"📜 /logs \[n\] — last N lines of progress log \(default 50\)" "\n"
     r"📄 /result \[name\] — last \(or named\) result file content" "\n"
+    r"🕐 /history \[n\] — last N execution results with status \(default 10\)" "\n"
     "🗂️ /sessions — recent session list\n"
     "🛑 /stop — send interrupt to the running prompt\n"
     "🔌 /shutdown — finish current prompt then stop the daemon\n"
@@ -47,6 +48,7 @@ _MENU_KEYBOARD = [
     ],
     [
         {"text": "📜 Logs", "callback_data": "logs"},
+        {"text": "🕐 History", "callback_data": "history"},
         {"text": "🗂️ Sessions", "callback_data": "sessions"},
     ],
     [
@@ -281,6 +283,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("tail", self._cmd_tail))
         self._app.add_handler(CommandHandler("logs", self._cmd_logs))
         self._app.add_handler(CommandHandler("result", self._cmd_result))
+        self._app.add_handler(CommandHandler("history", self._cmd_history))
         self._app.add_handler(CommandHandler("sessions", self._cmd_sessions))
         self._app.add_handler(CommandHandler("stop", self._cmd_stop))
         self._app.add_handler(CommandHandler("shutdown", self._cmd_shutdown))
@@ -299,6 +302,7 @@ class TelegramBot:
                 BotCommand("tail", "📡 log streaming"),
                 BotCommand("logs", "📜 recent logs"),
                 BotCommand("result", "📄 last result"),
+                BotCommand("history", "🕐 execution history"),
                 BotCommand("sessions", "🗂️ session list"),
                 BotCommand("stop", "🛑 stop execution"),
                 BotCommand("shutdown", "🔌 graceful daemon shutdown"),
@@ -410,6 +414,9 @@ class TelegramBot:
         elif data == "logs":
             context.args = []
             await self._send_logs(update, context)
+        elif data == "history":
+            context.args = []
+            await self._send_history(update, context)
         elif data == "sessions":
             await self._send_sessions(update, context)
         elif data == "stop":
@@ -570,6 +577,80 @@ class TelegramBot:
         if len(content) > max_chars:
             content = content[:max_chars] + "\n…(truncated)"
         await self._reply(update, f"*{result_path.name}*\n\n{content}")
+
+    async def _cmd_history(self, update: Any, context: Any) -> None:
+        if not await self._guard(update):
+            return
+        await self._send_history(update, context)
+
+    async def _send_history(self, update: Any, context: Any) -> None:
+        import re
+
+        try:
+            n = int(context.args[0]) if context.args else 10
+            n = max(1, min(n, 50))
+        except (ValueError, IndexError):
+            await self._reply(update, "Usage: /history [n]  — entries to show, 1–50")
+            return
+        result_dir = self._daemon_config.result_path
+        if not result_dir.exists():
+            await self._reply(update, "🕐 No results directory found.")
+            return
+        candidates = sorted(
+            result_dir.glob("*_RESULT.md"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )[:n]
+        if not candidates:
+            await self._reply(update, "🕐 No history found.")
+            return
+
+        _status_re = re.compile(r"^- Status: `([^`]+)`", re.MULTILINE)
+        _started_re = re.compile(r"^- Started at: `([^`]+)`", re.MULTILINE)
+        _completed_re = re.compile(r"^- Completed at: `([^`]+)`", re.MULTILINE)
+        _verdict_re = re.compile(r"^- Supervisor verdict: `([^`]+)`", re.MULTILINE)
+        _status_icons = {
+            "done": "✅",
+            "failed": "❌",
+            "in_progress": "▶️",
+            "error": "⚠️",
+        }
+
+        lines = [f"🕐 *Execution history (last {len(candidates)})*", ""]
+        for path in reversed(candidates):  # oldest first for chronological readability
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            status_m = _status_re.search(content)
+            started_m = _started_re.search(content)
+            completed_m = _completed_re.search(content)
+            verdict_m = _verdict_re.search(content)
+
+            status = status_m.group(1) if status_m else "?"
+            started = started_m.group(1) if started_m else "?"
+            completed = completed_m.group(1) if completed_m else ""
+            verdict = verdict_m.group(1) if verdict_m else ""
+
+            # Strip _RESULT.md suffix to get the original prompt filename
+            prompt_name = path.name
+            if prompt_name.endswith("_RESULT.md"):
+                prompt_name = prompt_name[: -len("_RESULT.md")]
+
+            icon = _status_icons.get(status, "❓")
+            entry = f"{icon} `{prompt_name}`"
+            if verdict:
+                entry += f"\n  Verdict: {verdict}"
+            entry += f"\n  Started: {started}"
+            if completed and completed != "not completed":
+                entry += f" → {completed}"
+            lines.append(entry)
+
+        text = "\n".join(lines)
+        max_chars = 3800
+        if len(text) > max_chars:
+            text = text[:max_chars] + "\n…(truncated)"
+        await self._reply(update, text)
 
     async def _cmd_sessions(self, update: Any, context: Any) -> None:
         if not await self._guard(update):

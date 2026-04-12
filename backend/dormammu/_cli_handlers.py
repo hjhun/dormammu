@@ -25,7 +25,7 @@ from dormammu.config import (
     set_config_value,
     write_active_agent_cli_config,
 )
-from dormammu.daemon import DaemonRunner, SessionProgressLogStream, load_daemon_config
+from dormammu.daemon import DaemonAlreadyRunningError, DaemonRunner, SessionProgressLogStream, load_daemon_config
 from dormammu.telegram.stream import TelegramProgressStream
 from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt
@@ -467,6 +467,9 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
         except KeyboardInterrupt:
             print("daemonize interrupted", file=sys.stderr)
             return 130
+        except DaemonAlreadyRunningError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         except (RuntimeError, ValueError, OSError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
