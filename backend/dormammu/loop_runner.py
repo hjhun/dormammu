@@ -283,6 +283,7 @@ class LoopRunner:
                     continuation_prompt_path=continuation_prompt_path,
                     next_action="Manual intervention is required before the loop can continue safely.",
                 )
+                self._emit_escalation_banner(status=status, report=report, attempt_number=attempt_number)
                 return LoopRunResult(
                     status=status,
                     attempts_completed=attempt_number,
@@ -358,6 +359,29 @@ class LoopRunner:
             current_prompt = continuation.text
             attempt_number += 1
             retries_used += 1
+
+    def _emit_escalation_banner(
+        self,
+        *,
+        status: str,
+        report: SupervisorReport,
+        attempt_number: int,
+    ) -> None:
+        separator = "!" * 60
+        self._write_progress(
+            [
+                separator,
+                f"=== DORMAMMU ESCALATION: {status.upper()} ===",
+                separator,
+                f"attempt: {attempt_number}",
+                f"verdict: {report.verdict}",
+                f"summary: {report.summary}",
+                f"report: {report.report_path or '.dev/supervisor_report.md'}",
+                "Manual intervention is required before this loop can continue.",
+                "Run `dormammu resume` after resolving the issue.",
+                separator,
+            ]
+        )
 
     def _emit_loop_snapshot(
         self,

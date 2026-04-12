@@ -151,6 +151,13 @@ class CliAdapter:
                 fallback_trigger=fallback_trigger,
             )
             fallback_reason = self._detect_token_exhaustion(enriched)
+            if (
+                fallback_reason is None
+                and self.config.fallback_on_nonzero_exit
+                and enriched.exit_code != 0
+                and not enriched.timed_out
+            ):
+                fallback_reason = f"non-zero exit code {enriched.exit_code}"
             if fallback_reason is None or index == len(candidates) - 1:
                 return replace(
                     enriched,
@@ -217,6 +224,7 @@ class CliAdapter:
         if on_started is not None:
             on_started(started)
 
+        timed_out = False
         with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
             "w",
             encoding="utf-8",
@@ -250,7 +258,23 @@ class CliAdapter:
                 process.stdin.write(command_plan.stdin_input or "")
                 process.stdin.close()
 
-            return_code = process.wait()
+            timeout = self.config.process_timeout_seconds
+            try:
+                return_code = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                timed_out = True
+                return_code = -1
+                timeout_message = (
+                    f"\n[dormammu] Agent CLI process timed out after {timeout} seconds "
+                    "and was forcefully terminated.\n"
+                )
+                stdout_file.write(timeout_message)
+                stdout_file.flush()
+                if self.live_output_stream is not None:
+                    self.live_output_stream.write(timeout_message)
+                    self.live_output_stream.flush()
             stdout_thread.join()
             stderr_thread.join()
         completed_at = _iso_now()
@@ -269,6 +293,7 @@ class CliAdapter:
             stderr_path=stderr_path,
             metadata_path=metadata_path,
             capabilities=capabilities,
+            timed_out=timed_out,
         )
 
         metadata_path.write_text(

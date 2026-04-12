@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import time
 from typing import Any, Mapping, Sequence
 
 from dormammu._utils import iso_now as _iso_now
@@ -274,6 +275,8 @@ class SupervisorReport:
 
 
 class Supervisor:
+    _WORKTREE_DIFF_CACHE_TTL_SECONDS: float = 5.0
+
     def __init__(
         self,
         config: AppConfig,
@@ -281,6 +284,8 @@ class Supervisor:
     ) -> None:
         self.config = config
         self.repository = repository or StateRepository(config)
+        self._worktree_diff_cache: tuple[list[str], bool, list[str]] | None = None
+        self._worktree_diff_cache_time: float = 0.0
 
     def validate(self, request: SupervisorRequest) -> SupervisorReport:
         self.repository.sync_operator_state()
@@ -575,6 +580,19 @@ class Supervisor:
         )
 
     def _collect_worktree_diff(self) -> tuple[list[str], bool, list[str]]:
+        """Return git worktree diff, using a short TTL cache to avoid redundant I/O.
+
+        Within a single ``validate()`` call — or rapid successive calls — the
+        ``git status`` result is cached for up to ``_WORKTREE_DIFF_CACHE_TTL_SECONDS``
+        seconds so that tight retry loops don't hammer the file system needlessly.
+        """
+        now = time.monotonic()
+        if (
+            self._worktree_diff_cache is not None
+            and now - self._worktree_diff_cache_time < self._WORKTREE_DIFF_CACHE_TTL_SECONDS
+        ):
+            return self._worktree_diff_cache
+
         completed = subprocess.run(
             ["git", "-C", str(self.config.repo_root), "status", "--short", "--untracked-files=all"],
             capture_output=True,
@@ -585,10 +603,15 @@ class Supervisor:
             details = [line for line in completed.stderr.splitlines() if line.strip()]
             if not details:
                 details = [f"git status exited with code {completed.returncode}"]
-            return [], False, details
-        changed_files = [line.rstrip() for line in completed.stdout.splitlines() if line.strip()]
-        details = [f"{len(changed_files)} changed path(s) detected."] if changed_files else ["Worktree is clean."]
-        return changed_files, True, details
+            result: tuple[list[str], bool, list[str]] = ([], False, details)
+        else:
+            changed_files = [line.rstrip() for line in completed.stdout.splitlines() if line.strip()]
+            details = [f"{len(changed_files)} changed path(s) detected."] if changed_files else ["Worktree is clean."]
+            result = (changed_files, True, details)
+
+        self._worktree_diff_cache = result
+        self._worktree_diff_cache_time = time.monotonic()
+        return result
 
     def _resolve_outcome(
         self,

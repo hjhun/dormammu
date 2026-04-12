@@ -23,6 +23,10 @@ DEFAULT_DAEMON_MAX_RETRIES = 49
 _RESULT_STATUS_RE = re.compile(r"^- Status: `([^`]+)`$", re.MULTILINE)
 
 
+class _PromptSkipped(Exception):
+    """Sentinel exception for gracefully skipping a deleted prompt file."""
+
+
 class SessionProgressLogStream:
     def __init__(self, terminal_stream: TextIO) -> None:
         self._terminal_stream = terminal_stream
@@ -223,10 +227,21 @@ class DaemonRunner:
         loop_result: LoopRunResult | None = None
         interrupted = False
 
+        skipped = False
         try:
             if result_path.exists():
                 result_path.unlink()
-            prompt_text = prompt_path.read_text(encoding="utf-8")
+            try:
+                prompt_text = prompt_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                self._log(
+                    f"daemon prompt {prompt_path.name}: prompt file was deleted before processing; skipping"
+                )
+                skipped = True
+                status = "skipped"
+                error = "Prompt file was deleted before processing."
+                # Jump to finally by re-raising a sentinel; handled as non-interrupted exit
+                raise _PromptSkipped()
             session_repository, scoped_config, session_id = self._start_prompt_session(
                 prompt_path=prompt_path,
                 prompt_text=prompt_text,
@@ -244,6 +259,8 @@ class DaemonRunner:
                 error = "Loop returned completed but session PLAN.md is not fully complete."
             elif status != "completed":
                 error = self._terminal_error_message(loop_result, next_pending_task)
+        except _PromptSkipped:
+            pass  # status/error already set; handled cleanly in finally
         except KeyboardInterrupt:
             interrupted = True
             status = "interrupted"
@@ -272,7 +289,7 @@ class DaemonRunner:
                 supervisor_report_path=(loop_result.report_path if loop_result else None),
                 continuation_prompt_path=(loop_result.continuation_prompt_path if loop_result else None),
             )
-            if not interrupted:
+            if not interrupted and not skipped:
                 self._write_result_report_from_result(prompt_result)
                 if prompt_path.exists():
                     prompt_path.unlink()

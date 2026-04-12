@@ -162,6 +162,7 @@ class AgentRunResult:
     requested_cli_path: Path | None = None
     attempted_cli_paths: Sequence[Path] = ()
     fallback_trigger: str | None = None
+    timed_out: bool = False
 
     def to_dict(self, *, include_help_text: bool = False) -> dict[str, Any]:
         return {
@@ -174,6 +175,7 @@ class AgentRunResult:
                 str(path) for path in (self.attempted_cli_paths or (self.cli_path,))
             ],
             "fallback_trigger": self.fallback_trigger,
+            "timed_out": self.timed_out,
             "workdir": str(self.workdir),
             "prompt_mode": self.prompt_mode,
             "command": list(self.command),

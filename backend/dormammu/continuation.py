@@ -22,6 +22,15 @@ class ContinuationPrompt:
         }
 
 
+def _safe_artifact_ref(value: Any) -> str:
+    if not value:
+        return "unknown"
+    path_str = str(value)
+    if not Path(path_str).exists():
+        return f"{path_str} (missing)"
+    return path_str
+
+
 def load_prompt_text(latest_run: Mapping[str, Any]) -> str:
     artifacts = latest_run.get("artifacts", {})
     prompt_path = artifacts.get("prompt")
@@ -82,10 +91,10 @@ def build_continuation_prompt(
         "Do not leave a PLAN.md item unchecked if the work is actually finished, and do not mark [O] before the repository and DASHBOARD.md both reflect the completion.",
         "",
         f"Latest run id: {latest_run.get('run_id', 'unknown')}",
-        f"Previous prompt artifact: {artifacts.get('prompt', 'unknown')}",
-        f"Previous stdout artifact: {artifacts.get('stdout', 'unknown')}",
-        f"Previous stderr artifact: {artifacts.get('stderr', 'unknown')}",
-        f"Supervisor report: {report.report_path or '.dev/supervisor_report.md'}",
+        f"Previous prompt artifact: {_safe_artifact_ref(artifacts.get('prompt'))}",
+        f"Previous stdout artifact: {_safe_artifact_ref(artifacts.get('stdout'))}",
+        f"Previous stderr artifact: {_safe_artifact_ref(artifacts.get('stderr'))}",
+        f"Supervisor report: {_safe_artifact_ref(report.report_path) if report.report_path else '.dev/supervisor_report.md'}",
         "",
         f"Supervisor verdict: {report.verdict}",
         f"Supervisor summary: {report.summary}",

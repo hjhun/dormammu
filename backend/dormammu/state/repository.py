@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
 import shutil
 from string import Template
-from typing import Any, Mapping, Sequence
+from typing import Any, Generator, Mapping, Sequence
+
+try:
+    import fcntl as _fcntl
+    _HAS_FCNTL = True
+except ImportError:
+    _fcntl = None  # type: ignore[assignment]
+    _HAS_FCNTL = False
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent.models import AgentRunResult, AgentRunStarted
@@ -469,6 +477,12 @@ class StateRepository:
             session_state = self._read_json(session_path)
             workflow_path = session_dir / "workflow_state.json"
             workflow_state = self._read_json(workflow_path) if workflow_path.exists() else {}
+            bootstrap = session_state.get("bootstrap") or {}
+            raw_goal = bootstrap.get("goal") or session_state.get("goal") or ""
+            goal_summary = (raw_goal[:120] + "...") if len(raw_goal) > 120 else raw_goal
+            loop_state = session_state.get("loop") or workflow_state.get("loop") or {}
+            supervisor_verdict = loop_state.get("latest_supervisor_verdict")
+            attempts_completed = loop_state.get("attempts_completed")
             sessions.append(
                 {
                     "session_id": session_state.get("session_id"),
@@ -482,6 +496,9 @@ class StateRepository:
                         "active_roadmap_phase_ids",
                         [],
                     ),
+                    "goal": goal_summary or None,
+                    "supervisor_verdict": supervisor_verdict,
+                    "attempts_completed": attempts_completed,
                     "next_action": session_state.get("next_action"),
                     "is_active": session_state.get("session_id") == active_session_id,
                     "workflow_last_completed_phase": workflow_state.get("workflow", {}).get(
@@ -663,8 +680,27 @@ class StateRepository:
         plan_path: Path,
         timestamp: str,
     ) -> None:
+        plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
+        plan_mtime = plan_path.stat().st_mtime if plan_path.exists() else None
+
+        # Detect if PLAN.md was externally modified since we last recorded its mtime.
+        if plan_mtime is not None and session_path.exists():
+            try:
+                stored = self._read_json(session_path)
+                stored_mtime = stored.get("plan_mtime")
+                if stored_mtime is not None and abs(plan_mtime - float(stored_mtime)) > 1.0:
+                    import sys
+                    print(
+                        f"[dormammu] Warning: {plan_path.name} was modified externally "
+                        f"(stored mtime={stored_mtime:.3f}, current={plan_mtime:.3f}). "
+                        "Manual edits will be preserved by re-reading the file.",
+                        file=sys.stderr,
+                    )
+            except Exception:
+                pass
+
         parsed_tasks = parse_tasks_document(
-            plan_path.read_text(encoding="utf-8"),
+            plan_text,
             source=self._display_state_path(plan_path),
         )
         task_sync = parsed_tasks.current_workflow.to_dict(synced_at=timestamp)
@@ -672,6 +708,8 @@ class StateRepository:
         session_state = self._read_json(session_path)
         session_state["updated_at"] = timestamp
         session_state["task_sync"] = task_sync
+        if plan_mtime is not None:
+            session_state["plan_mtime"] = plan_mtime
         self._write_json(session_path, session_state)
 
         workflow_state = self._read_json(workflow_path)
@@ -728,7 +766,38 @@ class StateRepository:
             timestamp=timestamp or _iso_now(),
         )
 
+    @contextlib.contextmanager
+    def _root_index_lock(self) -> Generator[None, None, None]:
+        """Acquire an exclusive file lock on the root .dev/ index files.
+
+        Prevents concurrent writes from multiple dormammu sessions racing on
+        `.dev/session.json` and `.dev/workflow_state.json`.  Falls back to a
+        no-op context on platforms that lack ``fcntl`` (e.g. Windows).
+        """
+        self.base_dev_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = self.base_dev_dir / ".dev_lock"
+        with lock_path.open("a", encoding="utf-8") as lock_file:
+            if _HAS_FCNTL:
+                _fcntl.flock(lock_file, _fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if _HAS_FCNTL:
+                    _fcntl.flock(lock_file, _fcntl.LOCK_UN)
+
     def _write_root_index_for_session(
+        self,
+        *,
+        session_repository: StateRepository,
+        timestamp: str,
+    ) -> None:
+        with self._root_index_lock():
+            self._write_root_index_for_session_locked(
+                session_repository=session_repository,
+                timestamp=timestamp,
+            )
+
+    def _write_root_index_for_session_locked(
         self,
         *,
         session_repository: StateRepository,

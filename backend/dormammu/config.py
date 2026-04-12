@@ -472,6 +472,8 @@ class AppConfig:
     guidance_files: tuple[Path, ...] = ()
     default_guidance_files: tuple[Path, ...] = ()
     telegram_config: TelegramConfig | None = None
+    process_timeout_seconds: int | None = None
+    fallback_on_nonzero_exit: bool = False
 
     @classmethod
     def load(
@@ -527,6 +529,12 @@ class AppConfig:
                 config_payload.get("telegram"),
                 config_path=config_file,
             ),
+            process_timeout_seconds=(
+                int(config_payload["process_timeout_seconds"])
+                if "process_timeout_seconds" in config_payload
+                else None
+            ),
+            fallback_on_nonzero_exit=bool(config_payload.get("fallback_on_nonzero_exit", False)),
         )
 
     def with_overrides(self, **kwargs: object) -> "AppConfig":
@@ -554,4 +562,6 @@ class AppConfig:
             "guidance_files": [str(path) for path in self.guidance_files],
             "default_guidance_files": [str(path) for path in self.default_guidance_files],
             "telegram_config": self.telegram_config.to_dict() if self.telegram_config else None,
+            "process_timeout_seconds": self.process_timeout_seconds,
+            "fallback_on_nonzero_exit": self.fallback_on_nonzero_exit,
         }

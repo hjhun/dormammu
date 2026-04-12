@@ -43,7 +43,13 @@ class DoctorReport:
         }
 
 
-def run_doctor(*, repo_root: Path, home_dir: Path | None = None, agent_cli: Path | None = None) -> DoctorReport:
+def run_doctor(
+    *,
+    repo_root: Path,
+    home_dir: Path | None = None,
+    agent_cli: Path | None = None,
+    active_agent_cli_from_config: Path | None = None,
+) -> DoctorReport:
     resolved_home_dir = (
         home_dir
         or Path(os.environ.get("HOME", "")).expanduser()
@@ -54,6 +60,7 @@ def run_doctor(*, repo_root: Path, home_dir: Path | None = None, agent_cli: Path
         _check_python_version(),
         _check_home_directory(resolved_home_dir),
         _check_agent_cli(agent_cli),
+        _check_configured_agent_cli(active_agent_cli_from_config),
         _check_agent_directory(repo_root),
         _check_repo_writable(repo_root),
     )
@@ -151,6 +158,60 @@ def _check_agent_cli(agent_cli: Path | None) -> DoctorCheck:
         summary=summary,
         details={
             "path": str(resolved),
+            "exists": exists,
+            "executable": executable,
+        },
+    )
+
+
+def _check_configured_agent_cli(agent_cli: Path | None) -> DoctorCheck:
+    if agent_cli is None:
+        return DoctorCheck(
+            name="configured_agent_cli",
+            ok=False,
+            summary=(
+                "active_agent_cli is not set in dormammu.json or ~/.dormammu/config. "
+                "Run: dormammu set-config active_agent_cli <path>"
+            ),
+            details={
+                "path": None,
+                "configured": False,
+                "hint": "dormammu set-config active_agent_cli /usr/local/bin/claude",
+            },
+        )
+
+    resolved = agent_cli.expanduser()
+    raw_text = str(agent_cli)
+    if resolved.is_absolute() or "/" in raw_text:
+        if not resolved.is_absolute():
+            resolved = Path(os.path.abspath(str(Path.cwd() / resolved)))
+        exists = resolved.exists()
+        executable = exists and os.access(resolved, os.X_OK)
+    else:
+        located = shutil.which(raw_text)
+        if located is not None:
+            resolved = Path(located)
+            exists = True
+            executable = os.access(resolved, os.X_OK)
+        else:
+            exists = False
+            executable = False
+
+    ok = exists and executable
+    if ok:
+        summary = f"Configured active_agent_cli is available: {resolved}."
+    elif not exists:
+        summary = f"Configured active_agent_cli does not exist: {resolved}."
+    else:
+        summary = f"Configured active_agent_cli is not executable: {resolved}."
+
+    return DoctorCheck(
+        name="configured_agent_cli",
+        ok=ok,
+        summary=summary,
+        details={
+            "path": str(resolved),
+            "configured": True,
             "exists": exists,
             "executable": executable,
         },
