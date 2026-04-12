@@ -17,19 +17,36 @@ if TYPE_CHECKING:
     from dormammu.telegram.stream import TelegramProgressStream
 
 
-_HELP_TEXT = """\
-*dormammu bot commands*
+_HELP_TEXT = (
+    "🤖 *dormammu bot commands*\n\n"
+    "📊 /status — daemon status and active prompt\n"
+    r"▶️ /run \<prompt\> — queue a new prompt for execution" "\n"
+    "📋 /queue — list pending prompts\n"
+    r"📡 /tail \[on|off\] — stream daemon output to this chat" "\n"
+    r"📜 /logs \[n\] — last N lines of progress log \(default 50\)" "\n"
+    r"📄 /result \[name\] — last \(or named\) result file content" "\n"
+    "🗂️ /sessions — recent session list\n"
+    "🛑 /stop — send interrupt to the running prompt\n"
+    "❓ /help — this message"
+)
 
-/status — daemon status and active prompt
-/run <prompt> — queue a new prompt for execution
-/queue — list pending prompts
-/tail [on|off] — stream daemon output to this chat
-/logs [n] — last N lines of progress log (default 50)
-/result [name] — last (or named) result file content
-/sessions — recent session list
-/stop — send interrupt to the running prompt
-/help — this message\
-"""
+_MENU_KEYBOARD = [
+    [
+        {"text": "📊 Status", "callback_data": "status"},
+        {"text": "📋 Queue", "callback_data": "queue"},
+    ],
+    [
+        {"text": "📡 Tail on", "callback_data": "tail_on"},
+        {"text": "📡 Tail off", "callback_data": "tail_off"},
+    ],
+    [
+        {"text": "📜 Logs", "callback_data": "logs"},
+        {"text": "🗂️ Sessions", "callback_data": "sessions"},
+    ],
+    [
+        {"text": "🛑 Stop", "callback_data": "stop"},
+    ],
+]
 
 
 class TelegramBot:
@@ -186,7 +203,8 @@ class TelegramBot:
             self._ready.set()
             return
 
-        from telegram.ext import CommandHandler, MessageHandler, filters
+        from telegram import BotCommand
+        from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
         self._app = Application.builder().token(self._config.bot_token).build()
         self._app.add_handler(CommandHandler("start", self._cmd_help))
@@ -199,6 +217,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("result", self._cmd_result))
         self._app.add_handler(CommandHandler("sessions", self._cmd_sessions))
         self._app.add_handler(CommandHandler("stop", self._cmd_stop))
+        self._app.add_handler(CallbackQueryHandler(self._cmd_callback))
         # Record any incoming message so the sender is tracked for broadcasts.
         self._app.add_handler(
             MessageHandler(filters.ALL, self._track_chat),
@@ -206,6 +225,17 @@ class TelegramBot:
         )
 
         async with self._app:
+            await self._app.bot.set_my_commands([
+                BotCommand("status", "📊 daemon status"),
+                BotCommand("run", "▶️ run a prompt"),
+                BotCommand("queue", "📋 pending prompts"),
+                BotCommand("tail", "📡 log streaming"),
+                BotCommand("logs", "📜 recent logs"),
+                BotCommand("result", "📄 last result"),
+                BotCommand("sessions", "🗂️ session list"),
+                BotCommand("stop", "🛑 stop execution"),
+                BotCommand("help", "❓ help"),
+            ])
             await self._app.start()
             await self._app.updater.start_polling(drop_pending_updates=True)
             self._ready.set()  # signal successful startup
@@ -230,7 +260,9 @@ class TelegramBot:
         chat = update.effective_chat
         chat_id = chat.id if chat else None
         if chat_id is None or not self._is_allowed(chat_id):
-            if update.message:
+            if update.callback_query is not None:
+                await update.callback_query.answer("Access denied.", show_alert=True)
+            elif update.message:
                 await update.message.reply_text("Access denied.")
             return False
         self._record_chat(chat_id)
@@ -250,21 +282,71 @@ class TelegramBot:
     # Command handlers
     # ------------------------------------------------------------------
 
+    def _build_menu_markup(self) -> Any:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        keyboard = [
+            [InlineKeyboardButton(btn["text"], callback_data=btn["callback_data"]) for btn in row]
+            for row in _MENU_KEYBOARD
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
     async def _cmd_help(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
-        await update.message.reply_text(_HELP_TEXT, parse_mode="Markdown")
+        await update.message.reply_text(
+            _HELP_TEXT,
+            parse_mode="MarkdownV2",
+            reply_markup=self._build_menu_markup(),
+        )
+
+    async def _reply(self, update: Any, text: str, parse_mode: str = "Markdown") -> None:
+        """Send a reply whether the update came from a message or a callback query."""
+        if update.callback_query is not None:
+            await update.callback_query.message.reply_text(text, parse_mode=parse_mode)
+        elif update.message is not None:
+            await update.message.reply_text(text, parse_mode=parse_mode)
+
+    async def _cmd_callback(self, update: Any, context: Any) -> None:
+        query = update.callback_query
+        if query is None:
+            return
+        await query.answer()
+        if not await self._guard(update):
+            return
+
+        data = query.data
+        if data == "status":
+            await self._send_status(update, context)
+        elif data == "queue":
+            await self._send_queue(update, context)
+        elif data == "tail_on":
+            context.args = ["on"]
+            await self._send_tail(update, context)
+        elif data == "tail_off":
+            context.args = ["off"]
+            await self._send_tail(update, context)
+        elif data == "logs":
+            context.args = []
+            await self._send_logs(update, context)
+        elif data == "sessions":
+            await self._send_sessions(update, context)
+        elif data == "stop":
+            await self._send_stop(update, context)
 
     async def _cmd_status(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
+        await self._send_status(update, context)
+
+    async def _send_status(self, update: Any, context: Any) -> None:
         in_progress = list(self._runner._in_progress)
         streaming_id = self._stream.streaming_chat_id
-        lines = ["*dormammu daemon status*"]
+        lines = ["📊 *dormammu daemon status*"]
         if in_progress:
-            lines.append("Active: " + ", ".join(p.name for p in in_progress))
+            lines.append("▶️ Active: " + ", ".join(p.name for p in in_progress))
         else:
-            lines.append("Active: idle")
+            lines.append("💤 Active: idle")
         from dormammu.daemon.queue import is_prompt_candidate
 
         prompt_dir = self._daemon_config.prompt_path
@@ -275,29 +357,30 @@ class TelegramBot:
                 for p in prompt_dir.iterdir()
                 if is_prompt_candidate(p, self._daemon_config.queue) and p not in self._runner._in_progress
             )
-        lines.append(f"Queued: {pending_count}")
-        lines.append(f"Streaming: {'on (chat ' + str(streaming_id) + ')' if streaming_id else 'off'}")
-        lines.append(f"Repo: `{self._app_config.repo_root}`")
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        lines.append(f"📋 Queued: {pending_count}")
+        lines.append(f"📡 Streaming: {'on (chat ' + str(streaming_id) + ')' if streaming_id else 'off'}")
+        lines.append(f"📁 Repo: `{self._app_config.repo_root}`")
+        await self._reply(update, "\n".join(lines))
 
     async def _cmd_run(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
         if not context.args:
-            await update.message.reply_text("Usage: /run <prompt text>")
+            await self._reply(update, "Usage: /run <prompt text>")
             return
         prompt_text = " ".join(context.args)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         prompt_path = self._daemon_config.prompt_path / f"tg_{ts}.md"
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text(prompt_text, encoding="utf-8")
-        await update.message.reply_text(
-            f"Queued: `{prompt_path.name}`", parse_mode="Markdown"
-        )
+        await self._reply(update, f"▶️ Queued: `{prompt_path.name}`")
 
     async def _cmd_queue(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
+        await self._send_queue(update, context)
+
+    async def _send_queue(self, update: Any, context: Any) -> None:
         from dormammu.daemon.queue import is_prompt_candidate
 
         prompt_dir = self._daemon_config.prompt_path
@@ -309,33 +392,37 @@ class TelegramBot:
                 if is_prompt_candidate(p, self._daemon_config.queue)
             ]
         if not items:
-            await update.message.reply_text("Prompt queue is empty.")
+            await self._reply(update, "📋 Prompt queue is empty.")
             return
-        lines = [f"*Prompt queue ({len(items)})*"] + [f"• {name}" for name in items]
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        lines = [f"📋 *Prompt queue ({len(items)})*"] + [f"• {name}" for name in items]
+        await self._reply(update, "\n".join(lines))
 
     async def _cmd_tail(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
+        await self._send_tail(update, context)
+
+    async def _send_tail(self, update: Any, context: Any) -> None:
         chat_id = update.effective_chat.id
         mode = context.args[0].lower() if context.args else "on"
         if mode == "off":
             self._stream.disable_streaming()
-            await update.message.reply_text("Log streaming disabled.")
+            await self._reply(update, "📡 Log streaming disabled.")
         else:
             self._stream.enable_streaming(chat_id)
-            await update.message.reply_text(
-                "Log streaming enabled. Use /tail off to stop."
-            )
+            await self._reply(update, "📡 Log streaming enabled. Use /tail off to stop.")
 
     async def _cmd_logs(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
+        await self._send_logs(update, context)
+
+    async def _send_logs(self, update: Any, context: Any) -> None:
         try:
             n = int(context.args[0]) if context.args else 50
             n = max(1, min(n, 200))
         except (ValueError, IndexError):
-            await update.message.reply_text("Usage: /logs [n]  — lines to show, 1–200")
+            await self._reply(update, "Usage: /logs [n]  — lines to show, 1–200")
             return
         progress_dir = self._daemon_config.result_path.parent / "progress"
         log_path: Path | None = None
@@ -348,24 +435,24 @@ class TelegramBot:
             if candidates:
                 log_path = candidates[0]
         if log_path is None or not log_path.exists():
-            await update.message.reply_text("No progress log available (run with --debug to enable).")
+            await self._reply(update, "📜 No progress log available (run with --debug to enable).")
             return
         text = log_path.read_text(encoding="utf-8", errors="replace")
         tail = "\n".join(text.splitlines()[-n:])
         if not tail.strip():
-            await update.message.reply_text("Log is empty.")
+            await self._reply(update, "📜 Log is empty.")
             return
         max_chars = 3800
         if len(tail) > max_chars:
             tail = "..." + tail[-max_chars:]
-        await update.message.reply_text(f"```\n{tail}\n```", parse_mode="Markdown")
+        await self._reply(update, f"```\n{tail}\n```")
 
     async def _cmd_result(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
         result_dir = self._daemon_config.result_path
         if not result_dir.exists():
-            await update.message.reply_text("No results directory found.")
+            await self._reply(update, "📄 No results directory found.")
             return
         if context.args:
             name = context.args[0]
@@ -379,26 +466,27 @@ class TelegramBot:
                 reverse=True,
             )
             if not candidates:
-                await update.message.reply_text("No results found.")
+                await self._reply(update, "📄 No results found.")
                 return
             result_path = candidates[0]
         if not result_path.exists():
-            await update.message.reply_text(f"Result not found: {result_path.name}")
+            await self._reply(update, f"📄 Result not found: {result_path.name}")
             return
         content = result_path.read_text(encoding="utf-8", errors="replace")
         max_chars = 3800
         if len(content) > max_chars:
             content = content[:max_chars] + "\n…(truncated)"
-        await update.message.reply_text(
-            f"*{result_path.name}*\n\n{content}", parse_mode="Markdown"
-        )
+        await self._reply(update, f"*{result_path.name}*\n\n{content}")
 
     async def _cmd_sessions(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
+        await self._send_sessions(update, context)
+
+    async def _send_sessions(self, update: Any, context: Any) -> None:
         sessions_dir = self._app_config.base_dev_dir / "sessions"
         if not sessions_dir.exists():
-            await update.message.reply_text("No sessions directory found.")
+            await self._reply(update, "🗂️ No sessions directory found.")
             return
         session_dirs = sorted(
             (p for p in sessions_dir.iterdir() if p.is_dir()),
@@ -406,18 +494,21 @@ class TelegramBot:
             reverse=True,
         )[:10]
         if not session_dirs:
-            await update.message.reply_text("No sessions found.")
+            await self._reply(update, "🗂️ No sessions found.")
             return
-        lines = [f"*Recent sessions ({len(session_dirs)})*"] + [f"• {s.name}" for s in session_dirs]
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        lines = [f"🗂️ *Recent sessions ({len(session_dirs)})*"] + [f"• {s.name}" for s in session_dirs]
+        await self._reply(update, "\n".join(lines))
 
     async def _cmd_stop(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
+        await self._send_stop(update, context)
+
+    async def _send_stop(self, update: Any, context: Any) -> None:
         in_progress = list(self._runner._in_progress)
         if not in_progress:
-            await update.message.reply_text("No active prompt to stop.")
+            await self._reply(update, "🛑 No active prompt to stop.")
             return
         names = ", ".join(p.name for p in in_progress)
-        await update.message.reply_text(f"Sending interrupt to active prompt: {names}")
+        await self._reply(update, f"🛑 Sending interrupt to active prompt: {names}")
         os.kill(os.getpid(), signal.SIGINT)
