@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import select
 import struct
+import threading
 import time
 from typing import Callable, Final, Protocol
 
@@ -35,10 +36,12 @@ class PollingWatcher:
         watch_config: WatchConfig,
         *,
         event_logger: Callable[[str], None] | None = None,
+        stop_event: threading.Event | None = None,
     ) -> None:
         self.prompt_dir = prompt_dir
         self.watch_config = watch_config
         self._event_logger = event_logger
+        self._stop_event = stop_event
 
     def start(self) -> None:
         return None
@@ -47,7 +50,12 @@ class PollingWatcher:
         return None
 
     def wait_for_changes(self) -> list[Path]:
-        time.sleep(self.watch_config.poll_interval_seconds)
+        if self._stop_event is not None:
+            # Block until the poll interval elapses OR the stop event fires,
+            # whichever comes first.  This makes /shutdown respond immediately.
+            self._stop_event.wait(timeout=self.watch_config.poll_interval_seconds)
+        else:
+            time.sleep(self.watch_config.poll_interval_seconds)
         paths = list(self.prompt_dir.iterdir()) if self.prompt_dir.exists() else []
         if self._event_logger is not None:
             self._event_logger(
@@ -84,11 +92,17 @@ class InotifyWatcher:
         watch_config: WatchConfig,
         *,
         event_logger: Callable[[str], None] | None = None,
+        stop_event: threading.Event | None = None,
     ) -> None:
         self.prompt_dir = prompt_dir
         self.watch_config = watch_config
         self._event_logger = event_logger
+        self._stop_event = stop_event
         self._fd: int | None = None
+        # Wake-up pipe: a byte written to _wake_w makes select() return
+        # immediately so that the shutdown signal is honoured without delay.
+        self._wake_r: int | None = None
+        self._wake_w: int | None = None
         libc_name = ctypes.util.find_library("c") or "libc.so.6"
         self._libc = ctypes.CDLL(libc_name, use_errno=True)
 
@@ -112,22 +126,58 @@ class InotifyWatcher:
             os.close(fd)
             self._fd = None
             raise OSError(err, os.strerror(err))
+        # Create the wake-up pipe for interrupt-driven shutdown.
+        self._wake_r, self._wake_w = os.pipe()
         self._log_event(
             "daemon watcher event: backend=inotify "
             f"watching={self.prompt_dir} mask={self._format_mask(self._WATCH_MASK)}"
         )
 
+    def _wake_up(self) -> None:
+        """Write a single byte to the wake-up pipe to unblock select()."""
+        if self._wake_w is not None:
+            try:
+                os.write(self._wake_w, b"\x00")
+            except OSError:
+                pass
+
     def close(self) -> None:
         if self._fd is not None:
             os.close(self._fd)
             self._fd = None
+        if self._wake_w is not None:
+            try:
+                os.close(self._wake_w)
+            except OSError:
+                pass
+            self._wake_w = None
+        if self._wake_r is not None:
+            try:
+                os.close(self._wake_r)
+            except OSError:
+                pass
+            self._wake_r = None
 
     def wait_for_changes(self) -> list[Path]:
         if self._fd is None:
             raise RuntimeError("Inotify watcher has not been started.")
         while True:
-            readable, _, _ = select.select([self._fd], [], [])
-            if not readable:
+            fds = [self._fd]
+            if self._wake_r is not None:
+                fds.append(self._wake_r)
+            try:
+                readable, _, _ = select.select(fds, [], [])
+            except (OSError, ValueError):
+                # fd was closed (e.g. during shutdown) — return empty
+                return []
+            # Wake-up pipe fired → shutdown requested; drain and return.
+            if self._wake_r is not None and self._wake_r in readable:
+                try:
+                    os.read(self._wake_r, 256)
+                except OSError:
+                    pass
+                return []
+            if self._fd not in readable:
                 continue
             try:
                 payload = os.read(self._fd, 4096)
@@ -174,15 +224,16 @@ def build_watcher(
     watch_config: WatchConfig,
     *,
     event_logger: Callable[[str], None] | None = None,
+    stop_event: threading.Event | None = None,
 ) -> PromptWatcher:
     if watch_config.backend == "polling":
-        return PollingWatcher(prompt_dir, watch_config, event_logger=event_logger)
+        return PollingWatcher(prompt_dir, watch_config, event_logger=event_logger, stop_event=stop_event)
     if watch_config.backend == "inotify":
         if not InotifyWatcher.is_available():
             raise RuntimeError("Inotify backend is not available on this platform.")
-        return InotifyWatcher(prompt_dir, watch_config, event_logger=event_logger)
+        return InotifyWatcher(prompt_dir, watch_config, event_logger=event_logger, stop_event=stop_event)
     if watch_config.backend == "auto":
         if InotifyWatcher.is_available():
-            return InotifyWatcher(prompt_dir, watch_config, event_logger=event_logger)
-        return PollingWatcher(prompt_dir, watch_config, event_logger=event_logger)
+            return InotifyWatcher(prompt_dir, watch_config, event_logger=event_logger, stop_event=stop_event)
+        return PollingWatcher(prompt_dir, watch_config, event_logger=event_logger, stop_event=stop_event)
     raise RuntimeError(f"Unsupported watcher backend: {watch_config.backend}")

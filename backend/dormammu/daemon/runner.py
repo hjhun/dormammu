@@ -107,6 +107,8 @@ class DaemonRunner:
             self.daemon_config.result_path.parent / "daemon.pid"
         )
         self._pid_lock_file: object = None  # open file handle held while running
+        # Set in run_forever() so request_shutdown() can wake up the watcher.
+        self._active_watcher: object = None
 
     def in_progress_snapshot(self) -> frozenset[Path]:
         """Return a thread-safe snapshot of the currently-active prompt paths."""
@@ -117,10 +119,15 @@ class DaemonRunner:
         """Ask the daemon loop to stop after the current prompt finishes.
 
         Safe to call from any thread (e.g. Telegram bot, signal handler).
-        The loop exits cleanly at the next idle check; no in-progress work
-        is interrupted.
+        Sets the shutdown event (unblocks PollingWatcher immediately) and
+        writes to the inotify watcher's wake-up pipe so that
+        InotifyWatcher.wait_for_changes() returns without delay.
         """
         self._shutdown_requested.set()
+        # Wake up the inotify watcher if it's currently blocking in select().
+        watcher = getattr(self, "_active_watcher", None)
+        if watcher is not None and hasattr(watcher, "_wake_up"):
+            watcher._wake_up()
 
     @property
     def shutdown_requested(self) -> bool:
@@ -134,7 +141,9 @@ class DaemonRunner:
                 self.daemon_config.prompt_path,
                 self.daemon_config.watch,
                 event_logger=self._log,
+                stop_event=self._shutdown_requested,
             )
+            self._active_watcher = watcher
             self._emit_startup_banner(watcher_backend=watcher.backend_name)
             self._write_heartbeat(status="idle")
             watcher.start()

@@ -403,5 +403,81 @@ class BotShutdownRegistrationTests(unittest.TestCase):
         self.assertIn("shutdown", all_callbacks)
 
 
+# ===========================================================================
+# 6. Watcher shutdown responsiveness
+# ===========================================================================
+
+class WatcherShutdownResponsivenessTests(unittest.TestCase):
+    """Verify that both watchers unblock quickly when the stop_event fires."""
+
+    def test_polling_watcher_returns_early_on_stop_event(self) -> None:
+        """PollingWatcher with a long interval must return within ~1 s when
+        the stop_event is set."""
+        import threading
+        from dormammu.daemon.models import WatchConfig
+        from dormammu.daemon.watchers import PollingWatcher
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            watch_config = WatchConfig(backend="polling", poll_interval_seconds=60)
+            stop_event = threading.Event()
+            watcher = PollingWatcher(Path(tmpdir), watch_config, stop_event=stop_event)
+            watcher.start()
+
+            results: list[float] = []
+
+            def _run() -> None:
+                t0 = time.monotonic()
+                watcher.wait_for_changes()
+                results.append(time.monotonic() - t0)
+
+            t = threading.Thread(target=_run)
+            t.start()
+            time.sleep(0.05)  # let the watcher block
+            stop_event.set()
+            t.join(timeout=2.0)
+            watcher.close()
+
+            self.assertFalse(t.is_alive(), "watcher thread is still blocked after stop_event")
+            self.assertTrue(results, "wait_for_changes() did not return")
+            self.assertLess(results[0], 2.0, f"wait_for_changes() took too long: {results[0]:.2f}s")
+
+    def test_request_shutdown_wakes_polling_watcher_via_event(self) -> None:
+        """DaemonRunner.request_shutdown() must unblock a PollingWatcher promptly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _seed_repo(root)
+            runner = _make_runner(root)
+
+            # Simulate the watcher being active (as run_forever does)
+            from dormammu.daemon.models import WatchConfig
+            from dormammu.daemon.watchers import PollingWatcher
+            watch_config = WatchConfig(backend="polling", poll_interval_seconds=60)
+            watcher = PollingWatcher(
+                runner.daemon_config.prompt_path,
+                watch_config,
+                stop_event=runner._shutdown_requested,
+            )
+            runner._active_watcher = watcher
+            watcher.start()
+
+            results: list[float] = []
+
+            def _run() -> None:
+                t0 = time.monotonic()
+                watcher.wait_for_changes()
+                results.append(time.monotonic() - t0)
+
+            t = threading.Thread(target=_run)
+            t.start()
+            time.sleep(0.05)
+            runner.request_shutdown()
+            t.join(timeout=2.0)
+            watcher.close()
+
+            self.assertFalse(t.is_alive())
+            self.assertLess(results[0], 2.0)
+
+
 if __name__ == "__main__":
     unittest.main()
