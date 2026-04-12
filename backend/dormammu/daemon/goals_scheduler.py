@@ -84,6 +84,9 @@ class GoalsScheduler:
         waiting for the first timer interval to elapse.  Any previously
         scheduled timer is cancelled first so that the next interval is
         measured from *this* run, not from when the daemon started.
+
+        Processing runs in a background thread so the calling thread
+        (the main daemon loop) is not blocked while agent CLIs execute.
         """
         if self._stop_event.is_set():
             return
@@ -93,9 +96,27 @@ class GoalsScheduler:
         # Cancel any timer that the watcher thread may have already armed
         # so the next interval starts fresh after this run completes.
         self._cancel_timer()
-        self._process_goals()
-        # Re-arm the timer for the next scheduled run.
-        self._sync_timer()
+        t = threading.Thread(
+            target=self._trigger_now_bg,
+            daemon=True,
+            name="dormammu-goals-init-trigger",
+        )
+        t.start()
+
+    def _trigger_now_bg(self) -> None:
+        """Background task: process goals immediately then re-arm the periodic timer."""
+        try:
+            if self._stop_event.is_set():
+                return
+            # Cancel any timer the watcher thread may have armed between
+            # trigger_now() returning and this thread starting.
+            self._cancel_timer()
+            self._process_goals()
+        except Exception as exc:
+            self._log(f"goals scheduler: initial trigger error: {exc}")
+        finally:
+            if not self._stop_event.is_set():
+                self._sync_timer()
 
     # ------------------------------------------------------------------
     # Internal — watcher loop
@@ -317,6 +338,7 @@ class GoalsScheduler:
             stdin_input = prompt
 
         try:
+            self._log(f"goals scheduler: calling {role} agent ({cli.name}) for {stem}")
             result = subprocess.run(
                 args,
                 input=stdin_input,

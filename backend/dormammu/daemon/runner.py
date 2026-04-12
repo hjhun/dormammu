@@ -159,11 +159,11 @@ class DaemonRunner:
             self._active_watcher = watcher
             self._emit_startup_banner(watcher_backend=watcher.backend_name)
             self._write_heartbeat(status="idle")
+            watcher.start()
             if self._goals_scheduler is not None:
                 self._goals_scheduler.start()
                 self._log("goals scheduler: started")
                 self._goals_scheduler.trigger_now()
-            watcher.start()
             try:
                 while not self._shutdown_requested.is_set():
                     processed = self.run_pending_once(watcher_backend=watcher.backend_name)
@@ -253,8 +253,8 @@ class DaemonRunner:
             print(line, file=self.progress_stream)
         self.progress_stream.flush()
 
-    def _startup_banner_lines(self, *, watcher_backend: str) -> tuple[str, ...]:
-        return (
+    def _startup_banner_lines(self, *, watcher_backend: str) -> list[str]:
+        lines: list[str] = [
             "=== dormammu daemonize ===",
             f"repo root: {self.app_config.repo_root.resolve()}",
             f"daemon config: {self.daemon_config.config_path}",
@@ -276,7 +276,17 @@ class DaemonRunner:
             (
                 "prompt lifecycle: each accepted prompt reuses the dormammu run loop and writes its result only after the loop reaches a terminal outcome"
             ),
-        )
+        ]
+        if self.daemon_config.goals is not None:
+            goals = self.daemon_config.goals
+            lines.append(
+                f"goals: {goals.path} "
+                f"(interval={goals.interval_minutes}m, "
+                f"watching for .md files)"
+            )
+        else:
+            lines.append("goals: disabled")
+        return lines
 
     def _watcher_poll_interval_seconds(self, watcher_backend: str) -> int:
         if watcher_backend == "polling":
