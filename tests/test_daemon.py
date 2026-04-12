@@ -81,6 +81,7 @@ class DaemonConfigTests(unittest.TestCase):
     def _app_config(root: Path) -> AppConfig:
         env = dict(os.environ)
         env["HOME"] = str(root / ".test-home")
+        env["DORMAMMU_SESSIONS_DIR"] = str(root / "sessions")
         return AppConfig.load(repo_root=root, env=env)
 
 
@@ -358,6 +359,7 @@ class DaemonRunnerTests(unittest.TestCase):
     def _app_config(root: Path) -> AppConfig:
         env = dict(os.environ)
         env["HOME"] = str(root / ".test-home")
+        env["DORMAMMU_SESSIONS_DIR"] = str(root / "sessions")
         return AppConfig.load(repo_root=root, env=env)
 
     def _write_active_cli_config(self, root: Path, cli_path: Path) -> None:
@@ -409,7 +411,7 @@ class DaemonRunnerTests(unittest.TestCase):
                 f"""\
                 #!{sys.executable}
                 from pathlib import Path
-                import json
+                import json, os
                 import sys
 
                 ROOT = Path({str(root)!r})
@@ -420,6 +422,8 @@ class DaemonRunnerTests(unittest.TestCase):
                 TARGET_PATH = ROOT / "done.txt"
                 SESSION_PATH = ROOT / ".dev" / "session.json"
                 MARKER_PATH = ROOT / {marker_path.name!r}
+                _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
+                sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
 
                 def mark_plan_complete() -> None:
                     if MARK_ROOT_PLAN:
@@ -439,7 +443,7 @@ class DaemonRunnerTests(unittest.TestCase):
                     session_id = payload.get("active_session_id") or payload.get("session_id")
                     if not session_id:
                         return
-                    plan_path = ROOT / ".dev" / "sessions" / str(session_id) / "PLAN.md"
+                    plan_path = sessions_dir / str(session_id) / "PLAN.md"
                     if not plan_path.exists():
                         return
                     lines = plan_path.read_text(encoding="utf-8").splitlines()

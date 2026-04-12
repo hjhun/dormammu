@@ -8,6 +8,7 @@ Covers four features introduced in the dormammu/ralph comparison work:
 """
 from __future__ import annotations
 
+import os
 import stat
 import subprocess
 import sys
@@ -397,7 +398,7 @@ class PatternsContinuationInjectionTests(unittest.TestCase):
             )
             never_done.chmod(never_done.stat().st_mode | stat.S_IEXEC)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             with mock.patch.object(cli_adapter_module.time, "sleep", return_value=None):
                 LoopRunner(config, repository=repository).run(
@@ -416,7 +417,7 @@ class PatternsContinuationInjectionTests(unittest.TestCase):
             session_id = json.loads(
                 (root / ".dev" / "session.json").read_text(encoding="utf-8")
             )["active_session_id"]
-            cont_path = root / ".dev" / "sessions" / session_id / "continuation_prompt.txt"
+            cont_path = config.sessions_dir / session_id / "continuation_prompt.txt"
             self.assertTrue(cont_path.exists(), "continuation_prompt.txt must be written on retry")
             cont_text = cont_path.read_text(encoding="utf-8")
             self.assertIn("Always use Path not str", cont_text)

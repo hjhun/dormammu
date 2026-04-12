@@ -81,6 +81,7 @@ class CliAdapter:
         # Keep child CLIs anchored to the resolved HOME contract so ~/.foo
         # lookups behave consistently under dormammu.
         env["HOME"] = str(self.config.home_dir)
+        env["DORMAMMU_SESSIONS_DIR"] = str(self.config.sessions_dir)
         return env
 
     def _run_help_command(

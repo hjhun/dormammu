@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import stat
 import sys
@@ -39,7 +40,7 @@ class CliAdapterTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_fake_cli(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             repository.ensure_bootstrap_state(active_roadmap_phase_ids=["phase_3"])
 
@@ -63,7 +64,7 @@ class CliAdapterTests(unittest.TestCase):
                 "active_session_id"
             ]
             workflow_state = json.loads(
-                (root / ".dev" / "sessions" / session_id / "workflow_state.json").read_text(
+                (root / "sessions" / session_id / "workflow_state.json").read_text(
                     encoding="utf-8"
                 )
             )

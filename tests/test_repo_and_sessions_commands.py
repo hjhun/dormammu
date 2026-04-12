@@ -58,6 +58,7 @@ def _seed_repo(root: Path) -> None:
 def _app_config(root: Path) -> AppConfig:
     env = dict(os.environ)
     env["HOME"] = str(root / ".test-home")
+    env["DORMAMMU_SESSIONS_DIR"] = str(root / "sessions")
     return AppConfig.load(repo_root=root, env=env)
 
 
@@ -438,7 +439,7 @@ class ClearSessionsTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             bot, runner, app_config = _make_bot(root)
-            sessions_dir = app_config.base_dev_dir / "sessions"
+            sessions_dir = app_config.sessions_dir
             sessions_dir.mkdir(parents=True, exist_ok=True)
             update = _make_update()
             context = mock.MagicMock()
@@ -452,7 +453,7 @@ class ClearSessionsTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             bot, runner, app_config = _make_bot(root)
-            sessions_dir = app_config.base_dev_dir / "sessions"
+            sessions_dir = app_config.sessions_dir
             sessions_dir.mkdir(parents=True, exist_ok=True)
             # Create 3 fake session directories
             for i in range(3):
@@ -475,7 +476,7 @@ class ClearSessionsTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             bot, runner, app_config = _make_bot(root)
-            sessions_dir = app_config.base_dev_dir / "sessions"
+            sessions_dir = app_config.sessions_dir
             sessions_dir.mkdir(parents=True, exist_ok=True)
             (sessions_dir / "sess-001").mkdir()
             update = _make_update()

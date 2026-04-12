@@ -688,7 +688,7 @@ class TelegramBot:
         await self._send_sessions(update, context)
 
     async def _send_sessions(self, update: Any, context: Any) -> None:
-        sessions_dir = self._app_config.base_dev_dir / "sessions"
+        sessions_dir = self._app_config.sessions_dir
         if not sessions_dir.exists():
             await self._reply(update, "🗂️ No sessions directory found.")
             return
@@ -829,10 +829,10 @@ class TelegramBot:
         await self._send_clear_sessions(update, context)
 
     async def _send_clear_sessions(self, update: Any, context: Any) -> None:
-        """Delete all session subdirectories under the current repo's .dev/sessions/."""
+        """Delete all session subdirectories under the current sessions directory."""
         import shutil
 
-        sessions_dir = self._app_config.base_dev_dir / "sessions"
+        sessions_dir = self._app_config.sessions_dir
         if not sessions_dir.exists():
             await self._reply(update, "🗑️ No sessions directory found — nothing to clear.")
             return

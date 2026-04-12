@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import stat
@@ -39,7 +40,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=2)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -61,11 +62,11 @@ class LoopRunnerTests(unittest.TestCase):
                 "active_session_id"
             ]
             self.assertTrue(
-                (root / ".dev" / "sessions" / session_id / "continuation_prompt.txt").exists()
+                (config.sessions_dir / session_id / "continuation_prompt.txt").exists()
             )
-            self.assertTrue((root / ".dev" / "sessions" / session_id / "PLAN.md").exists())
+            self.assertTrue((config.sessions_dir / session_id / "PLAN.md").exists())
             continuation_text = (
-                root / ".dev" / "sessions" / session_id / "continuation_prompt.txt"
+                config.sessions_dir / session_id / "continuation_prompt.txt"
             ).read_text(encoding="utf-8")
             self.assertIn("Work inside the current repository and its active workdir by default.", continuation_text)
             self.assertIn("Do not inspect or modify unrelated paths outside the repository", continuation_text)
@@ -77,7 +78,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=3)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -95,7 +96,7 @@ class LoopRunnerTests(unittest.TestCase):
             session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
                 "active_session_id"
             ]
-            prompt_dir = root / ".dev" / "sessions" / session_id / "logs"
+            prompt_dir = config.sessions_dir / session_id / "logs"
             prompt_paths = sorted(prompt_dir.glob("*.prompt.txt"))
             self.assertEqual(len(prompt_paths), 3)
             third_prompt = prompt_paths[-1].read_text(encoding="utf-8")
@@ -108,7 +109,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=2)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             runner = LoopRunner(config, repository=repository)
             first_result = runner.run(
@@ -128,7 +129,7 @@ class LoopRunnerTests(unittest.TestCase):
                 "active_session_id"
             ]
             self.assertTrue(
-                (root / ".dev" / "sessions" / session_id / "continuation_prompt.txt").exists()
+                (config.sessions_dir / session_id / "continuation_prompt.txt").exists()
             )
 
             resumed = RecoveryManager(
@@ -146,7 +147,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=2)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             repository.start_new_session(
                 goal="Session A",
@@ -189,7 +190,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=3)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -214,7 +215,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=1)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -239,7 +240,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=1, plan_completion_attempt=2)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -269,7 +270,7 @@ class LoopRunnerTests(unittest.TestCase):
                 mark_root_plan=True,
             )
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -293,7 +294,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=1, plan_completion_attempt=1)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -312,12 +313,12 @@ class LoopRunnerTests(unittest.TestCase):
                 "active_session_id"
             ]
             workflow_state = (
-                root / ".dev" / "sessions" / session_id / "workflow_state.json"
+                config.sessions_dir / session_id / "workflow_state.json"
             ).read_text(encoding="utf-8")
             payload = json.loads(workflow_state)
             self.assertEqual(payload["workflow"]["resume_from_phase"], "develop")
             continuation_text = (
-                root / ".dev" / "sessions" / session_id / "continuation_prompt.txt"
+                config.sessions_dir / session_id / "continuation_prompt.txt"
             ).read_text(encoding="utf-8")
             self.assertIn("Recommended resume phase: develop", continuation_text)
 
@@ -327,7 +328,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=2)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             runner = LoopRunner(config, repository=repository)
             first_result = runner.run(
@@ -373,7 +374,7 @@ class LoopRunnerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -414,7 +415,7 @@ class LoopRunnerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -446,7 +447,7 @@ class LoopRunnerTests(unittest.TestCase):
             fake_cli = self._write_loop_cli(root, success_attempt=1)
 
             captured = io.StringIO()
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             runner = LoopRunner(config, repository=repository, progress_stream=captured)
 
@@ -476,7 +477,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_promise_cli(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -500,7 +501,7 @@ class LoopRunnerTests(unittest.TestCase):
             self._seed_repo(root)
             fake_cli = self._write_promise_cli(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -535,7 +536,7 @@ class LoopRunnerTests(unittest.TestCase):
             )
             fake_cli = self._write_committing_loop_cli(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             result = LoopRunner(config, repository=repository).run(
                 LoopRunRequest(
@@ -665,12 +666,14 @@ class LoopRunnerTests(unittest.TestCase):
                         return
                     if not SESSION_PATH.exists():
                         return
-                    import json
+                    import json, os
                     payload = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
                     session_id = payload.get("active_session_id") or payload.get("session_id")
                     if not session_id:
                         return
-                    plan_path = ROOT / ".dev" / "sessions" / str(session_id) / "PLAN.md"
+                    _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
+                    sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
+                    plan_path = sessions_dir / str(session_id) / "PLAN.md"
                     if not plan_path.exists():
                         return
                     lines = plan_path.read_text(encoding="utf-8").splitlines()
@@ -763,11 +766,14 @@ class LoopRunnerTests(unittest.TestCase):
                 def mark_plan_complete() -> None:
                     if not SESSION_PATH.exists():
                         return
+                    import os
                     payload = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
                     session_id = payload.get("active_session_id") or payload.get("session_id")
                     if not session_id:
                         return
-                    plan_path = ROOT / ".dev" / "sessions" / str(session_id) / "PLAN.md"
+                    _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
+                    sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
+                    plan_path = sessions_dir / str(session_id) / "PLAN.md"
                     if not plan_path.exists():
                         return
                     lines = plan_path.read_text(encoding="utf-8").splitlines()

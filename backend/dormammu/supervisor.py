@@ -173,10 +173,6 @@ def _meaningful_changed_files(changed_files: Sequence[str]) -> list[str]:
             continue
         if candidate.startswith(".dev/"):
             continue
-        if candidate.startswith(".dev/logs/"):
-            continue
-        if candidate.startswith(".dev/sessions/") and "/logs/" in candidate:
-            continue
         if candidate.endswith("supervisor_report.md"):
             continue
         if candidate.endswith("continuation_prompt.txt"):

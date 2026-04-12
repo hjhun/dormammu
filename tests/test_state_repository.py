@@ -22,7 +22,7 @@ class StateRepositoryTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             artifacts = repository.ensure_bootstrap_state(goal="Bootstrap test goal")
 
@@ -31,7 +31,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertTrue(artifacts.session.exists())
             self.assertTrue(artifacts.workflow_state.exists())
             self.assertTrue(artifacts.logs_dir.exists())
-            self.assertIn(".dev/sessions/", str(artifacts.dashboard))
+            self.assertIn(str(root / "sessions"), str(artifacts.dashboard))
             root_session_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
             self.assertEqual(
                 root_session_index["active_session_id"],
@@ -66,14 +66,14 @@ class StateRepositoryTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             repository.ensure_bootstrap_state()
 
             active_session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
                 "active_session_id"
             ]
-            migrated_session_path = root / ".dev" / "sessions" / active_session_id / "session.json"
+            migrated_session_path = root / "sessions" / active_session_id / "session.json"
             merged = json.loads(migrated_session_path.read_text(encoding="utf-8"))
             self.assertEqual(merged["session_id"], "existing")
             self.assertEqual(merged["custom"]["answer"], 42)
@@ -105,7 +105,7 @@ class StateRepositoryTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             artifacts = repository.ensure_bootstrap_state()
             session_plan_path = artifacts.plan
@@ -133,7 +133,7 @@ class StateRepositoryTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             repository.ensure_bootstrap_state(goal="Original goal")
             original_session = repository.read_session_state()["session_id"]
@@ -154,20 +154,20 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertTrue((root / ".dev" / "DASHBOARD.md").exists())
             self.assertTrue((root / ".dev" / "PLAN.md").exists())
 
-            archived_dir = root / ".dev" / "sessions" / original_session
+            archived_dir = root / "sessions" / original_session
             self.assertTrue((archived_dir / "session.json").exists())
             self.assertTrue((archived_dir / "workflow_state.json").exists())
-            self.assertTrue((root / ".dev" / "sessions" / "phase7-multi-session" / "DASHBOARD.md").exists())
+            self.assertTrue((root / "sessions" / "phase7-multi-session" / "DASHBOARD.md").exists())
             self.assertTrue((archived_dir / "supervisor_report.md").exists())
             self.assertTrue((archived_dir / "continuation_prompt.txt").exists())
-            self.assertTrue((root / ".dev" / "sessions" / "phase7-multi-session" / "PLAN.md").exists())
+            self.assertTrue((root / "sessions" / "phase7-multi-session" / "PLAN.md").exists())
 
     def test_list_sessions_marks_active_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             repository.ensure_bootstrap_state(goal="Original goal")
             repository.start_new_session(
@@ -188,11 +188,11 @@ class StateRepositoryTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             repository.ensure_bootstrap_state(goal="Original goal")
             original_session = repository.read_session_state()["session_id"]
-            (root / ".dev" / "sessions" / original_session / "DASHBOARD.md").write_text(
+            (root / "sessions" / original_session / "DASHBOARD.md").write_text(
                 "# DASHBOARD\n\nOriginal session\n",
                 encoding="utf-8",
             )
@@ -210,7 +210,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(restored_session["session_id"], original_session)
             self.assertIn(
                 "Original session",
-                (root / ".dev" / "sessions" / original_session / "DASHBOARD.md").read_text(
+                (root / "sessions" / original_session / "DASHBOARD.md").read_text(
                     encoding="utf-8"
                 ),
             )
@@ -223,12 +223,12 @@ class StateRepositoryTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             repository.ensure_bootstrap_state(goal="Mirror root PLAN state")
 
             session_id = repository.read_session_state()["session_id"]
-            session_plan = root / ".dev" / "sessions" / session_id / "PLAN.md"
+            session_plan = root / "sessions" / session_id / "PLAN.md"
             root_plan = root / ".dev" / "PLAN.md"
             self.assertTrue(root_plan.exists())
 
@@ -252,7 +252,7 @@ class StateRepositoryTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             repository.start_new_session(
                 goal="Active session goal",
@@ -272,10 +272,10 @@ class StateRepositoryTests(unittest.TestCase):
                 (root / ".dev" / "session.json").read_text(encoding="utf-8"),
             )
             parallel_dashboard = (
-                root / ".dev" / "sessions" / "parallel-session" / "DASHBOARD.md"
+                root / "sessions" / "parallel-session" / "DASHBOARD.md"
             ).read_text(encoding="utf-8")
             self.assertIn("Parallel session goal", parallel_dashboard)
-            self.assertTrue((root / ".dev" / "sessions" / "parallel-session" / "PLAN.md").exists())
+            self.assertTrue((root / "sessions" / "parallel-session" / "PLAN.md").exists())
             self.assertEqual(
                 session_repository.read_session_state()["session_id"],
                 "parallel-session",
@@ -288,9 +288,14 @@ class StateRepositoryTests(unittest.TestCase):
             home = Path(tmpdir) / "home"
             self._seed_repo(root)
 
+            sessions_dir = home / ".dormammu" / "sessions"
             config = AppConfig.load(
                 repo_root=root,
-                env={"HOME": str(home), **{key: value for key, value in os.environ.items() if key != "HOME"}},
+                env={
+                    "HOME": str(home),
+                    "DORMAMMU_SESSIONS_DIR": str(sessions_dir),
+                    **{key: value for key, value in os.environ.items() if key not in ("HOME", "DORMAMMU_SESSIONS_DIR")},
+                },
             )
             repository = StateRepository(config)
             repository.start_new_session(goal="Prompt goal", session_id="prompt-session")
@@ -303,7 +308,7 @@ class StateRepositoryTests(unittest.TestCase):
             )
 
             self.assertEqual(prompt_path.read_text(encoding="utf-8"), source_prompt.read_text(encoding="utf-8"))
-            global_prompt = home / ".dormammu" / "sessions" / "prompt-session" / ".dev" / "PROMPT.md"
+            global_prompt = sessions_dir / "prompt-session" / ".dev" / "PROMPT.md"
             self.assertTrue(global_prompt.exists())
             self.assertEqual(global_prompt.read_text(encoding="utf-8"), source_prompt.read_text(encoding="utf-8"))
 
@@ -312,7 +317,7 @@ class StateRepositoryTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
 
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             artifacts = repository.ensure_bootstrap_state(
                 goal="Original goal",

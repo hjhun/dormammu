@@ -139,14 +139,17 @@ class CliTests(unittest.TestCase):
             (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(["init-state", "--repo-root", str(root)])
 
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertTrue(Path(payload["dashboard"]).exists())
             self.assertTrue(Path(payload["tasks"]).exists())
-            self.assertIn(".dev/sessions/", payload["dashboard"])
+            self.assertIn(str(root / "sessions"), payload["dashboard"])
 
     def test_init_state_records_custom_guidance_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -157,7 +160,10 @@ class CliTests(unittest.TestCase):
             custom_guidance.write_text("# Custom agent rules\n\nUse this file.\n", encoding="utf-8")
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "init-state",
@@ -182,7 +188,10 @@ class CliTests(unittest.TestCase):
             self._seed_repo(root)
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "init-state",
@@ -198,8 +207,8 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertTrue(Path(payload["dashboard"]).exists())
-            self.assertIn(".dev/sessions/", payload["dashboard"])
-            self.assertIn(".dev/sessions/", payload["logs_dir"])
+            self.assertIn(str(root / "sessions"), payload["dashboard"])
+            self.assertIn(str(root / "sessions"), payload["logs_dir"])
             root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
             self.assertIn("active_session_id", root_index)
 
@@ -210,7 +219,10 @@ class CliTests(unittest.TestCase):
             gitignore_path = root / ".gitignore"
             self.assertFalse(gitignore_path.exists())
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 exit_code = main(["init-state", "--repo-root", str(root)])
 
             self.assertEqual(exit_code, 0)
@@ -223,7 +235,10 @@ class CliTests(unittest.TestCase):
             gitignore_path = root / ".gitignore"
             gitignore_path.write_text(".venv/\n", encoding="utf-8")
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 first_exit = main(["init-state", "--repo-root", str(root)])
                 second_exit = main(
                     [
@@ -265,6 +280,7 @@ class CliTests(unittest.TestCase):
                     {
                         "HOME": str(home_dir),
                         "PATH": str(bin_dir),
+                        "DORMAMMU_SESSIONS_DIR": str(root / "sessions"),
                     },
                     clear=False,
                 ),
@@ -306,6 +322,7 @@ class CliTests(unittest.TestCase):
                     {
                         "HOME": str(home_dir),
                         "PATH": str(bin_dir),
+                        "DORMAMMU_SESSIONS_DIR": str(root / "sessions"),
                     },
                     clear=False,
                 ),
@@ -327,6 +344,7 @@ class CliTests(unittest.TestCase):
 
             stdout = io.StringIO()
             with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
                 mock.patch("sys.stdin.isatty", return_value=True),
                 mock.patch(
                     "builtins.input",
@@ -341,7 +359,7 @@ class CliTests(unittest.TestCase):
                 "active_session_id"
             ]
             workflow_state = json.loads(
-                (root / ".dev" / "sessions" / session_id / "workflow_state.json").read_text(
+                (root / "sessions" / session_id / "workflow_state.json").read_text(
                     encoding="utf-8"
                 )
             )
@@ -352,9 +370,13 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
+            sessions_dir = root / "sessions"
 
             start_one_stdout = io.StringIO()
-            with contextlib.redirect_stdout(start_one_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(start_one_stdout),
+            ):
                 first_exit = main(
                     [
                         "start-session",
@@ -374,7 +396,10 @@ class CliTests(unittest.TestCase):
             self.assertEqual(first_payload["session"]["session_id"], "session-one")
 
             start_two_stdout = io.StringIO()
-            with contextlib.redirect_stdout(start_two_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(start_two_stdout),
+            ):
                 second_exit = main(
                     [
                         "start-session",
@@ -392,7 +417,10 @@ class CliTests(unittest.TestCase):
             self.assertEqual(second_exit, 0)
 
             sessions_stdout = io.StringIO()
-            with contextlib.redirect_stdout(sessions_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(sessions_stdout),
+            ):
                 sessions_exit = main(["sessions", "--repo-root", str(root)])
 
             self.assertEqual(sessions_exit, 0)
@@ -405,8 +433,12 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
+            sessions_dir = root / "sessions"
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 main(
                     [
                         "start-session",
@@ -435,7 +467,10 @@ class CliTests(unittest.TestCase):
                 )
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "restore-session",
@@ -455,8 +490,12 @@ class CliTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=1)
+            sessions_dir = root / "sessions"
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 main(
                     [
                         "start-session",
@@ -472,7 +511,10 @@ class CliTests(unittest.TestCase):
                 )
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "run",
@@ -493,14 +535,14 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
-            self.assertIn(".dev/sessions/session-a", payload["report_path"])
+            self.assertIn(str(sessions_dir / "session-a"), payload["report_path"])
             workflow_state = json.loads(
-                (root / ".dev" / "sessions" / "session-a" / "workflow_state.json").read_text(
+                (sessions_dir / "session-a" / "workflow_state.json").read_text(
                     encoding="utf-8"
                 )
             )
             self.assertIn(
-                ".dev/sessions/session-a/logs",
+                str(sessions_dir / "session-a" / "logs"),
                 workflow_state["latest_run"]["artifacts"]["stdout"],
             )
 
@@ -509,9 +551,13 @@ class CliTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=1)
+            sessions_dir = root / "sessions"
 
             first_stdout = io.StringIO()
-            with contextlib.redirect_stdout(first_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(first_stdout),
+            ):
                 first_exit = main(
                     [
                         "run",
@@ -533,7 +579,10 @@ class CliTests(unittest.TestCase):
             (root / ".attempt-count").unlink()
             (root / "done.txt").unlink()
             second_stdout = io.StringIO()
-            with contextlib.redirect_stdout(second_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(second_stdout),
+            ):
                 second_exit = main(
                     [
                         "run",
@@ -548,7 +597,7 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(second_exit, 0)
             second_payload = json.loads(second_stdout.getvalue())
-            self.assertIn(f".dev/sessions/{session_id}", second_payload["report_path"])
+            self.assertIn(str(sessions_dir / session_id), second_payload["report_path"])
             self.assertEqual(marker_path.read_text(encoding="utf-8").strip(), session_id)
 
     def test_run_starts_a_new_session_when_marker_is_missing(self) -> None:
@@ -556,8 +605,12 @@ class CliTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=1)
+            sessions_dir = root / "sessions"
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 main(
                     [
                         "start-session",
@@ -575,7 +628,10 @@ class CliTests(unittest.TestCase):
             (root / ".session").unlink()
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "run",
@@ -592,15 +648,19 @@ class CliTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             session_id = (root / ".session").read_text(encoding="utf-8").strip()
             self.assertNotEqual(session_id, "existing-session")
-            self.assertIn(f".dev/sessions/{session_id}", payload["report_path"])
+            self.assertIn(str(sessions_dir / session_id), payload["report_path"])
 
     def test_resume_can_target_a_saved_session_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=2)
+            sessions_dir = root / "sessions"
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 main(
                     [
                         "start-session",
@@ -616,7 +676,10 @@ class CliTests(unittest.TestCase):
                 )
 
             first_stdout = io.StringIO()
-            with contextlib.redirect_stdout(first_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(first_stdout),
+            ):
                 first_exit = main(
                     [
                         "run",
@@ -636,7 +699,10 @@ class CliTests(unittest.TestCase):
                 )
 
             self.assertEqual(first_exit, 1)
-            with contextlib.redirect_stdout(io.StringIO()):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 main(
                     [
                         "start-session",
@@ -652,7 +718,10 @@ class CliTests(unittest.TestCase):
                 )
 
             resume_stdout = io.StringIO()
-            with contextlib.redirect_stdout(resume_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(resume_stdout),
+            ):
                 resume_exit = main(
                     [
                         "resume",
@@ -738,7 +807,10 @@ class CliTests(unittest.TestCase):
             fake_cli = self._write_fake_cli(root)
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "run-once",
@@ -777,7 +849,10 @@ class CliTests(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "run-once",
@@ -806,7 +881,11 @@ class CliTests(unittest.TestCase):
             outside_cwd.mkdir()
 
             stdout = io.StringIO()
-            with contextlib.chdir(outside_cwd), contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.chdir(outside_cwd),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "run-once",
@@ -834,7 +913,10 @@ class CliTests(unittest.TestCase):
             custom_guidance.write_text("# Rules\n\nAlways mention this custom file.\n", encoding="utf-8")
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "run-once",
@@ -863,7 +945,10 @@ class CliTests(unittest.TestCase):
             fake_cli = self._write_fake_cli(root)
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "run-once",
@@ -887,9 +972,13 @@ class CliTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=2)
+            sessions_dir = root / "sessions"
 
             first_stdout = io.StringIO()
-            with contextlib.redirect_stdout(first_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(first_stdout),
+            ):
                 first_exit = main(
                     [
                         "run",
@@ -915,11 +1004,14 @@ class CliTests(unittest.TestCase):
                 "active_session_id"
             ]
             self.assertTrue(
-                (root / ".dev" / "sessions" / session_id / "continuation_prompt.txt").exists()
+                (sessions_dir / session_id / "continuation_prompt.txt").exists()
             )
 
             resume_stdout = io.StringIO()
-            with contextlib.redirect_stdout(resume_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(resume_stdout),
+            ):
                 resume_exit = main(
                     [
                         "resume",
@@ -940,14 +1032,21 @@ class CliTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=2)
+            sessions_dir = root / "sessions"
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 init_exit = main(["init-state", "--repo-root", str(root)])
 
             self.assertEqual(init_exit, 0)
 
             first_stdout = io.StringIO()
-            with contextlib.redirect_stdout(first_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(first_stdout),
+            ):
                 first_exit = main(
                     [
                         "run",
@@ -971,7 +1070,10 @@ class CliTests(unittest.TestCase):
             self.assertEqual(first_payload["status"], "failed")
 
             resume_stdout = io.StringIO()
-            with contextlib.redirect_stdout(resume_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(resume_stdout),
+            ):
                 resume_exit = main(
                     [
                         "resume",
@@ -994,7 +1096,10 @@ class CliTests(unittest.TestCase):
             fake_cli = self._write_loop_cli(root, success_attempt=1)
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "run",
@@ -1021,7 +1126,10 @@ class CliTests(unittest.TestCase):
             fake_cli = self._write_loop_cli(root, success_attempt=2)
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "run",
@@ -1049,8 +1157,12 @@ class CliTests(unittest.TestCase):
             root = Path(tmpdir)
             self._seed_repo(root)
             fake_cli = self._write_loop_cli(root, success_attempt=2)
+            sessions_dir = root / "sessions"
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 first_exit = main(
                     [
                         "run",
@@ -1070,7 +1182,10 @@ class CliTests(unittest.TestCase):
             self.assertEqual(first_exit, 1)
 
             resume_stdout = io.StringIO()
-            with contextlib.redirect_stdout(resume_stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(resume_stdout),
+            ):
                 resume_exit = main(
                     [
                         "resume",
@@ -1122,6 +1237,7 @@ class CliTests(unittest.TestCase):
             stdout = io.StringIO()
             stderr = io.StringIO()
             with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
             ):
@@ -1160,6 +1276,7 @@ class CliTests(unittest.TestCase):
             stdout = io.StringIO()
             stderr = io.StringIO()
             with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
             ):
@@ -1203,6 +1320,7 @@ class CliTests(unittest.TestCase):
             stdout = io.StringIO()
             stderr = io.StringIO()
             with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
             ):
@@ -1232,6 +1350,7 @@ class CliTests(unittest.TestCase):
             stdout = io.StringIO()
             stderr = io.StringIO()
             with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
             ):
@@ -1272,7 +1391,10 @@ class CliTests(unittest.TestCase):
             fake_cli = self._write_loop_cli(root, success_attempt=2)
 
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(stdout),
+            ):
                 exit_code = main(
                     [
                         "run",
@@ -1318,9 +1440,10 @@ class CliTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            sessions_dir = home / ".dormammu" / "sessions"
             stdout = io.StringIO()
             with (
-                mock.patch.dict("os.environ", {"HOME": str(home)}, clear=False),
+                mock.patch.dict("os.environ", {"HOME": str(home), "DORMAMMU_SESSIONS_DIR": str(sessions_dir)}, clear=False),
                 contextlib.redirect_stdout(stdout),
             ):
                 exit_code = main(
@@ -1338,13 +1461,13 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             session_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
             session_id = session_index["active_session_id"]
-            session_prompt = root / ".dev" / "sessions" / session_id / "PROMPT.md"
+            session_prompt = sessions_dir / session_id / "PROMPT.md"
             self.assertTrue(session_prompt.exists())
             self.assertEqual(session_prompt.read_text(encoding="utf-8"), prompt_file.read_text(encoding="utf-8"))
-            global_prompt = home / ".dormammu" / "sessions" / session_id / ".dev" / "PROMPT.md"
+            global_prompt = sessions_dir / session_id / ".dev" / "PROMPT.md"
             self.assertTrue(global_prompt.exists())
             self.assertEqual(global_prompt.read_text(encoding="utf-8"), prompt_file.read_text(encoding="utf-8"))
-            session_plan = root / ".dev" / "sessions" / session_id / "PLAN.md"
+            session_plan = sessions_dir / session_id / "PLAN.md"
             self.assertTrue(session_plan.exists())
             self.assertIn("Create DASHBOARD.md and PLAN.md from this request", session_plan.read_text(encoding="utf-8"))
 
@@ -1561,7 +1684,10 @@ class CliTests(unittest.TestCase):
                     session_id = payload.get("active_session_id") or payload.get("session_id")
                     if not session_id:
                         return
-                    plan_path = ROOT / ".dev" / "sessions" / str(session_id) / "PLAN.md"
+                    import os
+                    _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
+                    sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
+                    plan_path = sessions_dir / str(session_id) / "PLAN.md"
                     if not plan_path.exists():
                         return
                     lines = plan_path.read_text(encoding="utf-8").splitlines()

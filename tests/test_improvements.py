@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import stat
 import sys
 import tempfile
@@ -294,7 +295,7 @@ class PlanMtimeDetectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             _seed_repo(root)
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repo = StateRepository(config)
             repo.ensure_bootstrap_state(prompt_text="Write tests.", active_roadmap_phase_ids=["phase_3"])
             repo.sync_operator_state()
@@ -309,7 +310,7 @@ class PlanMtimeDetectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             _seed_repo(root)
-            config = AppConfig.load(repo_root=root)
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repo = StateRepository(config)
             repo.ensure_bootstrap_state(prompt_text="Write tests.", active_roadmap_phase_ids=["phase_3"])
             repo.sync_operator_state()
@@ -323,7 +324,7 @@ class PlanMtimeDetectionTests(unittest.TestCase):
             # Now modify PLAN.md externally
             active_session_id = session_state.get("active_session_id") or session_state.get("session_id")
             if active_session_id:
-                plan_path = root / ".dev" / "sessions" / str(active_session_id) / "PLAN.md"
+                plan_path = config.sessions_dir / str(active_session_id) / "PLAN.md"
                 if plan_path.exists():
                     plan_path.write_text(
                         plan_path.read_text(encoding="utf-8") + "\n<!-- manual edit -->\n",

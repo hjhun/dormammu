@@ -88,7 +88,7 @@ class StateRepository:
         self.config = config
         self.base_dev_dir = config.base_dev_dir
         self.templates_dir = config.templates_dir / "dev"
-        self.sessions_dir = self.base_dev_dir / "sessions"
+        self.sessions_dir = config.sessions_dir
         self.session_id = self._normalize_session_id(session_id) if session_id else None
         self.dev_dir = (
             self.sessions_dir / self.session_id
@@ -951,7 +951,10 @@ class StateRepository:
             target_plan_path.write_text(legacy_tasks_path.read_text(encoding="utf-8"), encoding="utf-8")
 
     def _state_root_display(self) -> str:
-        return self.dev_dir.relative_to(self.config.repo_root).as_posix()
+        try:
+            return self.dev_dir.relative_to(self.config.repo_root).as_posix()
+        except ValueError:
+            return str(self.dev_dir)
 
     def _has_legacy_root_snapshot(self) -> bool:
         return any(
@@ -1079,4 +1082,4 @@ class StateRepository:
     def _global_prompt_mirror_path(self) -> Path:
         session_state = self._read_json(self.state_file("session.json"))
         session_id = str(session_state.get("session_id") or self.session_id)
-        return self.config.global_home_dir / "sessions" / session_id / ".dev" / "PROMPT.md"
+        return self.config.sessions_dir / session_id / ".dev" / "PROMPT.md"

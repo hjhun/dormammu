@@ -461,6 +461,7 @@ class AppConfig:
     global_home_dir: Path
     base_dev_dir: Path
     dev_dir: Path
+    sessions_dir: Path
     logs_dir: Path
     templates_dir: Path
     agents_dir: Path
@@ -488,6 +489,8 @@ class AppConfig:
         agents_dir = _discover_agents_dir(root, values, asset_root)
         base_dev_dir = root / ".dev"
         dev_dir = base_dev_dir
+        sessions_dir_override = values.get("DORMAMMU_SESSIONS_DIR", "").strip()
+        sessions_dir = Path(sessions_dir_override).expanduser() if sessions_dir_override else _global_home_dir(values) / "sessions"
         config_file = _resolve_config_file(root, values)
         config_payload = _load_config_payload(config_file)
         fallback_agent_clis = (
@@ -505,6 +508,7 @@ class AppConfig:
             global_home_dir=_global_home_dir(values),
             base_dev_dir=base_dev_dir,
             dev_dir=dev_dir,
+            sessions_dir=sessions_dir,
             logs_dir=dev_dir / "logs",
             templates_dir=asset_root / "templates",
             agents_dir=agents_dir,
@@ -548,6 +552,7 @@ class AppConfig:
             "global_home_dir": str(self.global_home_dir),
             "base_dev_dir": str(self.base_dev_dir),
             "dev_dir": str(self.dev_dir),
+            "sessions_dir": str(self.sessions_dir),
             "logs_dir": str(self.logs_dir),
             "templates_dir": str(self.templates_dir),
             "agents_dir": str(self.agents_dir),

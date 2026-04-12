@@ -108,23 +108,24 @@ class RecoveryManagerTests(unittest.TestCase):
                 f"""\
                 #!{sys.executable}
                 from pathlib import Path
-                import sys
+                import json, os, sys
 
                 ROOT = Path({str(root)!r})
                 SUCCESS_ATTEMPT = {success_attempt}
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
                 SESSION_PATH = ROOT / ".dev" / "session.json"
+                _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
+                sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
 
                 def mark_plan_complete() -> None:
                     if not SESSION_PATH.exists():
                         return
-                    import json
                     payload = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
                     session_id = payload.get("active_session_id") or payload.get("session_id")
                     if not session_id:
                         return
-                    plan_path = ROOT / ".dev" / "sessions" / str(session_id) / "PLAN.md"
+                    plan_path = sessions_dir / str(session_id) / "PLAN.md"
                     if not plan_path.exists():
                         return
                     lines = plan_path.read_text(encoding="utf-8").splitlines()
@@ -171,7 +172,8 @@ class RecoveryManagerTests(unittest.TestCase):
         return script
 
     def _make_runner(self, root: Path) -> tuple[AppConfig, StateRepository, LoopRunner]:
-        config = AppConfig.load(repo_root=root)
+        import os
+        config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
         repository = StateRepository(config)
         runner = LoopRunner(config, repository=repository)
         return config, repository, runner
@@ -216,7 +218,7 @@ class RecoveryManagerTests(unittest.TestCase):
             # Corrupt the workflow_state so the supervisor sees broken state
             session_json = root / ".dev" / "session.json"
             session_id = json.loads(session_json.read_text(encoding="utf-8"))["active_session_id"]
-            ws_path = root / ".dev" / "sessions" / session_id / "workflow_state.json"
+            ws_path = config.sessions_dir / session_id / "workflow_state.json"
             ws = json.loads(ws_path.read_text(encoding="utf-8"))
             ws["latest_run"] = None  # force supervisor "blocked" verdict
             ws_path.write_text(json.dumps(ws), encoding="utf-8")
@@ -348,7 +350,7 @@ class RecoveryManagerTests(unittest.TestCase):
             # Remove the 'loop' key from workflow_state so resume cannot reconstruct the request
             session_json = root / ".dev" / "session.json"
             session_id = json.loads(session_json.read_text(encoding="utf-8"))["active_session_id"]
-            ws_path = root / ".dev" / "sessions" / session_id / "workflow_state.json"
+            ws_path = config.sessions_dir / session_id / "workflow_state.json"
             ws = json.loads(ws_path.read_text(encoding="utf-8"))
             ws.pop("loop", None)
             ws_path.write_text(json.dumps(ws), encoding="utf-8")
