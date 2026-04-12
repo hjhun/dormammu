@@ -22,7 +22,7 @@ _HELP_TEXT = (
     "📊 /status — daemon status and active prompt\n"
     r"▶️ /run \<prompt\> — queue a new prompt for execution" "\n"
     "📋 /queue — list pending prompts\n"
-    r"📡 /tail \[on\|off\] — stream daemon output to this chat" "\n"
+    r"📡 /tail \[on\|off\|prompt\] — stream output \(prompt: key info only\)" "\n"
     r"📜 /logs \[n\] — last N lines of progress log \(default 50\)" "\n"
     r"📄 /result \[name\] — last \(or named\) result file content" "\n"
     "🗂️ /sessions — recent session list\n"
@@ -37,6 +37,7 @@ _MENU_KEYBOARD = [
     ],
     [
         {"text": "📡 Tail on", "callback_data": "tail_on"},
+        {"text": "📡 Tail prompt", "callback_data": "tail_prompt"},
         {"text": "📡 Tail off", "callback_data": "tail_off"},
     ],
     [
@@ -323,6 +324,9 @@ class TelegramBot:
         elif data == "tail_on":
             context.args = ["on"]
             await self._send_tail(update, context)
+        elif data == "tail_prompt":
+            context.args = ["prompt"]
+            await self._send_tail(update, context)
         elif data == "tail_off":
             context.args = ["off"]
             await self._send_tail(update, context)
@@ -408,9 +412,17 @@ class TelegramBot:
         if mode == "off":
             self._stream.disable_streaming()
             await self._reply(update, "📡 Log streaming disabled.")
+        elif mode == "prompt":
+            self._stream.enable_streaming(chat_id, prompt_only=True)
+            await self._reply(
+                update,
+                "📡 Prompt-only streaming enabled.\n"
+                "Shows attempt info, agent output, and supervisor verdict.\n"
+                "Use /tail off to stop.",
+            )
         else:
             self._stream.enable_streaming(chat_id)
-            await self._reply(update, "📡 Log streaming enabled. Use /tail off to stop.")
+            await self._reply(update, "📡 Log streaming enabled (full). Use /tail off to stop.")
 
     async def _cmd_logs(self, update: Any, context: Any) -> None:
         if not await self._guard(update):

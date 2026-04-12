@@ -3,6 +3,74 @@ from __future__ import annotations
 import threading
 from typing import Callable, TextIO
 
+# Section headers whose body content should be suppressed in prompt-only mode.
+_DUMP_SECTION_HEADERS = frozenset(["=== DASHBOARD.md ===", "=== PLAN.md ==="])
+
+
+class PromptLineFilter:
+    """Stateful line-level filter for TelegramProgressStream prompt-only mode.
+
+    Passes through dormammu framework header lines and their key metadata
+    (attempt, verdict, run id, summary, …) plus raw agent output, while
+    suppressing verbose DASHBOARD.md and PLAN.md dump sections.
+
+    Call ``should_include(line)`` with each complete line (including the
+    trailing newline) to decide whether it should be forwarded to Telegram.
+    """
+
+    # Framework header lines that are always forwarded.
+    _PASS_HEADERS = frozenset([
+        "=== dormammu loop attempt ===",
+        "=== dormammu command ===",
+        "=== dormammu supervisor ===",
+        "=== dormammu promise ===",
+        "=== dormammu escalation ===",
+    ])
+
+    # Metadata keys from framework sections that are worth forwarding.
+    _PASS_KEY_PREFIXES = (
+        "attempt:",
+        "retries used:",
+        "session:",
+        "cli:",
+        "run id:",
+        "prompt mode:",
+        "verdict:",
+        "escalation:",
+        "summary:",
+        "report:",
+        "Agent emitted",
+    )
+
+    def __init__(self) -> None:
+        self._in_dump = False
+
+    def should_include(self, line: str) -> bool:
+        stripped = line.rstrip("\n").strip()
+
+        # Any === section header resets dump state.
+        if stripped.startswith("===") and stripped.endswith("==="):
+            if stripped in _DUMP_SECTION_HEADERS:
+                self._in_dump = True
+                return False  # suppress the header itself too
+            self._in_dump = False
+            return stripped in self._PASS_HEADERS
+
+        if self._in_dump:
+            return False
+
+        # Always pass key metadata lines from framework sections.
+        lower = stripped.lower()
+        for prefix in self._PASS_KEY_PREFIXES:
+            if lower.startswith(prefix.lower()):
+                return True
+
+        # Pass raw agent output (non-empty lines that aren't framework noise).
+        if stripped and not stripped.startswith("Taking a short break"):
+            return True
+
+        return False
+
 
 class TelegramProgressStream:
     """TextIO-compatible stream wrapper that optionally forwards output to a Telegram chat.
@@ -38,6 +106,8 @@ class TelegramProgressStream:
         self._buffer_size = 0
         self._closed = False
         self.encoding = getattr(base_stream, "encoding", "utf-8")
+        self._line_filter: PromptLineFilter | None = None
+        self._line_buf: str = ""  # partial-line accumulator for filter mode
 
         # Delegate session log methods only when the base supports them so that
         # hasattr(stream, 'reset_session_log') faithfully reflects whether
@@ -73,16 +143,24 @@ class TelegramProgressStream:
         with self._lock:
             self._send_fn = send_fn
 
-    def enable_streaming(self, chat_id: int) -> None:
-        """Start forwarding writes to the given Telegram chat."""
+    def enable_streaming(self, chat_id: int, *, prompt_only: bool = False) -> None:
+        """Start forwarding writes to the given Telegram chat.
+
+        When ``prompt_only`` is True, verbose DASHBOARD.md / PLAN.md dump
+        sections are suppressed and only key metadata and agent output are sent.
+        """
         with self._lock:
             self._streaming_chat_id = chat_id
+            self._line_filter = PromptLineFilter() if prompt_only else None
+            self._line_buf = ""
 
     def disable_streaming(self) -> None:
         """Flush buffer and stop forwarding to Telegram."""
         with self._lock:
             self._flush_locked()
             self._streaming_chat_id = None
+            self._line_filter = None
+            self._line_buf = ""
             self._buffer.clear()
             self._buffer_size = 0
 
@@ -106,11 +184,26 @@ class TelegramProgressStream:
         self._base.write(data)
         with self._lock:
             if self._streaming_chat_id is not None and self._send_fn is not None:
-                self._buffer.append(data)
-                self._buffer_size += len(data)
-                if self._buffer_size >= self._chunk_size:
-                    self._flush_locked()
+                if self._line_filter is not None:
+                    self._write_filtered_locked(data)
+                else:
+                    self._buffer.append(data)
+                    self._buffer_size += len(data)
+                    if self._buffer_size >= self._chunk_size:
+                        self._flush_locked()
         return len(data)
+
+    def _write_filtered_locked(self, data: str) -> None:
+        """Apply PromptLineFilter line-by-line and buffer only accepted lines."""
+        self._line_buf += data
+        while "\n" in self._line_buf:
+            line, self._line_buf = self._line_buf.split("\n", 1)
+            full_line = line + "\n"
+            if self._line_filter is not None and self._line_filter.should_include(full_line):
+                self._buffer.append(full_line)
+                self._buffer_size += len(full_line)
+        if self._buffer_size >= self._chunk_size:
+            self._flush_locked()
 
     def flush(self) -> None:
         self._base.flush()
