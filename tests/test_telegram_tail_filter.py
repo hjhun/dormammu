@@ -412,5 +412,85 @@ class PartialLineWriteTests(unittest.TestCase):
                          "Split verbose line must be suppressed")
 
 
+# ---------------------------------------------------------------------------
+# 6. Flush correctness
+# ---------------------------------------------------------------------------
+
+class FlushCorrectnessTests(unittest.TestCase):
+    """flush() and close() must not lose buffered or partial-line content."""
+
+    def test_explicit_flush_drains_partial_line_in_dashboard_mode(self) -> None:
+        """A partial line (no trailing \\n) in _line_buf is sent on flush()."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1, dashboard=True)
+
+        stream.write("=== dormammu command ===\n")
+        stream.write("Partial output without newline")  # no \n — sits in _line_buf
+        stream.flush()
+        stream.disable_streaming()
+
+        combined = "\n".join(sent)
+        self.assertIn("Partial output without newline", combined,
+                      "flush() must drain partial line from _line_buf")
+
+    def test_explicit_flush_drains_partial_line_in_full_mode(self) -> None:
+        """Same guarantee in full (unfiltered) mode."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1)
+
+        stream.write("Some output without newline")
+        stream.flush()
+        stream.disable_streaming()
+
+        combined = "\n".join(sent)
+        self.assertIn("Some output without newline", combined,
+                      "flush() must drain partial line in full mode")
+
+    def test_close_flushes_remaining_buffer(self) -> None:
+        """close() must send any content still in _buffer."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1)
+
+        stream.write("Last message before close\n")
+        # Do NOT call flush — rely on close() to do it
+        stream.close()
+
+        combined = "\n".join(sent)
+        self.assertIn("Last message before close", combined,
+                      "close() must flush _buffer before stopping the timer")
+
+    def test_close_flushes_partial_line(self) -> None:
+        """close() must send a partial line that was never terminated with \\n."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1, dashboard=True)
+
+        stream.write("=== dormammu command ===\n")
+        stream.write("Unterminated output")  # no \n
+        stream.close()
+
+        combined = "\n".join(sent)
+        self.assertIn("Unterminated output", combined,
+                      "close() must flush partial line from _line_buf")
+
+    def test_chunk_boundary_preserves_whitespace(self) -> None:
+        """Content at chunk boundaries must not have internal whitespace stripped."""
+        stream, sent = _make_stream()
+        stream = TelegramProgressStream(
+            io.StringIO(), chunk_size=20, flush_interval_seconds=9999
+        )
+        sent: list[str] = []
+        stream.set_send_fn(lambda cid, txt: sent.append(txt))
+        stream.enable_streaming(chat_id=1)
+
+        # Write exactly chunk_size chars then a bit more so two chunks are produced
+        stream.write("A" * 20 + "B" * 5 + "\n")
+        stream.flush()
+        stream.disable_streaming()
+
+        combined = "".join(sent)
+        self.assertIn("A" * 20, combined, "First chunk content must not be stripped")
+        self.assertIn("B" * 5, combined, "Second chunk content must not be stripped")
+
+
 if __name__ == "__main__":
     unittest.main()

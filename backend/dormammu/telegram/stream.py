@@ -153,8 +153,8 @@ class TelegramProgressStream:
 
     def _timer_flush(self) -> None:
         """Periodic flush callback: drain the buffer then reschedule."""
-        with self._lock:
-            self._flush_locked()
+        chunks = self._collect_and_reset()
+        self._send_chunks(chunks)
         self._schedule_flush_timer()
 
     # ------------------------------------------------------------------
@@ -181,8 +181,9 @@ class TelegramProgressStream:
 
     def disable_streaming(self) -> None:
         """Flush buffer and stop forwarding to Telegram."""
+        chunks = self._collect_and_reset()
+        self._send_chunks(chunks)
         with self._lock:
-            self._flush_locked()
             self._streaming_chat_id = None
             self._line_filter = None
             self._line_buf = ""
@@ -190,11 +191,13 @@ class TelegramProgressStream:
             self._buffer_size = 0
 
     def close(self) -> None:
-        """Stop the flush timer and release resources."""
+        """Flush remaining buffer, stop the flush timer, and release resources."""
         self._closed = True
         if self._flush_timer is not None:
             self._flush_timer.cancel()
             self._flush_timer = None
+        chunks = self._collect_and_reset()
+        self._send_chunks(chunks)
 
     @property
     def streaming_chat_id(self) -> int | None:
@@ -207,19 +210,23 @@ class TelegramProgressStream:
 
     def write(self, data: str) -> int:
         self._base.write(data)
+        chunks: list[tuple[int, str]] = []
         with self._lock:
             if self._streaming_chat_id is not None and self._send_fn is not None:
                 if self._line_filter is not None:
                     self._write_filtered_locked(data)
+                    if self._buffer_size >= self._chunk_size:
+                        chunks = self._collect_buffer_locked()
                 else:
                     self._buffer.append(data)
                     self._buffer_size += len(data)
                     if self._buffer_size >= self._chunk_size:
-                        self._flush_locked()
+                        chunks = self._collect_buffer_locked()
+        self._send_chunks(chunks)
         return len(data)
 
     def _write_filtered_locked(self, data: str) -> None:
-        """Apply PromptLineFilter line-by-line and buffer only accepted lines."""
+        """Apply DashboardLineFilter line-by-line and buffer only accepted lines."""
         self._line_buf += data
         while "\n" in self._line_buf:
             line, self._line_buf = self._line_buf.split("\n", 1)
@@ -227,13 +234,11 @@ class TelegramProgressStream:
             if self._line_filter is not None and self._line_filter.should_include(full_line):
                 self._buffer.append(full_line)
                 self._buffer_size += len(full_line)
-        if self._buffer_size >= self._chunk_size:
-            self._flush_locked()
 
     def flush(self) -> None:
         self._base.flush()
-        with self._lock:
-            self._flush_locked()
+        chunks = self._collect_and_reset()
+        self._send_chunks(chunks)
 
     def isatty(self) -> bool:
         return False
@@ -242,18 +247,55 @@ class TelegramProgressStream:
     # Internal
     # ------------------------------------------------------------------
 
-    def _flush_locked(self) -> None:
+    def _collect_buffer_locked(self) -> list[tuple[int, str]]:
+        """Drain _buffer under the lock and return (chat_id, chunk) pairs to send.
+
+        Does NOT flush _line_buf — call _collect_and_reset() for a full flush.
+        """
         if not self._buffer or self._streaming_chat_id is None or self._send_fn is None:
-            return
+            return []
         text = "".join(self._buffer)
         self._buffer.clear()
         self._buffer_size = 0
         chat_id = self._streaming_chat_id
-        send_fn = self._send_fn
+        result = []
         for i in range(0, len(text), self._chunk_size):
-            chunk = text[i : i + self._chunk_size].strip()
-            if chunk:
-                try:
-                    send_fn(chat_id, chunk)
-                except Exception:
-                    pass
+            chunk = text[i : i + self._chunk_size]
+            if chunk.strip():
+                result.append((chat_id, chunk))
+        return result
+
+    def _collect_and_reset(self) -> list[tuple[int, str]]:
+        """Flush both _line_buf and _buffer under the lock; return chunks to send.
+
+        _line_buf content (partial line without trailing newline) is emitted as-is
+        so that in-flight agent output is not lost on explicit flush() or close().
+        """
+        with self._lock:
+            if self._streaming_chat_id is None or self._send_fn is None:
+                return []
+            # Drain any partial line from _line_buf into _buffer before collecting.
+            if self._line_buf and self._line_filter is not None:
+                # Treat the partial line as a complete line for flush purposes.
+                if self._line_filter.should_include(self._line_buf + "\n"):
+                    self._buffer.append(self._line_buf)
+                    self._buffer_size += len(self._line_buf)
+                self._line_buf = ""
+            elif self._line_buf and self._line_filter is None:
+                # Full mode: flush partial line too.
+                self._buffer.append(self._line_buf)
+                self._buffer_size += len(self._line_buf)
+                self._line_buf = ""
+            return self._collect_buffer_locked()
+
+    def _send_chunks(self, chunks: list[tuple[int, str]]) -> None:
+        """Send pre-collected (chat_id, chunk) pairs outside the lock."""
+        for chat_id, chunk in chunks:
+            with self._lock:
+                send_fn = self._send_fn
+            if send_fn is None:
+                break
+            try:
+                send_fn(chat_id, chunk)
+            except Exception:
+                pass
