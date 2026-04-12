@@ -349,21 +349,18 @@ configure_telegram() {
     return 0
   fi
 
-  printf 'Allowed chat ID (your Telegram user or group ID): '
-  local tg_chat_id
-  read -r tg_chat_id </dev/tty || return 0
-  if [[ -z "${tg_chat_id}" ]]; then
-    log 'No chat ID entered. Skipping Telegram setup.'
-    return 0
-  fi
-
   if ! "${VENV_DIR}/bin/dormammu" set-config telegram.bot_token "${tg_token}" --global; then
     log 'warning: failed to write telegram.bot_token to config.'
     return 0
   fi
-  if ! "${VENV_DIR}/bin/dormammu" set-config telegram.allowed_chat_ids --add "${tg_chat_id}" --global; then
-    log 'warning: failed to write telegram.allowed_chat_ids to config.'
-    return 0
+
+  printf 'Allowed chat ID (your Telegram user or group ID, Enter to skip): '
+  local tg_chat_id
+  read -r tg_chat_id </dev/tty || true
+  if [[ -n "${tg_chat_id}" ]]; then
+    if ! "${VENV_DIR}/bin/dormammu" set-config telegram.allowed_chat_ids --add "${tg_chat_id}" --global; then
+      log 'warning: failed to write telegram.allowed_chat_ids to config.'
+    fi
   fi
 
   log ''

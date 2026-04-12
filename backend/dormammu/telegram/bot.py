@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import threading
@@ -36,6 +37,11 @@ class TelegramBot:
 
     Runs in a background daemon thread with its own asyncio event loop.
     Command handlers can safely read daemon state and write prompt files.
+
+    Known chat IDs (chats that have successfully issued at least one command)
+    are persisted to ``<base_dev_dir>/telegram_known_chats.json`` so that
+    startup broadcast messages can reach users even when ``allowed_chat_ids``
+    is not configured.
     """
 
     def __init__(
@@ -56,13 +62,61 @@ class TelegramBot:
         self._app: Any = None
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
+        self._known_chats_path = app_config.base_dev_dir / "telegram_known_chats.json"
+        self._known_chats: set[int] = self._load_known_chats()
+        self._known_chats_lock = threading.Lock()
+        self._startup_error: BaseException | None = None
+
+    # ------------------------------------------------------------------
+    # Known-chat registry (persisted to disk)
+    # ------------------------------------------------------------------
+
+    def _load_known_chats(self) -> set[int]:
+        try:
+            data = json.loads(self._known_chats_path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return {int(cid) for cid in data}
+        except (OSError, ValueError, TypeError):
+            pass
+        return set()
+
+    def _save_known_chats(self) -> None:
+        try:
+            self._known_chats_path.parent.mkdir(parents=True, exist_ok=True)
+            self._known_chats_path.write_text(
+                json.dumps(sorted(self._known_chats), indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+    def _record_chat(self, chat_id: int) -> None:
+        """Add chat_id to the known-chats registry and persist if new."""
+        with self._known_chats_lock:
+            if chat_id not in self._known_chats:
+                self._known_chats.add(chat_id)
+                self._save_known_chats()
+
+    def _broadcast_targets(self) -> list[int]:
+        """Return the list of chat IDs to broadcast to.
+
+        If ``allowed_chat_ids`` is configured, use that list.
+        Otherwise fall back to every chat that has ever used the bot.
+        """
+        if self._config.allowed_chat_ids:
+            return list(self._config.allowed_chat_ids)
+        with self._known_chats_lock:
+            return list(self._known_chats)
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Start bot polling in a daemon thread. Blocks until the bot loop is ready."""
+        """Start bot polling in a daemon thread. Blocks until the bot loop is ready.
+
+        Raises the startup error if the bot thread fails to initialize.
+        """
         self._thread = threading.Thread(
             target=self._run,
             daemon=True,
@@ -70,7 +124,28 @@ class TelegramBot:
         )
         self._thread.start()
         self._ready.wait(timeout=15)
+        if self._startup_error is not None:
+            raise self._startup_error
         self._stream.set_send_fn(self._send_message_sync)
+
+    def notify_started(self) -> None:
+        """Broadcast a startup message to all target chat IDs."""
+        if self._loop is None or self._app is None:
+            return
+        targets = self._broadcast_targets()
+        if not targets:
+            return
+        repo = str(self._app_config.repo_root)
+        message = f"dormammu daemon started.\nRepo: {repo}"
+        for chat_id in targets:
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._app.bot.send_message(chat_id=chat_id, text=message),
+                    self._loop,
+                )
+                future.result(timeout=10)
+            except Exception:
+                pass
 
     def _send_message_sync(self, chat_id: int, text: str) -> None:
         """Thread-safe: schedule a Telegram message send from any thread."""
@@ -89,6 +164,11 @@ class TelegramBot:
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._async_run())
+        except Exception as exc:
+            if self._ready.is_set():
+                raise  # runtime error after startup — let thread exception handler see it
+            self._startup_error = exc
+            self._ready.set()
         finally:
             self._loop.close()
 
@@ -106,7 +186,7 @@ class TelegramBot:
             self._ready.set()
             return
 
-        from telegram.ext import CommandHandler
+        from telegram.ext import CommandHandler, MessageHandler, filters
 
         self._app = Application.builder().token(self._config.bot_token).build()
         self._app.add_handler(CommandHandler("start", self._cmd_help))
@@ -119,11 +199,16 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("result", self._cmd_result))
         self._app.add_handler(CommandHandler("sessions", self._cmd_sessions))
         self._app.add_handler(CommandHandler("stop", self._cmd_stop))
+        # Record any incoming message so the sender is tracked for broadcasts.
+        self._app.add_handler(
+            MessageHandler(filters.ALL, self._track_chat),
+            group=1,
+        )
 
         async with self._app:
             await self._app.start()
             await self._app.updater.start_polling(drop_pending_updates=True)
-            self._ready.set()
+            self._ready.set()  # signal successful startup
             try:
                 await asyncio.Event().wait()
             except (asyncio.CancelledError, KeyboardInterrupt):
@@ -148,7 +233,18 @@ class TelegramBot:
             if update.message:
                 await update.message.reply_text("Access denied.")
             return False
+        self._record_chat(chat_id)
         return True
+
+    # ------------------------------------------------------------------
+    # Chat tracker (group=1, runs after command handlers)
+    # ------------------------------------------------------------------
+
+    async def _track_chat(self, update: Any, context: Any) -> None:
+        """Persist chat ID for every allowed incoming message."""
+        chat = update.effective_chat
+        if chat is not None and self._is_allowed(chat.id):
+            self._record_chat(chat.id)
 
     # ------------------------------------------------------------------
     # Command handlers

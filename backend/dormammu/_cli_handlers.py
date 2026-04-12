@@ -441,9 +441,15 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
             )
             try:
                 bot.start()
+                bot.notify_started()
                 print("Telegram bot started.", file=sys.stderr)
             except Exception as exc:
                 print(f"warning: Telegram bot failed to start: {exc}", file=sys.stderr)
+                print(
+                    "hint: verify that telegram.bot_token in your config is a valid token "
+                    "from @BotFather and has not been revoked.",
+                    file=sys.stderr,
+                )
 
         try:
             return runner.run_forever()
