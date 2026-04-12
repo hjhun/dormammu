@@ -6,9 +6,9 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      release_version:
-        description: "Release version to publish, for example 0.1.1"
-        required: true
+      version_override:
+        description: "Version override (leave blank to use VERSION file)"
+        required: false
         type: string
 
 jobs:
@@ -24,13 +24,21 @@ jobs:
         id: release
         shell: bash
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            raw_version="${{ inputs.release_version }}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            # Tag push — use the pushed tag as the release version and warn
+            # if it diverges from the VERSION file.
+            raw_version="${GITHUB_REF_NAME#v}"
+            file_version="$(cat VERSION)"
+            if [[ "${raw_version}" != "${file_version}" ]]; then
+              echo "Warning: tag ${GITHUB_REF_NAME} does not match VERSION file (${file_version})" >&2
+            fi
+          elif [[ -n "${{ inputs.version_override }}" ]]; then
+            raw_version="${{ inputs.version_override }}"
+            raw_version="${raw_version#v}"
           else
-            raw_version="${GITHUB_REF_NAME}"
+            raw_version="$(cat VERSION)"
           fi
 
-          raw_version="${raw_version#v}"
           if [[ -z "${raw_version}" ]]; then
             echo "Release version must not be empty." >&2
             exit 1
@@ -53,8 +61,7 @@ jobs:
         run: python -m pip install --upgrade pip build
 
       - name: Build release artifacts
-        env:
-          DORMAMMU_BUILD_VERSION: ${{ steps.release.outputs.build_version }}
+        # VERSION file is the source of truth; no env-var override needed.
         run: python -m build
 
       - name: Upload workflow artifacts

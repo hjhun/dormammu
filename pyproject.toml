@@ -22,7 +22,7 @@ dormammu = "dormammu.cli:main"
 package-dir = {"" = "backend"}
 
 [tool.setuptools.dynamic]
-version = {attr = "dormammu.__version__"}
+version = {file = "VERSION"}
 
 [tool.setuptools.packages.find]
 where = ["backend"]
