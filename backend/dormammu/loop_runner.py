@@ -122,9 +122,9 @@ class LoopRunner:
     ) -> None:
         self.config = config
         self.repository = repository or StateRepository(config)
-        self.adapter = adapter or CliAdapter(config)
-        self.supervisor = supervisor or Supervisor(config, repository=self.repository)
         self.progress_stream = progress_stream or sys.stderr
+        self.adapter = adapter or CliAdapter(config, live_output_stream=self.progress_stream)
+        self.supervisor = supervisor or Supervisor(config, repository=self.repository)
 
     def run(
         self,
@@ -153,7 +153,7 @@ class LoopRunner:
                     dev_dir=runtime_repository.dev_dir,
                     logs_dir=runtime_repository.logs_dir,
                 )
-                runtime_adapter = CliAdapter(runtime_config)
+                runtime_adapter = CliAdapter(runtime_config, live_output_stream=self.progress_stream)
                 runtime_supervisor = Supervisor(self.config, repository=runtime_repository)
 
         current_prompt = prompt_text if prompt_text is not None else request.prompt_text

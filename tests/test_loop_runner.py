@@ -434,6 +434,74 @@ class LoopRunnerTests(unittest.TestCase):
             workflow_state = repository.read_workflow_state()
             self.assertEqual(workflow_state["loop"]["status"], "blocked")
 
+    def test_progress_stream_is_routed_to_adapter_live_output(self) -> None:
+        """Regression: CliAdapter.live_output_stream must use the LoopRunner progress_stream,
+        not the hardcoded sys.stderr, so TelegramProgressStream (and any custom stream)
+        receives subprocess stdout/stderr from the agent CLI."""
+        import io
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+
+            captured = io.StringIO()
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            runner = LoopRunner(config, repository=repository, progress_stream=captured)
+
+            # The adapter created inside LoopRunner must carry the progress_stream.
+            self.assertIs(runner.adapter.live_output_stream, captured)
+
+            result = runner.run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="stream-routing-test",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+            self.assertEqual(result.status, "completed")
+            # Agent CLI prints "ATTEMPT::1" to stdout, which _mirror_pipe routes to
+            # live_output_stream.  Verify it landed in our captured stream.
+            self.assertIn("ATTEMPT::1", captured.getvalue())
+
+    def test_loop_completes_when_agent_commits_changes(self) -> None:
+        """Regression: supervisor prompt-outcome-alignment must count files from recent
+        git commits as progress evidence so that an agent that commits its work does not
+        trigger an infinite rework_required loop."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            # Configure git identity so the fake CLI can commit.
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.email", "test@test.com"], check=True
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.name", "Test"], check=True
+            )
+            fake_cli = self._write_committing_loop_cli(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Implement the required marker file.",
+                    repo_root=root,
+                    run_label="commit-progress-test",
+                    max_retries=1,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.attempts_completed, 1)
+
     def _seed_repo(self, root: Path) -> None:
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
@@ -574,6 +642,70 @@ class LoopRunnerTests(unittest.TestCase):
                     if attempt >= PLAN_COMPLETION_ATTEMPT:
                         mark_plan_complete()
 
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_committing_loop_cli(self, root: Path, *, name: str = "fake-committing-agent") -> Path:
+        """Fake CLI that creates done.txt, marks PLAN complete, then git-commits everything.
+
+        This simulates an agent that commits its changes so the worktree is clean
+        when the supervisor runs.  The supervisor must detect the commit as progress
+        evidence instead of returning rework_required.
+        """
+        script = root / name
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import json, subprocess, sys
+                from pathlib import Path
+
+                ROOT = Path({str(root)!r})
+                TARGET_PATH = ROOT / "done.txt"
+                SESSION_PATH = ROOT / ".dev" / "session.json"
+
+                def mark_plan_complete() -> None:
+                    if not SESSION_PATH.exists():
+                        return
+                    payload = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
+                    session_id = payload.get("active_session_id") or payload.get("session_id")
+                    if not session_id:
+                        return
+                    plan_path = ROOT / ".dev" / "sessions" / str(session_id) / "PLAN.md"
+                    if not plan_path.exists():
+                        return
+                    lines = plan_path.read_text(encoding="utf-8").splitlines()
+                    rewritten = [
+                        line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                        for line in lines
+                    ]
+                    plan_path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: {name} [--prompt-file PATH]")
+                        return 0
+
+                    TARGET_PATH.write_text("done\\n", encoding="utf-8")
+                    mark_plan_complete()
+
+                    # Commit all changes so the worktree is clean when supervisor runs.
+                    subprocess.run(
+                        ["git", "-C", str(ROOT), "add", "-A"], check=True, capture_output=True
+                    )
+                    subprocess.run(
+                        ["git", "-C", str(ROOT), "commit", "-m", "agent: implement marker file"],
+                        check=True, capture_output=True,
+                    )
+                    print("COMMITTED::done.txt")
                     return 0
 
                 raise SystemExit(main())

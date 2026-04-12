@@ -72,9 +72,9 @@ def _mirror_pipe(
 
 
 class CliAdapter:
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig, *, live_output_stream: TextIO | None = None) -> None:
         self.config = config
-        self.live_output_stream = sys.stderr
+        self.live_output_stream = live_output_stream if live_output_stream is not None else sys.stderr
 
     def _subprocess_env(self) -> dict[str, str]:
         env = dict(os.environ)

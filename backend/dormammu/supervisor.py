@@ -142,6 +142,25 @@ def _find_question_lines(*texts: str) -> list[str]:
     return matches
 
 
+def _meaningful_committed_files(file_paths: Sequence[str]) -> list[str]:
+    """Filter bare paths emitted by ``git log --name-only`` (no status prefix)."""
+    meaningful: list[str] = []
+    for entry in file_paths:
+        candidate = entry.strip()
+        if not candidate:
+            continue
+        if candidate == "DORMAMMU.log":
+            continue
+        if candidate.startswith(".dev/"):
+            continue
+        if candidate.endswith("supervisor_report.md"):
+            continue
+        if candidate.endswith("continuation_prompt.txt"):
+            continue
+        meaningful.append(candidate)
+    return meaningful
+
+
 def _meaningful_changed_files(changed_files: Sequence[str]) -> list[str]:
     meaningful: list[str] = []
     for entry in changed_files:
@@ -484,14 +503,25 @@ class Supervisor:
         )
         stdout_text = ""
         stderr_text = ""
+        run_started_at: str | None = None
+        run_completed_at: str | None = None
         if isinstance(workflow_run, Mapping):
             artifacts = workflow_run.get("artifacts", {})
             if isinstance(artifacts, Mapping):
                 stdout_text = _load_artifact_text(artifacts.get("stdout"))
                 stderr_text = _load_artifact_text(artifacts.get("stderr"))
+            run_started_at = workflow_run.get("started_at")
+            run_completed_at = workflow_run.get("completed_at")
         question_lines = _find_question_lines(stdout_text, stderr_text)
-        progress_evidence = bool(_meaningful_changed_files(changed_files)) or (
-            bool(required_paths) and not missing_required_paths
+        committed_files = (
+            self._collect_committed_files_since(run_started_at, run_completed_at)
+            if run_started_at
+            else []
+        )
+        progress_evidence = (
+            bool(_meaningful_changed_files(changed_files))
+            or bool(_meaningful_committed_files(committed_files))
+            or (bool(required_paths) and not missing_required_paths)
         )
         prompt_alignment_details = [
             (
@@ -578,6 +608,28 @@ class Supervisor:
             required_paths=tuple(required_paths),
             recommended_next_phase=recommended_next_phase,
         )
+
+    def _collect_committed_files_since(self, started_at: str, completed_at: str | None = None) -> list[str]:
+        """Return file paths from git commits made during the agent run window.
+
+        Only commits whose committer date falls between ``started_at`` and
+        ``completed_at`` (inclusive) are examined.  This avoids counting repository
+        bootstrap commits or earlier work as agent progress.
+        """
+        try:
+            cmd = [
+                "git", "-C", str(self.config.repo_root),
+                "log", f"--after={started_at}",
+                "--name-only", "--format=",
+            ]
+            if completed_at:
+                cmd.append(f"--before={completed_at}")
+            completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        except Exception:
+            return []
+        if completed.returncode != 0:
+            return []
+        return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
 
     def _collect_worktree_diff(self) -> tuple[list[str], bool, list[str]]:
         """Return git worktree diff, using a short TTL cache to avoid redundant I/O.
