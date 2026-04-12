@@ -27,7 +27,9 @@ class DaemonAlreadyRunningError(RuntimeError):
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.config import AppConfig
+from dormammu.daemon.goals_scheduler import GoalsScheduler
 from dormammu.daemon.models import DaemonConfig, DaemonPromptResult
+from dormammu.daemon.pipeline_runner import PipelineRunner
 from dormammu.daemon.queue import is_prompt_candidate, prompt_sort_key
 from dormammu.daemon.reports import render_result_markdown
 from dormammu.daemon.watchers import EFFECTIVE_POLL_INTERVAL_SECONDS, PromptWatcher, build_watcher
@@ -109,6 +111,17 @@ class DaemonRunner:
         self._pid_lock_file: object = None  # open file handle held while running
         # Set in run_forever() so request_shutdown() can wake up the watcher.
         self._active_watcher: object = None
+        # Goals scheduler — started in run_forever() when goals config is set.
+        self._goals_scheduler: GoalsScheduler | None = (
+            GoalsScheduler(
+                self.daemon_config.goals,
+                self.daemon_config.prompt_path,
+                self.app_config,
+                progress_stream=self.progress_stream,
+            )
+            if self.daemon_config.goals is not None
+            else None
+        )
 
     def in_progress_snapshot(self) -> frozenset[Path]:
         """Return a thread-safe snapshot of the currently-active prompt paths."""
@@ -146,6 +159,9 @@ class DaemonRunner:
             self._active_watcher = watcher
             self._emit_startup_banner(watcher_backend=watcher.backend_name)
             self._write_heartbeat(status="idle")
+            if self._goals_scheduler is not None:
+                self._goals_scheduler.start()
+                self._log("goals scheduler: started")
             watcher.start()
             try:
                 while not self._shutdown_requested.is_set():
@@ -158,6 +174,9 @@ class DaemonRunner:
                             break
                         watcher.wait_for_changes()
             finally:
+                if self._goals_scheduler is not None:
+                    self._goals_scheduler.stop()
+                    self._log("goals scheduler: stopped")
                 watcher.close()
                 self._remove_heartbeat()
                 if hasattr(self.progress_stream, "close_log"):
@@ -490,14 +509,29 @@ class DaemonRunner:
         prompt_path: Path,
         prompt_text: str,
     ) -> LoopRunResult:
+        enriched_text = build_guidance_prompt(
+            prompt_text,
+            guidance_files=scoped_config.guidance_files,
+            repo_root=scoped_config.repo_root,
+        )
+
+        # When an agents config is present, use the role-based pipeline.
+        if scoped_config.agents is not None:
+            return PipelineRunner(
+                scoped_config,
+                scoped_config.agents,
+                repository=session_repository,
+                progress_stream=self.progress_stream,
+            ).run(
+                enriched_text,
+                stem=prompt_path.stem,
+            )
+
+        # Default: single-agent LoopRunner (existing behaviour).
         agent_cli = self._resolve_agent_cli(scoped_config)
         request = LoopRunRequest(
             cli_path=agent_cli,
-            prompt_text=build_guidance_prompt(
-                prompt_text,
-                guidance_files=scoped_config.guidance_files,
-                repo_root=scoped_config.repo_root,
-            ),
+            prompt_text=enriched_text,
             repo_root=scoped_config.repo_root,
             workdir=scoped_config.repo_root,
             input_mode="auto",

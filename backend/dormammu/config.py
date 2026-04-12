@@ -5,9 +5,12 @@ import json
 import os
 from pathlib import Path
 import shutil
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from dormammu.telegram.config import TelegramConfig, parse_telegram_config
+
+if TYPE_CHECKING:
+    from dormammu.agent.role_config import AgentsConfig
 
 
 REPO_MARKERS = ("pyproject.toml", "AGENTS.md", ".dev")
@@ -473,6 +476,7 @@ class AppConfig:
     guidance_files: tuple[Path, ...] = ()
     default_guidance_files: tuple[Path, ...] = ()
     telegram_config: TelegramConfig | None = None
+    agents: AgentsConfig | None = None
     process_timeout_seconds: int | None = None
     fallback_on_nonzero_exit: bool = False
 
@@ -533,6 +537,10 @@ class AppConfig:
                 config_payload.get("telegram"),
                 config_path=config_file,
             ),
+            agents=_parse_agents_config_lazy(
+                config_payload.get("agents"),
+                config_path=config_file,
+            ),
             process_timeout_seconds=(
                 int(config_payload["process_timeout_seconds"])
                 if "process_timeout_seconds" in config_payload
@@ -567,6 +575,18 @@ class AppConfig:
             "guidance_files": [str(path) for path in self.guidance_files],
             "default_guidance_files": [str(path) for path in self.default_guidance_files],
             "telegram_config": self.telegram_config.to_dict() if self.telegram_config else None,
+            "agents": self.agents.to_dict() if self.agents else None,
             "process_timeout_seconds": self.process_timeout_seconds,
             "fallback_on_nonzero_exit": self.fallback_on_nonzero_exit,
         }
+
+
+def _parse_agents_config_lazy(
+    value: Any,
+    *,
+    config_path: Path | None,
+) -> AgentsConfig | None:
+    """Lazy wrapper to avoid circular import at module load time."""
+    from dormammu.agent.role_config import parse_agents_config  # noqa: PLC0415
+
+    return parse_agents_config(value, config_path=config_path)

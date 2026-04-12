@@ -10,5 +10,9 @@
   "queue": {
     "allowed_extensions": [".md", ".txt"],
     "ignore_hidden_files": true
+  },
+  "goals": {
+    "path": "./goals",
+    "interval_minutes": 60
   }
 }

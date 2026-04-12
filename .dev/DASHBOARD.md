@@ -2,19 +2,13 @@
 
 ## Actual Progress
 
-- Goal: Apply Ralph-inspired improvements to dormammu — Codebase Patterns
-  accumulation, `<promise>COMPLETE</promise>` self-completion signal, PRD agent
-  skill, and Mermaid workflow visualization in the dashboard template.
-- Prompt-driven scope: Internal implementation changes only; no existing CLI
-  commands were added or removed.
-- Active roadmap focus:
-- Phase 5. CLI Operator Experience and Progress Visibility
-- Current workflow phase: commit
-- Last completed workflow phase: final_verification
+- Goal: Daemonize Goals automation + planner/architect/developer/tester/reviewer/committer
+  role-based pipeline
+- Active roadmap focus: Phase 7. Hardening, Multi-Session, and Productization
+- Current workflow phase: complete
+- Last completed workflow phase: final verify (515/515 tests pass)
 - Supervisor verdict: `approved`
-- Escalation status: `approved`
-- Resume point: All four improvements are implemented and 220 tests pass.
-  Proceed to commit.
+- Resume point: ready for commit
 
 ## Workflow Phases
 
@@ -30,26 +24,17 @@ flowchart LR
     final_verify -->|rework| develop
 ```
 
-## In Progress
+## Completed
 
-All implementation complete. Awaiting commit.
+All 6 implementation phases done:
 
-## Progress Notes
-
-- `templates/dev/patterns.md.tmpl` — new template for `.dev/PATTERNS.md`
-- `StateRepository.read_patterns_text()` / `_ensure_patterns_file()` — bootstrap and read PATTERNS.md
-- `guidance.build_guidance_prompt(patterns_text=...)` — injects patterns into initial prompts
-- `continuation.build_continuation_prompt(patterns_text=...)` — includes patterns + update instruction in retries
-- `loop_runner.LoopRunner._stdout_has_promise_complete()` — detects `<promise>COMPLETE</promise>` in agent stdout
-- `agents/skills/prd-agent/SKILL.md` — new PRD generation skill
-- `templates/dev/dashboard.md.tmpl` — Mermaid workflow diagram added
-- All 220 tests pass.
+1. Config models — `role_config.py`, `goals_config.py`, `AppConfig.agents`, `DaemonConfig.goals`
+2. GoalsScheduler — background daemon thread, timer lifecycle, prompt generation
+3. PipelineRunner — developer→tester→reviewer→committer with MAX_STAGE_ITERATIONS=3 re-entry
+4. DaemonRunner integration — GoalsScheduler started/stopped, PipelineRunner used when agents configured
+5. Telegram goals commands — `/goals` list/add/delete with inline keyboard
+6. Tests (515 pass), example configs updated, AGENTS.md updated with pipeline docs
 
 ## Risks And Watchpoints
 
-- PATTERNS.md is repo-wide (`.dev/PATTERNS.md`), not session-specific. Multiple
-  concurrent sessions share the same patterns file.
-- `<promise>COMPLETE</promise>` bypasses supervisor validation. Agents should
-  only emit it when all work is genuinely done.
-- Mermaid rendering requires a Markdown viewer that supports Mermaid (GitHub,
-  VS Code with extension, etc.).
+None outstanding.

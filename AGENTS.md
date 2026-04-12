@@ -57,6 +57,57 @@ when the prompt or acceptance criteria explicitly require system-test-level
 coverage; when that happens, run them in a real device or equivalent executable
 environment when available.
 
+## Role-Based Agent Pipeline
+
+When `agents` is configured in `dormammu.json`, `DaemonRunner` routes each
+goal through `PipelineRunner` instead of `LoopRunner`. The pipeline executes
+these roles in order:
+
+```
+developer → tester → reviewer → committer
+```
+
+### Roles
+
+| Role | Slot | Verdict format | Re-entry trigger |
+|------|------|----------------|-----------------|
+| developer | `01-developer` | n/a | tester FAIL or reviewer NEEDS_WORK |
+| tester | `04-tester` | `OVERALL: PASS` / `OVERALL: FAIL` | — |
+| reviewer | `05-reviewer` | `VERDICT: APPROVED` / `VERDICT: NEEDS_WORK` | — |
+| committer | `06-committer` | n/a | — |
+
+**Tester** is a black-box one-shot agent. It designs and executes test cases
+against the observable behaviour described in the goal, then writes its last
+output line as `OVERALL: PASS` or `OVERALL: FAIL`. A `FAIL` verdict causes the
+developer to re-enter with the tester report appended to the original prompt.
+
+**Reviewer** performs a one-shot code review against the goal and the architect
+design document (`.dev/02-architect/<date>_<stem>.md` if present). Its last
+output line must be `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK`.
+
+**Re-entry limit**: `MAX_STAGE_ITERATIONS = 3`. After three rounds in either
+the tester or reviewer loop, the pipeline advances unconditionally.
+
+Each role writes its output to `.dev/<slot>-<role>/<date>_<stem>.md`.
+
+### CLI resolution per role
+
+For each role, the CLI is resolved in this order:
+
+1. `agents.<role>.cli` in `dormammu.json`
+2. `active_agent_cli` (global fallback)
+
+### Goals automation
+
+When `goals` is configured in `daemonize.json`, `GoalsScheduler` runs as a
+separate daemon thread. It polls the goals directory at `interval_minutes`
+intervals and, for each `.md` file found, writes a prompt into `prompt_path/`
+for the next pipeline run. Files already processed (same `<date>_<stem>`) are
+skipped.
+
+The goals directory is also manageable through the Telegram bot via `/goals`
+(list, add, delete).
+
 ## Skill Routing
 
 Use the distributable workflow bundle under `agents/` to execute each phase:

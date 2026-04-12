@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from dormammu.daemon.goals_config import GoalsConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +29,7 @@ class DaemonConfig:
     result_path: Path
     watch: WatchConfig
     queue: QueueConfig
+    goals: GoalsConfig | None = None
 
 
 @dataclass(frozen=True, slots=True)

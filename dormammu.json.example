@@ -18,5 +18,22 @@
     "rate limit exceeded",
     "token limit",
     "insufficient credits"
-  ]
+  ],
+  "agents": {
+    "developer": {
+      "cli": "claude",
+      "model": "claude-opus-4-6"
+    },
+    "tester": {
+      "cli": "claude",
+      "model": "claude-sonnet-4-6"
+    },
+    "reviewer": {
+      "cli": "claude",
+      "model": "claude-sonnet-4-6"
+    },
+    "committer": {
+      "cli": "claude"
+    }
+  }
 }

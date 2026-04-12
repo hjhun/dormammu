@@ -33,6 +33,7 @@ _HELP_TEXT = (
     "🗂️ /sessions — recent session list\n"
     r"🗂️ /repo \[path\] — switch working repo \(or pick from sibling list\)" "\n"
     r"🗑️ /clear\_sessions — delete all session data for the current repo" "\n"
+    "🎯 /goals — list, add, or delete goal files\n"
     "🛑 /stop — send interrupt to the running prompt\n"
     "🔌 /shutdown — finish current prompt then stop the daemon\n"
     "❓ /help — this message"
@@ -56,6 +57,9 @@ _MENU_KEYBOARD = [
     [
         {"text": "🗂️ Repo", "callback_data": "repo"},
         {"text": "🗑️ Clear Sessions", "callback_data": "clear_sessions"},
+    ],
+    [
+        {"text": "🎯 Goals", "callback_data": "goals"},
     ],
     [
         {"text": "🛑 Stop", "callback_data": "stop"},
@@ -118,6 +122,12 @@ class TelegramBot:
         # Indexed by callback_data "repo_pick:<i>".  Lives only in the asyncio
         # event-loop thread so no lock is required.
         self._pending_repo_choices: list[Path] = []
+        # Goals add/delete conversation state — keyed by chat_id.
+        # "add_waiting" means the bot is waiting for the user to type goal content.
+        # "del_waiting" means the bot is waiting for the user to pick a file to delete.
+        self._goals_pending: dict[int, str] = {}
+        # Cache of goal files shown in the last /goals_del inline keyboard.
+        self._pending_goal_choices: list[Path] = []
 
     # ------------------------------------------------------------------
     # Known-chat registry (persisted to disk)
@@ -297,6 +307,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("sessions", self._cmd_sessions))
         self._app.add_handler(CommandHandler("repo", self._cmd_repo))
         self._app.add_handler(CommandHandler("clear_sessions", self._cmd_clear_sessions))
+        self._app.add_handler(CommandHandler("goals", self._cmd_goals))
         self._app.add_handler(CommandHandler("stop", self._cmd_stop))
         self._app.add_handler(CommandHandler("shutdown", self._cmd_shutdown))
         self._app.add_handler(CallbackQueryHandler(self._cmd_callback))
@@ -304,6 +315,11 @@ class TelegramBot:
         self._app.add_handler(
             MessageHandler(filters.ALL, self._track_chat),
             group=1,
+        )
+        # Handle plain text messages for goals_add conversation flow.
+        self._app.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_text_input),
+            group=2,
         )
 
         async with self._app:
@@ -318,6 +334,7 @@ class TelegramBot:
                 BotCommand("sessions", "🗂️ session list"),
                 BotCommand("repo", "🗂️ switch working repo"),
                 BotCommand("clear_sessions", "🗑️ clear session data"),
+                BotCommand("goals", "🎯 list/add/delete goals"),
                 BotCommand("stop", "🛑 stop execution"),
                 BotCommand("shutdown", "🔌 graceful daemon shutdown"),
                 BotCommand("help", "❓ help"),
@@ -449,6 +466,16 @@ class TelegramBot:
             await self._send_clear_sessions(update, context)
         elif data.startswith("repo_pick:"):
             await self._handle_repo_pick(update, data[len("repo_pick:"):])
+        elif data == "goals":
+            await self._send_goals(update, context)
+        elif data == "goals_add":
+            await self._handle_goals_add_start(update, context)
+        elif data.startswith("goals_del:"):
+            await self._handle_goals_del_pick(update, data[len("goals_del:"):])
+        elif data == "goals_del_cancel":
+            chat_id = update.effective_chat.id
+            self._goals_pending.pop(chat_id, None)
+            await self._reply(update, "🎯 Goals deletion cancelled.")
         elif data == "stop":
             await self._send_stop(update, context)
         elif data == "shutdown":
@@ -892,3 +919,166 @@ class TelegramBot:
             )
         else:
             await self._reply(update, "🔌 Graceful shutdown requested. Daemon will stop shortly.")
+
+    # ------------------------------------------------------------------
+    # Goals commands
+    # ------------------------------------------------------------------
+
+    def _goals_path(self) -> Path | None:
+        """Return the configured goals directory, or None if not configured."""
+        goals_cfg = getattr(self._daemon_config, "goals", None)
+        return goals_cfg.path if goals_cfg is not None else None
+
+    def _list_goal_files(self) -> list[Path]:
+        path = self._goals_path()
+        if path is None or not path.exists():
+            return []
+        return sorted(p for p in path.iterdir() if p.is_file() and p.suffix == ".md")
+
+    async def _cmd_goals(self, update: Any, context: Any) -> None:
+        if not await self._guard(update):
+            return
+        await self._send_goals(update, context)
+
+    async def _send_goals(self, update: Any, context: Any) -> None:
+        goals_path = self._goals_path()
+        if goals_path is None:
+            await self._reply(
+                update,
+                "🎯 Goals are not configured.\n"
+                "Add a `goals` section to your daemonize config.",
+            )
+            return
+
+        files = self._list_goal_files()
+        if not files:
+            lines = ["🎯 *Goals* — no goal files yet."]
+        else:
+            lines = [f"🎯 *Goals ({len(files)})*"]
+            for f in files:
+                lines.append(f"• {f.stem}")
+
+        try:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+            keyboard = [
+                [
+                    InlineKeyboardButton("➕ Add goal", callback_data="goals_add"),
+                    InlineKeyboardButton("🗑️ Delete goal", callback_data="goals_del:list"),
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+        except ImportError:
+            reply_markup = None
+
+        await self._reply(update, "\n".join(lines), reply_markup=reply_markup)
+
+    async def _handle_goals_add_start(self, update: Any, context: Any) -> None:
+        if not await self._guard(update):
+            return
+        if self._goals_path() is None:
+            await self._reply(update, "🎯 Goals are not configured.")
+            return
+        chat_id = update.effective_chat.id
+        self._goals_pending[chat_id] = "add_waiting"
+        await self._reply(
+            update,
+            "🎯 *Add goal*\n\nPlease type your goal content.\n"
+            "The first line will be used as the filename stem.",
+        )
+
+    async def _handle_goals_del_pick(self, update: Any, idx_str: str) -> None:
+        if not await self._guard(update):
+            return
+        goals_path = self._goals_path()
+        if goals_path is None:
+            await self._reply(update, "🎯 Goals are not configured.")
+            return
+
+        if idx_str == "list":
+            files = self._list_goal_files()
+            if not files:
+                await self._reply(update, "🎯 No goal files to delete.")
+                return
+            self._pending_goal_choices = files
+            try:
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+                keyboard = [
+                    [InlineKeyboardButton(f.stem, callback_data=f"goals_del:{i}")]
+                    for i, f in enumerate(files)
+                ]
+                keyboard.append(
+                    [InlineKeyboardButton("❌ Cancel", callback_data="goals_del_cancel")]
+                )
+                reply_markup = InlineKeyboardMarkup(keyboard)
+            except ImportError:
+                reply_markup = None
+
+            lines = ["🗑️ *Select goal to delete*"] + [
+                f"{i}. {f.stem}" for i, f in enumerate(files)
+            ]
+            await self._reply(update, "\n".join(lines), reply_markup=reply_markup)
+            return
+
+        # Numeric index — delete the selected file.
+        try:
+            idx = int(idx_str)
+        except ValueError:
+            await self._reply(update, "❌ Invalid selection.")
+            return
+        if idx < 0 or idx >= len(self._pending_goal_choices):
+            await self._reply(update, "❌ Selection expired — please run /goals again.")
+            return
+
+        target = self._pending_goal_choices[idx]
+        self._pending_goal_choices = []
+        try:
+            target.unlink(missing_ok=True)
+            await self._reply(update, f"🗑️ Deleted goal: `{target.stem}`")
+        except OSError as exc:
+            await self._reply(update, f"❌ Failed to delete `{target.name}`: {exc}")
+
+    async def _handle_text_input(self, update: Any, context: Any) -> None:
+        """Process free-text input during active conversation flows (e.g. goals_add)."""
+        chat = update.effective_chat
+        if chat is None:
+            return
+        chat_id = chat.id
+        if not self._is_allowed(chat_id):
+            return
+
+        pending = self._goals_pending.get(chat_id)
+        if pending == "add_waiting":
+            await self._handle_goals_add_content(update, context)
+
+    async def _handle_goals_add_content(self, update: Any, context: Any) -> None:
+        chat_id = update.effective_chat.id
+        self._goals_pending.pop(chat_id, None)
+
+        goals_path = self._goals_path()
+        if goals_path is None:
+            return
+
+        text = (update.message.text or "").strip()
+        if not text:
+            await self._reply(update, "❌ Goal content cannot be empty.")
+            return
+
+        # Derive filename stem from the first line.
+        import re as _re
+        first_line = text.splitlines()[0].strip()
+        stem = _re.sub(r"[^\w\s-]", "", first_line.lower())
+        stem = _re.sub(r"[\s_]+", "-", stem).strip("-") or "goal"
+
+        from datetime import datetime, timezone as _tz
+        date_str = datetime.now(_tz.utc).strftime("%Y%m%d")
+        filename = f"{date_str}_{stem}.md"
+        dest = goals_path / filename
+
+        try:
+            goals_path.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+            await self._reply(update, f"✅ Goal saved: `{filename}`")
+        except OSError as exc:
+            await self._reply(update, f"❌ Failed to save goal: {exc}")

@@ -1,0 +1,200 @@
+"""Unit tests for dormammu.agent.role_config."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from dormammu.agent.role_config import (
+    AgentsConfig,
+    ROLE_NAMES,
+    RoleAgentConfig,
+    parse_agents_config,
+)
+
+
+# ---------------------------------------------------------------------------
+# RoleAgentConfig
+# ---------------------------------------------------------------------------
+
+
+class TestRoleAgentConfig:
+    def test_defaults(self) -> None:
+        cfg = RoleAgentConfig()
+        assert cfg.cli is None
+        assert cfg.model is None
+
+    def test_resolve_cli_uses_own_when_set(self) -> None:
+        cfg = RoleAgentConfig(cli=Path("my-cli"))
+        assert cfg.resolve_cli(Path("fallback")) == Path("my-cli")
+
+    def test_resolve_cli_falls_back_to_active(self) -> None:
+        cfg = RoleAgentConfig()
+        assert cfg.resolve_cli(Path("claude")) == Path("claude")
+
+    def test_resolve_cli_returns_none_when_both_none(self) -> None:
+        cfg = RoleAgentConfig()
+        assert cfg.resolve_cli(None) is None
+
+    def test_to_dict(self) -> None:
+        cfg = RoleAgentConfig(cli=Path("claude"), model="claude-opus-4-5")
+        d = cfg.to_dict()
+        assert d["cli"] == "claude"
+        assert d["model"] == "claude-opus-4-5"
+
+    def test_to_dict_none_fields(self) -> None:
+        cfg = RoleAgentConfig()
+        d = cfg.to_dict()
+        assert d["cli"] is None
+        assert d["model"] is None
+
+
+# ---------------------------------------------------------------------------
+# AgentsConfig
+# ---------------------------------------------------------------------------
+
+
+class TestAgentsConfig:
+    def test_defaults(self) -> None:
+        cfg = AgentsConfig()
+        for role in ROLE_NAMES:
+            assert cfg.for_role(role) == RoleAgentConfig()
+
+    def test_for_role_returns_correct_config(self) -> None:
+        planner_cfg = RoleAgentConfig(cli=Path("claude"), model="claude-opus-4-5")
+        cfg = AgentsConfig(planner=planner_cfg)
+        assert cfg.for_role("planner") is planner_cfg
+
+    def test_for_role_unknown_raises(self) -> None:
+        cfg = AgentsConfig()
+        with pytest.raises(ValueError, match="Unknown role"):
+            cfg.for_role("unknown")
+
+    def test_to_dict_contains_all_roles(self) -> None:
+        cfg = AgentsConfig()
+        d = cfg.to_dict()
+        assert set(d.keys()) == set(ROLE_NAMES)
+
+
+# ---------------------------------------------------------------------------
+# parse_agents_config
+# ---------------------------------------------------------------------------
+
+
+class TestParseAgentsConfig:
+    def test_none_returns_none(self) -> None:
+        assert parse_agents_config(None, config_path=None) is None
+
+    def test_empty_object_returns_defaults(self) -> None:
+        result = parse_agents_config({}, config_path=None)
+        assert isinstance(result, AgentsConfig)
+        for role in ROLE_NAMES:
+            assert result.for_role(role) == RoleAgentConfig()
+
+    def test_full_config(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "dormammu.json"
+        payload = {
+            "planner": {"cli": "claude", "model": "claude-opus-4-5"},
+            "architect": {"model": "claude-opus-4-5"},
+            "developer": {"cli": "claude"},
+            "tester": {},
+            "reviewer": {"cli": "claude", "model": "claude-sonnet-4-5"},
+            "committer": {"model": "claude-haiku-4-5"},
+        }
+        result = parse_agents_config(payload, config_path=cfg_path)
+        assert result is not None
+        assert result.planner.cli == Path("claude")
+        assert result.planner.model == "claude-opus-4-5"
+        assert result.architect.cli is None
+        assert result.architect.model == "claude-opus-4-5"
+        assert result.developer.cli == Path("claude")
+        assert result.developer.model is None
+        assert result.tester == RoleAgentConfig()
+        assert result.reviewer.cli == Path("claude")
+        assert result.committer.cli is None
+        assert result.committer.model == "claude-haiku-4-5"
+
+    def test_partial_config_uses_defaults_for_missing_roles(self) -> None:
+        payload = {"planner": {"cli": "claude"}}
+        result = parse_agents_config(payload, config_path=None)
+        assert result is not None
+        assert result.planner.cli == Path("claude")
+        assert result.developer == RoleAgentConfig()
+
+    def test_not_a_mapping_raises(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "dormammu.json"
+        with pytest.raises(RuntimeError, match="agents must be a JSON object"):
+            parse_agents_config("bad", config_path=cfg_path)
+
+    def test_role_not_a_mapping_raises(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "dormammu.json"
+        with pytest.raises(RuntimeError, match="agents.planner must be a JSON object"):
+            parse_agents_config({"planner": "bad"}, config_path=cfg_path)
+
+    def test_cli_empty_string_raises(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "dormammu.json"
+        with pytest.raises(RuntimeError, match="agents.planner.cli must be a non-empty string"):
+            parse_agents_config({"planner": {"cli": ""}}, config_path=cfg_path)
+
+    def test_model_empty_string_raises(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "dormammu.json"
+        with pytest.raises(RuntimeError, match="agents.developer.model must be a non-empty string"):
+            parse_agents_config({"developer": {"model": "  "}}, config_path=cfg_path)
+
+    def test_absolute_cli_path(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "dormammu.json"
+        abs_cli = str(tmp_path / "my-agent")
+        result = parse_agents_config(
+            {"planner": {"cli": abs_cli}}, config_path=cfg_path
+        )
+        assert result is not None
+        assert result.planner.cli == Path(abs_cli)
+
+    def test_relative_dotslash_cli_resolved_against_config_dir(
+        self, tmp_path: Path
+    ) -> None:
+        cfg_path = tmp_path / "dormammu.json"
+        result = parse_agents_config(
+            {"planner": {"cli": "./my-agent"}}, config_path=cfg_path
+        )
+        assert result is not None
+        assert result.planner.cli == (tmp_path / "my-agent").resolve()
+
+    def test_plain_name_cli_not_resolved(self, tmp_path: Path) -> None:
+        """Plain command names (e.g. 'claude') stay as-is for PATH lookup."""
+        cfg_path = tmp_path / "dormammu.json"
+        result = parse_agents_config(
+            {"planner": {"cli": "claude"}}, config_path=cfg_path
+        )
+        assert result is not None
+        assert result.planner.cli == Path("claude")
+
+
+# ---------------------------------------------------------------------------
+# Integration: resolve_cli with active_agent_cli
+# ---------------------------------------------------------------------------
+
+
+class TestResolveCli:
+    def test_all_roles_fall_back_to_active(self) -> None:
+        agents = AgentsConfig()
+        active = Path("claude")
+        for role in ROLE_NAMES:
+            assert agents.for_role(role).resolve_cli(active) == active
+
+    def test_role_override_takes_priority(self) -> None:
+        agents = AgentsConfig(
+            planner=RoleAgentConfig(cli=Path("my-planner"))
+        )
+        active = Path("claude")
+        assert agents.planner.resolve_cli(active) == Path("my-planner")
+        # Other roles still fall back
+        assert agents.developer.resolve_cli(active) == active
+
+    def test_model_only_config_keeps_cli_fallback(self) -> None:
+        agents = AgentsConfig(
+            tester=RoleAgentConfig(model="claude-sonnet-4-5")
+        )
+        active = Path("claude")
+        assert agents.tester.resolve_cli(active) == active
+        assert agents.tester.model == "claude-sonnet-4-5"
