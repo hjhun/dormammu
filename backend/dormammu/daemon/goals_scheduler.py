@@ -337,15 +337,31 @@ class GoalsScheduler:
         else:
             stdin_input = prompt
 
+        _ROLE_AGENT_TIMEOUT_SECONDS = 300  # 5-minute cap per role agent call
+
         try:
             self._log(f"goals scheduler: calling {role} agent ({cli.name}) for {stem}")
-            result = subprocess.run(
-                args,
-                input=stdin_input,
-                capture_output=True,
+            # When the prompt is passed via positional arg or flag (stdin_input is
+            # None), close the subprocess stdin so the CLI cannot block waiting
+            # for interactive input.
+            run_kwargs: dict = dict(
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 cwd=str(self._app_config.repo_root),
+                timeout=_ROLE_AGENT_TIMEOUT_SECONDS,
             )
+            if stdin_input is not None:
+                run_kwargs["input"] = stdin_input
+            else:
+                run_kwargs["stdin"] = subprocess.DEVNULL
+            result = subprocess.run(args, **run_kwargs)
+            if result.returncode != 0:
+                self._log(
+                    f"goals scheduler: {role} agent exited with code {result.returncode}"
+                )
+            if result.stderr.strip():
+                self._log(f"goals scheduler: {role} agent stderr: {result.stderr.strip()}")
             output = result.stdout or ""
 
             # Persist the agent's output as a role document.
@@ -358,6 +374,12 @@ class GoalsScheduler:
             )
             self._log(f"goals scheduler: {role} document written to {doc_path}")
             return output or None
+        except subprocess.TimeoutExpired:
+            self._log(
+                f"goals scheduler: {role} agent timed out after "
+                f"{_ROLE_AGENT_TIMEOUT_SECONDS}s — skipping"
+            )
+            return None
         except Exception as exc:
             self._log(f"goals scheduler: {role} agent call failed: {exc}")
             return None
