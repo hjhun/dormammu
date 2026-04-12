@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from importlib.metadata import PackageNotFoundError, version
 
-SOURCE_VERSION = "0.1.0"
+SOURCE_VERSION = "0.4.0"
 BUILD_VERSION_ENV = "DORMAMMU_BUILD_VERSION"
 
 
