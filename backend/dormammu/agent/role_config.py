@@ -11,6 +11,7 @@ ROLE_NAMES: tuple[str, ...] = (
     "tester",
     "reviewer",
     "committer",
+    "evaluator",
 )
 
 
@@ -43,7 +44,7 @@ class RoleAgentConfig:
 
 @dataclass(frozen=True, slots=True)
 class AgentsConfig:
-    """Pipeline role agent configurations for all six roles."""
+    """Pipeline role agent configurations for all seven roles."""
 
     planner: RoleAgentConfig = RoleAgentConfig()
     architect: RoleAgentConfig = RoleAgentConfig()
@@ -51,6 +52,7 @@ class AgentsConfig:
     tester: RoleAgentConfig = RoleAgentConfig()
     reviewer: RoleAgentConfig = RoleAgentConfig()
     committer: RoleAgentConfig = RoleAgentConfig()
+    evaluator: RoleAgentConfig = RoleAgentConfig()
 
     def for_role(self, role: str) -> RoleAgentConfig:
         """Return the config for the given role name."""

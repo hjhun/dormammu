@@ -210,8 +210,16 @@ class GoalsScheduler:
         goal_text = goal_file.read_text(encoding="utf-8")
         prompt = self._generate_prompt(goal_text, stem, date_str)
 
+        # Prepend a machine-readable metadata comment so that downstream
+        # components (DaemonRunner, PipelineRunner, EvaluatorStage) can
+        # recover the original goal file path without any shared state.
+        goal_source_tag = (
+            f"<!-- dormammu:goal_source={goal_file.resolve()} -->\n\n"
+        )
+        prompt_with_meta = goal_source_tag + prompt
+
         self._prompt_path.mkdir(parents=True, exist_ok=True)
-        dest.write_text(prompt, encoding="utf-8")
+        dest.write_text(prompt_with_meta, encoding="utf-8")
         self._log(f"goals scheduler: wrote prompt {dest.name}")
 
     # ------------------------------------------------------------------

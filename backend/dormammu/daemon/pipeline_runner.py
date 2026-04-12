@@ -33,12 +33,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
+from dormammu.daemon.evaluator import (
+    EvaluatorRequest,
+    EvaluatorStage,
+    resolve_evaluator_cli,
+    resolve_evaluator_model,
+)
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
 from dormammu.state import StateRepository
 
 if TYPE_CHECKING:
     from dormammu.agent.role_config import AgentsConfig
     from dormammu.config import AppConfig
+    from dormammu.daemon.goals_config import EvaluatorConfig
 
 MAX_STAGE_ITERATIONS = 3
 
@@ -82,8 +89,14 @@ class PipelineRunner:
         *,
         stem: str,
         date_str: str | None = None,
+        goal_file_path: Path | None = None,
+        evaluator_config: "EvaluatorConfig | None" = None,
     ) -> LoopRunResult:
-        """Execute the full pipeline and return a :class:`LoopRunResult`."""
+        """Execute the full pipeline and return a :class:`LoopRunResult`.
+
+        ``goal_file_path`` and ``evaluator_config`` are both required for the
+        evaluator stage to run.  When either is None the evaluator is skipped.
+        """
         if date_str is None:
             date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
 
@@ -153,6 +166,15 @@ class PipelineRunner:
 
         # ---- committer -------------------------------------------------------
         self._run_committer(stem=stem, date_str=date_str)
+
+        # ---- evaluator (goals-scheduler context only) -----------------------
+        self._run_evaluator(
+            prompt_text=prompt_text,
+            stem=stem,
+            date_str=date_str,
+            goal_file_path=goal_file_path,
+            evaluator_config=evaluator_config,
+        )
 
         assert loop_result is not None
         return loop_result
@@ -281,6 +303,68 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
             slot="06",
+        )
+
+    # ------------------------------------------------------------------
+    # Evaluator stage (goals-scheduler context only)
+    # ------------------------------------------------------------------
+
+    def _run_evaluator(
+        self,
+        *,
+        prompt_text: str,
+        stem: str,
+        date_str: str,
+        goal_file_path: Path | None,
+        evaluator_config: "EvaluatorConfig | None",
+    ) -> None:
+        """Run the evaluator stage if all conditions are met.
+
+        Conditions for execution:
+        1. ``goal_file_path`` is not None (pipeline was triggered by goals scheduler).
+        2. ``evaluator_config`` is not None and ``evaluator_config.enabled`` is True.
+        3. The evaluator has a resolvable CLI.
+        """
+        if goal_file_path is None or evaluator_config is None:
+            return
+        if not evaluator_config.enabled:
+            self._log("pipeline: evaluator disabled in config — skipping")
+            return
+
+        evaluator_cfg = self._agents.for_role("evaluator")
+        active_cli = self._app_config.active_agent_cli
+        cli = resolve_evaluator_cli(
+            evaluator_config,
+            evaluator_cfg.resolve_cli(None),  # agents.evaluator.cli only
+            active_cli,
+        )
+        if cli is None:
+            self._log("pipeline: evaluator has no resolvable CLI — skipping")
+            return
+
+        model = resolve_evaluator_model(evaluator_config, evaluator_cfg.model)
+
+        # Extract the original goal text (strip the metadata comment if present).
+        goal_text = _strip_goal_source_tag(prompt_text)
+
+        self._log("pipeline: evaluator stage starting")
+        request = EvaluatorRequest(
+            cli=cli,
+            model=model,
+            goal_file_path=goal_file_path,
+            goal_text=goal_text,
+            repo_root=self._app_config.repo_root,
+            dev_dir=self._app_config.base_dev_dir,
+            next_goal_strategy=evaluator_config.next_goal_strategy,
+            stem=stem,
+            date_str=date_str,
+        )
+        result = EvaluatorStage(
+            progress_stream=self._progress_stream,
+        ).run(request)
+        self._log(
+            f"pipeline: evaluator stage completed "
+            f"(status={result.status}, verdict={result.verdict})"
         )
 
     # ------------------------------------------------------------------
@@ -469,3 +553,14 @@ _MODEL_FLAGS: dict[str, str] = {
     "codex": "-m",
     "aider": "--model",
 }
+
+# Matches the metadata comment prepended by GoalsScheduler.
+_GOAL_SOURCE_TAG_RE = re.compile(
+    r"^<!--\s*dormammu:goal_source=[^\s>]+\s*-->\n\n?",
+    re.MULTILINE,
+)
+
+
+def _strip_goal_source_tag(text: str) -> str:
+    """Remove the dormammu:goal_source metadata comment from prompt text."""
+    return _GOAL_SOURCE_TAG_RE.sub("", text, count=1).lstrip()
