@@ -31,6 +31,8 @@ _HELP_TEXT = (
     r"📄 /result \[name\] — last \(or named\) result file content" "\n"
     r"🕐 /history \[n\] — last N execution results with status \(default 10\)" "\n"
     "🗂️ /sessions — recent session list\n"
+    r"🗂️ /repo \[path\] — switch working repo \(or pick from sibling list\)" "\n"
+    r"🗑️ /clear\_sessions — delete all session data for the current repo" "\n"
     "🛑 /stop — send interrupt to the running prompt\n"
     "🔌 /shutdown — finish current prompt then stop the daemon\n"
     "❓ /help — this message"
@@ -50,6 +52,10 @@ _MENU_KEYBOARD = [
         {"text": "📜 Logs", "callback_data": "logs"},
         {"text": "🕐 History", "callback_data": "history"},
         {"text": "🗂️ Sessions", "callback_data": "sessions"},
+    ],
+    [
+        {"text": "🗂️ Repo", "callback_data": "repo"},
+        {"text": "🗑️ Clear Sessions", "callback_data": "clear_sessions"},
     ],
     [
         {"text": "🛑 Stop", "callback_data": "stop"},
@@ -108,6 +114,10 @@ class TelegramBot:
         # API (30 msg/s limit) and delay incoming command responses.
         self._send_queue: asyncio.Queue[tuple[int, str]] | None = None
         self._send_task: asyncio.Task[None] | None = None
+        # Ephemeral list of repo paths shown in the last /repo inline keyboard.
+        # Indexed by callback_data "repo_pick:<i>".  Lives only in the asyncio
+        # event-loop thread so no lock is required.
+        self._pending_repo_choices: list[Path] = []
 
     # ------------------------------------------------------------------
     # Known-chat registry (persisted to disk)
@@ -285,6 +295,8 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("result", self._cmd_result))
         self._app.add_handler(CommandHandler("history", self._cmd_history))
         self._app.add_handler(CommandHandler("sessions", self._cmd_sessions))
+        self._app.add_handler(CommandHandler("repo", self._cmd_repo))
+        self._app.add_handler(CommandHandler("clear_sessions", self._cmd_clear_sessions))
         self._app.add_handler(CommandHandler("stop", self._cmd_stop))
         self._app.add_handler(CommandHandler("shutdown", self._cmd_shutdown))
         self._app.add_handler(CallbackQueryHandler(self._cmd_callback))
@@ -304,6 +316,8 @@ class TelegramBot:
                 BotCommand("result", "📄 last result"),
                 BotCommand("history", "🕐 execution history"),
                 BotCommand("sessions", "🗂️ session list"),
+                BotCommand("repo", "🗂️ switch working repo"),
+                BotCommand("clear_sessions", "🗑️ clear session data"),
                 BotCommand("stop", "🛑 stop execution"),
                 BotCommand("shutdown", "🔌 graceful daemon shutdown"),
                 BotCommand("help", "❓ help"),
@@ -382,12 +396,21 @@ class TelegramBot:
             reply_markup=self._build_menu_markup(),
         )
 
-    async def _reply(self, update: Any, text: str, parse_mode: str = "Markdown") -> None:
+    async def _reply(
+        self,
+        update: Any,
+        text: str,
+        parse_mode: str = "Markdown",
+        reply_markup: Any = None,
+    ) -> None:
         """Send a reply whether the update came from a message or a callback query."""
+        kwargs: dict[str, Any] = {"parse_mode": parse_mode}
+        if reply_markup is not None:
+            kwargs["reply_markup"] = reply_markup
         if update.callback_query is not None:
-            await update.callback_query.message.reply_text(text, parse_mode=parse_mode)
+            await update.callback_query.message.reply_text(text, **kwargs)
         elif update.message is not None:
-            await update.message.reply_text(text, parse_mode=parse_mode)
+            await update.message.reply_text(text, **kwargs)
 
     async def _cmd_callback(self, update: Any, context: Any) -> None:
         query = update.callback_query
@@ -419,6 +442,13 @@ class TelegramBot:
             await self._send_history(update, context)
         elif data == "sessions":
             await self._send_sessions(update, context)
+        elif data == "repo":
+            context.args = []
+            await self._send_repo(update, context)
+        elif data == "clear_sessions":
+            await self._send_clear_sessions(update, context)
+        elif data.startswith("repo_pick:"):
+            await self._handle_repo_pick(update, data[len("repo_pick:"):])
         elif data == "stop":
             await self._send_stop(update, context)
         elif data == "shutdown":
@@ -672,6 +702,161 @@ class TelegramBot:
             return
         lines = [f"🗂️ *Recent sessions ({len(session_dirs)})*"] + [f"• {s.name}" for s in session_dirs]
         await self._reply(update, "\n".join(lines))
+
+    async def _cmd_repo(self, update: Any, context: Any) -> None:
+        if not await self._guard(update):
+            return
+        await self._send_repo(update, context)
+
+    async def _send_repo(self, update: Any, context: Any) -> None:
+        """Show the current repo and allow switching to a sibling repo (or a direct path)."""
+        from dormammu.config import AppConfig, REPO_MARKERS
+
+        if context.args:
+            # Direct path provided: switch immediately.
+            raw = " ".join(context.args)
+            candidate = Path(raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = (self._app_config.repo_root / candidate).resolve()
+            await self._apply_repo_change(update, candidate)
+            return
+
+        # Scan sibling directories (parent of current repo root).
+        parent = self._app_config.repo_root.parent
+        candidates: list[Path] = []
+        if parent.exists():
+            for d in sorted(parent.iterdir()):
+                if d.is_dir() and any((d / marker).exists() for marker in REPO_MARKERS):
+                    candidates.append(d)
+
+        current = self._app_config.repo_root
+        other_candidates = [p for p in candidates if p.resolve() != current.resolve()]
+        if not candidates or not other_candidates:
+            await self._reply(
+                update,
+                f"🗂️ Current repo: `{current}`\n"
+                f"No sibling repos found under `{parent}`.\n"
+                "Use `/repo <path>` to switch directly.",
+            )
+            return
+
+        self._pending_repo_choices = candidates
+
+        try:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+            keyboard = []
+            for i, path in enumerate(candidates):
+                label = f"✅ {path.name}" if path == current else path.name
+                keyboard.append([InlineKeyboardButton(label, callback_data=f"repo_pick:{i}")])
+            keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="repo_pick:cancel")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+        except ImportError:
+            reply_markup = None
+
+        lines = [f"🗂️ *Select repository*", f"Current: `{current.name}`", ""]
+        for i, path in enumerate(candidates):
+            marker = "✅" if path == current else "  "
+            lines.append(f"{marker} {i}. {path.name}")
+        if reply_markup is None:
+            lines.append("")
+            lines.append("Reply with /repo <path> to switch.")
+
+        await self._reply(
+            update,
+            "\n".join(lines),
+            reply_markup=reply_markup,
+        )
+
+    async def _handle_repo_pick(self, update: Any, idx_str: str) -> None:
+        """Handle a repo_pick:<i> callback from the inline keyboard."""
+        if idx_str == "cancel":
+            await self._reply(update, "🗂️ Repo switch cancelled.")
+            return
+        try:
+            idx = int(idx_str)
+        except ValueError:
+            await self._reply(update, "❌ Invalid repo selection.")
+            return
+        if idx < 0 or idx >= len(self._pending_repo_choices):
+            await self._reply(update, "❌ Selection expired — please run /repo again.")
+            return
+        await self._apply_repo_change(update, self._pending_repo_choices[idx])
+
+    async def _apply_repo_change(self, update: Any, new_root: Path) -> None:
+        """Validate new_root and hot-swap the runner's app_config."""
+        from dormammu.config import AppConfig, REPO_MARKERS
+        from dormammu.state import StateRepository
+
+        if not new_root.exists() or not new_root.is_dir():
+            await self._reply(update, f"❌ Path not found: `{new_root}`")
+            return
+        if not any((new_root / marker).exists() for marker in REPO_MARKERS):
+            await self._reply(
+                update,
+                f"⚠️ `{new_root.name}` does not look like a dormammu repo\n"
+                "(missing AGENTS.md, .dev/, and pyproject.toml).",
+            )
+            return
+        if new_root.resolve() == self._app_config.repo_root.resolve():
+            await self._reply(update, f"🗂️ Already using repo `{new_root.name}`.")
+            return
+
+        in_progress = self._runner.in_progress_snapshot()
+        warning = ""
+        if in_progress:
+            names = ", ".join(p.name for p in in_progress)
+            warning = f"\n⚠️ A prompt is still running ({names}); change takes effect for the next prompt."
+
+        try:
+            new_config = AppConfig.load(repo_root=new_root)
+        except Exception as exc:
+            await self._reply(update, f"❌ Failed to load config for `{new_root.name}`: {exc}")
+            return
+
+        self._app_config = new_config
+        self._runner.app_config = new_config
+        self._runner.repository = StateRepository(new_config)
+        _log.info("repo switched to %s", new_root)
+        await self._reply(
+            update,
+            f"✅ Switched to repo: `{new_root}`{warning}",
+        )
+
+    async def _cmd_clear_sessions(self, update: Any, context: Any) -> None:
+        if not await self._guard(update):
+            return
+        await self._send_clear_sessions(update, context)
+
+    async def _send_clear_sessions(self, update: Any, context: Any) -> None:
+        """Delete all session subdirectories under the current repo's .dev/sessions/."""
+        import shutil
+
+        sessions_dir = self._app_config.base_dev_dir / "sessions"
+        if not sessions_dir.exists():
+            await self._reply(update, "🗑️ No sessions directory found — nothing to clear.")
+            return
+        session_dirs = [p for p in sessions_dir.iterdir() if p.is_dir()]
+        if not session_dirs:
+            await self._reply(update, "🗑️ Sessions directory is already empty.")
+            return
+        errors: list[str] = []
+        for d in session_dirs:
+            try:
+                shutil.rmtree(d)
+            except OSError as exc:
+                errors.append(f"{d.name}: {exc}")
+        if errors:
+            err_text = "\n".join(errors)
+            await self._reply(
+                update,
+                f"⚠️ Cleared with errors:\n```\n{err_text}\n```",
+            )
+        else:
+            await self._reply(
+                update,
+                f"🗑️ Cleared {len(session_dirs)} session(s) from `{sessions_dir}`.",
+            )
 
     async def _cmd_stop(self, update: Any, context: Any) -> None:
         if not await self._guard(update):

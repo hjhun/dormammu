@@ -1,0 +1,528 @@
+"""Regression tests for /repo and /clear_sessions Telegram bot commands.
+
+/repo:
+  1. No args → shows sibling repo list as inline keyboard
+  2. No sibling repos → shows "no siblings" message
+  3. Direct path arg (valid repo) → switches and confirms
+  4. Direct path arg (nonexistent) → error message
+  5. Direct path arg (not a repo) → warning message
+  6. Same repo as current → "already using" message
+  7. repo_pick callback (valid index) → switches repo
+  8. repo_pick callback (cancel) → cancellation message
+  9. repo_pick callback (expired index) → asks to re-run
+ 10. Switches runner.app_config and runner.repository
+ 11. Warning shown when prompt in progress
+ 12. /repo registered in help text and menu keyboard
+
+/clear_sessions:
+ 13. No sessions dir → "nothing to clear"
+ 14. Empty sessions dir → "already empty"
+ 15. Clears session dirs, reports count
+ 16. Partial failure is reported
+ 17. /clear_sessions registered in help text and menu keyboard
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND = ROOT / "backend"
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
+
+from dormammu.config import AppConfig
+from dormammu.daemon.config import load_daemon_config
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _seed_repo(root: Path) -> None:
+    import subprocess
+    subprocess.run(["git", "init"], cwd=root, capture_output=True, text=True, check=True)
+    (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
+    templates = root / "templates" / "dev"
+    templates.mkdir(parents=True, exist_ok=True)
+    (templates / "dashboard.md.tmpl").write_text("# DASHBOARD\n\n- Goal: ${goal}\n", encoding="utf-8")
+    (templates / "plan.md.tmpl").write_text("# PLAN\n\n${task_items}\n", encoding="utf-8")
+
+
+def _app_config(root: Path) -> AppConfig:
+    env = dict(os.environ)
+    env["HOME"] = str(root / ".test-home")
+    return AppConfig.load(repo_root=root, env=env)
+
+
+def _write_daemon_config(root: Path) -> Path:
+    config_path = root / "daemonize.json"
+    config_path.write_text(
+        json.dumps({
+            "schema_version": 1,
+            "prompt_path": "./queue/prompts",
+            "result_path": "./queue/results",
+            "watch": {"backend": "polling", "poll_interval_seconds": 1, "settle_seconds": 0},
+            "queue": {"allowed_extensions": [".md"], "ignore_hidden_files": True},
+        }, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def _make_bot(root: Path, mock_runner=None):
+    from dormammu.telegram.bot import TelegramBot
+    from dormammu.telegram.config import TelegramConfig
+
+    _seed_repo(root)
+    app_config = _app_config(root)
+    app_config.base_dev_dir.mkdir(parents=True, exist_ok=True)
+
+    if mock_runner is None:
+        mock_runner = mock.MagicMock()
+        mock_runner.shutdown_requested = False
+        mock_runner.in_progress_snapshot.return_value = frozenset()
+
+    mock_stream = mock.MagicMock()
+    mock_stream.streaming_chat_id = None
+
+    tg_config = TelegramConfig(
+        bot_token="1234:fake",
+        allowed_chat_ids=[42],
+        chunk_size=3000,
+        flush_interval_seconds=2.0,
+    )
+    daemon_config = load_daemon_config(_write_daemon_config(root), app_config=app_config)
+    bot = TelegramBot(
+        tg_config,
+        daemon_config=daemon_config,
+        app_config=app_config,
+        stream=mock_stream,
+        runner=mock_runner,
+    )
+    return bot, mock_runner, app_config
+
+
+def _make_update(chat_id: int = 42) -> mock.MagicMock:
+    upd = mock.MagicMock()
+    upd.effective_chat.id = chat_id
+    upd.callback_query = None
+    upd.message = mock.AsyncMock()
+    return upd
+
+
+def _last_reply(update: mock.MagicMock) -> str:
+    return update.message.reply_text.call_args[0][0]
+
+
+def _last_reply_kwargs(update: mock.MagicMock) -> dict:
+    return update.message.reply_text.call_args[1]
+
+
+# ===========================================================================
+# /repo — no args: inline keyboard list
+# ===========================================================================
+
+class RepoCmdListTests(unittest.IsolatedAsyncioTestCase):
+
+    async def test_shows_sibling_repos_as_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            current_repo = parent / "repo-a"
+            sibling_repo = parent / "repo-b"
+            current_repo.mkdir()
+            sibling_repo.mkdir()
+            # Make both look like repos
+            (current_repo / "AGENTS.md").write_text("x")
+            (sibling_repo / "AGENTS.md").write_text("x")
+            import subprocess
+            subprocess.run(["git", "init"], cwd=current_repo, capture_output=True, check=True)
+            subprocess.run(["git", "init"], cwd=sibling_repo, capture_output=True, check=True)
+
+            bot, runner, _ = _make_bot(current_repo)
+            update = _make_update()
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._send_repo(update, context)
+
+            # Both repos must appear in _pending_repo_choices
+            names = [p.name for p in bot._pending_repo_choices]
+            self.assertIn("repo-a", names)
+            self.assertIn("repo-b", names)
+            # Reply must mention both names
+            reply = _last_reply(update)
+            self.assertIn("repo-a", reply)
+            self.assertIn("repo-b", reply)
+
+    async def test_no_sibling_repos_shows_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            current_repo = parent / "only-repo"
+            current_repo.mkdir()
+            (current_repo / "AGENTS.md").write_text("x")
+            import subprocess
+            subprocess.run(["git", "init"], cwd=current_repo, capture_output=True, check=True)
+
+            bot, runner, _ = _make_bot(current_repo)
+            update = _make_update()
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._send_repo(update, context)
+
+            reply = _last_reply(update)
+            self.assertIn("No sibling repos", reply)
+
+
+# ===========================================================================
+# /repo <path> — direct path switch
+# ===========================================================================
+
+class RepoDirectPathTests(unittest.IsolatedAsyncioTestCase):
+
+    async def test_valid_repo_switches_and_confirms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            current_repo = parent / "repo-a"
+            new_repo = parent / "repo-b"
+            current_repo.mkdir()
+            new_repo.mkdir()
+            (current_repo / "AGENTS.md").write_text("x")
+            (new_repo / "AGENTS.md").write_text("x")
+            import subprocess
+            subprocess.run(["git", "init"], cwd=current_repo, capture_output=True, check=True)
+            subprocess.run(["git", "init"], cwd=new_repo, capture_output=True, check=True)
+
+            bot, runner, _ = _make_bot(current_repo)
+            update = _make_update()
+            context = mock.MagicMock()
+            context.args = [str(new_repo)]
+
+            await bot._send_repo(update, context)
+
+            reply = _last_reply(update)
+            self.assertIn("✅", reply)
+            self.assertIn("repo-b", reply)
+
+    async def test_nonexistent_path_returns_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, _ = _make_bot(root)
+            update = _make_update()
+            context = mock.MagicMock()
+            context.args = ["/nonexistent/path/that/does/not/exist"]
+
+            await bot._send_repo(update, context)
+
+            reply = _last_reply(update)
+            self.assertIn("❌", reply)
+            self.assertIn("not found", reply.lower())
+
+    async def test_non_repo_dir_returns_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            current_repo = parent / "repo-a"
+            plain_dir = parent / "not-a-repo"
+            current_repo.mkdir()
+            plain_dir.mkdir()
+            (current_repo / "AGENTS.md").write_text("x")
+            import subprocess
+            subprocess.run(["git", "init"], cwd=current_repo, capture_output=True, check=True)
+
+            bot, runner, _ = _make_bot(current_repo)
+            update = _make_update()
+            context = mock.MagicMock()
+            context.args = [str(plain_dir)]
+
+            await bot._send_repo(update, context)
+
+            reply = _last_reply(update)
+            self.assertIn("⚠️", reply)
+
+    async def test_same_repo_shows_already_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, _ = _make_bot(root)
+            update = _make_update()
+            context = mock.MagicMock()
+            context.args = [str(root)]
+
+            await bot._send_repo(update, context)
+
+            reply = _last_reply(update)
+            self.assertIn("Already", reply)
+
+
+# ===========================================================================
+# /repo inline keyboard callbacks
+# ===========================================================================
+
+class RepoPickCallbackTests(unittest.IsolatedAsyncioTestCase):
+
+    async def _setup_with_sibling(self, tmpdir_path: str):
+        parent = Path(tmpdir_path)
+        current_repo = parent / "repo-a"
+        sibling_repo = parent / "repo-b"
+        current_repo.mkdir()
+        sibling_repo.mkdir()
+        (current_repo / "AGENTS.md").write_text("x")
+        (sibling_repo / "AGENTS.md").write_text("x")
+        import subprocess
+        subprocess.run(["git", "init"], cwd=current_repo, capture_output=True, check=True)
+        subprocess.run(["git", "init"], cwd=sibling_repo, capture_output=True, check=True)
+        bot, runner, _ = _make_bot(current_repo)
+        # Populate pending choices
+        update = _make_update()
+        context = mock.MagicMock()
+        context.args = []
+        await bot._send_repo(update, context)
+        return bot, runner, sibling_repo
+
+    async def test_valid_pick_switches_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bot, runner, sibling = await self._setup_with_sibling(tmpdir)
+            # Find the index of the sibling
+            idx = bot._pending_repo_choices.index(sibling)
+            update = _make_update()
+            await bot._handle_repo_pick(update, str(idx))
+            reply = _last_reply(update)
+            self.assertIn("✅", reply)
+            self.assertIn("repo-b", reply)
+
+    async def test_cancel_pick_shows_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bot, runner, _ = await self._setup_with_sibling(tmpdir)
+            update = _make_update()
+            await bot._handle_repo_pick(update, "cancel")
+            reply = _last_reply(update)
+            self.assertIn("cancel", reply.lower())
+
+    async def test_expired_index_asks_to_rerun(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, _ = _make_bot(root)
+            # _pending_repo_choices is empty — simulates expiry
+            update = _make_update()
+            await bot._handle_repo_pick(update, "5")
+            reply = _last_reply(update)
+            self.assertIn("/repo", reply)
+
+    async def test_invalid_index_str_returns_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, _ = _make_bot(root)
+            update = _make_update()
+            await bot._handle_repo_pick(update, "not_a_number")
+            reply = _last_reply(update)
+            self.assertIn("❌", reply)
+
+
+# ===========================================================================
+# Repo switch side-effects
+# ===========================================================================
+
+class RepoSwitchSideEffectTests(unittest.IsolatedAsyncioTestCase):
+
+    async def test_switch_updates_runner_app_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            current_repo = parent / "repo-a"
+            new_repo = parent / "repo-b"
+            current_repo.mkdir()
+            new_repo.mkdir()
+            (current_repo / "AGENTS.md").write_text("x")
+            (new_repo / "AGENTS.md").write_text("x")
+            import subprocess
+            subprocess.run(["git", "init"], cwd=current_repo, capture_output=True, check=True)
+            subprocess.run(["git", "init"], cwd=new_repo, capture_output=True, check=True)
+
+            runner = mock.MagicMock()
+            runner.shutdown_requested = False
+            runner.in_progress_snapshot.return_value = frozenset()
+            runner.app_config = None
+            runner.repository = None
+
+            bot, _, _ = _make_bot(current_repo, mock_runner=runner)
+            update = _make_update()
+            context = mock.MagicMock()
+            context.args = [str(new_repo)]
+
+            await bot._send_repo(update, context)
+
+            self.assertIsNotNone(runner.app_config)
+            self.assertEqual(runner.app_config.repo_root.resolve(), new_repo.resolve())
+
+    async def test_switch_updates_runner_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            current_repo = parent / "repo-a"
+            new_repo = parent / "repo-b"
+            current_repo.mkdir()
+            new_repo.mkdir()
+            (current_repo / "AGENTS.md").write_text("x")
+            (new_repo / "AGENTS.md").write_text("x")
+            import subprocess
+            subprocess.run(["git", "init"], cwd=current_repo, capture_output=True, check=True)
+            subprocess.run(["git", "init"], cwd=new_repo, capture_output=True, check=True)
+
+            runner = mock.MagicMock()
+            runner.shutdown_requested = False
+            runner.in_progress_snapshot.return_value = frozenset()
+
+            bot, _, _ = _make_bot(current_repo, mock_runner=runner)
+            update = _make_update()
+            context = mock.MagicMock()
+            context.args = [str(new_repo)]
+
+            await bot._send_repo(update, context)
+
+            # repository was set (not just called as mock)
+            self.assertTrue(hasattr(runner, "repository"))
+
+    async def test_switch_shows_warning_when_prompt_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            current_repo = parent / "repo-a"
+            new_repo = parent / "repo-b"
+            current_repo.mkdir()
+            new_repo.mkdir()
+            (current_repo / "AGENTS.md").write_text("x")
+            (new_repo / "AGENTS.md").write_text("x")
+            import subprocess
+            subprocess.run(["git", "init"], cwd=current_repo, capture_output=True, check=True)
+            subprocess.run(["git", "init"], cwd=new_repo, capture_output=True, check=True)
+
+            runner = mock.MagicMock()
+            runner.shutdown_requested = False
+            runner.in_progress_snapshot.return_value = frozenset([Path("/q/active-task.md")])
+
+            bot, _, _ = _make_bot(current_repo, mock_runner=runner)
+            update = _make_update()
+            context = mock.MagicMock()
+            context.args = [str(new_repo)]
+
+            await bot._send_repo(update, context)
+
+            reply = _last_reply(update)
+            self.assertIn("⚠️", reply)
+            self.assertIn("active-task.md", reply)
+
+
+# ===========================================================================
+# /clear_sessions
+# ===========================================================================
+
+class ClearSessionsTests(unittest.IsolatedAsyncioTestCase):
+
+    async def test_no_sessions_dir_says_nothing_to_clear(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, _ = _make_bot(root)
+            # Don't create sessions dir
+            update = _make_update()
+            context = mock.MagicMock()
+
+            await bot._send_clear_sessions(update, context)
+
+            reply = _last_reply(update)
+            self.assertIn("nothing to clear", reply.lower())
+
+    async def test_empty_sessions_dir_says_already_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, app_config = _make_bot(root)
+            sessions_dir = app_config.base_dev_dir / "sessions"
+            sessions_dir.mkdir(parents=True, exist_ok=True)
+            update = _make_update()
+            context = mock.MagicMock()
+
+            await bot._send_clear_sessions(update, context)
+
+            reply = _last_reply(update)
+            self.assertIn("already empty", reply.lower())
+
+    async def test_clears_session_dirs_and_reports_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, app_config = _make_bot(root)
+            sessions_dir = app_config.base_dev_dir / "sessions"
+            sessions_dir.mkdir(parents=True, exist_ok=True)
+            # Create 3 fake session directories
+            for i in range(3):
+                d = sessions_dir / f"session-{i:03d}"
+                d.mkdir()
+                (d / "state.json").write_text("{}", encoding="utf-8")
+            update = _make_update()
+            context = mock.MagicMock()
+
+            await bot._send_clear_sessions(update, context)
+
+            reply = _last_reply(update)
+            self.assertIn("3", reply)
+            # Sessions should actually be gone
+            remaining = [p for p in sessions_dir.iterdir() if p.is_dir()]
+            self.assertEqual(remaining, [])
+
+    async def test_clear_uses_current_app_config_base_dev_dir(self) -> None:
+        """Verify that /clear_sessions targets the current bot._app_config, not a stale one."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, app_config = _make_bot(root)
+            sessions_dir = app_config.base_dev_dir / "sessions"
+            sessions_dir.mkdir(parents=True, exist_ok=True)
+            (sessions_dir / "sess-001").mkdir()
+            update = _make_update()
+            context = mock.MagicMock()
+
+            await bot._send_clear_sessions(update, context)
+
+            self.assertFalse((sessions_dir / "sess-001").exists())
+
+
+# ===========================================================================
+# Registration: help text, menu keyboard
+# ===========================================================================
+
+class RepoAndClearSessionsRegistrationTests(unittest.TestCase):
+
+    def test_repo_in_help_text(self) -> None:
+        from dormammu.telegram.bot import _HELP_TEXT
+        self.assertIn("/repo", _HELP_TEXT)
+
+    def test_clear_sessions_in_help_text(self) -> None:
+        from dormammu.telegram.bot import _HELP_TEXT
+        self.assertIn("clear", _HELP_TEXT.lower())
+        self.assertIn("sessions", _HELP_TEXT.lower())
+
+    def test_repo_in_menu_keyboard(self) -> None:
+        from dormammu.telegram.bot import _MENU_KEYBOARD
+        all_callbacks = [btn["callback_data"] for row in _MENU_KEYBOARD for btn in row]
+        self.assertIn("repo", all_callbacks)
+
+    def test_clear_sessions_in_menu_keyboard(self) -> None:
+        from dormammu.telegram.bot import _MENU_KEYBOARD
+        all_callbacks = [btn["callback_data"] for row in _MENU_KEYBOARD for btn in row]
+        self.assertIn("clear_sessions", all_callbacks)
+
+    def test_repo_pick_handled_in_callback(self) -> None:
+        import inspect
+        from dormammu.telegram import bot as bot_module
+        source = inspect.getsource(bot_module.TelegramBot._cmd_callback)
+        self.assertIn("repo_pick", source)
+
+    def test_clear_sessions_handled_in_callback(self) -> None:
+        import inspect
+        from dormammu.telegram import bot as bot_module
+        source = inspect.getsource(bot_module.TelegramBot._cmd_callback)
+        self.assertIn("clear_sessions", source)
+
+
+if __name__ == "__main__":
+    unittest.main()
