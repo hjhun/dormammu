@@ -13,6 +13,14 @@ from typing import TYPE_CHECKING, Any
 
 _log = logging.getLogger(__name__)
 
+
+def _md(text: str) -> str:
+    """Escape special characters for Telegram MarkdownV1."""
+    for ch in ("_", "*", "`", "["):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 if TYPE_CHECKING:
     from dormammu.config import AppConfig
     from dormammu.daemon.models import DaemonConfig
@@ -495,7 +503,7 @@ class TelegramBot:
         streaming_id = self._stream.streaming_chat_id
         lines = ["📊 *dormammu daemon status*"]
         if in_progress:
-            lines.append("▶️ Active: " + ", ".join(p.name for p in in_progress))
+            lines.append("▶️ Active: " + ", ".join(_md(p.name) for p in in_progress))
         else:
             lines.append("💤 Active: idle")
         from dormammu.daemon.queue import is_prompt_candidate
@@ -511,7 +519,7 @@ class TelegramBot:
             )
         lines.append(f"📋 Queued: {pending_count}")
         lines.append(f"📡 Streaming: {'on (chat ' + str(streaming_id) + ')' if streaming_id else 'off'}")
-        lines.append(f"📁 Repo: `{self._app_config.repo_root}`")
+        lines.append(f"📁 Repo: `{_md(str(self._app_config.repo_root))}`")
         await self._reply(update, "\n".join(lines))
 
     async def _cmd_run(self, update: Any, context: Any) -> None:
@@ -650,7 +658,7 @@ class TelegramBot:
         max_chars = 3800
         if len(content) > max_chars:
             content = content[:max_chars] + "\n…(truncated)"
-        await self._reply(update, f"*{result_path.name}*\n\n{content}")
+        await self._reply(update, f"📄 {result_path.name}\n\n{content}", parse_mode=None)
 
     async def _cmd_history(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
@@ -912,7 +920,7 @@ class TelegramBot:
         if not in_progress:
             await self._reply(update, "🛑 No active prompt to stop.")
             return
-        names = ", ".join(p.name for p in in_progress)
+        names = ", ".join(_md(p.name) for p in in_progress)
         await self._reply(update, f"🛑 Sending interrupt to active prompt: {names}")
         os.kill(os.getpid(), signal.SIGINT)
 
