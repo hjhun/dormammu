@@ -414,6 +414,24 @@ class TestGoalsSchedulerMultiAgentRegression:
         assert "## Plan" in content
         assert "## Design" in content
 
+    def test_queued_prompt_contains_english_language_requirement(
+        self, tmp_path: Path
+    ) -> None:
+        sched, goals_dir, prompt_path = _make_scheduler(tmp_path, agents_cfg=_agents())
+        (goals_dir / "feature.md").write_text("목표: 시스템 개선", encoding="utf-8")
+
+        with patch("subprocess.run", side_effect=[_ok(_CLAUDE_PLAN), _ok(_CODEX_DESIGN)]):
+            with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
+                mock_dt.now.return_value.strftime.return_value = "20260412"
+                mock_dt.now.return_value.timezone = None
+                sched._process_goals()
+
+        content = list(prompt_path.glob("*.md"))[0].read_text(encoding="utf-8")
+        assert "Language requirement" in content
+        assert "English" in content
+        # Notice must precede the Goal section
+        assert content.index("Language requirement") < content.index("# Goal")
+
     def test_planner_role_document_written_with_claude_output(
         self, tmp_path: Path
     ) -> None:

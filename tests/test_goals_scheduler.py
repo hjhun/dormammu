@@ -116,7 +116,18 @@ class TestGoalFileListing:
 class TestBuildPrompt:
     def test_goal_only(self) -> None:
         result = GoalsScheduler._build_prompt("do something", None, None)
-        assert result == "# Goal\n\ndo something"
+        assert "# Goal" in result
+        assert "do something" in result
+
+    def test_language_notice_always_present(self) -> None:
+        for plan, design in [(None, None), ("p", None), ("p", "d")]:
+            result = GoalsScheduler._build_prompt("goal", plan, design)
+            assert "Language requirement" in result
+            assert "English" in result
+
+    def test_language_notice_appears_before_goal(self) -> None:
+        result = GoalsScheduler._build_prompt("goal text", None, None)
+        assert result.index("Language requirement") < result.index("# Goal")
 
     def test_with_plan(self) -> None:
         result = GoalsScheduler._build_prompt("goal", "plan text", None)

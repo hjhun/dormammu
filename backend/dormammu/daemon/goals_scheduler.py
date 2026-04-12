@@ -276,7 +276,8 @@ class GoalsScheduler:
             "3. Acceptance criteria\n"
             "4. Risk assessment\n\n"
             f"# Goal\n\n{goal_text.strip()}\n\n"
-            "Output your plan in Markdown."
+            "Output your plan in Markdown. "
+            "Write all content in English regardless of the language of the goal above."
         )
 
     def _architect_prompt(self, goal_text: str, plan_text: str) -> str:
@@ -290,7 +291,8 @@ class GoalsScheduler:
             "4. Test strategy (unit, integration, system)\n\n"
             f"# Original Goal\n\n{goal_text.strip()}\n\n"
             f"# Plan\n\n{plan_text.strip()}\n\n"
-            "Output your design in Markdown."
+            "Output your design in Markdown. "
+            "Write all content in English regardless of the language of the goal above."
         )
 
     def _call_role_agent(
@@ -399,7 +401,11 @@ class GoalsScheduler:
         plan_text: str | None,
         design_text: str | None,
     ) -> str:
-        sections: list[str] = [f"# Goal\n\n{goal_text.strip()}"]
+        language_notice = (
+            "> **Language requirement:** All responses, code comments, "
+            "documentation, and deliverables must be written in English."
+        )
+        sections: list[str] = [language_notice, f"# Goal\n\n{goal_text.strip()}"]
         if plan_text:
             sections.append(f"## Plan\n\n{plan_text.strip()}")
         if design_text:
