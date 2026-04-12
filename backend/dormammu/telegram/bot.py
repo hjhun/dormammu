@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import signal
@@ -60,7 +61,18 @@ class TelegramBot:
     are persisted to ``<base_dev_dir>/telegram_known_chats.json`` so that
     startup broadcast messages can reach users even when ``allowed_chat_ids``
     is not configured.
+
+    Outgoing progress messages are funnelled through an asyncio queue drained
+    by ``_drain_send_queue`` at a maximum of ~20 messages/second (50 ms
+    interval).  This keeps the bot's event loop responsive to incoming commands
+    even during heavy log streaming, and stays safely under Telegram's 30 msg/s
+    per-bot API limit.
     """
+
+    # Minimum delay between consecutive outgoing sends (50 ms ≈ 20 msg/s).
+    _SEND_INTERVAL_S: float = 0.05
+    # Maximum queued outgoing messages; older items are dropped if exceeded.
+    _SEND_QUEUE_MAXSIZE: int = 200
 
     def __init__(
         self,
@@ -84,6 +96,11 @@ class TelegramBot:
         self._known_chats: set[int] = self._load_known_chats()
         self._known_chats_lock = threading.Lock()
         self._startup_error: BaseException | None = None
+        # Outgoing message queue — drained by _drain_send_queue at a controlled
+        # rate so that heavy progress streaming cannot saturate the Telegram Bot
+        # API (30 msg/s limit) and delay incoming command responses.
+        self._send_queue: asyncio.Queue[tuple[int, str]] | None = None
+        self._send_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Known-chat registry (persisted to disk)
@@ -166,16 +183,59 @@ class TelegramBot:
                 pass
 
     def _send_message_sync(self, chat_id: int, text: str) -> None:
-        """Thread-safe: schedule a Telegram message send from any thread."""
-        if self._loop is None or self._app is None:
+        """Thread-safe: enqueue a Telegram message from any thread.
+
+        The message is placed into ``_send_queue`` via
+        ``loop.call_soon_threadsafe`` so that the asyncio event loop drains it
+        at a controlled rate (``_SEND_INTERVAL_S``).  This prevents heavy
+        progress streaming from flooding the API or starving incoming command
+        handlers.
+        """
+        if self._loop is None or self._send_queue is None:
             return
         try:
-            asyncio.run_coroutine_threadsafe(
-                self._app.bot.send_message(chat_id=chat_id, text=text),
-                self._loop,
-            )
+            self._loop.call_soon_threadsafe(self._put_to_send_queue, chat_id, text)
         except Exception:
             pass
+
+    def _put_to_send_queue(self, chat_id: int, text: str) -> None:
+        """Called from within the event loop (via call_soon_threadsafe).
+
+        Drops the message silently if the queue is full so that a burst of
+        progress output cannot cause unbounded memory growth.
+        """
+        if self._send_queue is None:
+            return
+        try:
+            self._send_queue.put_nowait((chat_id, text))
+        except asyncio.QueueFull:
+            pass  # shed load rather than block
+
+    async def _drain_send_queue(self) -> None:
+        """Background asyncio task: send queued messages at a controlled rate.
+
+        Yielding ``asyncio.sleep(_SEND_INTERVAL_S)`` after every send lets the
+        event loop process incoming Telegram updates (e.g. /status, /stop)
+        between outgoing messages, keeping the bot responsive during long runs.
+        """
+        assert self._send_queue is not None
+        while True:
+            try:
+                chat_id, text = await self._send_queue.get()
+            except asyncio.CancelledError:
+                break
+            try:
+                if self._app is not None:
+                    await self._app.bot.send_message(chat_id=chat_id, text=text)
+            except Exception:
+                pass
+            finally:
+                self._send_queue.task_done()
+            # Yield control so incoming command handlers can run between sends.
+            try:
+                await asyncio.sleep(self._SEND_INTERVAL_S)
+            except asyncio.CancelledError:
+                break
 
     def _run(self) -> None:
         self._loop = asyncio.new_event_loop()
@@ -239,12 +299,22 @@ class TelegramBot:
             ])
             await self._app.start()
             await self._app.updater.start_polling(drop_pending_updates=True)
+            # Start the rate-limited outgoing message drainer before signalling
+            # readiness so that _send_message_sync can be called immediately.
+            self._send_queue = asyncio.Queue(maxsize=self._SEND_QUEUE_MAXSIZE)
+            self._send_task = asyncio.create_task(
+                self._drain_send_queue(), name="dormammu-telegram-sender"
+            )
             self._ready.set()  # signal successful startup
             try:
                 await asyncio.Event().wait()
             except (asyncio.CancelledError, KeyboardInterrupt):
                 pass
             finally:
+                if self._send_task is not None:
+                    self._send_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await self._send_task
                 await self._app.updater.stop()
                 await self._app.stop()
 
