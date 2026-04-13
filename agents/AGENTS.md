@@ -93,6 +93,19 @@ Use these skill names:
 - `committing-agent`
 - `supervising-agent`
 
+## Pipeline Stage Protocol
+
+At the start of every pipeline stage (tester, reviewer, committer, evaluator),
+the agent must:
+
+1. Read `.dev/DASHBOARD.md` and output its full content.
+2. Read `.dev/PLAN.md` and output its full content.
+3. Then proceed with the stage task.
+
+This makes the current workflow state visible in each stage's stored output
+document, so operators can track progress across the full pipeline without
+inspecting state files separately.
+
 ## Notes
 
 - Keep workflow paths and skill paths relative to `agents/`.

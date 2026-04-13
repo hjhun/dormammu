@@ -97,6 +97,18 @@ For each role, the CLI is resolved in this order:
 1. `agents.<role>.cli` in `dormammu.json`
 2. `active_agent_cli` (global fallback)
 
+### Pipeline Stage Protocol
+
+At the start of every pipeline stage, the agent must:
+
+1. Read `.dev/DASHBOARD.md` and output its full content.
+2. Read `.dev/PLAN.md` and output its full content.
+3. Then proceed with the stage task.
+
+This makes the current workflow state visible in each stage's output and
+stored document, so operators can observe progress through the pipeline without
+inspecting state files separately.
+
 ### Goals automation
 
 When `goals` is configured in `daemonize.json`, `GoalsScheduler` runs as a
