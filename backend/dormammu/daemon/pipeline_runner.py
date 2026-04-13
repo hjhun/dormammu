@@ -184,6 +184,7 @@ class PipelineRunner:
     # ------------------------------------------------------------------
 
     def _run_developer(self, prompt_text: str, *, stem: str) -> LoopRunResult:
+        self._emit_dashboard("developer")
         self._log("pipeline: developer stage starting")
         dev_cfg = self._agents.for_role("developer")
         active_cli = self._app_config.active_agent_cli
@@ -229,6 +230,7 @@ class PipelineRunner:
         if cli is None:
             return None
 
+        self._emit_dashboard("tester")
         self._log("pipeline: tester stage starting")
         prompt = self._tester_prompt(goal_text, stem=stem, date_str=date_str)
         output = self._call_once(
@@ -264,6 +266,7 @@ class PipelineRunner:
         if cli is None:
             return None
 
+        self._emit_dashboard("reviewer")
         self._log("pipeline: reviewer stage starting")
         design_text = self._read_architect_doc(stem, date_str)
         prompt = self._reviewer_prompt(goal_text, design_text, stem=stem, date_str=date_str)
@@ -293,6 +296,7 @@ class PipelineRunner:
             self._log("pipeline: committer has no CLI — skipping commit")
             return
 
+        self._emit_dashboard("committer")
         self._log("pipeline: committer stage starting")
         prompt = self._committer_prompt(stem)
         self._call_once(
@@ -347,6 +351,7 @@ class PipelineRunner:
         # Extract the original goal text (strip the metadata comment if present).
         goal_text = _strip_goal_source_tag(prompt_text)
 
+        self._emit_dashboard("evaluator")
         self._log("pipeline: evaluator stage starting")
         request = EvaluatorRequest(
             cli=cli,
@@ -530,6 +535,20 @@ class PipelineRunner:
             f"# Feedback from {source}\n\n"
             f"{feedback_text.strip()}"
         )
+
+    def _emit_dashboard(self, stage: str) -> None:
+        """Print the current DASHBOARD.md to stdout, prefixed with the stage name."""
+        dashboard_path = self._app_config.base_dev_dir / "DASHBOARD.md"
+        separator = "=" * 60
+        print(separator, flush=True)
+        print(f"=== DASHBOARD [{stage}] ===", flush=True)
+        print(separator, flush=True)
+        if dashboard_path.exists():
+            content = dashboard_path.read_text(encoding="utf-8").rstrip()
+            print(content if content else "(empty)", flush=True)
+        else:
+            print(f"(DASHBOARD.md not found at {dashboard_path})", flush=True)
+        print(separator, flush=True)
 
     def _log(self, message: str) -> None:
         print(message, file=self._progress_stream)
