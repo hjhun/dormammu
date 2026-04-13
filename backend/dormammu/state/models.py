@@ -192,7 +192,6 @@ class DashboardTemplateContext:
     notes: Sequence[str]
     active_roadmap_focus: Sequence[str]
     risks_and_watchpoints: Sequence[str]
-    current_workflow_tasks: Sequence[str]
 
     def render_values(self) -> dict[str, str]:
         return {
@@ -207,7 +206,6 @@ class DashboardTemplateContext:
             "notes": _bullet_lines(self.notes),
             "active_roadmap_focus": _bullet_lines(self.active_roadmap_focus),
             "risks_and_watchpoints": _bullet_lines(self.risks_and_watchpoints),
-            "current_workflow_tasks": "\n".join(self.current_workflow_tasks),
         }
 
 
@@ -313,15 +311,6 @@ def default_dashboard_context(
             "Do not overwrite existing operator-authored Markdown.",
             "Keep JSON merges additive so interrupted runs stay resumable.",
             "Keep session-scoped state isolated when multiple workflows run in parallel.",
-        ],
-        current_workflow_tasks=[
-            "- [ ] Plan",
-            "- [ ] Design",
-            "- [ ] Develop",
-            "- [ ] Test Author",
-            "- [ ] Test & Review",
-            "- [ ] Final Verify",
-            "- [ ] Commit",
         ],
     )
 
