@@ -16,7 +16,6 @@
 
 <p align="center">
   <a href="docs/GUIDE.md">Full Guide</a> ·
-  <a href="docs/ko/GUIDE.md">한국어 가이드</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#quick-start">Quick Start</a>
 </p>
@@ -73,38 +72,63 @@ Any other CLI can be used with `--extra-arg` pass-through.
 
 ## Architecture Overview
 
-```
-dormammu run / daemonize
-        │
-        ▼
-  ┌─────────────────────────────────────────────┐
-  │               Supervisor Loop               │
-  │                                             │
-  │  ┌──────────┐   ┌──────────┐  ┌─────────┐  │
-  │  │  Agent   │──▶│Validator │─▶│Continua-│  │
-  │  │  CLI     │   │(required │  │tion Gen │  │
-  │  │ Adapter  │   │ paths,   │  │         │  │
-  │  └──────────┘   │ worktree │  └────┬────┘  │
-  │                 │ changes) │       │retry  │
-  │                 └──────────┘       ▼       │
-  │                              ┌──────────┐  │
-  │                              │ .dev/ state│ │
-  │                              │ DASHBOARD │  │
-  │                              │ PLAN.md   │  │
-  │                              │ logs/     │  │
-  │                              └──────────┘  │
-  └─────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    User([User]) --> cmd["dormammu run / daemonize"]
+    cmd --> loop[Supervisor Loop]
+    loop --> adapter[CLI Adapter]
+    adapter --> agent["Agent CLI\ncodex · claude · gemini · cline · aider"]
+    agent --> validator["Supervisor Validator\nrequired paths · worktree changes · output"]
+    validator -- pass --> done([Done])
+    validator -- fail --> cont[Continuation Context Generator]
+    cont --> state[".dev/ State\nDASHBOARD · PLAN · logs"]
+    state --> adapter
 ```
 
-For `daemonize` with role-based pipeline enabled:
+When `daemonize` is used with a role-based pipeline:
 
+```mermaid
+flowchart LR
+    goal([Goal File]) --> dev[Developer]
+    dev --> tester[Tester]
+    tester -- "OVERALL: FAIL" --> dev
+    tester -- "OVERALL: PASS" --> reviewer[Reviewer]
+    reviewer -- "VERDICT: NEEDS_WORK" --> dev
+    reviewer -- "VERDICT: APPROVED" --> committer[Committer]
+    committer --> done([Done])
 ```
-goal file ──▶ developer ──▶ tester ──▶ reviewer ──▶ committer
-                  ▲              │           │
-                  └──── FAIL ────┘           │
-                  ▲                          │
-                  └──────── NEEDS_WORK ──────┘
+
+## Workflow Pipeline
+
+DORMAMMU ships a bundled guidance framework (`agents/`) that routes multi-phase
+work through specialized agent roles. The Supervising Agent controls all phase
+transitions.
+
+```mermaid
+flowchart TD
+    Start([New Scope]) --> plan[Planning Agent]
+    plan --> design[Designing Agent]
+    design --> develop[Developing Agent]
+    design --> testauth[Test Authoring Agent]
+    develop --> build[Building & Deploying Agent]
+    testauth --> build
+    build --> review[Testing & Reviewing Agent]
+    review -- "fail / needs rework" --> develop
+    review -- pass --> finalverify[Final Verification\nSupervising Agent]
+    finalverify -- fail --> develop
+    finalverify -- pass --> commit[Committing Agent]
+    commit --> Done([Done])
+
+    supervisor[Supervising Agent] -. orchestrates .-> plan
+    supervisor -. orchestrates .-> design
+    supervisor -. orchestrates .-> develop
+    supervisor -. orchestrates .-> testauth
+    supervisor -. orchestrates .-> build
+    supervisor -. orchestrates .-> review
+    supervisor -. orchestrates .-> commit
 ```
+
+See [docs/GUIDE.md](docs/GUIDE.md) for a full description of each agent role.
 
 ## Installation
 
@@ -174,25 +198,69 @@ dormammu resume --repo-root .
 dormammu daemonize --repo-root . --config daemonize.json
 ```
 
-See [daemonize.json.example](daemonize.json.example) for a starting config.
+See [config/daemonize.json.example](config/daemonize.json.example) for a starting config.
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `doctor` | Verify environment — Python, CLI path, repo writability, workspace structure |
-| `init-state` | Bootstrap or refresh `.dev/` state for a repository |
-| `run-once` | One bounded agent call with artifact capture, no retry loop |
-| `run` | Full supervised retry loop with validation and continuation |
-| `resume` | Continue a previous `run` from saved loop state |
-| `daemonize` | Long-running daemon that processes a prompt queue |
-| `inspect-cli` | Show resolved CLI adapter details — prompt mode, flags, preset match |
-| `show-config` | Print the resolved runtime config and its source path |
-| `start-session` | Begin a new named session under `.dev/` |
-| `sessions` | List saved session snapshots |
-| `restore-session` | Restore an older session into the active `.dev/` view |
+### All Commands
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `doctor` | — | Verify environment — Python version, CLI path, repo writability, workspace structure |
+| `init-state` | — | Bootstrap or refresh `.dev/` state for a repository |
+| `show-config` | — | Print the resolved runtime config and its source path |
+| `set-config` | — | Set or modify a config value in `dormammu.json` or `~/.dormammu/config` |
+| `inspect-cli` | — | Show resolved CLI adapter details — prompt mode, flags, preset match |
+| `run-once` | — | One bounded agent call with artifact capture, no retry loop |
+| `run` | `run-loop` | Full supervised retry loop with validation and continuation |
+| `resume` | `resume-loop` | Continue a previous `run` from saved loop state |
+| `daemonize` | — | Long-running daemon that watches a prompt directory and processes a queue |
+| `start-session` | — | Archive the current session and begin a new named session |
+| `sessions` | — | List all saved session snapshots |
+| `restore-session` | — | Restore an older session into the active `.dev/` view |
 
 Full reference: `dormammu --help` or `dormammu <command> --help`.
+
+### `run` Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--repo-root` | `.` | Repository root directory |
+| `--agent-cli` | from config | Agent CLI to use (overrides `active_agent_cli`) |
+| `--prompt` | — | Inline prompt text (mutually exclusive with `--prompt-file`) |
+| `--prompt-file` | — | Path to a prompt file (mutually exclusive with `--prompt`) |
+| `--input-mode` | `auto` | How the prompt is passed: `auto` `file` `arg` `stdin` `positional` |
+| `--max-iterations` | `50` | Total attempt budget (`-1` for infinite) |
+| `--max-retries` | — | Retry budget (alternative to `--max-iterations`) |
+| `--required-path` | — | File that must exist after the run (repeatable) |
+| `--require-worktree-changes` | off | Fail validation if the worktree has no changes |
+| `--workdir` | — | Working directory for the agent process |
+| `--guidance-file` | — | Additional guidance files to embed in the prompt (repeatable) |
+| `--extra-arg` | — | Pass-through flags to the agent CLI (repeatable) |
+| `--run-label` | — | Human-readable label for this run (appears in logs) |
+| `--session-id` | — | Attach run to a specific session |
+| `--prompt-flag` | — | Override the flag used to pass the prompt to the CLI |
+| `--debug` | off | Write `DORMAMMU.log` at the repository root |
+
+### `set-config` Options
+
+| Option | Description |
+|--------|-------------|
+| `key` | Config key to set (e.g. `active_agent_cli`) |
+| `value` | Value to assign |
+| `--add` | Append value to a list field |
+| `--remove` | Remove value from a list field |
+| `--unset` | Remove the key entirely |
+| `--global` | Write to `~/.dormammu/config` instead of project-level `dormammu.json` |
+
+### `daemonize` Options
+
+| Option | Description |
+|--------|-------------|
+| `--repo-root` | Repository root directory |
+| `--config` | Path to the daemon queue config file (`daemonize.json`) |
+| `--guidance-file` | Additional guidance files (repeatable) |
+| `--debug` | Write per-prompt progress logs under `result_path/../progress/` |
 
 ## Configuration
 
@@ -244,12 +312,14 @@ Separate from `dormammu.json`. Controls prompt watching and queue behavior.
 }
 ```
 
-Example files for different queue presets are included:
+Example configs under `config/`:
 
-- [`daemonize.json.example`](daemonize.json.example) — default mixed `.md`/`.txt` watcher
-- [`daemonize.named-skill.example.json`](daemonize.named-skill.example.json) — Markdown-only queue
-- [`daemonize.mixed-skill-resolution.example.json`](daemonize.mixed-skill-resolution.example.json) — with file settle delay for editors that write in multiple passes
-- [`daemonize.phase-specific-clis.example.json`](daemonize.phase-specific-clis.example.json) — shorter polling interval
+| File | Use when |
+|------|----------|
+| `daemonize.json.example` | Default — mixed `.md` and `.txt` prompt queue |
+| `daemonize.named-skill.example.json` | Markdown-only queue |
+| `daemonize.mixed-skill-resolution.example.json` | Editor writes files in multiple passes; add settle delay |
+| `daemonize.phase-specific-clis.example.json` | Shorter polling interval for faster scan cadence |
 
 ## What Gets Written
 
@@ -312,6 +382,7 @@ DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json \
 backend/     Python package — loop engine, CLI adapters, state, supervisor, daemon
 agents/      Distributable workflow and skill guidance bundle
 templates/   Bootstrap templates for .dev/ state files
+config/      Example configuration files
 docs/        User and operator documentation
 scripts/     Install and developer convenience scripts
 tests/       Runtime, adapter, and workflow validation
