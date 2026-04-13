@@ -244,7 +244,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
 
 
 def _handle_run_loop(args: argparse.Namespace) -> int:
-    config = _load_config(args.repo_root)
+    config = _load_config(args.repo_root, discover=args.repo_root is not None)
     config = _with_guidance_overrides(config, args.guidance_files)
     prompt_text, prompt_source_path = _read_prompt_input(args)
     with _project_log_capture(config.repo_root, "run", enabled=args.debug):
@@ -407,7 +407,7 @@ def _handle_doctor(args: argparse.Namespace) -> int:
 
 
 def _handle_daemonize(args: argparse.Namespace) -> int:
-    config = _with_guidance_overrides(_load_config(args.repo_root), args.guidance_files)
+    config = _with_guidance_overrides(_load_config(args.repo_root, discover=args.repo_root is not None), args.guidance_files)
     try:
         daemon_config = load_daemon_config(args.config, app_config=config)
     except (RuntimeError, ValueError, OSError) as exc:

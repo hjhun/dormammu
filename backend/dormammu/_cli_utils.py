@@ -65,8 +65,8 @@ def _project_log_capture(repo_root: Path, command_name: str, *, enabled: bool) -
 # Config and state helpers
 # ---------------------------------------------------------------------------
 
-def _load_config(repo_root: Path | None) -> AppConfig:
-    return AppConfig.load(repo_root=repo_root)
+def _load_config(repo_root: Path | None, *, discover: bool = True) -> AppConfig:
+    return AppConfig.load(repo_root=repo_root, discover=discover)
 
 
 def _with_guidance_overrides(config: AppConfig, guidance_files: Sequence[Path] | None) -> AppConfig:

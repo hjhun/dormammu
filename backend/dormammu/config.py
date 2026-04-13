@@ -486,9 +486,10 @@ class AppConfig:
         *,
         env: Mapping[str, str] | None = None,
         repo_root: Path | None = None,
+        discover: bool = True,
     ) -> "AppConfig":
         values = env or os.environ
-        root = discover_repo_root(repo_root)
+        root = discover_repo_root(repo_root) if discover else (repo_root or Path.cwd()).resolve()
         asset_root = _discover_asset_root(root, values)
         agents_dir = _discover_agents_dir(root, values, asset_root)
         base_dev_dir = root / ".dev"
