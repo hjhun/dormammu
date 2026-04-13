@@ -50,10 +50,10 @@ flowchart TD
     you([You]) --> cmd["dormammu run"]
     cmd --> adapter[CLI Adapter]
     adapter --> agent["Agent CLI"]
-    agent --> validator["Supervisor Validator\nrequired paths · worktree · output"]
+    agent --> validator["Supervisor Validator<br/>required paths · worktree · output"]
     validator -- pass --> done([Done])
     validator -- fail --> cont[Continuation Context Generator]
-    cont --> state[".dev/ State\nDASHBOARD · PLAN · logs"]
+    cont --> state[".dev/ State<br/>DASHBOARD · PLAN · logs"]
     state --> adapter
 ```
 
@@ -586,22 +586,22 @@ active and when to advance.
 
 ```mermaid
 flowchart TD
-    Start([New Scope]) --> wf1["Workflow 1\nPlanning & Design"]
+    Start([New Scope]) --> wf1["Workflow 1<br/>Planning & Design"]
     wf1 --> plan[Planning Agent]
     plan --> design[Designing Agent]
 
-    design --> wf2["Workflow 2\nDevelop & Test Authoring"]
+    design --> wf2["Workflow 2<br/>Develop & Test Authoring"]
     wf2 --> develop[Developing Agent]
     wf2 --> testauth[Test Authoring Agent]
 
-    develop --> wf3["Workflow 3\nBuild, Deploy & Review"]
+    develop --> wf3["Workflow 3<br/>Build, Deploy & Review"]
     testauth --> wf3
     wf3 --> build[Building & Deploying Agent]
     build --> review[Testing & Reviewing Agent]
     review -- "fail / needs rework" --> develop
 
-    review -- pass --> wf4["Workflow 4\nCleanup & Commit"]
-    wf4 --> finalverify[Final Verification\nSupervising Agent]
+    review -- pass --> wf4["Workflow 4<br/>Cleanup & Commit"]
+    wf4 --> finalverify["Final Verification<br/>Supervising Agent"]
     finalverify -- fail --> develop
     finalverify -- pass --> commit[Committing Agent]
     commit --> Done([Done])

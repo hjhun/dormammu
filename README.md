@@ -77,11 +77,11 @@ flowchart TD
     User([User]) --> cmd["dormammu run / daemonize"]
     cmd --> loop[Supervisor Loop]
     loop --> adapter[CLI Adapter]
-    adapter --> agent["Agent CLI\ncodex · claude · gemini · cline · aider"]
-    agent --> validator["Supervisor Validator\nrequired paths · worktree changes · output"]
+    adapter --> agent["Agent CLI<br/>codex · claude · gemini · cline · aider"]
+    agent --> validator["Supervisor Validator<br/>required paths · worktree changes · output"]
     validator -- pass --> done([Done])
     validator -- fail --> cont[Continuation Context Generator]
-    cont --> state[".dev/ State\nDASHBOARD · PLAN · logs"]
+    cont --> state[".dev/ State<br/>DASHBOARD · PLAN · logs"]
     state --> adapter
 ```
 
@@ -114,7 +114,7 @@ flowchart TD
     testauth --> build
     build --> review[Testing & Reviewing Agent]
     review -- "fail / needs rework" --> develop
-    review -- pass --> finalverify[Final Verification\nSupervising Agent]
+    review -- pass --> finalverify["Final Verification<br/>Supervising Agent"]
     finalverify -- fail --> develop
     finalverify -- pass --> commit[Committing Agent]
     commit --> Done([Done])

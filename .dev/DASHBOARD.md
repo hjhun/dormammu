@@ -2,13 +2,15 @@
 
 ## Actual Progress
 
-- Goal: Daemonize Goals automation + planner/architect/developer/tester/reviewer/committer
-  role-based pipeline
+- Goal: Fix broken line breaks in DORMAMMU Mermaid UML diagrams
+- Prompt-driven scope: Replace escaped Mermaid label newlines in public docs
+  and lock the behavior with a regression test
 - Active roadmap focus: Phase 7. Hardening, Multi-Session, and Productization
 - Current workflow phase: complete
-- Last completed workflow phase: final verify (515/515 tests pass)
+- Last completed workflow phase: test and review
 - Supervisor verdict: `approved`
-- Resume point: ready for commit
+- Escalation status: `approved`
+- Resume point: ready for commit preparation if requested
 
 ## Workflow Phases
 
@@ -24,16 +26,20 @@ flowchart LR
     final_verify -->|rework| develop
 ```
 
-## Completed
+## In Progress
 
-All 6 implementation phases done:
+Public Mermaid UML labels now use `<br/>` instead of escaped `\n`, so
+multi-line node labels render correctly in Markdown viewers that support
+Mermaid.
 
-1. Config models — `role_config.py`, `goals_config.py`, `AppConfig.agents`, `DaemonConfig.goals`
-2. GoalsScheduler — background daemon thread, timer lifecycle, prompt generation
-3. PipelineRunner — developer→tester→reviewer→committer with MAX_STAGE_ITERATIONS=3 re-entry
-4. DaemonRunner integration — GoalsScheduler started/stopped, PipelineRunner used when agents configured
-5. Telegram goals commands — `/goals` list/add/delete with inline keyboard
-6. Tests (515 pass), example configs updated, AGENTS.md updated with pipeline docs
+## Progress Notes
+
+- Updated Mermaid diagrams in `README.md` and `docs/GUIDE.md`
+- Added `tests/test_mermaid_docs.py` to prevent escaped newline labels from
+  returning in Mermaid blocks
+- Targeted validation passed:
+  `python3 -m pytest tests/test_mermaid_docs.py -q`
+  `python3 -m pytest tests/test_ralph_improvements.py -q`
 
 ## Risks And Watchpoints
 
