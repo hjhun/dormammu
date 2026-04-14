@@ -1,26 +1,71 @@
 ---
 name: evaluating-agent
-description: Evaluates the outcome of a completed development cycle against the original goal and optionally generates the next goal. Runs automatically after the committer stage when triggered by the goals scheduler. Use when assessing goal achievement, producing evaluation reports, or scheduling the next development cycle.
+description: Evaluates implementation against requirements at mid-pipeline checkpoints and at the end of a completed development cycle. Use for mid-pipeline checks (verify implementation matches refined requirements before committing) and for final evaluation (assess goal achievement and optionally generate the next goal).
 ---
 
 # Evaluating Agent Skill
 
-Use this skill as the final stage of a goals-scheduler-driven pipeline run.
-It assesses whether the completed implementation achieved the original goal
-and decides what the next development cycle should address.
+Use this skill in two contexts:
 
-This skill only executes when the pipeline was triggered by the goals
-scheduler.  It never runs during manual `dormammu run` invocations.
+1. **Mid-pipeline check** — verifies that the current stage output matches the
+   refined requirements before the pipeline advances. Triggered by the
+   supervisor when the task complexity or risk warrants it (see
+   `.dev/WORKFLOWS.md` for the planned checkpoints).
+2. **Final evaluation** — assesses whether the completed implementation achieved
+   the original goal and optionally generates the next development cycle. Runs
+   after the committer stage, either automatically (goals-scheduler trigger) or
+   when the `WORKFLOWS.md` final step is reached.
 
 ## Inputs
 
 | Source | Content |
 |--------|---------|
 | Original goal text | Passed in the evaluator prompt |
+| `.dev/REQUIREMENTS.md` | Refined requirements from refining-agent (if present) |
 | `.dev/PLAN.md` | Completed task checklist |
+| `.dev/WORKFLOWS.md` | Planned stage sequence and checkpoint context |
 | `.dev/DASHBOARD.md` | Live progress and active phase |
 | `.dev/supervisor_report.md` | Latest supervisor verdict and checks |
 | `git log -3 --oneline --stat` | Recent commits and changed files |
+
+## Modes
+
+### Mid-Pipeline Check
+
+Used when the supervisor or `WORKFLOWS.MD` triggers an evaluator checkpoint
+before the commit stage. Focus narrowly on the current stage:
+
+1. Read `.dev/REQUIREMENTS.md` acceptance criteria.
+2. Inspect changed files and test results from the current stage.
+3. Determine whether the stage output satisfies the criteria needed to advance.
+4. Produce a short checkpoint report (see format below) and a `PROCEED` or
+   `REWORK` decision.
+
+Write checkpoint reports to `.dev/07-evaluator/check_<stage>_<date>.md`.
+
+#### Checkpoint Report Format
+
+```markdown
+# Evaluator Checkpoint — <stage name>
+
+**Date**: <ISO-8601 timestamp>
+**Stage**: <stage name>
+**Decision**: PROCEED | REWORK
+
+## Criteria Checked
+- [x] <criterion> — <evidence>
+- [ ] <criterion> — <gap or missing evidence>
+
+## Findings
+<Short summary of what was verified and what was not>
+
+DECISION: PROCEED | REWORK
+```
+
+If the decision is `REWORK`, the supervisor must route back to the appropriate
+earlier stage before the pipeline can advance.
+
+### Final Evaluation
 
 ## Evaluation Criteria
 
@@ -107,13 +152,15 @@ can process directly as a new goal file.  It should:
 
 | File | Purpose |
 |------|---------|
-| `.dev/07-evaluator/<date>_<stem>.md` | Full evaluation report |
+| `.dev/07-evaluator/check_<stage>_<date>.md` | Mid-pipeline checkpoint report |
+| `.dev/07-evaluator/<date>_<stem>.md` | Full final evaluation report |
 | Original goal file (when strategy is `auto`) | Overwritten with the next goal |
 
 ## Rules
 
 - Write all output in English regardless of the goal language.
 - Do not invent passing evidence; base verdicts only on confirmed facts.
+- In mid-pipeline mode, use `DECISION: PROCEED | REWORK` not `VERDICT:`.
 - Keep the `VERDICT:` line as the last non-empty line before any next-goal block.
 - When `next_goal_strategy` is `auto` and the goal was fully achieved with no
   obvious continuation, it is acceptable to output an empty next-goal block —
@@ -123,7 +170,14 @@ can process directly as a new goal file.  It should:
 
 ## Done Criteria
 
-This skill is complete when:
+**Mid-pipeline check** — complete when:
+
+1. The checkpoint report is written to
+   `.dev/07-evaluator/check_<stage>_<date>.md`.
+2. The `DECISION:` line is present as the last non-empty line.
+3. The supervisor has received a clear `PROCEED` or `REWORK` signal.
+
+**Final evaluation** — complete when:
 
 1. The evaluation report is written to `.dev/07-evaluator/<date>_<stem>.md`.
 2. The `VERDICT:` line is present as the last non-empty line of the report.

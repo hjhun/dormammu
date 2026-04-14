@@ -2,15 +2,30 @@
 
 Pipeline stages
 ---------------
-developer → tester (loop back to developer on FAIL) →
-reviewer  (loop back to developer on NEEDS_WORK)  →
-committer
+refiner   (optional, one-shot) →
+planner   (optional, one-shot) →
+developer (supervised LoopRunner) →
+tester    (one-shot, loops back to developer on FAIL) →
+reviewer  (one-shot, loops back to developer on NEEDS_WORK) →
+committer (one-shot) →
+evaluator (one-shot, goals-scheduler context only)
 
 Each stage writes a document to ``.dev/<slot>-<role>/<date>_<stem>.md``.
-The developer stage reuses the existing :class:`LoopRunner` so the full
-supervisor loop is preserved.  The tester, reviewer, and committer stages
-are one-shot agent calls: the agent runs once, produces a report/action,
-and the pipeline interprets the result.
+
+Refiner
+-------
+Converts the raw goal into a structured ``.dev/REQUIREMENTS.md``.  Skipped
+when ``agents.refiner`` has no resolvable CLI.
+
+Planner
+-------
+Reads ``.dev/REQUIREMENTS.md`` (if present) and generates the adaptive
+``.dev/WORKFLOWS.md`` stage sequence plus updates ``.dev/PLAN.md`` and
+``.dev/DASHBOARD.md``.  Skipped when ``agents.planner`` has no resolvable CLI.
+
+Developer
+---------
+Reuses :class:`LoopRunner` so the full supervisor retry loop is preserved.
 
 Re-entry limits
 ---------------
@@ -103,6 +118,12 @@ class PipelineRunner:
         dev_prompt = prompt_text
         loop_result: LoopRunResult | None = None
 
+        # ---- refiner (optional) ---------------------------------------------
+        self._run_refiner(prompt_text, stem=stem, date_str=date_str)
+
+        # ---- planner (optional) ---------------------------------------------
+        self._run_planner(prompt_text, stem=stem, date_str=date_str)
+
         # ---- developer → tester loop ----------------------------------------
         for tester_iter in range(MAX_STAGE_ITERATIONS):
             loop_result = self._run_developer(dev_prompt, stem=stem)
@@ -178,6 +199,88 @@ class PipelineRunner:
 
         assert loop_result is not None
         return loop_result
+
+    # ------------------------------------------------------------------
+    # Refiner stage (one-shot, optional)
+    # ------------------------------------------------------------------
+
+    def _run_refiner(
+        self, goal_text: str, *, stem: str, date_str: str
+    ) -> str | None:
+        """Run the refiner agent once.
+
+        Produces ``.dev/REQUIREMENTS.md`` and saves the output document to
+        ``.dev/00-refiner/<date>_<stem>.md``.
+
+        Returns the agent output string, or ``None`` if the refiner role has
+        no resolvable CLI (stage is skipped).
+        """
+        refiner_cfg = self._agents.for_role("refiner")
+        # Refiner is opt-in: only run when agents.refiner.cli is explicitly set.
+        # Do NOT fall back to active_agent_cli so that existing single-agent
+        # setups are unaffected.
+        cli = refiner_cfg.cli
+        if cli is None:
+            self._log("pipeline: refiner has no explicit CLI — skipping refine stage")
+            return None
+
+        self._log("pipeline: refiner stage starting")
+        prompt = self._refiner_prompt(goal_text, stem=stem, date_str=date_str)
+        output = self._call_once(
+            role="refiner",
+            cli=cli,
+            model=refiner_cfg.model,
+            prompt=prompt,
+            stem=stem,
+            date_str=date_str,
+            slot="00",
+        )
+        self._log("pipeline: refiner stage completed")
+        return output
+
+    # ------------------------------------------------------------------
+    # Planner stage (one-shot, optional)
+    # ------------------------------------------------------------------
+
+    def _run_planner(
+        self, goal_text: str, *, stem: str, date_str: str
+    ) -> str | None:
+        """Run the planner agent once.
+
+        Reads ``.dev/REQUIREMENTS.md`` (produced by the refiner) if it exists,
+        then instructs the agent to generate ``.dev/WORKFLOWS.md`` and update
+        ``.dev/PLAN.md`` / ``.dev/DASHBOARD.md``.
+
+        Saves output to ``.dev/01-planner/<date>_<stem>.md``.
+
+        Returns the agent output string, or ``None`` if the planner role has
+        no resolvable CLI (stage is skipped).
+        """
+        planner_cfg = self._agents.for_role("planner")
+        # Planner is opt-in: only run when agents.planner.cli is explicitly set.
+        # Do NOT fall back to active_agent_cli so that existing single-agent
+        # setups are unaffected.
+        cli = planner_cfg.cli
+        if cli is None:
+            self._log("pipeline: planner has no explicit CLI — skipping plan stage")
+            return None
+
+        self._log("pipeline: planner stage starting")
+        requirements_text = self._read_requirements_doc()
+        prompt = self._planner_prompt(
+            goal_text, requirements_text, stem=stem, date_str=date_str
+        )
+        output = self._call_once(
+            role="planner",
+            cli=cli,
+            model=planner_cfg.model,
+            prompt=prompt,
+            stem=stem,
+            date_str=date_str,
+            slot="01",
+        )
+        self._log("pipeline: planner stage completed")
+        return output
 
     # ------------------------------------------------------------------
     # Developer stage (LoopRunner)
@@ -441,16 +544,98 @@ class PipelineRunner:
     # Internal — prompt builders
     # ------------------------------------------------------------------
 
+    def _refiner_prompt(self, goal_text: str, *, stem: str, date_str: str) -> str:
+        return (
+            "Follow the Pipeline Stage Protocol from AGENTS.md:\n"
+            "Before starting your task, read and output the full content of "
+            ".dev/DASHBOARD.md, .dev/PLAN.md, and .dev/WORKFLOWS.md (if they "
+            "exist) so the current workflow state is visible in this stage's output.\n\n"
+            "You are a requirement refiner. Your job is to convert the raw goal "
+            "below into a structured, unambiguous requirements document that the "
+            "planning agent can use without asking further questions.\n\n"
+            "Your task:\n"
+            "1. Read and output .dev/DASHBOARD.md, .dev/PLAN.md, and "
+            ".dev/WORKFLOWS.md if they exist.\n"
+            "2. Analyse the goal for ambiguities, missing scope boundaries, "
+            "unspecified acceptance criteria, and open dependencies.\n"
+            "3. Write .dev/REQUIREMENTS.md with these sections:\n"
+            "   ## Goal — one-paragraph restatement\n"
+            "   ## Scope / In Scope — explicit items that are included\n"
+            "   ## Scope / Out of Scope — explicit exclusions\n"
+            "   ## Acceptance Criteria — verifiable checkboxes\n"
+            "   ## Constraints — technical, time, or resource limits\n"
+            "   ## Dependencies — other phases, systems, or external factors\n"
+            "   ## Open Questions — unresolved decisions planning must address\n"
+            "   ## Risks — known risks and suggested mitigations\n"
+            "4. Each acceptance criterion must be verifiable from the repository "
+            "state (file exists, test passes, command succeeds). Avoid criteria "
+            "like 'works correctly' or 'is intuitive'.\n"
+            "5. If the goal is already clear enough, write the document "
+            "immediately and note that no clarification was needed.\n\n"
+            f"# Goal\n\n{goal_text.strip()}\n\n"
+            f"Write .dev/REQUIREMENTS.md now, then save your report to: "
+            f".dev/00-refiner/{date_str}_{stem}.md"
+        )
+
+    def _planner_prompt(
+        self,
+        goal_text: str,
+        requirements_text: str | None,
+        *,
+        stem: str,
+        date_str: str,
+    ) -> str:
+        req_section = (
+            f"\n\n# Refined Requirements\n\n{requirements_text.strip()}"
+            if requirements_text
+            else ""
+        )
+        return (
+            "Follow the Pipeline Stage Protocol from AGENTS.md:\n"
+            "Before starting your task, read and output the full content of "
+            ".dev/DASHBOARD.md, .dev/PLAN.md, and .dev/WORKFLOWS.md (if they "
+            "exist) so the current workflow state is visible in this stage's output.\n\n"
+            "You are a planning agent. Your job is to turn the goal and refined "
+            "requirements into an actionable, adaptive workflow plan.\n\n"
+            "Your task:\n"
+            "1. Read and output .dev/DASHBOARD.md, .dev/PLAN.md, and "
+            ".dev/WORKFLOWS.md if they exist.\n"
+            "2. Read agents/skills/planning-agent/SKILL.md for the full planning "
+            "protocol and WORKFLOWS.md format.\n"
+            "3. Generate .dev/WORKFLOWS.md — the adaptive, task-specific stage "
+            "sequence. Use [ ] for pending steps and [O] for completed steps. "
+            "Include only the stages this task genuinely needs. Insert evaluator "
+            "checkpoints where complexity or risk warrants them.\n"
+            "4. Update .dev/PLAN.md with the prompt-derived phase checklist "
+            "using [ ] Phase N. <title> for pending and [O] Phase N. <title> "
+            "for completed items.\n"
+            "5. Update .dev/DASHBOARD.md with the real current progress, active "
+            "phase, next action, and any risks.\n"
+            "6. Record any open questions from the requirements as blockers if "
+            "they cannot be resolved without human input.\n\n"
+            "Planning rules:\n"
+            "- Keep phases outcome-focused, not tool-focused.\n"
+            "- Prefer 4-8 top-level phase items for the active scope.\n"
+            "- WORKFLOWS.md is the authoritative process map for this task.\n"
+            "- Preserve existing completed work unless the state is clearly wrong.\n\n"
+            f"# Goal\n\n{goal_text.strip()}"
+            f"{req_section}\n\n"
+            f"Write .dev/WORKFLOWS.md and update .dev/PLAN.md and "
+            f".dev/DASHBOARD.md now, then save your report to: "
+            f".dev/01-planner/{date_str}_{stem}.md"
+        )
+
     def _tester_prompt(self, goal_text: str, *, stem: str, date_str: str) -> str:
         return (
             "Follow the Pipeline Stage Protocol from AGENTS.md:\n"
             "Before starting your task, read and output the full content of "
-            ".dev/DASHBOARD.md and .dev/PLAN.md so the current workflow state "
-            "is visible in this stage's output.\n\n"
+            ".dev/DASHBOARD.md, .dev/PLAN.md, and .dev/WORKFLOWS.md so the "
+            "current workflow state is visible in this stage's output.\n\n"
             "You are a black-box tester. Test the implementation described by the "
             "goal below WITHOUT looking at internal implementation details.\n\n"
             "Your task:\n"
-            "1. Read and output .dev/DASHBOARD.md and .dev/PLAN.md.\n"
+            "1. Read and output .dev/DASHBOARD.md, .dev/PLAN.md, and "
+            ".dev/WORKFLOWS.md.\n"
             "2. Design test cases that verify the behaviour described in the goal.\n"
             "3. Execute each test case.\n"
             "4. Record each test case as PASS or FAIL with reproduction steps for failures.\n"
@@ -479,12 +664,13 @@ class PipelineRunner:
         return (
             "Follow the Pipeline Stage Protocol from AGENTS.md:\n"
             "Before starting your task, read and output the full content of "
-            ".dev/DASHBOARD.md and .dev/PLAN.md so the current workflow state "
-            "is visible in this stage's output.\n\n"
+            ".dev/DASHBOARD.md, .dev/PLAN.md, and .dev/WORKFLOWS.md so the "
+            "current workflow state is visible in this stage's output.\n\n"
             "You are a code reviewer. Review the implementation for correctness "
             "and adherence to the design.\n\n"
             "Check for:\n"
-            "1. Read and output .dev/DASHBOARD.md and .dev/PLAN.md.\n"
+            "1. Read and output .dev/DASHBOARD.md, .dev/PLAN.md, and "
+            ".dev/WORKFLOWS.md.\n"
             "2. Correctness of logic against the goal and design.\n"
             "3. Coding rule violations or anti-patterns.\n"
             "4. Hard-coded values tied to a specific purpose that should be "
@@ -503,12 +689,13 @@ class PipelineRunner:
         return (
             "Follow the Pipeline Stage Protocol from AGENTS.md:\n"
             "Before starting your task, read and output the full content of "
-            ".dev/DASHBOARD.md and .dev/PLAN.md so the current workflow state "
-            "is visible in this stage's output.\n\n"
+            ".dev/DASHBOARD.md, .dev/PLAN.md, and .dev/WORKFLOWS.md so the "
+            "current workflow state is visible in this stage's output.\n\n"
             "You are a Git committer. Create a commit for the completed "
             "implementation.\n\n"
             "Steps:\n"
-            "1. Read and output .dev/DASHBOARD.md and .dev/PLAN.md.\n"
+            "1. Read and output .dev/DASHBOARD.md, .dev/PLAN.md, and "
+            ".dev/WORKFLOWS.md.\n"
             "2. Inspect the working tree and confirm which files belong to the active scope.\n"
             "3. Stage only the intended files and create the commit.\n\n"
             "Commit message format:\n"
@@ -527,6 +714,13 @@ class PipelineRunner:
     # ------------------------------------------------------------------
     # Internal — helpers
     # ------------------------------------------------------------------
+
+    def _read_requirements_doc(self) -> str | None:
+        """Return .dev/REQUIREMENTS.md text if it exists, else None."""
+        doc = self._app_config.base_dev_dir / "REQUIREMENTS.md"
+        if doc.exists():
+            return doc.read_text(encoding="utf-8")
+        return None
 
     def _read_architect_doc(self, stem: str, date_str: str) -> str | None:
         """Return architect document text if it exists, else None."""

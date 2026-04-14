@@ -23,9 +23,9 @@
 ---
 
 `dormammu` wraps any external coding-agent CLI — `codex`, `claude`, `gemini`,
-`cline`, `aider`, or your own — in a loop that validates the result, generates
-continuation context, retries on failure, and stores everything under `.dev/`
-so work can be resumed at any point.
+`cline`, or your own — in a supervisor-driven loop that validates results,
+generates continuation context, retries on failure, and stores everything under
+`.dev/` so work can be resumed at any point.
 
 ## Why DORMAMMU
 
@@ -46,13 +46,14 @@ automation alike.
 |---------|-------------|
 | **Supervised retry loops** | The supervisor validates each agent result and generates continuation context for the next attempt |
 | **Resumable execution** | Prompts, logs, session metadata, and machine state are persisted under `.dev/` — resume after any interruption |
-| **Multi-CLI adapter** | Drive `codex`, `claude`, `gemini`, `cline`, and `aider` through a unified runtime with preset-aware command building |
-| **Role-based pipeline** | Route goals through a `developer → tester → reviewer → committer` pipeline with automated feedback loops |
-| **Daemonize mode** | Watch a prompt directory, queue incoming files in deterministic order, and run each through the supervised loop |
+| **Multi-CLI adapter** | Drive `codex`, `claude`, `gemini`, and `cline` through a unified runtime with preset-aware command building |
+| **Refine & Plan stages** | A refining agent converts raw goals into `REQUIREMENTS.md`; a planning agent generates an adaptive `WORKFLOWS.md` checklist |
+| **Role-based pipeline** | Route goals through `refiner → planner → developer → tester → reviewer → committer` with automated feedback loops |
+| **Daemonize mode** | Watch a prompt directory, queue incoming files in deterministic order, and run each through the supervised pipeline |
 | **Goals automation** | Schedule periodic goals that are automatically promoted into the daemon queue; manageable via Telegram |
 | **Fallback CLIs** | Automatically switch to a backup agent CLI when the primary hits quota or token exhaustion |
 | **Guidance injection** | Embed repository guidance (`AGENTS.md`, custom `--guidance-file`) into every agent prompt |
-| **Operator-visible state** | `DASHBOARD.md`, `PLAN.md`, and `workflow_state.json` keep progress visible at a glance |
+| **Operator-visible state** | `DASHBOARD.md`, `PLAN.md`, `WORKFLOWS.md`, and `workflow_state.json` keep progress visible at a glance |
 | **Session management** | Start named sessions, list saved snapshots, and restore older sessions at any time |
 | **Environment diagnostics** | `doctor` checks Python, CLI availability, repository writability, and workspace structure |
 
@@ -66,18 +67,35 @@ DORMAMMU ships preset-aware adapters for:
 | `claude` | print-mode | — | `--dangerously-skip-permissions` |
 | `gemini` | prompt flag | `--include-directories` | `--approval-mode yolo` |
 | `cline` | positional + `-y` | `--cwd` | `-y` |
-| `aider` | `--message` flag | — | `--yes` |
 
 Any other CLI can be used with `--extra-arg` pass-through.
 
-## Architecture Overview
+## How It Works
+
+### Run Modes
+
+DORMAMMU has three execution modes:
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| **run-once** | `dormammu run-once` | One bounded agent call with artifact capture, no retry |
+| **run** | `dormammu run` | Full supervised retry loop with validation and continuation |
+| **daemonize** | `dormammu daemonize` | Long-running daemon that watches a prompt queue |
+
+When `agents` is configured in `dormammu.json`, all three modes route through
+the **PipelineRunner** — the same multi-role pipeline regardless of mode. When
+`agents` is absent, `run` uses the single-agent **LoopRunner** and `run-once`
+calls the **CliAdapter** directly.
+
+### Single-Agent Loop
+
+Without `agents` config, the supervised loop works like this:
 
 ```mermaid
 flowchart TD
-    User([User]) --> cmd["dormammu run / daemonize"]
-    cmd --> loop[Supervisor Loop]
-    loop --> adapter[CLI Adapter]
-    adapter --> agent["Agent CLI<br/>codex · claude · gemini · cline · aider"]
+    you([You]) --> cmd["dormammu run"]
+    cmd --> adapter[CLI Adapter]
+    adapter --> agent["Agent CLI<br/>codex · claude · gemini · cline"]
     agent --> validator["Supervisor Validator<br/>required paths · worktree changes · output"]
     validator -- pass --> done([Done])
     validator -- fail --> cont[Continuation Context Generator]
@@ -85,20 +103,47 @@ flowchart TD
     state --> adapter
 ```
 
-When `daemonize` is used with a role-based pipeline:
+### Role-Based Pipeline
+
+When `agents` is configured, goals flow through a full multi-role pipeline:
 
 ```mermaid
-flowchart LR
-    goal([Goal File]) --> dev[Developer]
-    dev --> tester[Tester]
-    tester -- "OVERALL: FAIL" --> dev
+flowchart TD
+    prompt([Prompt / Goal]) --> refiner["Refiner (optional)<br/>writes REQUIREMENTS.md"]
+    refiner --> planner["Planner (optional)<br/>writes WORKFLOWS.md"]
+    planner --> developer[Developer]
+    developer --> tester[Tester]
+    tester -- "OVERALL: FAIL" --> developer
     tester -- "OVERALL: PASS" --> reviewer[Reviewer]
-    reviewer -- "VERDICT: NEEDS_WORK" --> dev
+    reviewer -- "VERDICT: NEEDS_WORK" --> developer
     reviewer -- "VERDICT: APPROVED" --> committer[Committer]
     committer --> done([Done])
 ```
 
-## Workflow Pipeline
+**Refiner** (opt-in): Converts the raw goal into a structured
+`.dev/REQUIREMENTS.md` — clarifying scope, acceptance criteria, constraints,
+and risks — before any code is written. Only runs when `agents.refiner.cli` is
+explicitly set.
+
+**Planner** (opt-in): Reads `REQUIREMENTS.md` and produces `.dev/WORKFLOWS.md`,
+an adaptive, task-specific stage checklist (`[ ] Phase N. Role — agent`).
+Also updates `PLAN.md` and `DASHBOARD.md`. Only runs when `agents.planner.cli`
+is explicitly set.
+
+**Developer**: Implements the active scope, guided by `REQUIREMENTS.md` and
+`WORKFLOWS.md` when available.
+
+**Tester**: Black-box validation — appends `OVERALL: PASS` or `OVERALL: FAIL`
+as its last output line. A `FAIL` routes the developer back with the report.
+
+**Reviewer**: Code review against the goal and any architect design document.
+Appends `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK`. After three round-trips
+the pipeline advances unconditionally.
+
+**Committer**: Stages only the active scope and produces an intentional git
+commit after the reviewer approves.
+
+### Guidance Framework
 
 DORMAMMU ships a bundled guidance framework (`agents/`) that routes multi-phase
 work through specialized agent roles. The Supervising Agent controls all phase
@@ -106,7 +151,8 @@ transitions.
 
 ```mermaid
 flowchart TD
-    Start([New Scope]) --> plan[Planning Agent]
+    Start([New Scope]) --> refine[Refining Agent]
+    refine --> plan[Planning Agent]
     plan --> design[Designing Agent]
     design --> develop[Developing Agent]
     design --> testauth[Test Authoring Agent]
@@ -226,7 +272,7 @@ Full reference: `dormammu --help` or `dormammu <command> --help`.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--repo-root` | `.` | Repository root directory |
-| `--agent-cli` | from config | Agent CLI to use (overrides `active_agent_cli`) |
+| `--agent-cli` | from config | Agent CLI to use (overrides `active_agent_cli`; bypasses PipelineRunner) |
 | `--prompt` | — | Inline prompt text (mutually exclusive with `--prompt-file`) |
 | `--prompt-file` | — | Path to a prompt file (mutually exclusive with `--prompt`) |
 | `--input-mode` | `auto` | How the prompt is passed: `auto` `file` `arg` `stdin` `positional` |
@@ -241,6 +287,11 @@ Full reference: `dormammu --help` or `dormammu <command> --help`.
 | `--session-id` | — | Attach run to a specific session |
 | `--prompt-flag` | — | Override the flag used to pass the prompt to the CLI |
 | `--debug` | off | Write `DORMAMMU.log` at the repository root |
+
+> **Note:** When `--agent-cli` is explicitly provided, DORMAMMU uses the
+> single-agent path (LoopRunner for `run`, CliAdapter for `run-once`)
+> regardless of whether `agents` is configured. This lets you override pipeline
+> behavior for one-off runs.
 
 ### `set-config` Options
 
@@ -277,7 +328,7 @@ Resolved in this order:
   "active_agent_cli": "/home/you/.local/bin/codex",
   "fallback_agent_clis": [
     "claude",
-    { "path": "aider", "extra_args": ["--yes"] }
+    "gemini"
   ],
   "cli_overrides": {
     "cline": { "extra_args": ["-y", "--verbose", "--timeout", "1200"] }
@@ -286,16 +337,23 @@ Resolved in this order:
     "usage limit", "quota exceeded", "rate limit exceeded"
   ],
   "agents": {
-    "developer":  { "cli": "claude", "model": "claude-opus-4-6" },
-    "tester":     { "cli": "claude", "model": "claude-sonnet-4-6" },
-    "reviewer":   { "cli": "claude", "model": "claude-sonnet-4-6" },
-    "committer":  { "cli": "claude" }
+    "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "planner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "developer": { "cli": "claude", "model": "claude-opus-4-6" },
+    "tester":    { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "reviewer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "committer": { "cli": "claude" }
   }
 }
 ```
 
-When `agents` is configured, `daemonize` uses the role-based pipeline
-(`developer → tester → reviewer → committer`) instead of the default loop.
+When `agents` is configured, all run modes (`run`, `run-once`, `daemonize`)
+use the role-based pipeline. Providing `--agent-cli` on the command line reverts
+to the single-agent path for that invocation.
+
+`refiner` and `planner` are **opt-in**: they only run when their `cli` is
+explicitly set. Omitting them has no effect on the developer → tester →
+reviewer → committer flow.
 
 ### Daemon queue config (`daemonize.json`)
 
@@ -327,6 +385,8 @@ Every run leaves behind inspectable artifacts:
 
 | Path | Contents |
 |------|----------|
+| `.dev/REQUIREMENTS.md` | Structured requirements produced by the refining agent |
+| `.dev/WORKFLOWS.md` | Adaptive stage checklist produced by the planning agent |
 | `.dev/DASHBOARD.md` | Operator-facing progress, active phase, next action, risks |
 | `.dev/PLAN.md` | Prompt-derived task checklist (`[ ]` / `[O]` phase items) |
 | `.dev/workflow_state.json` | Machine-readable workflow state (source of truth) |

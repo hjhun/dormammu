@@ -14,6 +14,7 @@ Korean-language guide is at [docs/ko/GUIDE.md](ko/GUIDE.md).
 
 - [What DORMAMMU Does](#what-dormammu-does)
 - [Core Concepts](#core-concepts)
+- [How It Works — Run Modes](#how-it-works--run-modes)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Commands Reference](#commands-reference)
@@ -95,9 +96,69 @@ known CLI.
 
 ### Role-based pipeline
 
-When `agents` is configured in `dormammu.json`, the daemon routes each goal
-through a `developer → tester → reviewer → committer` pipeline with automated
-feedback loops between stages.
+When `agents` is configured in `dormammu.json`, all run modes route each goal
+through a multi-role pipeline:
+
+```
+refiner (opt-in) → planner (opt-in) → developer → tester → reviewer → committer
+```
+
+The **refiner** converts the raw goal into structured requirements; the
+**planner** produces an adaptive workflow checklist. Both stages are opt-in —
+they run only when their CLI is explicitly configured.
+
+---
+
+## How It Works — Run Modes
+
+DORMAMMU has three execution modes. Their behavior depends on whether `agents`
+is configured in `dormammu.json`.
+
+### Without `agents` config
+
+| Mode | What runs |
+|------|-----------|
+| `run-once` | `CliAdapter` — one bounded agent call, no retry |
+| `run` | `LoopRunner` — supervised retry loop with a single agent |
+| `daemonize` | Not applicable; `agents` must be set for the daemon pipeline |
+
+### With `agents` config
+
+| Mode | What runs |
+|------|-----------|
+| `run-once` | `PipelineRunner` — one full pipeline pass (refiner → … → committer) |
+| `run` | `PipelineRunner` — one full pipeline pass |
+| `daemonize` | `PipelineRunner` — one full pipeline pass per queued prompt |
+
+> **Override:** If `--agent-cli` is explicitly provided on the command line,
+> DORMAMMU uses the single-agent path (LoopRunner / CliAdapter) regardless of
+> the `agents` config. This lets you bypass the pipeline for one-off runs.
+
+### PipelineRunner stages
+
+```mermaid
+flowchart TD
+    prompt([Prompt / Goal]) --> refiner["Refiner<br/>(opt-in: agents.refiner.cli)"]
+    refiner --> planner["Planner<br/>(opt-in: agents.planner.cli)"]
+    planner --> developer[Developer]
+    developer --> tester[Tester]
+    tester -- "OVERALL: FAIL" --> developer
+    tester -- "OVERALL: PASS" --> reviewer[Reviewer]
+    reviewer -- "VERDICT: NEEDS_WORK" --> developer
+    reviewer -- "VERDICT: APPROVED" --> committer[Committer]
+    committer --> done([Done])
+```
+
+Each stage writes its output to a numbered slot under `.dev/`:
+
+| Stage | Output path |
+|-------|------------|
+| refiner | `.dev/00-refiner/` → `.dev/REQUIREMENTS.md` |
+| planner | `.dev/01-planner/` → `.dev/WORKFLOWS.md` |
+| developer | `.dev/01-developer/` |
+| tester | `.dev/04-tester/` |
+| reviewer | `.dev/05-reviewer/` |
+| committer | `.dev/06-committer/` |
 
 ---
 
@@ -260,7 +321,7 @@ dormammu set-config active_agent_cli claude
 dormammu set-config token_exhaustion_patterns "rate limit" --add
 
 # Remove from a list
-dormammu set-config fallback_agent_clis aider --remove
+dormammu set-config fallback_agent_clis gemini --remove
 
 # Write to global config instead of project config
 dormammu set-config active_agent_cli codex --global
@@ -287,6 +348,9 @@ Output includes:
 Execute one agent invocation. Stores the prompt artifact, stdout, stderr, and
 run metadata. Does not retry.
 
+When `agents` is configured (and `--agent-cli` is not explicitly provided),
+`run-once` executes one full pipeline pass instead of a single agent call.
+
 ```bash
 dormammu run-once \
   --repo-root . \
@@ -296,7 +360,8 @@ dormammu run-once \
 
 ### `dormammu run`
 
-Execute the supervised retry loop.
+Execute the supervised retry loop (single-agent) or one full pipeline pass
+(when `agents` is configured and `--agent-cli` is not provided).
 
 ```bash
 dormammu run \
@@ -313,7 +378,7 @@ Key options:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--prompt` / `--prompt-file` | — | Inline prompt text or path to a prompt file |
-| `--agent-cli` | from config | CLI to drive (overrides `active_agent_cli` in config) |
+| `--agent-cli` | from config | CLI to drive; also bypasses PipelineRunner when set |
 | `--input-mode` | `auto` | Prompt pass mode: `auto` `file` `arg` `stdin` `positional` |
 | `--required-path` | — | File that must exist or change after the agent runs (repeatable) |
 | `--require-worktree-changes` | off | Fail validation if the worktree has no changes |
@@ -363,10 +428,7 @@ Full example:
   "active_agent_cli": "/home/you/.local/bin/codex",
   "fallback_agent_clis": [
     "claude",
-    {
-      "path": "aider",
-      "extra_args": ["--yes"]
-    }
+    "gemini"
   ],
   "cli_overrides": {
     "cline": {
@@ -381,10 +443,12 @@ Full example:
     "insufficient credits"
   ],
   "agents": {
-    "developer":  { "cli": "claude", "model": "claude-opus-4-6" },
-    "tester":     { "cli": "claude", "model": "claude-sonnet-4-6" },
-    "reviewer":   { "cli": "claude", "model": "claude-sonnet-4-6" },
-    "committer":  { "cli": "claude" }
+    "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "planner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "developer": { "cli": "claude", "model": "claude-opus-4-6" },
+    "tester":    { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "reviewer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "committer": { "cli": "claude" }
   }
 }
 ```
@@ -399,8 +463,9 @@ Full example:
 | `token_exhaustion_patterns` | Patterns in agent output that trigger CLI fallback |
 | `agents` | Role-based pipeline CLI and model assignments |
 
-When `agents` is configured, `daemonize` uses the role-based pipeline instead
-of the plain loop. See [Role-Based Agent Pipeline](#role-based-agent-pipeline).
+When `agents` is configured, all run modes use the role-based pipeline.
+`refiner` and `planner` are opt-in — they only run when their `cli` field
+is explicitly set.
 
 ### Daemon queue config (`daemonize.json`)
 
@@ -453,6 +518,46 @@ specialized roles for each phase of development. The **Supervising Agent**
 acts as the top-level controller, deciding which role acts next and when to
 advance a phase transition.
 
+### Refining Agent
+
+**Path:** `agents/skills/refining-agent/SKILL.md`
+
+Converts a raw goal or user request into a structured, unambiguous
+requirements document before any planning or coding begins.
+
+- Identifies missing information and asks 3–6 targeted clarifying questions
+  (scope, acceptance criteria, constraints, dependencies, risks)
+- Writes the refined requirements to `.dev/REQUIREMENTS.md`
+- Updates `.dev/DASHBOARD.md` to show requirements-confirmed status
+- Hands off to the Planning Agent when requirements are confirmed
+
+**Opt-in:** Only runs when `agents.refiner.cli` is explicitly set in
+`dormammu.json`. Skipped otherwise.
+
+Used when: a new scope has ambiguous goals, missing acceptance criteria, or
+unclear constraints that could derail implementation.
+
+### Planning Agent
+
+**Path:** `agents/skills/planning-agent/SKILL.md`
+
+Converts confirmed requirements (or a raw goal) into a concrete, adaptive
+workflow checklist.
+
+- Reads `.dev/REQUIREMENTS.md` as primary input (falls back to raw goal)
+- Produces `.dev/WORKFLOWS.md` — an adaptive, task-specific stage sequence
+  with `[ ]` checkboxes for each phase
+- Includes evaluator checkpoint annotations where mid-pipeline review is needed
+- Produces 4–8 phases with clear completion signals
+- Writes a phase checklist to `.dev/PLAN.md` (`[ ] Phase N. <title>`)
+- Updates `.dev/DASHBOARD.md` with active phase and next action
+
+**Opt-in:** Only runs when `agents.planner.cli` is explicitly set in
+`dormammu.json`. Skipped otherwise.
+
+Used when: requirements are clear and planning decisions are needed before
+implementation begins.
+
 ### Supervising Agent
 
 **Path:** `agents/skills/supervising-agent/SKILL.md`
@@ -469,23 +574,13 @@ Phase gate rules:
 
 | Transition | Required evidence |
 |------------|------------------|
-| planning → design | Tasks exist and next action is clear |
+| refine → plan | `.dev/REQUIREMENTS.md` exists and is confirmed |
+| plan → design | `WORKFLOWS.md` and `PLAN.md` exist; next action is clear |
 | design → develop | Active scope has interface or decision records |
 | develop → test_author | Product code changes exist in intended files |
 | test_author → build | Unit/integration test code exists |
 | test_review → final_verify | Executed validation has clear results |
 | final_verify → commit | Active slice passed final operational review |
-
-### Planning Agent
-
-**Path:** `agents/skills/planning-agent/SKILL.md`
-
-Converts a goal into a concrete, outcome-focused phase plan.
-
-- Produces 4–8 phases with clear completion signals
-- Writes a phase checklist to `.dev/PLAN.md` (`[ ] Phase N. <title>`)
-- Updates `.dev/DASHBOARD.md` with active phase and next action
-- Used when: new scope starts, prompt needs expansion into actionable steps
 
 ### Designing Agent
 
@@ -504,11 +599,12 @@ Produces implementation-ready design decisions before broad coding begins.
 
 Implements the active task slice.
 
+- Reads `.dev/REQUIREMENTS.md` and `.dev/WORKFLOWS.md` at the start of each
+  session to align with current requirements and planned stages
 - Writes product code for the current active phase only
 - Keeps product-code ownership separate from test-code ownership
 - Updates `.dev/` state after each meaningful change
 - Each step is idempotent — safe to retry after interruption
-- Used when: active phase is implementation
 
 ### Test Authoring Agent
 
@@ -520,7 +616,6 @@ Writes and maintains automated tests for the active implementation slice.
 - System tests only when explicitly requested
 - Runs in parallel with the Developing Agent after design is complete
 - Updates `.dev/` state when test code is ready
-- Used when: after design, when a scope needs test coverage
 
 ### Building and Deploying Agent
 
@@ -542,7 +637,6 @@ Validates changes through executed tests and review-oriented analysis.
 - Default scope: unit + integration tests
 - Can add linters, build checks, and system tests as needed
 - Produces execution evidence (not just test code) for the supervisor gate
-- Used when: implementation is complete and proof of correctness is needed
 
 ### Committing Agent
 
@@ -553,18 +647,20 @@ Finalizes a validated scope into an intentional git commit.
 - Stages only files within the active scope (no incidental changes)
 - Enforces 80-character line limit on commit messages
 - Updates `.dev/` commit status after a successful commit
-- Used when: final verification has passed and the scope is ready to commit
 
 ### Evaluating Agent
 
 **Path:** `agents/skills/evaluating-agent/SKILL.md`
 
-Assesses goal achievement after a pipeline run completes.
+Assesses goal achievement after a pipeline run completes. Supports two modes:
 
-- Reviews execution artifacts against the original goal
-- Generates a structured evaluation report under `.dev/07-evaluator/`
-- Can produce a follow-up goal for the Goals Scheduler to queue next
-- Used when: goals automation is enabled and an evaluator stage is configured
+- **Mid-pipeline check**: writes `DECISION: PROCEED` or `DECISION: REWORK` to
+  `.dev/07-evaluator/check_<stage>_<date>.md` — used when a WORKFLOWS.md
+  checkpoint is reached
+- **Final evaluation**: writes `VERDICT: goal_achieved / partial / not_achieved`
+  with a structured report — used at end-of-pipeline
+
+Can generate a follow-up goal for the Goals Scheduler to queue next.
 
 ### PRD Agent
 
@@ -581,14 +677,17 @@ Generates a structured Product Requirements Document before planning begins.
 ## Workflow Pipeline
 
 The bundled workflows (`agents/workflows/`) combine the agent roles above into
-four composable sequences. The Supervising Agent controls which workflow is
-active and when to advance.
+composable sequences. The Supervising Agent controls which workflow is active
+and when to advance.
 
 ```mermaid
 flowchart TD
-    Start([New Scope]) --> wf1["Workflow 1<br/>Planning & Design"]
-    wf1 --> plan[Planning Agent]
-    plan --> design[Designing Agent]
+    Start([New Scope]) --> wf0["Workflow 0<br/>Refine & Plan"]
+    wf0 --> refine[Refining Agent]
+    refine --> plan[Planning Agent]
+
+    plan --> wf1["Workflow 1<br/>Planning & Design"]
+    wf1 --> design[Designing Agent]
 
     design --> wf2["Workflow 2<br/>Develop & Test Authoring"]
     wf2 --> develop[Developing Agent]
@@ -606,8 +705,24 @@ flowchart TD
     finalverify -- pass --> commit[Committing Agent]
     commit --> Done([Done])
 
-    supervisor[Supervising Agent] -. orchestrates all transitions .-> wf1
+    supervisor[Supervising Agent] -. orchestrates all transitions .-> wf0
 ```
+
+### Workflow 0 — Refine and Plan
+
+**Path:** `agents/workflows/refine-plan.md`
+
+Runs the Refining Agent then the Planning Agent in sequence. The refiner
+converts the raw goal into `.dev/REQUIREMENTS.md`; the planner reads it and
+produces `.dev/WORKFLOWS.md` — an adaptive checklist of stages tailored to
+the specific task.
+
+**When to skip refining:** For simple, well-scoped changes where requirements
+are already clear, the refiner can be skipped (leave `agents.refiner.cli`
+unset). The planner can still run from the raw goal.
+
+**Outputs:** `.dev/REQUIREMENTS.md`, `.dev/WORKFLOWS.md`, `.dev/PLAN.md`,
+updated `.dev/DASHBOARD.md`.
 
 ### Workflow 1 — Planning and Design
 
@@ -653,7 +768,8 @@ files, stages only the active scope, and produces a scoped commit.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> planning
+    [*] --> refine
+    refine --> planning : REQUIREMENTS.md confirmed
     planning --> design : tasks exist, next action clear
     design --> develop : interfaces or decisions documented
     design --> test_author : interfaces or decisions documented
@@ -673,7 +789,7 @@ stateDiagram-v2
 
 `daemonize` turns DORMAMMU into a long-running queue worker. Drop a prompt
 file into `prompt_path` and the daemon picks it up, runs it through the
-supervised loop, and writes a result report to `result_path`.
+supervised pipeline, and writes a result report to `result_path`.
 
 ```bash
 dormammu daemonize --repo-root . --config daemonize.json
@@ -717,12 +833,14 @@ DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json \
 
 ## Role-Based Agent Pipeline
 
-When `agents` is configured in `dormammu.json`, the daemon routes each goal
-through a four-stage pipeline instead of the single-agent loop:
+When `agents` is configured in `dormammu.json`, all run modes route each goal
+through the multi-stage pipeline instead of the single-agent loop:
 
 ```mermaid
 flowchart LR
-    goal([Goal File]) --> dev[Developer]
+    goal([Goal File]) --> refiner["Refiner (opt-in)"]
+    refiner --> planner["Planner (opt-in)"]
+    planner --> dev[Developer]
     dev --> tester[Tester]
     tester -- "OVERALL: FAIL" --> dev
     tester -- "OVERALL: PASS" --> reviewer[Reviewer]
@@ -735,10 +853,21 @@ flowchart LR
 
 | Role | Output slot | Verdict | Re-entry trigger |
 |------|------------|---------|-----------------|
+| refiner | `.dev/00-refiner/` | — (writes REQUIREMENTS.md) | — |
+| planner | `.dev/01-planner/` | — (writes WORKFLOWS.md) | — |
 | developer | `.dev/01-developer/` | — | tester `FAIL` or reviewer `NEEDS_WORK` |
 | tester | `.dev/04-tester/` | `OVERALL: PASS` / `OVERALL: FAIL` | — |
 | reviewer | `.dev/05-reviewer/` | `VERDICT: APPROVED` / `VERDICT: NEEDS_WORK` | — |
 | committer | `.dev/06-committer/` | — | — |
+
+**Refiner** (opt-in): Reads the raw prompt and writes `.dev/REQUIREMENTS.md`
+with structured scope, acceptance criteria, and risk notes. Only runs when
+`agents.refiner.cli` is explicitly set.
+
+**Planner** (opt-in): Reads `.dev/REQUIREMENTS.md` (or the raw prompt) and
+writes `.dev/WORKFLOWS.md` — an adaptive `[ ] Phase N.` checklist. Also
+updates `PLAN.md` and `DASHBOARD.md`. Only runs when `agents.planner.cli` is
+explicitly set.
 
 **Tester** runs as a black-box one-shot agent. It designs and executes test
 cases against the observable behavior described in the goal, then appends
@@ -759,6 +888,10 @@ For each role, the CLI is resolved in order:
 
 1. `agents.<role>.cli` from `dormammu.json`
 2. `active_agent_cli` as the global fallback
+
+For `refiner` and `planner`, there is **no fallback**: they only run when their
+`cli` is explicitly set. This preserves backward compatibility — existing
+single-CLI setups are unaffected.
 
 ---
 
@@ -808,13 +941,37 @@ dormammu run \
 
 | File | Role |
 |------|------|
+| `.dev/REQUIREMENTS.md` | Structured requirements from the refining agent |
+| `.dev/WORKFLOWS.md` | Adaptive stage checklist from the planning agent (`[ ]` / `[O]`) |
 | `.dev/DASHBOARD.md` | Current operator-facing status: active phase, next action, risks |
 | `.dev/PLAN.md` | Prompt-derived phase checklist (`[ ]` pending, `[O]` complete) |
 | `.dev/workflow_state.json` | Machine-readable workflow state — the source of truth |
 | `.dev/session.json` | Active session metadata |
 | `.dev/logs/` | Per-run prompt, stdout, stderr, and metadata artifacts |
 | `.dev/sessions/` | Archived session snapshots |
-| `.dev/07-evaluator/` | Evaluation reports from the Evaluating Agent (when goals are enabled) |
+| `.dev/00-refiner/` | Raw output from the refining agent |
+| `.dev/01-planner/` | Raw output from the planning agent |
+| `.dev/07-evaluator/` | Evaluation reports from the Evaluating Agent |
+
+### WORKFLOWS.md format
+
+The planning agent writes `.dev/WORKFLOWS.md` as an adaptive checklist:
+
+```markdown
+[ ] Phase 0. Refine — refining-agent
+[O] Phase 1. Plan — planning-agent
+[ ] Phase 2. Design — designing-agent
+[ ] Phase 3. Develop — developing-agent (parallel with Phase 4)
+[ ] Phase 4. Test Author — test-authoring-agent (parallel with Phase 3)
+[ ] Phase 5. Evaluator checkpoint
+[ ] Phase 6. Build/Deploy — building-and-deploying (if packaging needed)
+[ ] Phase 7. Test/Review — testing-and-reviewing
+[ ] Phase 8. Commit — committing-agent
+[ ] Phase 9. Evaluate — evaluating-agent
+```
+
+Stages not needed for the specific task are omitted. Completed stages are
+marked `[O]`. This file is updated by each agent as it advances.
 
 Debug logs:
 
@@ -863,7 +1020,7 @@ Configure fallbacks in `dormammu.json`:
   "active_agent_cli": "codex",
   "fallback_agent_clis": [
     "claude",
-    { "path": "aider", "extra_args": ["--yes"] }
+    "gemini"
   ],
   "token_exhaustion_patterns": [
     "usage limit", "quota exceeded", "rate limit exceeded"
@@ -913,6 +1070,8 @@ Per-CLI defaults can be set in `cli_overrides`:
 
 ## Typical Operator Flow
 
+### Single-agent run (no `agents` config)
+
 ```bash
 # 1. Check the environment
 dormammu doctor --repo-root . --agent-cli codex
@@ -934,6 +1093,45 @@ dormammu run \
 
 # 5. Resume if interrupted
 dormammu resume --repo-root .
+```
+
+### Pipeline run (with `agents` config)
+
+```bash
+# 1. Set up dormammu.json with agents roles
+cat > dormammu.json <<'EOF'
+{
+  "agents": {
+    "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "planner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "developer": { "cli": "claude", "model": "claude-opus-4-6" },
+    "tester":    { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "reviewer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "committer": { "cli": "claude" }
+  }
+}
+EOF
+
+# 2. Run once — executes the full pipeline
+dormammu run-once \
+  --repo-root . \
+  --prompt "Add pagination support to the user listing API."
+
+# 3. Or watch a prompt queue
+dormammu daemonize --repo-root . --config daemonize.json
+```
+
+After a pipeline run, inspect the stage outputs:
+
+```bash
+# See what the refiner produced
+cat .dev/REQUIREMENTS.md
+
+# See the planned workflow
+cat .dev/WORKFLOWS.md
+
+# See the current dashboard
+cat .dev/DASHBOARD.md
 ```
 
 ---

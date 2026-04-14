@@ -2,10 +2,7 @@
   "active_agent_cli": "/home/you/.local/bin/codex",
   "fallback_agent_clis": [
     "claude",
-    {
-      "path": "aider",
-      "extra_args": ["--yes"]
-    }
+    "gemini"
   ],
   "cli_overrides": {
     "cline": {
@@ -20,6 +17,14 @@
     "insufficient credits"
   ],
   "agents": {
+    "refiner": {
+      "cli": "claude",
+      "model": "claude-sonnet-4-6"
+    },
+    "planner": {
+      "cli": "claude",
+      "model": "claude-sonnet-4-6"
+    },
     "developer": {
       "cli": "claude",
       "model": "claude-opus-4-6"

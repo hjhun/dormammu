@@ -193,6 +193,43 @@ def _handle_run_once(args: argparse.Namespace) -> int:
             prompt_text=prompt_text,
             source_path=prompt_source_path,
         )
+        enriched_prompt = build_guidance_prompt(
+            prompt_text,
+            guidance_files=config.guidance_files,
+            repo_root=config.repo_root,
+            patterns_text=repository.read_patterns_text(),
+        )
+
+        # When an agents config is present AND --agent-cli was not explicitly
+        # provided, route through PipelineRunner so the full refiner → planner
+        # → developer → … sequence runs once, consistent with run and daemonize
+        # modes.  An explicit --agent-cli flag signals single-agent intent and
+        # bypasses the pipeline.
+        if config.agents is not None and not args.agent_cli:
+            from datetime import datetime, timezone
+
+            from dormammu.daemon.pipeline_runner import PipelineRunner
+
+            stem = (
+                prompt_source_path.stem
+                if prompt_source_path is not None
+                else (args.run_label or "run-once")
+            )
+            date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+            try:
+                result = PipelineRunner(
+                    config,
+                    config.agents,
+                    repository=repository,
+                ).run(enriched_prompt, stem=stem, date_str=date_str)
+            except (RuntimeError, ValueError, OSError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+
+            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
+            return 0 if result.status == "completed" else 1
+
+        # Default: single-shot CliAdapter call (no pipeline, no retries).
         try:
             agent_cli = _resolve_agent_cli(config, args.agent_cli)
         except ValueError as exc:
@@ -208,12 +245,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
 
         request = AgentRunRequest(
             cli_path=agent_cli,
-            prompt_text=build_guidance_prompt(
-                prompt_text,
-                guidance_files=config.guidance_files,
-                repo_root=config.repo_root,
-                patterns_text=repository.read_patterns_text(),
-            ),
+            prompt_text=enriched_prompt,
             repo_root=config.repo_root,
             workdir=workdir,
             input_mode=args.input_mode,
@@ -233,14 +265,14 @@ def _handle_run_once(args: argparse.Namespace) -> int:
                 print(f"command: {' '.join(started.command)}", file=sys.stderr)
                 sys.stderr.flush()
 
-            result = CliAdapter(config).run_once(request, on_started=_handle_started)
+            agent_result = CliAdapter(config).run_once(request, on_started=_handle_started)
         except (RuntimeError, ValueError, OSError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
 
-        repository.record_latest_run(result)
-        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
-        return 0 if result.exit_code == 0 else result.exit_code
+        repository.record_latest_run(agent_result)
+        print(json.dumps(agent_result.to_dict(), indent=2, ensure_ascii=True))
+        return 0 if agent_result.exit_code == 0 else agent_result.exit_code
 
 
 def _handle_run_loop(args: argparse.Namespace) -> int:
@@ -294,31 +326,58 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
             workdir=workdir,
         )
 
-        request = LoopRunRequest(
-            cli_path=agent_cli,
-            prompt_text=build_guidance_prompt(
-                prompt_text,
-                guidance_files=config.guidance_files,
-                repo_root=config.repo_root,
-                patterns_text=repository.read_patterns_text(),
-            ),
+        enriched_prompt = build_guidance_prompt(
+            prompt_text,
+            guidance_files=config.guidance_files,
             repo_root=config.repo_root,
-            workdir=workdir,
-            input_mode=args.input_mode,
-            prompt_flag=args.prompt_flag,
-            extra_args=tuple(args.extra_args or ()),
-            run_label=args.run_label,
-            max_retries=max_retries,
-            required_paths=tuple(args.required_paths or ()),
-            require_worktree_changes=args.require_worktree_changes,
-            expected_roadmap_phase_id=(roadmap_phases[0] if roadmap_phases else "phase_4"),
+            patterns_text=repository.read_patterns_text(),
         )
 
-        try:
-            result = LoopRunner(config, repository=repository).run(request)
-        except (RuntimeError, ValueError, OSError) as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
+        # When an agents config is present AND --agent-cli was not explicitly
+        # provided, route through PipelineRunner so the refiner → planner →
+        # developer → … sequence is applied consistently with daemonize mode.
+        # An explicit --agent-cli flag signals single-agent intent and bypasses
+        # the pipeline.
+        if config.agents is not None and not args.agent_cli:
+            from datetime import datetime, timezone
+
+            from dormammu.daemon.pipeline_runner import PipelineRunner
+
+            stem = (
+                prompt_source_path.stem
+                if prompt_source_path is not None
+                else (args.run_label or "run")
+            )
+            date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+            try:
+                result = PipelineRunner(
+                    config,
+                    config.agents,
+                    repository=repository,
+                ).run(enriched_prompt, stem=stem, date_str=date_str)
+            except (RuntimeError, ValueError, OSError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+        else:
+            request = LoopRunRequest(
+                cli_path=agent_cli,
+                prompt_text=enriched_prompt,
+                repo_root=config.repo_root,
+                workdir=workdir,
+                input_mode=args.input_mode,
+                prompt_flag=args.prompt_flag,
+                extra_args=tuple(args.extra_args or ()),
+                run_label=args.run_label,
+                max_retries=max_retries,
+                required_paths=tuple(args.required_paths or ()),
+                require_worktree_changes=args.require_worktree_changes,
+                expected_roadmap_phase_id=(roadmap_phases[0] if roadmap_phases else "phase_4"),
+            )
+            try:
+                result = LoopRunner(config, repository=repository).run(request)
+            except (RuntimeError, ValueError, OSError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
 
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
         return 0 if result.status == "completed" else 1

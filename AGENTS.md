@@ -27,21 +27,30 @@ Use the following precedence order when deciding what to do next:
 1. Direct user request
 2. `.dev/PROJECT.md`
 3. `.dev/ROADMAP.md`
-4. Current `.dev` execution state files
-5. Current repository contents
+4. Current `.dev/WORKFLOWS.md` stage sequence
+5. Current `.dev` execution state files
+6. Current repository contents
 
 ## Required Workflow
 
-All substantial work should follow this sequence:
+All substantial work should follow this base sequence. The planning agent
+records the exact adaptive stage sequence for the current task in
+`.dev/WORKFLOWS.md`. Stages not listed in `WORKFLOWS.md` for a given task are
+skipped.
 
-1. Plan
+```
+0. Refine
+1. Plan          ← generates .dev/WORKFLOWS.md
 2. Design
-3. Develop
-4. Test Authoring
-5. Build and Deploy
-6. Test and Review
-7. Final Verification
-8. Commit
+3. Develop       ↓ parallel tracks
+4. Test Author   ↑ parallel tracks
+5. [Evaluator check — if WORKFLOWS.md includes a mid-pipeline checkpoint]
+6. Build and Deploy   (only if packaging or deployability is required)
+7. Test and Review
+8. Final Verification
+9. Commit
+10. Evaluate
+```
 
 Use the supervisor skill as the controller for every multi-step implementation
 effort.
@@ -99,11 +108,13 @@ For each role, the CLI is resolved in this order:
 
 ### Pipeline Stage Protocol
 
-At the start of every pipeline stage, the agent must:
+At the start of every pipeline stage (tester, reviewer, committer, evaluator),
+the agent must:
 
 1. Read `.dev/DASHBOARD.md` and output its full content.
 2. Read `.dev/PLAN.md` and output its full content.
-3. Then proceed with the stage task.
+3. Read `.dev/WORKFLOWS.md` and output its full content.
+4. Then proceed with the stage task.
 
 This makes the current workflow state visible in each stage's output and
 stored document, so operators can observe progress through the pipeline without
@@ -124,6 +135,7 @@ The goals directory is also manageable through the Telegram bot via `/goals`
 
 Use the distributable workflow bundle under `agents/` to execute each phase:
 
+- Refine and Plan workflow: `agents/workflows/refine-plan.md`
 - Planning and Design workflow: `agents/workflows/planning-design.md`
 - Development and Test Authoring workflow: `agents/workflows/develop-test-authoring.md`
 - Build Deploy and Test Review workflow: `agents/workflows/build-deploy-test-review.md`
@@ -132,6 +144,7 @@ Use the distributable workflow bundle under `agents/` to execute each phase:
 Use the skills under `agents/skills/` when a workflow document routes to a
 specific skill:
 
+- Refine: `agents/skills/refining-agent/SKILL.md`
 - Planning: `agents/skills/planning-agent/SKILL.md`
 - Design: `agents/skills/designing-agent/SKILL.md`
 - Development: `agents/skills/developing-agent/SKILL.md`
@@ -140,16 +153,33 @@ specific skill:
 - Test and Review: `agents/skills/testing-and-reviewing/SKILL.md`
 - Commit: `agents/skills/committing-agent/SKILL.md`
 - Supervision: `agents/skills/supervising-agent/SKILL.md`
+- Evaluation: `agents/skills/evaluating-agent/SKILL.md`
 
 ## Phase Expectations
 
+### 0. Refine
+
+Use `agents/skills/refining-agent/SKILL.md` when a new request arrives and
+the scope or acceptance criteria need to be clarified before planning begins.
+
+- Ask 3–6 targeted clarifying questions about scope, acceptance criteria,
+  constraints, dependencies, and risks.
+- Produce `.dev/REQUIREMENTS.md` with refined, unambiguous requirements.
+- Hand off to the planning agent once requirements are confirmed.
+- Skip this phase for simple, well-scoped changes where no clarification is
+  needed.
+
 ### 1. Plan
 
-- update `.dev/DASHBOARD.md` with the actual in-progress status for the active scope
-- update `.dev/PLAN.md` with prompt-derived phase checklist items in `[ ] Phase N. <title>` form
-- update `.dev/TASKS.md` with development work items for the active scope
-- update `.dev/ROADMAP.md` when roadmap slices change
-- record the active phase and next action
+- Read `.dev/REQUIREMENTS.md` as primary input; fall back to the raw goal.
+- Generate `.dev/WORKFLOWS.md` — an adaptive, task-specific stage sequence
+  with checkboxes that reflects exactly which stages this task needs and where
+  evaluator checkpoints are placed.
+- Update `.dev/DASHBOARD.md` with the actual in-progress status for the active scope.
+- Update `.dev/PLAN.md` with prompt-derived phase checklist items in
+  `[ ] Phase N. <title>` form.
+- Update `.dev/TASKS.md` with development work items for the active scope.
+- Record the active phase and next action.
 
 ### 2. Design
 
@@ -187,12 +217,29 @@ Rules:
   environment is unavailable, record the gap explicitly instead of pretending
   coverage exists
 
-### 5. Build And Deploy
+### 5. Evaluator Check (mid-pipeline, optional)
+
+Triggered when `.dev/WORKFLOWS.md` includes a mid-pipeline evaluator
+checkpoint. The supervisor invokes `agents/skills/evaluating-agent/SKILL.md`
+in mid-pipeline check mode.
+
+- The evaluator reads `.dev/REQUIREMENTS.md` acceptance criteria and inspects
+  stage outputs.
+- It produces a checkpoint report in `.dev/07-evaluator/check_<stage>_<date>.md`
+  with a `DECISION: PROCEED` or `DECISION: REWORK` verdict.
+- `PROCEED` — the supervisor advances to the next stage.
+- `REWORK` — the supervisor routes back to the stage indicated in the report.
+
+Insert a mid-pipeline checkpoint when the task modifies a public interface,
+spans more than two development phases, or has ambiguous acceptance criteria
+that should be verified before committing.
+
+### 6. Build And Deploy
 
 Use this phase when the roadmap requires packaging, install flows, release
 artifacts, or deployability checks.
 
-### 6. Test And Review
+### 7. Test And Review
 
 Validation must include, when relevant:
 
@@ -207,10 +254,10 @@ Validation must include, when relevant:
 Run this phase after the developer agent has finished the active implementation
 slice. Do not treat authored test code as executed validation.
 
-### 7. Final Verification
+### 8. Final Verification
 
 After development and executed validation complete, the supervisor must run one
-final operation verification pass before commit preparation.
+final operational verification pass before commit preparation.
 
 Rules:
 
@@ -220,15 +267,30 @@ Rules:
 - when the cause requires code changes, route back to Develop and repeat the
   downstream validation flow
 
-### 8. Commit
+### 9. Commit
 
 Use the committing skill only after the active scope has passed validation or
 the user explicitly asks for commit preparation.
+
+### 10. Evaluate
+
+Use `agents/skills/evaluating-agent/SKILL.md` in final evaluation mode after
+the commit stage completes.
+
+- Assesses whether the completed implementation achieved the original goal.
+- Reads `.dev/REQUIREMENTS.md`, `.dev/PLAN.md`, `.dev/DASHBOARD.md`, and the
+  recent git log.
+- Produces a full evaluation report in `.dev/07-evaluator/<date>_<stem>.md`
+  with a `VERDICT: goal_achieved | partial | not_achieved` line.
+- Optionally generates the next development goal when `next_goal_strategy` is
+  configured.
 
 ## `.dev` State Management
 
 When a workflow is active, keep these files aligned when they exist:
 
+- `.dev/REQUIREMENTS.md`
+- `.dev/WORKFLOWS.md`
 - `.dev/DASHBOARD.md`
 - `.dev/PLAN.md`
 - `.dev/ROADMAP.md`
@@ -242,6 +304,11 @@ operator-facing state.
 
 Use the Markdown files with these roles:
 
+- `.dev/REQUIREMENTS.md`: refined, unambiguous requirements produced by the
+  refining agent before planning begins
+- `.dev/WORKFLOWS.md`: the adaptive stage sequence for the current task,
+  generated by the planning agent; use `[ ]` for pending and `[O]` for
+  completed steps
 - `.dev/DASHBOARD.md`: show the real current progress, active phase, next action,
   risks, and notable in-progress context for the active scope
 - `.dev/PLAN.md`: list the prompt-derived phase checklist for the active scope
@@ -249,6 +316,31 @@ Use the Markdown files with these roles:
   completed items
 - `.dev/TASKS.md`: list the development work items derived from the current user
   prompt or scope
+
+## Evaluator Checkpoint Protocol
+
+When `.dev/WORKFLOWS.md` contains a mid-pipeline evaluator checkpoint, the
+supervisor must:
+
+1. Confirm the preceding stage is complete (evidence present in `.dev/`).
+2. Invoke `agents/skills/evaluating-agent/SKILL.md` in mid-pipeline check mode.
+3. Read the checkpoint report from `.dev/07-evaluator/check_<stage>_<date>.md`.
+4. If `DECISION: PROCEED` — advance to the next stage.
+5. If `DECISION: REWORK` — route back to the stage indicated in the report.
+
+## Phase Gate Rules
+
+Each phase transition requires evidence:
+
+- `refine → plan`: `.dev/REQUIREMENTS.md` exists and is confirmed
+- `plan → design`: `WORKFLOWS.md` and `PLAN.md` exist; next action is clear
+- `design → develop`: interface or decision exists for the active scope
+- `develop → test_author`: product code changes exist in intended files
+- `test_author → test_review`: unit/integration test code exists and has been
+  executed (authored tests alone do not satisfy this gate)
+- `test_review → final_verify`: executed validation has clear results
+- `final_verify → commit`: completed slice passed final operational verification
+- `commit`: diff scope and validation both support version control
 
 ## Roadmap Alignment
 
@@ -266,19 +358,19 @@ Prefer roadmap execution in this order unless the user redirects the priority:
 
 When resuming work after interruption:
 
-1. read current `.dev` state
-2. verify whether dashboard, tasks, and machine state agree
-3. identify the earliest uncertain phase
-4. resume from that phase rather than assuming later phases are valid
+1. Read current `.dev` state including `WORKFLOWS.md`.
+2. Verify whether dashboard, tasks, WORKFLOWS.md, and machine state agree.
+3. Identify the earliest uncertain stage in `WORKFLOWS.md`.
+4. Resume from that stage rather than assuming later stages are valid.
 
 ## Default Agent Posture
 
 When working in this repository, agents should:
 
-- be explicit about the active phase
-- use the mapped workflow skill for that phase
+- be explicit about the active stage
+- use the mapped workflow skill for that stage
 - refer to adjacent workflow skills when handoff or collaboration is required
 - let the supervisor govern transitions
-- keep progress visible in `.dev`
+- keep progress visible in `.dev/`, especially in `WORKFLOWS.md`
 - prefer deterministic checks before semantic judgment
 - preserve resumability at every step
