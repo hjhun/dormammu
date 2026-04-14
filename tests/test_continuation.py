@@ -207,12 +207,12 @@ class ContinuationPromptEdgeCaseTests(unittest.TestCase):
             original_prompt_text="Do the work.",
             repo_guidance={
                 "rule_files": [],
-                "workflow_files": ["agents/workflows/planning-design.md"],
+                "workflow_files": ["agents/workflows/refine-plan.md"],
             },
         )
 
         self.assertIn("Repository workflows:", continuation.text)
-        self.assertIn("agents/workflows/planning-design.md", continuation.text)
+        self.assertIn("agents/workflows/refine-plan.md", continuation.text)
 
     def test_source_run_id_matches_latest_run(self) -> None:
         """The returned ContinuationPrompt.source_run_id matches the run_id in latest_run."""

@@ -7,8 +7,7 @@ name = "dormammu"
 dynamic = ["version"]
 description = "Python-based coding agent loop orchestrator"
 readme = "README.md"
-license = "Apache-2.0"
-license-files = ["LICENSE"]
+license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dependencies = []
 
@@ -20,6 +19,7 @@ dormammu = "dormammu.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "backend"}
+license-files = ["LICENSE"]
 
 [tool.setuptools.dynamic]
 version = {file = "VERSION"}
@@ -32,6 +32,7 @@ dormammu = [
   "assets/templates/dev/*.tmpl",
   "assets/agents/AGENTS.md",
   "assets/agents/workflows/*.md",
+  "assets/agents/rules/*.md",
   "assets/agents/skills/*/SKILL.md",
   "assets/agents/skills/*/agents/*.yaml",
 ]

@@ -27,6 +27,8 @@ from dormammu.daemon.goals_config import (
 )
 from dormammu.daemon.pipeline_runner import _strip_goal_source_tag
 
+AGENTS_DIR = Path(__file__).resolve().parents[1] / "agents"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,6 +55,7 @@ def _make_request(
         goal_text=goal_text,
         repo_root=tmp_path,
         dev_dir=dev_dir,
+        agents_dir=AGENTS_DIR,
         next_goal_strategy=next_goal_strategy,
         stem="feature_x",
         date_str="20260413",

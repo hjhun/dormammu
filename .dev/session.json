@@ -1,23 +1,24 @@
 {
   "session_id": "bootstrap-20260407-235000-kst",
   "created_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-14T13:55:00+09:00",
+  "updated_at": "2026-04-14T23:19:00+09:00",
   "run_type": "bootstrap",
   "status": "active",
   "state_schema_version": 7,
-  "active_phase": "commit",
+  "active_phase": "final_verification",
   "active_roadmap_phase_ids": [
-    "phase_4"
+    "phase_4",
+    "phase_7"
   ],
-  "resume_token": "commit:mandatory-refine-plan-goals-analyzer",
+  "resume_token": "final_verification:evaluator-rules-complete",
   "last_safe_checkpoint": {
     "phase": "final_verification",
-    "timestamp": "2026-04-14T13:55:00+09:00",
-    "description": "Validated runtime, goals, and public docs for the mandatory refine-plan and analyzer-led goals workflow slice."
+    "timestamp": "2026-04-14T23:19:00+09:00",
+    "description": "Completed the evaluator/rules implementation, repaired the install-script regression, and passed the full pytest suite."
   },
   "bootstrap": {
-    "goal": "Make refine -> plan mandatory in run, run-once, and daemonize, and add an analyzer expert to goals prompt generation so planner-controlled workflows start from stronger prompts.",
-    "captured_at": "2026-04-14T13:45:00+09:00",
+    "goal": "Implement the evaluator checkpoint architecture and package runtime rule contracts under agents/rules.",
+    "captured_at": "2026-04-14T23:19:00+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -30,43 +31,39 @@
   },
   "task_sync": {
     "source": ".dev/PLAN.md",
-    "resume_checkpoint": "Implementation and targeted validation are complete. Resume from commit preparation unless the user redirects priority.",
-    "total_tasks": 5,
-    "completed_tasks": 5,
+    "resume_checkpoint": "Implementation and full validation are complete. Resume only if the user wants commit preparation or additional hardening beyond this evaluator/rules scope.",
+    "total_tasks": 4,
+    "completed_tasks": 4,
     "pending_tasks": 0,
     "all_completed": true,
     "next_pending_task": null,
     "items": [
       {
-        "text": "Phase 1. Add `analyzer` to the runtime role model and examples",
+        "text": "Phase 1. Review the current evaluator, supervisor, and goals-scheduler roles and confirm the approved checkpoint architecture",
         "completed": true
       },
       {
-        "text": "Phase 2. Make `refiner` and `planner` mandatory pipeline prelude stages",
+        "text": "Phase 2. Move one-shot runtime stage contracts into `agents/rules/` and mirror them into packaged assets",
         "completed": true
       },
       {
-        "text": "Phase 3. Enforce the mandatory prelude in CLI and daemon single-agent paths",
+        "text": "Phase 3. Implement the mandatory post-plan evaluator checkpoint and keep the goals-only post-commit evaluator aligned with the rules-based contract",
         "completed": true
       },
       {
-        "text": "Phase 4. Upgrade goals prompt generation to use requirements analysis and planner-owned workflow contracts",
-        "completed": true
-      },
-      {
-        "text": "Phase 5. Refresh regression tests and fake CLI helpers for the new flow",
+        "text": "Phase 4. Run the full repository test suite, fix regressions, and leave `.dev` state synchronized with the completed work",
         "completed": true
       }
     ],
-    "synced_at": "2026-04-14T13:45:00+09:00"
+    "synced_at": "2026-04-14T23:19:00+09:00"
   },
-  "next_action": "Prepare the validated mandatory refine-plan and goals analyzer slice for commit and push.",
+  "next_action": "Await user direction for commit preparation or any additional hardening beyond the completed evaluator/rules implementation.",
   "notes": [
-    "Resume from commit preparation unless a higher-priority runtime workflow change is requested.",
-    "run, run-once, and daemonize single-agent paths now execute a mandatory refine-plan prelude before downstream work.",
-    "Goals prompt generation now supports analyzer -> planner -> architect and emits a workflow contract that makes planner authoritative after plan.",
-    "README.md, docs/GUIDE.md, and docs/ko/GUIDE.md now describe the new runtime and goals behavior.",
-    "Validation passed for targeted role-config, pipeline-runner, goals-scheduler, CLI, daemon, and Mermaid-doc test slices."
+    "Mandatory post-plan evaluator checkpoint remains semantic and is now backed by rules loaded from agents/rules with packaged fallback.",
+    "Final evaluator remains mandatory only for goals-scheduler prompts after commit.",
+    "Source and packaged rule assets are synchronized under agents/rules and backend/dormammu/assets/agents/rules.",
+    "Full repository validation passed: python3 -m pytest -> 627 passed in 68.25s.",
+    "No commit was created in this pass."
   ],
   "loop": {
     "status": "idle",

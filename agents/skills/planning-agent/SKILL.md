@@ -75,7 +75,7 @@ Generated workflow for this task. Update checkboxes as each stage completes.
 [ ] Phase 8. Supervisor gate
 [ ] Phase 9. Evaluator check — evaluating-agent (mid-pipeline)
 [ ] Phase 10. Commit — committing-agent
-[ ] Phase 11. Evaluate — evaluating-agent (final)
+[ ] Phase 11. Evaluate — evaluating-agent (final, when required)
 ```
 
 ### Evaluator Checkpoint Guidance
@@ -89,7 +89,9 @@ Add a mid-pipeline `evaluating-agent` checkpoint when any of these apply:
 - The supervisor flags uncertainty about whether the implementation matches the
   refined requirements.
 
-A final `evaluating-agent` step is always included at the end of the workflow.
+A final `evaluating-agent` step is included when the task needs an explicit
+post-commit semantic assessment. Goals-scheduler-triggered runs also receive a
+mandatory final evaluator at runtime after the commit stage.
 
 ## Planning Rules
 

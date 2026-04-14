@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import subprocess
 import sys
@@ -208,6 +209,8 @@ class SupervisorTests(unittest.TestCase):
         prompt_path.write_text(prompt_text, encoding="utf-8")
         stdout_path.write_text(stdout_text, encoding="utf-8")
         stderr_path.write_text(stderr_text, encoding="utf-8")
+        started_at = datetime.now(timezone.utc) + timedelta(seconds=2)
+        completed_at = started_at + timedelta(seconds=1)
 
         payload = {
             "run_id": "seed-run",
@@ -216,8 +219,8 @@ class SupervisorTests(unittest.TestCase):
             "prompt_mode": "file",
             "command": [str(root / "fake-agent"), "--prompt-file", str(prompt_path)],
             "exit_code": 0,
-            "started_at": "2026-04-08T00:00:00+09:00",
-            "completed_at": "2026-04-08T00:00:01+09:00",
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
             "artifacts": {
                 "prompt": str(prompt_path),
                 "stdout": str(stdout_path),

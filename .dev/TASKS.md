@@ -2,17 +2,16 @@
 
 ## Prompt-Derived Implementation Plan
 
-- [O] Phase 1. Capture the active bug report, current workflow stage, and
-  manual repro target in the root `.dev` state
-- [O] Phase 2. Reproduce the failure by sending `SIGTERM` to `daemonize` during
-  an in-flight prompt
-- [O] Phase 3. Wire the daemon shutdown event into the active agent execution
-  path and preserve interrupted prompt state
-- [O] Phase 4. Add automated regression coverage for prompt interruption during
-  daemon shutdown
-- [O] Phase 5. Re-run focused validation and the requested manual integration
-  scenario in `~/samba/test`
+- [O] Phase 1. Restore the implementation path to the approved evaluator
+  design and remove reliance on large hardcoded runtime prompt bodies
+- [O] Phase 2. Add source and packaged runtime rule assets under `agents/rules/`
+  and wire the loader into the pipeline/evaluator stages
+- [O] Phase 3. Keep mandatory evaluator behavior scoped to post-plan and
+  goals-only post-commit contexts
+- [O] Phase 4. Execute full-repository validation, diagnose failures, and fix
+  the install-script loop harness regression
 
 ## Resume Checkpoint
 
-The active task list is complete. Resume only if the user expands the scope.
+The active implementation task is complete. Resume only if the user asks for
+commit preparation or additional follow-up changes.

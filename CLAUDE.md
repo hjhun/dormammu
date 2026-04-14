@@ -30,7 +30,7 @@ skills in the `agents/` bundle.
 | Situation | Workflow / Skill |
 |-----------|-----------------|
 | New request with unclear scope or acceptance criteria | `agents/workflows/refine-plan.md` |
-| Requirements clear, need planning and design decisions | `agents/workflows/planning-design.md` |
+| Requirements clear, need planning refresh before design | `agents/workflows/refine-plan.md` (skip refining when not needed) |
 | Implementation ready (code + tests) | `agents/workflows/develop-test-authoring.md` |
 | Build / deploy / validation / final review needed | `agents/workflows/build-deploy-test-review.md` |
 | Final validation passed, commit ready | `agents/workflows/cleanup-commit.md` |

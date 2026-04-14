@@ -712,21 +712,20 @@ flowchart TD
     wf0 --> refine[Refining Agent]
     refine --> plan[Planning Agent]
 
-    plan --> wf1["Workflow 1<br/>Planning & Design"]
-    wf1 --> design[Designing Agent]
+    plan --> design[Designing Agent]
 
-    design --> wf2["Workflow 2<br/>Develop & Test Authoring"]
-    wf2 --> develop[Developing Agent]
-    wf2 --> testauth[Test Authoring Agent]
+    design --> wf1["Workflow 1<br/>Develop & Test Authoring"]
+    wf1 --> develop[Developing Agent]
+    wf1 --> testauth[Test Authoring Agent]
 
-    develop --> wf3["Workflow 3<br/>Build, Deploy & Review"]
-    testauth --> wf3
-    wf3 --> build[Building & Deploying Agent]
+    develop --> wf2["Workflow 2<br/>Build, Deploy & Review"]
+    testauth --> wf2
+    wf2 --> build[Building & Deploying Agent]
     build --> review[Testing & Reviewing Agent]
     review -- "fail / needs rework" --> develop
 
-    review -- pass --> wf4["Workflow 4<br/>Cleanup & Commit"]
-    wf4 --> finalverify["Final Verification<br/>Supervising Agent"]
+    review -- pass --> wf3["Workflow 3<br/>Cleanup & Commit"]
+    wf3 --> finalverify["Final Verification<br/>Supervising Agent"]
     finalverify -- fail --> develop
     finalverify -- pass --> commit[Committing Agent]
     commit --> Done([Done])
@@ -745,23 +744,14 @@ the specific task.
 
 **When to skip refining:** For simple, well-scoped changes where requirements
 are already clear, the refiner can be skipped (leave `agents.refiner.cli`
-unset). The planner can still run from the raw goal.
+unset). The planner can still run from the raw goal, and the supervisor can
+hand off directly to the Designing Agent after planning. There is no separate
+planning-and-design workflow document.
 
 **Outputs:** `.dev/REQUIREMENTS.md`, `.dev/WORKFLOWS.md`, `.dev/PLAN.md`,
 updated `.dev/DASHBOARD.md`.
 
-### Workflow 1 — Planning and Design
-
-**Path:** `agents/workflows/planning-design.md`
-
-Runs the Planning Agent then the Designing Agent in sequence. Enter this
-workflow when a new scope starts or design decisions are needed before any
-code changes.
-
-**Outputs:** Phase checklist in `.dev/PLAN.md`, implementation-ready design
-notes, updated `.dev/DASHBOARD.md`.
-
-### Workflow 2 — Develop and Test Authoring
+### Workflow 1 — Develop and Test Authoring
 
 **Path:** `agents/workflows/develop-test-authoring.md`
 
@@ -771,7 +761,7 @@ design is complete. Both share the same active slice but own separate files.
 **Outputs:** Product-code changes, matching unit/integration tests, updated
 `.dev/` state.
 
-### Workflow 3 — Build, Deploy, and Test Review
+### Workflow 2 — Build, Deploy, and Test Review
 
 **Path:** `agents/workflows/build-deploy-test-review.md`
 
@@ -781,7 +771,7 @@ Verification. Failures at any stage route back to development.
 **Outputs:** Build/packaging evidence, executed validation results, findings
 written to `.dev/`.
 
-### Workflow 4 — Cleanup and Commit
+### Workflow 3 — Cleanup and Commit
 
 **Path:** `agents/workflows/cleanup-commit.md`
 

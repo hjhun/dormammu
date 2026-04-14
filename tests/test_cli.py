@@ -1681,10 +1681,15 @@ class CliTests(unittest.TestCase):
                         marker in prompt
                         for marker in (
                             "You are a requirement refiner.",
+                            "You are the requirement refiner.",
                             "You are a planning agent.",
+                            "You are the planning agent.",
                             "You are an analyzer agent.",
                         )
                     )
+
+                def is_plan_evaluator_prompt(prompt: str) -> bool:
+                    return "mandatory post-plan evaluator checkpoint" in prompt
 
                 def mark_plan_complete() -> None:
                     if not SESSION_PATH.exists():
@@ -1719,6 +1724,12 @@ class CliTests(unittest.TestCase):
                         prompt = Path(args[index + 1]).read_text(encoding="utf-8")
                     else:
                         prompt = sys.stdin.read()
+
+                    if is_plan_evaluator_prompt(prompt):
+                        print("CHECKPOINT::ok")
+                        print("DECISION: PROCEED")
+                        print(f"PROMPT::{{prompt.strip()}}")
+                        return 0
 
                     if is_prelude_prompt(prompt):
                         print("PRELUDE::ok")

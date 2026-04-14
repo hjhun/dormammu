@@ -9,6 +9,7 @@ It packages:
 
 - reusable workflow documents under `workflows/`
 - reusable skill documents under `skills/`
+- reusable runtime rule documents under `rules/`
 - a stable entry document for agents that need to decide what to use next
 
 Use this directory when `dormammu` is shipped, installed, or copied into
@@ -19,10 +20,12 @@ another environment and the workflow guidance must travel with it.
 Start here, then route to the matching workflow document:
 
 - `workflows/refine-plan.md`
-- `workflows/planning-design.md`
 - `workflows/develop-test-authoring.md`
 - `workflows/build-deploy-test-review.md`
 - `workflows/cleanup-commit.md`
+
+There is no separate planning-and-design workflow document. Once planning is
+current, the supervisor routes directly to `skills/designing-agent/SKILL.md`.
 
 Use `skills/supervising-agent/SKILL.md` as the top-level controller whenever
 the task spans multiple phases or the next workflow is not obvious.
@@ -33,14 +36,18 @@ Every non-trivial task follows this sequence. The exact stages active for a
 given task are recorded in `.dev/WORKFLOWS.md` after planning completes.
 
 ```
-refine → plan → design → develop + test-author → test-review → commit → evaluate
-             ↑                    ↑                    ↑
-        supervisor gates between each phase; evaluator checkpoints as needed
+refine → plan → evaluator(plan) → design → develop + test-author → test-review → final verify → commit → evaluate
+                       ↑                         ↑                              ↑
+          mandatory semantic checkpoint     supervisor gates             final evaluator when required
 ```
 
 Stages are not fixed. The planning agent generates an adaptive workflow in
 `.dev/WORKFLOWS.md` that includes only the stages the task actually needs and
 inserts evaluator checkpoints where complexity or risk warrants them.
+
+The mandatory prelude is always `refine -> plan -> evaluator(plan checkpoint)`.
+The post-commit final evaluator is mandatory only for goals-scheduler prompts,
+or when the task-specific workflow explicitly includes it.
 
 ## Workflow Routing
 
@@ -51,24 +58,16 @@ Use `workflows/refine-plan.md` when:
 - a new request or goal arrives
 - the scope or acceptance criteria are unclear before planning begins
 - `.dev/REQUIREMENTS.md` needs to be created or refreshed
+- requirements are already clear but planning needs to be refreshed before
+  design starts
 
 This workflow uses:
 
 - `skills/refining-agent/SKILL.md`
 - `skills/planning-agent/SKILL.md`
 
-### Planning And Design
-
-Use `workflows/planning-design.md` when:
-
-- requirements are already refined and `.dev/REQUIREMENTS.md` exists
-- `.dev` state needs to be refreshed from an existing plan
-- design decisions are needed before implementation
-
-This workflow uses:
-
-- `skills/planning-agent/SKILL.md`
-- `skills/designing-agent/SKILL.md`
+If requirements are already clear, skip refining and let the supervisor hand
+off from planning to `skills/designing-agent/SKILL.md`.
 
 ### Development And Test Authoring
 
@@ -123,6 +122,20 @@ Use these skill names:
 - `committing-agent`
 - `supervising-agent`
 - `evaluating-agent`
+
+## Runtime Rules
+
+Stable runtime contracts for one-shot pipeline stages live under `rules/`.
+
+Current packaged rule files:
+
+- `rules/refiner-runtime.md`
+- `rules/planner-runtime.md`
+- `rules/tester-runtime.md`
+- `rules/reviewer-runtime.md`
+- `rules/committer-runtime.md`
+- `rules/evaluator-check-plan.md`
+- `rules/evaluator-final.md`
 
 ## Pipeline Stage Protocol
 

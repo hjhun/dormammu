@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import tempfile
 from typing import TYPE_CHECKING, Any, Mapping
 
 from dormammu.telegram.config import TelegramConfig, parse_telegram_config
@@ -63,8 +64,27 @@ def _global_home_dir(env: Mapping[str, str]) -> Path:
     return _resolve_home_dir(env) / DEFAULT_GLOBAL_HOME_DIRNAME
 
 
-def _default_global_config_path(env: Mapping[str, str]) -> Path:
-    return _global_home_dir(env) / DEFAULT_GLOBAL_CONFIG_FILENAME
+def _default_global_config_path(global_home_dir: Path) -> Path:
+    return global_home_dir / DEFAULT_GLOBAL_CONFIG_FILENAME
+
+
+def _nearest_existing_parent(path: Path) -> Path:
+    candidate = path
+    while not candidate.exists() and candidate.parent != candidate:
+        candidate = candidate.parent
+    return candidate
+
+
+def _is_writable_path(path: Path) -> bool:
+    return os.access(_nearest_existing_parent(path), os.W_OK)
+
+
+def _resolve_global_home_dir(root: Path, env: Mapping[str, str]) -> Path:
+    candidate = _global_home_dir(env)
+    if _is_writable_path(candidate):
+        return candidate
+    user_fragment = str(os.getuid()) if hasattr(os, "getuid") else "default"
+    return (Path(tempfile.gettempdir()) / f"dormammu-{user_fragment}").resolve()
 
 
 def detect_available_agent_cli(env: Mapping[str, str] | None = None) -> Path | None:
@@ -77,7 +97,12 @@ def detect_available_agent_cli(env: Mapping[str, str] | None = None) -> Path | N
     return None
 
 
-def _resolve_config_file(root: Path, env: Mapping[str, str]) -> Path | None:
+def _resolve_config_file(
+    root: Path,
+    env: Mapping[str, str],
+    *,
+    global_home_dir: Path,
+) -> Path | None:
     explicit_path = env.get("DORMAMMU_CONFIG_PATH")
     if explicit_path:
         candidate = Path(explicit_path).expanduser()
@@ -90,7 +115,7 @@ def _resolve_config_file(root: Path, env: Mapping[str, str]) -> Path | None:
     candidate = root / DEFAULT_CONFIG_FILENAME
     if candidate.exists():
         return candidate.resolve()
-    global_candidate = _default_global_config_path(env)
+    global_candidate = _default_global_config_path(global_home_dir)
     if global_candidate.exists():
         return global_candidate.resolve()
     return None
@@ -285,7 +310,13 @@ def _discover_asset_root(root: Path, env: Mapping[str, str]) -> Path:
     return root
 
 
-def _discover_agents_dir(root: Path, env: Mapping[str, str], asset_root: Path) -> Path:
+def _discover_agents_dir(
+    root: Path,
+    env: Mapping[str, str],
+    asset_root: Path,
+    *,
+    global_home_dir: Path,
+) -> Path:
     explicit_dir = env.get("DORMAMMU_AGENTS_DIR")
     if explicit_dir:
         candidate = Path(explicit_dir).expanduser()
@@ -293,7 +324,7 @@ def _discover_agents_dir(root: Path, env: Mapping[str, str], asset_root: Path) -
             candidate = (root / candidate).resolve()
         return candidate
 
-    global_agents_dir = _global_home_dir(env) / "agents"
+    global_agents_dir = global_home_dir / "agents"
     if (global_agents_dir / "AGENTS.md").exists():
         return global_agents_dir
 
@@ -490,13 +521,23 @@ class AppConfig:
     ) -> "AppConfig":
         values = env or os.environ
         root = discover_repo_root(repo_root) if discover else (repo_root or Path.cwd()).resolve()
+        global_home_dir = _resolve_global_home_dir(root, values)
         asset_root = _discover_asset_root(root, values)
-        agents_dir = _discover_agents_dir(root, values, asset_root)
+        agents_dir = _discover_agents_dir(
+            root,
+            values,
+            asset_root,
+            global_home_dir=global_home_dir,
+        )
         base_dev_dir = root / ".dev"
         dev_dir = base_dev_dir
         sessions_dir_override = values.get("DORMAMMU_SESSIONS_DIR", "").strip()
-        sessions_dir = Path(sessions_dir_override).expanduser() if sessions_dir_override else _global_home_dir(values) / "sessions"
-        config_file = _resolve_config_file(root, values)
+        sessions_dir = (
+            Path(sessions_dir_override).expanduser()
+            if sessions_dir_override
+            else global_home_dir / "sessions"
+        )
+        config_file = _resolve_config_file(root, values, global_home_dir=global_home_dir)
         config_payload = _load_config_payload(config_file)
         fallback_agent_clis = (
             _parse_fallback_agent_clis(
@@ -510,7 +551,7 @@ class AppConfig:
             app_name=str(values.get("DORMAMMU_APP_NAME", _config_value(config_payload, "app_name", "dormammu"))),
             repo_root=root,
             home_dir=_resolve_home_dir(values),
-            global_home_dir=_global_home_dir(values),
+            global_home_dir=global_home_dir,
             base_dev_dir=base_dev_dir,
             dev_dir=dev_dir,
             sessions_dir=sessions_dir,

@@ -39,6 +39,13 @@ require_command() {
   fi
 }
 
+ensure_build_backend() {
+  if "${VENV_DIR}/bin/python" -c "import setuptools" >/dev/null 2>&1; then
+    return 0
+  fi
+  "${PYTHON_BIN}" -m venv --upgrade --system-site-packages "${VENV_DIR}"
+}
+
 resolve_cli_path() {
   local cli_name="$1"
   local whereis_output token
@@ -393,11 +400,12 @@ main() {
     "${PYTHON_BIN}" -m venv "${VENV_DIR}"
   fi
 
+  ensure_build_backend
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
 
   if [[ -d "${source_location}" ]]; then
     log "Installing dormammu from local source directory: ${source_location}"
-    "${VENV_DIR}/bin/pip" install --upgrade "${source_location}"
+    "${VENV_DIR}/bin/pip" install --no-build-isolation --upgrade "${source_location}"
   else
     TMP_DIR="$(mktemp -d)"
     local archive_path="${TMP_DIR}/dormammu.tar.gz"
@@ -405,7 +413,7 @@ main() {
     curl -fsSL "${source_location}" -o "${archive_path}"
     local source_dir
     source_dir="$(extract_archive "${archive_path}" "${TMP_DIR}")"
-    "${VENV_DIR}/bin/pip" install --upgrade "${source_dir}"
+    "${VENV_DIR}/bin/pip" install --no-build-isolation --upgrade "${source_dir}"
   fi
 
   link_binary

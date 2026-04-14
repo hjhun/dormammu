@@ -2,18 +2,16 @@
 
 ## Prompt-Derived Implementation Plan
 
-- [O] Phase 1. Refresh the active `.dev` workflow view for the SIGTERM shutdown
-  investigation and capture the repro target
-- [O] Phase 2. Reproduce the daemon shutdown failure with a real `daemonize`
-  process while an active prompt is still running
-- [O] Phase 3. Propagate daemon shutdown to the active agent subprocess without
-  breaking resumable prompt handling
-- [O] Phase 4. Add focused regression coverage for the interrupted daemon run
-  path
-- [O] Phase 5. Run targeted validation and repeat the manual integration repro,
-  including the requested project under `~/samba/test`
+- [O] Phase 1. Review the current evaluator, supervisor, and goals-scheduler
+  roles and confirm the approved checkpoint architecture
+- [O] Phase 2. Move one-shot runtime stage contracts into `agents/rules/` and
+  mirror them into packaged assets
+- [O] Phase 3. Implement the mandatory post-plan evaluator checkpoint and keep
+  the goals-only post-commit evaluator aligned with the rules-based contract
+- [O] Phase 4. Run the full repository test suite, fix regressions, and leave
+  `.dev` state synchronized with the completed work
 
 ## Resume Checkpoint
 
-Implementation and requested verification are complete. Resume only if the user
-requests commit preparation or additional shutdown hardening.
+Implementation and full validation are complete. Resume only if the user wants
+commit preparation or additional hardening beyond this evaluator/rules scope.

@@ -419,10 +419,36 @@ class InstallScriptTests(unittest.TestCase):
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
 
+                def is_prelude_prompt(prompt: str) -> bool:
+                    return any(
+                        marker in prompt
+                        for marker in (
+                            "You are the requirement refiner.",
+                            "You are the planning agent.",
+                        )
+                    )
+
+                def is_plan_evaluator_prompt(prompt: str) -> bool:
+                    return "mandatory post-plan evaluator checkpoint" in prompt
+
                 def main() -> int:
                     args = sys.argv[1:]
                     if "--help" in args:
                         print("usage: fake-loop-agent [--prompt-file PATH]")
+                        return 0
+
+                    if "--prompt-file" in args:
+                        index = args.index("--prompt-file")
+                        prompt = Path(args[index + 1]).read_text(encoding="utf-8")
+                    else:
+                        prompt = sys.stdin.read()
+
+                    print(f"PROMPT::{{prompt.strip()}}")
+                    if is_plan_evaluator_prompt(prompt):
+                        print("DECISION: PROCEED")
+                        return 0
+
+                    if is_prelude_prompt(prompt):
                         return 0
 
                     if COUNTER_PATH.exists():
@@ -431,14 +457,7 @@ class InstallScriptTests(unittest.TestCase):
                         attempt = 1
                     COUNTER_PATH.write_text(str(attempt), encoding="utf-8")
 
-                    if "--prompt-file" in args:
-                        index = args.index("--prompt-file")
-                        prompt = Path(args[index + 1]).read_text(encoding="utf-8")
-                    else:
-                        prompt = sys.stdin.read()
-
                     print(f"ATTEMPT::{{attempt}}")
-                    print(f"PROMPT::{{prompt.strip()}}")
                     if attempt >= SUCCESS_ATTEMPT:
                         TARGET_PATH.write_text("done\\n", encoding="utf-8")
                     return 0

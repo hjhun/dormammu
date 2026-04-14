@@ -42,6 +42,7 @@ def _make_app_config(tmp_path: Path, *, agents: AgentsConfig | None = None) -> A
     mock.repo_root = tmp_path
     mock.base_dev_dir = tmp_path / ".dev"
     mock.active_agent_cli = Path("claude")
+    mock.agents_dir = Path(__file__).resolve().parents[1] / "agents"
     mock.agents = agents
     return mock
 
@@ -121,6 +122,80 @@ class TestMandatoryPreludeStages:
 
         assert output == "plan"
         assert mock_call.call_args.kwargs["cli"] == Path("claude")
+
+    def test_plan_evaluator_proceed_verdict(self, tmp_path: Path) -> None:
+        agents = AgentsConfig(evaluator=RoleAgentConfig(cli=Path("echo")))
+        runner = _make_runner(tmp_path, agents=agents)
+
+        with patch.object(
+            runner, "_call_once", return_value="checkpoint ok\nDECISION: PROCEED"
+        ):
+            verdict, _ = runner._run_plan_evaluator(
+                "goal", stem="g", date_str="20260412"
+            )
+
+        assert verdict == "proceed"
+
+    def test_plan_evaluator_ambiguous_output_fails_closed_to_rework(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(evaluator=RoleAgentConfig(cli=Path("echo")))
+        runner = _make_runner(tmp_path, agents=agents)
+
+        with patch.object(runner, "_call_once", return_value="checkpoint without verdict"):
+            verdict, _ = runner._run_plan_evaluator(
+                "goal", stem="g", date_str="20260412"
+            )
+
+        assert verdict == "rework"
+
+    def test_run_refine_and_plan_retries_until_evaluator_proceeds(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(
+            refiner=RoleAgentConfig(cli=Path("echo")),
+            planner=RoleAgentConfig(cli=Path("echo")),
+            evaluator=RoleAgentConfig(cli=Path("echo")),
+        )
+        runner = _make_runner(tmp_path, agents=agents)
+
+        with (
+            patch.object(runner, "_run_refiner", return_value="requirements") as mock_refiner,
+            patch.object(runner, "_run_planner", return_value="plan") as mock_planner,
+            patch.object(
+                runner,
+                "_run_plan_evaluator",
+                side_effect=[
+                    ("rework", "DECISION: REWORK"),
+                    ("proceed", "DECISION: PROCEED"),
+                ],
+            ) as mock_eval,
+        ):
+            runner.run_refine_and_plan("goal", stem="g", date_str="20260412")
+
+        mock_refiner.assert_called_once()
+        assert mock_planner.call_count == 2
+        assert mock_eval.call_count == 2
+
+    def test_run_refine_and_plan_raises_after_max_rework(self, tmp_path: Path) -> None:
+        agents = AgentsConfig(
+            refiner=RoleAgentConfig(cli=Path("echo")),
+            planner=RoleAgentConfig(cli=Path("echo")),
+            evaluator=RoleAgentConfig(cli=Path("echo")),
+        )
+        runner = _make_runner(tmp_path, agents=agents)
+
+        with (
+            patch.object(runner, "_run_refiner", return_value="requirements"),
+            patch.object(runner, "_run_planner", return_value="plan"),
+            patch.object(
+                runner,
+                "_run_plan_evaluator",
+                return_value=("rework", "DECISION: REWORK"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="Mandatory plan evaluator"):
+                runner.run_refine_and_plan("goal", stem="g", date_str="20260412")
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +324,7 @@ class TestPipelineRun:
         dev_result = _make_loop_result("completed")
 
         with (
+            patch.object(runner, "run_refine_and_plan") as mock_prelude,
             patch.object(runner, "_run_developer", return_value=dev_result) as mock_dev,
             patch.object(
                 runner, "_run_tester", return_value=("pass", "OVERALL: PASS")
@@ -261,6 +337,7 @@ class TestPipelineRun:
             result = runner.run("goal", stem="s", date_str="20260412")
 
         assert result.status == "completed"
+        mock_prelude.assert_called_once()
         assert mock_dev.call_count == 1
         assert mock_tester.call_count == 1
         assert mock_reviewer.call_count == 1
@@ -280,6 +357,7 @@ class TestPipelineRun:
         ]
 
         with (
+            patch.object(runner, "run_refine_and_plan"),
             patch.object(
                 runner, "_run_developer", return_value=_make_loop_result("completed")
             ) as mock_dev,
@@ -311,6 +389,7 @@ class TestPipelineRun:
         ]
 
         with (
+            patch.object(runner, "run_refine_and_plan"),
             patch.object(
                 runner, "_run_developer", return_value=_make_loop_result("completed")
             ) as mock_dev,
@@ -334,6 +413,7 @@ class TestPipelineRun:
         runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
 
         with (
+            patch.object(runner, "run_refine_and_plan"),
             patch.object(
                 runner, "_run_developer", return_value=_make_loop_result("failed")
             ),
@@ -361,6 +441,7 @@ class TestPipelineRun:
 
         # Tester always fails
         with (
+            patch.object(runner, "run_refine_and_plan"),
             patch.object(
                 runner, "_run_developer", return_value=_make_loop_result("completed")
             ) as mock_dev,
@@ -388,6 +469,7 @@ class TestPipelineRun:
 
         # Reviewer always fails
         with (
+            patch.object(runner, "run_refine_and_plan"),
             patch.object(
                 runner, "_run_developer", return_value=_make_loop_result("completed")
             ) as mock_dev,
@@ -427,6 +509,7 @@ class TestPipelineRun:
         ]
 
         with (
+            patch.object(runner, "run_refine_and_plan"),
             patch.object(runner, "_run_developer", side_effect=fake_dev),
             patch.object(runner, "_run_tester", side_effect=tester_responses),
             patch.object(runner, "_run_reviewer", return_value=None),

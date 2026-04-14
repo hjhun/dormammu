@@ -3,12 +3,13 @@
 Pipeline stages
 ---------------
 refiner   (mandatory, one-shot) →
-planner   (mandatory, one-shot) →
+planner   (mandatory, one-shot, loops with evaluator on REWORK) →
+evaluator (mandatory plan checkpoint, one-shot) →
 developer (supervised LoopRunner) →
 tester    (one-shot, loops back to developer on FAIL) →
 reviewer  (one-shot, loops back to developer on NEEDS_WORK) →
 committer (one-shot) →
-evaluator (one-shot, goals-scheduler context only)
+evaluator (mandatory post-commit, goals-scheduler context only)
 
 Each stage writes a document to ``.dev/<slot>-<role>/<date>_<stem>.md``.
 
@@ -28,8 +29,8 @@ Reuses :class:`LoopRunner` so the full supervisor retry loop is preserved.
 
 Re-entry limits
 ---------------
-``MAX_STAGE_ITERATIONS`` caps the developer-tester and developer-reviewer
-loops independently, preventing infinite retries.
+``MAX_STAGE_ITERATIONS`` caps the planner-evaluator, developer-tester, and
+developer-reviewer loops independently, preventing infinite retries.
 
 Return value
 ------------
@@ -55,6 +56,7 @@ from dormammu.daemon.evaluator import (
     resolve_evaluator_cli,
     resolve_evaluator_model,
 )
+from dormammu.daemon.rules import build_rule_prompt, load_rule_text
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
 from dormammu.state import StateRepository
 
@@ -70,6 +72,8 @@ _TESTER_FAIL_RE = re.compile(r"OVERALL\s*:\s*FAIL", re.IGNORECASE)
 _TESTER_PASS_RE = re.compile(r"OVERALL\s*:\s*PASS", re.IGNORECASE)
 _REVIEWER_reject_RE = re.compile(r"VERDICT\s*:\s*NEEDS[_\s]WORK", re.IGNORECASE)
 _REVIEWER_APPROVE_RE = re.compile(r"VERDICT\s*:\s*APPROVED", re.IGNORECASE)
+_CHECKPOINT_REWORK_RE = re.compile(r"DECISION\s*:\s*REWORK", re.IGNORECASE)
+_CHECKPOINT_PROCEED_RE = re.compile(r"DECISION\s*:\s*PROCEED", re.IGNORECASE)
 
 _DEFAULT_MAX_RETRIES = 49
 
@@ -113,7 +117,36 @@ class PipelineRunner:
             date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
 
         self._run_refiner(goal_text, stem=stem, date_str=date_str)
-        self._run_planner(goal_text, stem=stem, date_str=date_str)
+
+        evaluator_feedback_text: str | None = None
+        for iteration in range(MAX_STAGE_ITERATIONS):
+            self._run_planner(
+                goal_text,
+                stem=stem,
+                date_str=date_str,
+                checkpoint_feedback_text=evaluator_feedback_text,
+            )
+            verdict, report_text = self._run_plan_evaluator(
+                goal_text,
+                stem=stem,
+                date_str=date_str,
+            )
+            if verdict == "proceed":
+                self._log(
+                    f"pipeline: plan evaluator PROCEED (iteration {iteration + 1})"
+                )
+                return
+            if iteration < MAX_STAGE_ITERATIONS - 1:
+                self._log(
+                    f"pipeline: plan evaluator REWORK (iteration {iteration + 1}) "
+                    "— re-entering planner"
+                )
+                evaluator_feedback_text = report_text
+                continue
+            raise RuntimeError(
+                "Mandatory plan evaluator requested REWORK after the maximum "
+                "planner retries."
+            )
 
     def run(
         self,
@@ -126,8 +159,9 @@ class PipelineRunner:
     ) -> LoopRunResult:
         """Execute the full pipeline and return a :class:`LoopRunResult`.
 
-        ``goal_file_path`` and ``evaluator_config`` are both required for the
-        evaluator stage to run.  When either is None the evaluator is skipped.
+        ``goal_file_path`` controls whether the mandatory post-commit evaluator
+        runs. When it is None, the prompt did not come from the goals scheduler
+        and the final evaluator is skipped.
         """
         if date_str is None:
             date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -252,7 +286,12 @@ class PipelineRunner:
     # ------------------------------------------------------------------
 
     def _run_planner(
-        self, goal_text: str, *, stem: str, date_str: str
+        self,
+        goal_text: str,
+        *,
+        stem: str,
+        date_str: str,
+        checkpoint_feedback_text: str | None = None,
     ) -> str | None:
         """Run the planner agent once.
 
@@ -272,7 +311,11 @@ class PipelineRunner:
         self._log("pipeline: planner stage starting")
         requirements_text = self._read_requirements_doc()
         prompt = self._planner_prompt(
-            goal_text, requirements_text, stem=stem, date_str=date_str
+            goal_text,
+            requirements_text,
+            stem=stem,
+            date_str=date_str,
+            checkpoint_feedback_text=checkpoint_feedback_text,
         )
         output = self._call_once(
             role="planner",
@@ -285,6 +328,51 @@ class PipelineRunner:
         )
         self._log("pipeline: planner stage completed")
         return output
+
+    # ------------------------------------------------------------------
+    # Plan evaluator stage (one-shot, mandatory)
+    # ------------------------------------------------------------------
+
+    def _run_plan_evaluator(
+        self, goal_text: str, *, stem: str, date_str: str
+    ) -> tuple[str, str]:
+        """Run the mandatory evaluator checkpoint after planning.
+
+        Returns ``(verdict, report_text)`` where verdict is ``"proceed"`` or
+        ``"rework"``. Missing or ambiguous decisions fail closed as rework.
+        """
+        evaluator_cfg = self._agents.for_role("evaluator")
+        cli = evaluator_cfg.resolve_cli(self._app_config.active_agent_cli)
+        if cli is None:
+            raise RuntimeError("No CLI available for mandatory evaluator role.")
+
+        self._log("pipeline: plan evaluator stage starting")
+        requirements_text = self._read_requirements_doc()
+        prompt = self._plan_evaluator_prompt(
+            goal_text,
+            requirements_text,
+            stem=stem,
+            date_str=date_str,
+        )
+        report_path = (
+            self._app_config.base_dev_dir
+            / "07-evaluator"
+            / f"check_plan_{date_str}_{stem}.md"
+        )
+        output = self._call_once(
+            role="evaluator",
+            cli=cli,
+            model=evaluator_cfg.model,
+            prompt=prompt,
+            stem=stem,
+            date_str=date_str,
+            slot="07",
+            doc_path=report_path,
+        )
+
+        if _CHECKPOINT_PROCEED_RE.search(output):
+            return "proceed", output
+        return "rework", output
 
     # ------------------------------------------------------------------
     # Developer stage (LoopRunner)
@@ -406,7 +494,7 @@ class PipelineRunner:
             return
 
         self._log("pipeline: committer stage starting")
-        prompt = self._committer_prompt(stem)
+        prompt = self._committer_prompt(stem, date_str=date_str)
         self._call_once(
             role="committer",
             cli=cli,
@@ -430,31 +518,32 @@ class PipelineRunner:
         goal_file_path: Path | None,
         evaluator_config: "EvaluatorConfig | None",
     ) -> None:
-        """Run the evaluator stage if all conditions are met.
+        """Run the mandatory post-commit evaluator for goals-scheduler prompts."""
+        if goal_file_path is None:
+            return
 
-        Conditions for execution:
-        1. ``goal_file_path`` is not None (pipeline was triggered by goals scheduler).
-        2. ``evaluator_config`` is not None and ``evaluator_config.enabled`` is True.
-        3. The evaluator has a resolvable CLI.
-        """
-        if goal_file_path is None or evaluator_config is None:
-            return
-        if not evaluator_config.enabled:
-            self._log("pipeline: evaluator disabled in config — skipping")
-            return
+        from dormammu.daemon.goals_config import EvaluatorConfig  # noqa: PLC0415
+
+        effective_config = evaluator_config or EvaluatorConfig(enabled=True)
+        if evaluator_config is not None and not evaluator_config.enabled:
+            self._log(
+                "pipeline: goals-triggered prompt requires post-commit "
+                "evaluation — ignoring disabled evaluator flag"
+            )
 
         evaluator_cfg = self._agents.for_role("evaluator")
         active_cli = self._app_config.active_agent_cli
         cli = resolve_evaluator_cli(
-            evaluator_config,
+            effective_config,
             evaluator_cfg.resolve_cli(None),  # agents.evaluator.cli only
             active_cli,
         )
         if cli is None:
-            self._log("pipeline: evaluator has no resolvable CLI — skipping")
-            return
+            raise RuntimeError(
+                "No CLI available for mandatory post-commit evaluator stage."
+            )
 
-        model = resolve_evaluator_model(evaluator_config, evaluator_cfg.model)
+        model = resolve_evaluator_model(effective_config, evaluator_cfg.model)
 
         # Extract the original goal text (strip the metadata comment if present).
         goal_text = _strip_goal_source_tag(prompt_text)
@@ -467,13 +556,16 @@ class PipelineRunner:
             goal_text=goal_text,
             repo_root=self._app_config.repo_root,
             dev_dir=self._app_config.base_dev_dir,
-            next_goal_strategy=evaluator_config.next_goal_strategy,
+            agents_dir=self._app_config.agents_dir,
+            next_goal_strategy=effective_config.next_goal_strategy,
             stem=stem,
             date_str=date_str,
         )
         result = EvaluatorStage(
             progress_stream=self._progress_stream,
         ).run(request)
+        if result.status != "completed":
+            raise RuntimeError("Mandatory post-commit evaluator stage failed.")
         self._log(
             f"pipeline: evaluator stage completed "
             f"(status={result.status}, verdict={result.verdict})"
@@ -493,6 +585,7 @@ class PipelineRunner:
         stem: str,
         date_str: str,
         slot: str,
+        doc_path: Path | None = None,
     ) -> str:
         """Run an agent CLI once and return its stdout."""
         from dormammu.agent.presets import preset_for_executable_name
@@ -536,14 +629,18 @@ class PipelineRunner:
             output = result.stdout or ""
 
             # Persist the agent output as a role document.
-            doc_dir = self._app_config.base_dev_dir / f"{slot}-{role}"
-            doc_dir.mkdir(parents=True, exist_ok=True)
-            doc_path = doc_dir / f"{date_str}_{stem}.md"
-            doc_path.write_text(
+            target_path = doc_path
+            if target_path is None:
+                doc_dir = self._app_config.base_dev_dir / f"{slot}-{role}"
+                doc_dir.mkdir(parents=True, exist_ok=True)
+                target_path = doc_dir / f"{date_str}_{stem}.md"
+            else:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(
                 f"# {role.capitalize()} — {stem}\n\n{output}",
                 encoding="utf-8",
             )
-            self._log(f"pipeline: {role} document → {doc_path}")
+            self._log(f"pipeline: {role} document → {target_path}")
             return output
         finally:
             if tmp_path is not None and tmp_path.exists():
@@ -554,36 +651,20 @@ class PipelineRunner:
     # ------------------------------------------------------------------
 
     def _refiner_prompt(self, goal_text: str, *, stem: str, date_str: str) -> str:
-        return (
-            "Follow the Pipeline Stage Protocol from AGENTS.md:\n"
-            "Before starting your task, read and output the full content of "
-            ".dev/DASHBOARD.md, .dev/PLAN.md, and .dev/WORKFLOWS.md (if they "
-            "exist) so the current workflow state is visible in this stage's output.\n\n"
-            "You are a requirement refiner. Your job is to convert the raw goal "
-            "below into a structured, unambiguous requirements document that the "
-            "planning agent can use without asking further questions.\n\n"
-            "Your task:\n"
-            "1. Read and output .dev/DASHBOARD.md, .dev/PLAN.md, and "
-            ".dev/WORKFLOWS.md if they exist.\n"
-            "2. Analyse the goal for ambiguities, missing scope boundaries, "
-            "unspecified acceptance criteria, and open dependencies.\n"
-            "3. Write .dev/REQUIREMENTS.md with these sections:\n"
-            "   ## Goal — one-paragraph restatement\n"
-            "   ## Scope / In Scope — explicit items that are included\n"
-            "   ## Scope / Out of Scope — explicit exclusions\n"
-            "   ## Acceptance Criteria — verifiable checkboxes\n"
-            "   ## Constraints — technical, time, or resource limits\n"
-            "   ## Dependencies — other phases, systems, or external factors\n"
-            "   ## Open Questions — unresolved decisions planning must address\n"
-            "   ## Risks — known risks and suggested mitigations\n"
-            "4. Each acceptance criterion must be verifiable from the repository "
-            "state (file exists, test passes, command succeeds). Avoid criteria "
-            "like 'works correctly' or 'is intuitive'.\n"
-            "5. If the goal is already clear enough, write the document "
-            "immediately and note that no clarification was needed.\n\n"
-            f"# Goal\n\n{goal_text.strip()}\n\n"
-            f"Write .dev/REQUIREMENTS.md now, then save your report to: "
-            f".dev/00-refiner/{date_str}_{stem}.md"
+        rule_text = self._load_rule("refiner-runtime.md")
+        report_path = self._stage_doc_path("00", "refiner", stem=stem, date_str=date_str)
+        return build_rule_prompt(
+            rule_text,
+            sections=(
+                ("Goal", goal_text),
+                (
+                    "Expected Outputs",
+                    (
+                        "- `.dev/REQUIREMENTS.md`\n"
+                        f"- Stage report: `{report_path}`"
+                    ),
+                ),
+            ),
         )
 
     def _planner_prompt(
@@ -593,68 +674,60 @@ class PipelineRunner:
         *,
         stem: str,
         date_str: str,
+        checkpoint_feedback_text: str | None = None,
     ) -> str:
-        req_section = (
-            f"\n\n# Refined Requirements\n\n{requirements_text.strip()}"
-            if requirements_text
-            else ""
+        rule_text = self._load_rule("planner-runtime.md")
+        report_path = self._stage_doc_path("01", "planner", stem=stem, date_str=date_str)
+        return build_rule_prompt(
+            rule_text,
+            sections=(
+                ("Goal", goal_text),
+                ("Refined Requirements", requirements_text),
+                ("Evaluator Feedback", checkpoint_feedback_text),
+                (
+                    "Expected Outputs",
+                    (
+                        "- `.dev/WORKFLOWS.md`\n"
+                        "- `.dev/PLAN.md`\n"
+                        "- `.dev/DASHBOARD.md`\n"
+                        f"- Stage report: `{report_path}`"
+                    ),
+                ),
+            ),
         )
-        return (
-            "Follow the Pipeline Stage Protocol from AGENTS.md:\n"
-            "Before starting your task, read and output the full content of "
-            ".dev/DASHBOARD.md, .dev/PLAN.md, and .dev/WORKFLOWS.md (if they "
-            "exist) so the current workflow state is visible in this stage's output.\n\n"
-            "You are a planning agent. Your job is to turn the goal and refined "
-            "requirements into an actionable, adaptive workflow plan.\n\n"
-            "Your task:\n"
-            "1. Read and output .dev/DASHBOARD.md, .dev/PLAN.md, and "
-            ".dev/WORKFLOWS.md if they exist.\n"
-            "2. Read agents/skills/planning-agent/SKILL.md for the full planning "
-            "protocol and WORKFLOWS.md format.\n"
-            "3. Generate .dev/WORKFLOWS.md — the adaptive, task-specific stage "
-            "sequence. Use [ ] for pending steps and [O] for completed steps. "
-            "Include only the stages this task genuinely needs. Insert evaluator "
-            "checkpoints where complexity or risk warrants them.\n"
-            "4. Update .dev/PLAN.md with the prompt-derived phase checklist "
-            "using [ ] Phase N. <title> for pending and [O] Phase N. <title> "
-            "for completed items.\n"
-            "5. Update .dev/DASHBOARD.md with the real current progress, active "
-            "phase, next action, and any risks.\n"
-            "6. Record any open questions from the requirements as blockers if "
-            "they cannot be resolved without human input.\n\n"
-            "Planning rules:\n"
-            "- Keep phases outcome-focused, not tool-focused.\n"
-            "- Prefer 4-8 top-level phase items for the active scope.\n"
-            "- WORKFLOWS.md is the authoritative process map for this task.\n"
-            "- Preserve existing completed work unless the state is clearly wrong.\n\n"
-            f"# Goal\n\n{goal_text.strip()}"
-            f"{req_section}\n\n"
-            f"Write .dev/WORKFLOWS.md and update .dev/PLAN.md and "
-            f".dev/DASHBOARD.md now, then save your report to: "
-            f".dev/01-planner/{date_str}_{stem}.md"
+
+    def _plan_evaluator_prompt(
+        self,
+        goal_text: str,
+        requirements_text: str | None,
+        *,
+        stem: str,
+        date_str: str,
+    ) -> str:
+        rule_text = self._load_rule("evaluator-check-plan.md")
+        report_path = (
+            self._app_config.base_dev_dir
+            / "07-evaluator"
+            / f"check_plan_{date_str}_{stem}.md"
+        )
+        return build_rule_prompt(
+            rule_text,
+            sections=(
+                ("Goal", goal_text),
+                ("Refined Requirements", requirements_text),
+                ("Expected Output Path", str(report_path)),
+            ),
         )
 
     def _tester_prompt(self, goal_text: str, *, stem: str, date_str: str) -> str:
-        return (
-            "Follow the Pipeline Stage Protocol from AGENTS.md:\n"
-            "Before starting your task, read and output the full content of "
-            ".dev/DASHBOARD.md, .dev/PLAN.md, and .dev/WORKFLOWS.md so the "
-            "current workflow state is visible in this stage's output.\n\n"
-            "You are a black-box tester. Test the implementation described by the "
-            "goal below WITHOUT looking at internal implementation details.\n\n"
-            "Your task:\n"
-            "1. Read and output .dev/DASHBOARD.md, .dev/PLAN.md, and "
-            ".dev/WORKFLOWS.md.\n"
-            "2. Design test cases that verify the behaviour described in the goal.\n"
-            "3. Execute each test case.\n"
-            "4. Record each test case as PASS or FAIL with reproduction steps for failures.\n"
-            "5. On the LAST line of your report write EITHER:\n"
-            "   OVERALL: PASS\n"
-            "   OR\n"
-            "   OVERALL: FAIL\n\n"
-            f"# Goal\n\n{goal_text.strip()}\n\n"
-            f"Write your test report to: "
-            f".dev/04-tester/{date_str}_{stem}.md"
+        rule_text = self._load_rule("tester-runtime.md")
+        report_path = self._stage_doc_path("04", "tester", stem=stem, date_str=date_str)
+        return build_rule_prompt(
+            rule_text,
+            sections=(
+                ("Goal", goal_text),
+                ("Expected Output Path", str(report_path)),
+            ),
         )
 
     def _reviewer_prompt(
@@ -665,59 +738,26 @@ class PipelineRunner:
         stem: str,
         date_str: str,
     ) -> str:
-        design_section = (
-            f"\n\n# Architect Design\n\n{design_text.strip()}"
-            if design_text
-            else ""
-        )
-        return (
-            "Follow the Pipeline Stage Protocol from AGENTS.md:\n"
-            "Before starting your task, read and output the full content of "
-            ".dev/DASHBOARD.md, .dev/PLAN.md, and .dev/WORKFLOWS.md so the "
-            "current workflow state is visible in this stage's output.\n\n"
-            "You are a code reviewer. Review the implementation for correctness "
-            "and adherence to the design.\n\n"
-            "Check for:\n"
-            "1. Read and output .dev/DASHBOARD.md, .dev/PLAN.md, and "
-            ".dev/WORKFLOWS.md.\n"
-            "2. Correctness of logic against the goal and design.\n"
-            "3. Coding rule violations or anti-patterns.\n"
-            "4. Hard-coded values tied to a specific purpose that should be "
-            "   generalised.\n"
-            "5. Items from the architect design that are missing in the code.\n\n"
-            "On the LAST line of your review write EITHER:\n"
-            "   VERDICT: APPROVED\n"
-            "   OR\n"
-            "   VERDICT: NEEDS_WORK\n\n"
-            f"# Goal\n\n{goal_text.strip()}"
-            f"{design_section}\n\n"
-            f"Write your review to: .dev/05-reviewer/{date_str}_{stem}.md"
+        rule_text = self._load_rule("reviewer-runtime.md")
+        report_path = self._stage_doc_path("05", "reviewer", stem=stem, date_str=date_str)
+        return build_rule_prompt(
+            rule_text,
+            sections=(
+                ("Goal", goal_text),
+                ("Architect Design", design_text),
+                ("Expected Output Path", str(report_path)),
+            ),
         )
 
-    def _committer_prompt(self, stem: str) -> str:
-        return (
-            "Follow the Pipeline Stage Protocol from AGENTS.md:\n"
-            "Before starting your task, read and output the full content of "
-            ".dev/DASHBOARD.md, .dev/PLAN.md, and .dev/WORKFLOWS.md so the "
-            "current workflow state is visible in this stage's output.\n\n"
-            "You are a Git committer. Create a commit for the completed "
-            "implementation.\n\n"
-            "Steps:\n"
-            "1. Read and output .dev/DASHBOARD.md, .dev/PLAN.md, and "
-            ".dev/WORKFLOWS.md.\n"
-            "2. Inspect the working tree and confirm which files belong to the active scope.\n"
-            "3. Stage only the intended files and create the commit.\n\n"
-            "Commit message format:\n"
-            "  <title (max 80 chars)>\n"
-            "  <blank line>\n"
-            "  <body — wrap at 80 chars on word boundaries>\n\n"
-            "Rules:\n"
-            "- English only.\n"
-            "- Title must be 80 characters or fewer.\n"
-            "- Separate title and body with a blank line.\n"
-            "- Wrap body lines at 80 characters.\n\n"
-            f"The implementation scope is: {stem}\n\n"
-            "Run git add -A and git commit now."
+    def _committer_prompt(self, stem: str, *, date_str: str) -> str:
+        rule_text = self._load_rule("committer-runtime.md")
+        report_path = self._stage_doc_path("06", "committer", stem=stem, date_str=date_str)
+        return build_rule_prompt(
+            rule_text,
+            sections=(
+                ("Implementation Scope", stem),
+                ("Expected Output Path", str(report_path)),
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -737,6 +777,12 @@ class PipelineRunner:
         if doc.exists():
             return doc.read_text(encoding="utf-8")
         return None
+
+    def _load_rule(self, rule_name: str) -> str:
+        return load_rule_text(self._app_config.agents_dir, rule_name)
+
+    def _stage_doc_path(self, slot: str, role: str, *, stem: str, date_str: str) -> Path:
+        return self._app_config.base_dev_dir / f"{slot}-{role}" / f"{date_str}_{stem}.md"
 
     @staticmethod
     def _append_feedback(

@@ -73,8 +73,11 @@ goal through `PipelineRunner` instead of `LoopRunner`. The pipeline executes
 these roles in order:
 
 ```
-developer → tester → reviewer → committer
+refiner → planner → evaluator(plan checkpoint) → developer → tester → reviewer → committer → evaluator(final, goals only)
 ```
+
+The mandatory prelude is always `refine -> plan -> evaluator(plan checkpoint)`.
+The post-commit final evaluator is mandatory only for goals-scheduler prompts.
 
 ### Roles
 
@@ -136,10 +139,13 @@ The goals directory is also manageable through the Telegram bot via `/goals`
 Use the distributable workflow bundle under `agents/` to execute each phase:
 
 - Refine and Plan workflow: `agents/workflows/refine-plan.md`
-- Planning and Design workflow: `agents/workflows/planning-design.md`
 - Development and Test Authoring workflow: `agents/workflows/develop-test-authoring.md`
 - Build Deploy and Test Review workflow: `agents/workflows/build-deploy-test-review.md`
 - Cleanup and Commit workflow: `agents/workflows/cleanup-commit.md`
+
+There is no separate planning-and-design workflow document. When requirements
+are already clear, use `agents/workflows/refine-plan.md`, skip refining as
+needed, and route into `agents/skills/designing-agent/SKILL.md` after planning.
 
 Use the skills under `agents/skills/` when a workflow document routes to a
 specific skill:
@@ -154,6 +160,10 @@ specific skill:
 - Commit: `agents/skills/committing-agent/SKILL.md`
 - Supervision: `agents/skills/supervising-agent/SKILL.md`
 - Evaluation: `agents/skills/evaluating-agent/SKILL.md`
+
+Stable runtime role contracts for one-shot pipeline stages live under
+`agents/rules/` and are mirrored into the packaged asset bundle at install
+time.
 
 ## Phase Expectations
 

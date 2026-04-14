@@ -32,6 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
+from dormammu.daemon.rules import build_rule_prompt, load_rule_text
+
 if TYPE_CHECKING:
     from dormammu.daemon.goals_config import EvaluatorConfig
 
@@ -67,6 +69,7 @@ class EvaluatorRequest:
     goal_text: str              # content of the original goal file
     repo_root: Path
     dev_dir: Path               # scoped session .dev/ directory
+    agents_dir: Path
     next_goal_strategy: str     # none | suggest | auto
     stem: str                   # prompt stem (used for output doc naming)
     date_str: str
@@ -135,88 +138,26 @@ class EvaluatorStage:
     # ------------------------------------------------------------------
 
     def _build_prompt(self, req: EvaluatorRequest) -> str:
-        sections: list[str] = [
-            "You are a goal evaluator. Your job is to assess whether the "
-            "implementation just committed fully achieved the original goal, "
-            "partially achieved it, or did not achieve it.",
-            "",
-            "## Original Goal",
-            "",
-            req.goal_text.strip(),
-        ]
-
+        rule_text = load_rule_text(req.agents_dir, "evaluator-final.md")
         plan_text = self._read_file(req.dev_dir / "PLAN.md")
-        if plan_text:
-            sections += ["", "## Completed Plan", "", plan_text.strip()]
-
         dashboard_text = self._read_file(req.dev_dir / "DASHBOARD.md")
-        if dashboard_text:
-            sections += ["", "## Dashboard", "", dashboard_text.strip()]
-
+        workflows_text = self._read_file(req.dev_dir / "WORKFLOWS.md")
         supervisor_report = self._read_file(req.dev_dir / "supervisor_report.md")
-        if supervisor_report:
-            sections += [
-                "",
-                "## Supervisor Report",
-                "",
-                supervisor_report.strip(),
-            ]
-
         git_summary = self._read_git_summary(req.repo_root)
-        if git_summary:
-            sections += ["", "## Recent Git Activity", "", git_summary.strip()]
-
-        sections += [
-            "",
-            "## Instructions",
-            "",
-            "1. Compare the original goal against the completed work evidence above.",
-            "2. Assess goal achievement on three levels:",
-            "   - **goal_achieved**: All acceptance criteria met, implementation complete.",
-            "   - **partial**: Core work done but some items missing or incomplete.",
-            "   - **not_achieved**: Implementation did not address the goal.",
-            "3. Write an evaluation report covering:",
-            "   - Goal achievement assessment",
-            "   - What was done well",
-            "   - What is missing or needs improvement",
-            "   - Roadmap alignment",
-            "4. On the LAST line of your assessment write EXACTLY ONE of:",
-            "   VERDICT: goal_achieved",
-            "   VERDICT: partial",
-            "   VERDICT: not_achieved",
-        ]
-
-        if req.next_goal_strategy == "auto":
-            sections += [
-                "",
-                "5. After the VERDICT line, generate the next goal for the "
-                "next development cycle.",
-                "   Wrap it in these exact delimiters (no extra blank lines "
-                "inside the delimiters):",
-                "   <!-- next_goal_start -->",
-                "   <next goal content in Markdown>",
-                "   <!-- next_goal_end -->",
-                "",
-                "   The next goal should build on what was achieved and address "
-                "any gaps, or define the next logical feature if the goal was "
-                "fully achieved.",
-            ]
-        elif req.next_goal_strategy == "suggest":
-            sections += [
-                "",
-                "5. After the VERDICT line, add a 'Suggestions for Next Cycle' "
-                "section with recommended next steps for a human to review.",
-            ]
-
-        sections += [
-            "",
-            f"Write your full evaluation to: "
-            f"{req.dev_dir}/07-evaluator/{req.date_str}_{req.stem}.md",
-            "",
-            "Write all content in English.",
-        ]
-
-        return "\n".join(sections)
+        output_path = req.dev_dir / "07-evaluator" / f"{req.date_str}_{req.stem}.md"
+        return build_rule_prompt(
+            rule_text,
+            sections=(
+                ("Original Goal", req.goal_text),
+                ("Completed Plan", plan_text),
+                ("Dashboard", dashboard_text),
+                ("Workflows", workflows_text),
+                ("Supervisor Report", supervisor_report),
+                ("Recent Git Activity", git_summary),
+                ("Next Goal Strategy", self._next_goal_strategy_instructions(req.next_goal_strategy)),
+                ("Expected Output Path", str(output_path)),
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Agent invocation
@@ -402,6 +343,22 @@ class EvaluatorStage:
     def _extract_evaluation_body(output: str) -> str:
         """Return the agent output with the next-goal block removed."""
         return _NEXT_GOAL_RE.sub("", output).strip()
+
+    @staticmethod
+    def _next_goal_strategy_instructions(strategy: str) -> str:
+        if strategy == "auto":
+            return (
+                "After the verdict line, generate the next goal inside these exact delimiters:\n"
+                "<!-- next_goal_start -->\n"
+                "<next goal content in Markdown>\n"
+                "<!-- next_goal_end -->"
+            )
+        if strategy == "suggest":
+            return (
+                "After the verdict line, add a `## Suggestions for Next Cycle` "
+                "section for human review. Do not output a next-goal block."
+            )
+        return "Do not output a next-goal block after the verdict line."
 
     def _log(self, message: str) -> None:
         print(message, file=self._progress_stream)

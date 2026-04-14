@@ -64,7 +64,18 @@ def run_doctor(
         _check_agent_directory(repo_root),
         _check_repo_writable(repo_root),
     )
-    status = "ok" if all(check.ok for check in checks) else "issues_found"
+    required_check_names = {
+        "python_version",
+        "home_directory",
+        "agent_cli",
+        "agent_directory",
+        "repo_writable",
+    }
+    status = (
+        "ok"
+        if all(check.ok for check in checks if check.name in required_check_names)
+        else "issues_found"
+    )
     return DoctorReport(status=status, repo_root=repo_root, home_dir=resolved_home_dir, checks=checks)
 
 
