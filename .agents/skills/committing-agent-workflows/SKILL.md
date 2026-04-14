@@ -27,11 +27,31 @@ Related skills:
    `git add -f` instead of silently dropping them from scope.
 5. Write a terse, accurate commit message that matches the actual diff.
 6. Validate the commit message format before creating the commit:
-   - keep a subject line and a separate body
+   - use this exact structure:
+     ```text
+     <subject>
+
+     <body with no intentionally inserted blank lines inside the body>
+
+     Co-Authored-By: <Model Name><noreply@company.com>
+     ```
+   - keep a subject line, a separate body, and the final
+     `Co-Authored-By:` trailer
    - keep every line at 80 characters or fewer
+   - if a line would exceed 80 characters, wrap it onto the next line
    - use real line breaks, not escaped newline sequences such as `\n`
    - prefer a temporary message file or repeated `-m` flags over embedded
      escape sequences in a single shell string
+   - do not insert blank lines inside the body just to separate paragraphs
+   - set `Model Name` from the active CLI model information; do not invent or
+     omit it
+   - if the model information is unavailable, stop and ask instead of guessing
+   - map `company.com` from the active CLI family:
+     - `codex` -> `openai.com`
+     - `gemini` -> `google.com`
+     - `claude` -> `anthropic.com`
+   - keep the `Co-Authored-By:` trailer exactly as
+     `Co-Authored-By: <Model Name><noreply@company.com>`
    - check the exact final message text line by line before `git commit`
    - if any line is 81+ characters, rewrite and re-check before committing
 7. After committing, verify the stored message with `git show --format=fuller --no-patch HEAD`.
@@ -55,6 +75,8 @@ Related skills:
   stored by Git and wrap lines manually when needed.
 - Treat the 80-character limit as a hard requirement for the subject and every
   body line with no exceptions.
+- Treat the `Co-Authored-By:` trailer format and company-domain mapping as a
+  hard requirement.
 
 ## Expected Outputs
 
