@@ -97,8 +97,9 @@ developer to re-enter with the tester report appended to the original prompt.
 design document (`.dev/02-architect/<date>_<stem>.md` if present). Its last
 output line must be `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK`.
 
-**Re-entry limit**: `MAX_STAGE_ITERATIONS = 3`. After three rounds in either
-the tester or reviewer loop, the pipeline advances unconditionally.
+**Re-entry limit**: `MAX_STAGE_ITERATIONS` is derived from the active
+iteration-max budget. After that many rounds in either the tester or reviewer
+loop, the pipeline advances unconditionally.
 
 Each role writes its output to `.dev/<slot>-<role>/<date>_<stem>.md`.
 

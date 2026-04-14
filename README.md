@@ -161,8 +161,8 @@ configured and otherwise falls back to `active_agent_cli`.
 as its last output line. A `FAIL` routes the developer back with the report.
 
 **Reviewer**: Code review against the goal and any architect design document.
-Appends `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK`. After three round-trips
-the pipeline advances unconditionally.
+Appends `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK`. After the configured
+iteration-max round-trips, the pipeline advances unconditionally.
 
 **Committer**: Stages only the active scope and produces an intentional git
 commit after the reviewer approves.

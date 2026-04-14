@@ -2,16 +2,16 @@
 
 ## Prompt-Derived Implementation Plan
 
-- [O] Phase 1. Inspect the release installer, packaging metadata, and existing
-  tests to identify why raw `install.sh` fails on Python 3.10
-- [O] Phase 2. Update the release install path to avoid the legacy
-  `bdist_wheel` fallback and keep the local editable installer behavior intact
-- [O] Phase 3. Add regression coverage for the fixed release-install command
-  path
-- [O] Phase 4. Execute targeted validation and confirm the installer fix is
-  ready for final verification
+- [O] Phase 1. Inspect the pipeline prelude rework loop and identify where the
+  fixed `3`-iteration cap is enforced
+- [O] Phase 2. Align the prelude evaluator re-entry cap with the pipeline's
+  iteration-max budget
+- [O] Phase 3. Add or adjust regression coverage for the new retry-limit
+  behavior
+- [O] Phase 4. Execute targeted validation and confirm the new iteration-limit
+  behavior is stable
 
 ## Resume Checkpoint
 
-Targeted validation completed. Resume only if follow-up packaging validation is
-requested.
+Targeted pipeline validation completed. Resume only if commit prep or a
+follow-up pipeline-budget change is requested.

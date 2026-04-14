@@ -969,8 +969,8 @@ architect design document (`.dev/02-architect/<date>_<stem>.md`). It appends
 `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK` as its last line. `NEEDS_WORK`
 sends the developer back for another round.
 
-**Re-entry limit**: after three rounds in the tester or reviewer loop,
-the pipeline advances unconditionally.
+**Re-entry limit**: after the configured iteration-max rounds in the tester or
+reviewer loop, the pipeline advances unconditionally.
 
 ### CLI assignment per role
 

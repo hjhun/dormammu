@@ -106,6 +106,9 @@ class TestAppendFeedback:
 
 
 class TestMandatoryPreludeStages:
+    def test_stage_iteration_limit_matches_developer_default_max_iterations(self) -> None:
+        assert MAX_STAGE_ITERATIONS == _make_loop_result().max_iterations
+
     def test_refiner_uses_active_cli_fallback(self, tmp_path: Path) -> None:
         runner = _make_runner(tmp_path, active_agent_cli=Path("claude"))
 
@@ -197,6 +200,31 @@ class TestMandatoryPreludeStages:
         ):
             with pytest.raises(RuntimeError, match="Mandatory plan evaluator"):
                 runner.run_refine_and_plan("goal", stem="g", date_str="20260412")
+
+    def test_run_refine_and_plan_retries_up_to_stage_iteration_limit(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(
+            refiner=RoleAgentConfig(cli=Path("echo")),
+            planner=RoleAgentConfig(cli=Path("echo")),
+            evaluator=RoleAgentConfig(cli=Path("echo")),
+        )
+        runner = _make_runner(tmp_path, agents=agents)
+
+        with (
+            patch.object(runner, "_run_refiner", return_value="requirements"),
+            patch.object(runner, "_run_planner", return_value="plan") as mock_planner,
+            patch.object(
+                runner,
+                "_run_plan_evaluator",
+                return_value=("rework", "DECISION: REWORK"),
+            ) as mock_eval,
+        ):
+            with pytest.raises(RuntimeError, match="Mandatory plan evaluator"):
+                runner.run_refine_and_plan("goal", stem="g", date_str="20260412")
+
+        assert mock_planner.call_count == MAX_STAGE_ITERATIONS
+        assert mock_eval.call_count == MAX_STAGE_ITERATIONS
 
 
 # ---------------------------------------------------------------------------

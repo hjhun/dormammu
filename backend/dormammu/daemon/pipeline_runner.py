@@ -30,7 +30,9 @@ Reuses :class:`LoopRunner` so the full supervisor retry loop is preserved.
 Re-entry limits
 ---------------
 ``MAX_STAGE_ITERATIONS`` caps the planner-evaluator, developer-tester, and
-developer-reviewer loops independently, preventing infinite retries.
+developer-reviewer loops independently. It is derived from the developer
+stage's default iteration budget so the prelude and downstream pipeline loops
+use the same retry ceiling.
 
 Return value
 ------------
@@ -66,8 +68,6 @@ if TYPE_CHECKING:
     from dormammu.config import AppConfig
     from dormammu.daemon.goals_config import EvaluatorConfig
 
-MAX_STAGE_ITERATIONS = 3
-
 # Patterns used to parse one-shot agent output.
 _TESTER_FAIL_RE = re.compile(r"OVERALL\s*:\s*FAIL", re.IGNORECASE)
 _TESTER_PASS_RE = re.compile(r"OVERALL\s*:\s*PASS", re.IGNORECASE)
@@ -77,6 +77,7 @@ _CHECKPOINT_REWORK_RE = re.compile(r"DECISION\s*:\s*REWORK", re.IGNORECASE)
 _CHECKPOINT_PROCEED_RE = re.compile(r"DECISION\s*:\s*PROCEED", re.IGNORECASE)
 
 _DEFAULT_MAX_RETRIES = 49
+MAX_STAGE_ITERATIONS = _DEFAULT_MAX_RETRIES + 1
 
 
 class PipelineRunner:
