@@ -40,10 +40,7 @@ require_command() {
 }
 
 ensure_build_backend() {
-  if "${VENV_DIR}/bin/python" -c "import setuptools" >/dev/null 2>&1; then
-    return 0
-  fi
-  "${PYTHON_BIN}" -m venv --upgrade --system-site-packages "${VENV_DIR}"
+  "${VENV_DIR}/bin/python" -m pip install --upgrade "setuptools>=68" wheel
 }
 
 resolve_cli_path() {
@@ -400,8 +397,8 @@ main() {
     "${PYTHON_BIN}" -m venv "${VENV_DIR}"
   fi
 
-  ensure_build_backend
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
+  ensure_build_backend
 
   if [[ -d "${source_location}" ]]; then
     log "Installing dormammu from local source directory: ${source_location}"

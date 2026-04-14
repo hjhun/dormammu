@@ -16,6 +16,126 @@ LOCAL_INSTALL_SCRIPT = ROOT / "scripts" / "install.sh"
 
 
 class InstallScriptTests(unittest.TestCase):
+    def test_local_install_script_upgrades_build_backend_before_editable_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_root = Path(tmpdir)
+            repo_root = temp_root / "repo"
+            repo_root.mkdir()
+            scripts_dir = repo_root / "scripts"
+            scripts_dir.mkdir()
+            script_path = scripts_dir / "install.sh"
+            script_path.write_text(LOCAL_INSTALL_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+            script_path.chmod(0o755)
+            (repo_root / "pyproject.toml").write_text(
+                textwrap.dedent(
+                    """\
+                    [build-system]
+                    requires = ["setuptools>=68", "wheel"]
+                    build-backend = "setuptools.build_meta"
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            home_dir = temp_root / "home"
+            home_dir.mkdir()
+            launcher_dir = home_dir / ".local" / "bin"
+            bashrc_path = home_dir / ".bashrc"
+            bashrc_path.write_text("", encoding="utf-8")
+
+            venv_bin = repo_root / ".venv" / "bin"
+            venv_bin.mkdir(parents=True)
+            log_path = temp_root / "install.log"
+            marker_path = temp_root / "backend-ready"
+
+            fake_python = venv_bin / "python"
+            fake_python.write_text(
+                textwrap.dedent(
+                    f"""\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    printf 'python:%s\\n' "$*" >> "{log_path}"
+                    if [[ "$#" -ge 4 && "$1" == "-m" && "$2" == "pip" && "$3" == "install" && "$4" == "--upgrade" ]]; then
+                      shift 4
+                      if [[ "$#" -eq 1 && "$1" == "pip" ]]; then
+                        exit 0
+                      fi
+                      if [[ "$#" -eq 2 && "$1" == "setuptools>=68" && "$2" == "wheel" ]]; then
+                        : > "{marker_path}"
+                        exit 0
+                      fi
+                    fi
+                    printf 'unexpected fake python invocation: %s\\n' "$*" >&2
+                    exit 1
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+
+            fake_pip = venv_bin / "pip"
+            fake_pip.write_text(
+                textwrap.dedent(
+                    f"""\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    printf 'pip:%s\\n' "$*" >> "{log_path}"
+                    if [[ "$#" -eq 4 && "$1" == "install" && "$2" == "--no-build-isolation" && "$3" == "-e" ]]; then
+                      if [[ ! -f "{marker_path}" ]]; then
+                        printf "ERROR: Project uses a build backend that is missing the 'build_editable' hook.\\n" >&2
+                        exit 1
+                      fi
+                      cat > "{venv_bin}/dormammu" <<'EOF'
+                    #!/usr/bin/env bash
+                    if [[ "${{1:-}}" == "--help" ]]; then
+                      printf 'usage: dormammu\\n'
+                      exit 0
+                    fi
+                    exit 0
+                    EOF
+                      chmod 755 "{venv_bin}/dormammu"
+                      exit 0
+                    fi
+                    printf 'unexpected fake pip invocation: %s\\n' "$*" >&2
+                    exit 1
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_pip.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "HOME": str(home_dir),
+                    "PYTHON": sys.executable,
+                    "DORMAMMU_BASHRC_PATH": str(bashrc_path),
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(script_path)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            self.assertTrue((launcher_dir / "dormammu").exists())
+            self.assertIn("Installed dormammu into", result.stdout)
+            self.assertTrue(marker_path.exists())
+
+            log_lines = log_path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(
+                log_lines,
+                [
+                    "python:-m pip install --upgrade pip",
+                    "python:-m pip install --upgrade setuptools>=68 wheel",
+                    f"pip:install --no-build-isolation -e {repo_root}",
+                ],
+            )
+
     def test_local_install_script_creates_launcher_and_bootstraps_bashrc(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)
