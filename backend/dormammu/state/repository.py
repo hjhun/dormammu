@@ -192,7 +192,15 @@ class StateRepository:
         state_root = self._state_root_display()
         self._ensure_plan_file(plan_path)
 
-        if self._should_regenerate_operator_state(
+        existing_goal = self._existing_goal()
+        should_reset_for_goal_change = (
+            goal is not None
+            and existing_goal is not None
+            and goal.strip()
+            and goal.strip() != existing_goal.strip()
+        )
+
+        if should_reset_for_goal_change or self._should_regenerate_operator_state(
             prompt_text=prompt_text,
             dashboard_path=dashboard_path,
             plan_path=plan_path,
@@ -527,10 +535,11 @@ class StateRepository:
             )
         sessions.sort(
             key=lambda item: (
+                not bool(item.get("is_active")),
                 str(item.get("updated_at") or ""),
                 str(item.get("created_at") or ""),
             ),
-            reverse=True,
+            reverse=False,
         )
         return sessions
 

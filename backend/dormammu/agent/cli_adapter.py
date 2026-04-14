@@ -435,7 +435,10 @@ class CliAdapter:
             input_mode = override.input_mode
 
         prompt_flag = request.prompt_flag or override.prompt_flag
-        extra_args = tuple(override.extra_args) + tuple(request.extra_args)
+        extra_args = self._merge_override_extra_args(
+            tuple(override.extra_args),
+            tuple(request.extra_args),
+        )
         return replace(
             request,
             cli_path=cli_path,
@@ -443,6 +446,37 @@ class CliAdapter:
             prompt_flag=prompt_flag,
             extra_args=extra_args,
         )
+
+    def _merge_override_extra_args(
+        self,
+        override_args: tuple[str, ...],
+        request_args: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        if not override_args:
+            return request_args
+        if not request_args:
+            return override_args
+
+        explicit_flags = {
+            arg.strip().lower()
+            for arg in request_args
+            if arg.startswith("-") and arg.strip()
+        }
+
+        merged: list[str] = []
+        index = 0
+        while index < len(override_args):
+            arg = override_args[index]
+            normalized = arg.strip().lower()
+            if normalized in explicit_flags:
+                index += 1
+                if index < len(override_args) and not override_args[index].startswith("-"):
+                    index += 1
+                continue
+            merged.append(arg)
+            index += 1
+
+        return tuple(merged) + request_args
 
     def _apply_default_preset_extra_args(
         self,
@@ -453,7 +487,10 @@ class CliAdapter:
         if preset is None or not preset.default_extra_args:
             return request
 
-        extra_args = tuple(request.extra_args)
+        extra_args = self._sanitize_preset_extra_args(
+            preset_key=preset.key,
+            extra_args=tuple(request.extra_args),
+        )
         default_args = self._default_preset_args_to_prepend(
             preset_key=preset.key,
             default_extra_args=preset.default_extra_args,
@@ -461,13 +498,57 @@ class CliAdapter:
             capabilities=capabilities,
             extra_args=extra_args,
         )
-        if not default_args:
+        merged_extra_args = tuple(default_args) + extra_args if default_args else extra_args
+        if merged_extra_args == tuple(request.extra_args):
             return request
+        return replace(request, extra_args=merged_extra_args)
 
-        return replace(
-            request,
-            extra_args=tuple(default_args) + extra_args,
+    def _sanitize_preset_extra_args(
+        self,
+        *,
+        preset_key: str,
+        extra_args: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        if preset_key != "gemini" or not extra_args:
+            return extra_args
+
+        parsed_args: list[tuple[str, ...]] = []
+        index = 0
+        while index < len(extra_args):
+            current = extra_args[index]
+            if current in {"--approval-mode", "--include-directories"} and index + 1 < len(extra_args):
+                parsed_args.append((current, extra_args[index + 1]))
+                index += 2
+                continue
+            parsed_args.append((current,))
+            index += 1
+
+        last_approval_index = max(
+            (
+                item_index
+                for item_index, item in enumerate(parsed_args)
+                if item[0] in {"--approval-mode", "--yolo"}
+            ),
+            default=None,
         )
+        last_include_index = max(
+            (
+                item_index
+                for item_index, item in enumerate(parsed_args)
+                if item[0] == "--include-directories"
+            ),
+            default=None,
+        )
+
+        sanitized: list[str] = []
+        for item_index, item in enumerate(parsed_args):
+            flag = item[0]
+            if flag in {"--approval-mode", "--yolo"} and item_index != last_approval_index:
+                continue
+            if flag == "--include-directories" and item_index != last_include_index:
+                continue
+            sanitized.extend(item)
+        return tuple(sanitized)
 
     def _default_preset_args_to_prepend(
         self,
@@ -502,10 +583,11 @@ class CliAdapter:
             return tuple(default_args)
 
         if preset_key == "gemini":
+            has_approval_arg, has_include_directories = self._gemini_explicit_arg_state(extra_args)
             default_args = []
-            if not any(flag in normalized_args for flag in ("--approval-mode", "--yolo")):
+            if not has_approval_arg:
                 default_args.extend(["--approval-mode", "yolo"])
-            if "--include-directories" not in normalized_args:
+            if not has_include_directories:
                 default_args.extend(["--include-directories", "/"])
             return tuple(default_args)
 
@@ -524,6 +606,30 @@ class CliAdapter:
         if any(flag.lower() in normalized_args for flag in suppress_flags):
             return ()
         return default_extra_args
+
+    def _gemini_explicit_arg_state(
+        self,
+        extra_args: tuple[str, ...],
+    ) -> tuple[bool, bool]:
+        has_approval_arg = False
+        has_include_directories = False
+        index = 0
+        while index < len(extra_args):
+            current = extra_args[index].strip().lower()
+            if current == "--approval-mode":
+                has_approval_arg = True
+                index += 2
+                continue
+            if current == "--yolo":
+                has_approval_arg = True
+                index += 1
+                continue
+            if current == "--include-directories":
+                has_include_directories = True
+                index += 2
+                continue
+            index += 1
+        return has_approval_arg, has_include_directories
 
     def _resolve_cli_override(self, cli_path: Path) -> CliInvocationConfig | None:
         overrides = self.config.cli_overrides or {}
