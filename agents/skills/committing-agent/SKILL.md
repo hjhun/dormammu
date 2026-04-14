@@ -33,7 +33,7 @@ Related skills:
 
      <body with no intentionally inserted blank lines inside the body>
 
-     Co-Authored-By: <Agent CLI Name><noreply@company.com>
+     Co-Authored-By: <Agent CLI Name> <noreply@company.com>
      ```
    - keep a subject line, a separate body, and the final
      `Co-Authored-By:` trailer
@@ -54,7 +54,7 @@ Related skills:
      - `gemini` -> `google.com`
      - `claude` -> `anthropic.com`
    - keep the `Co-Authored-By:` trailer exactly as
-     `Co-Authored-By: <Agent CLI Name><noreply@company.com>`
+     `Co-Authored-By: <Agent CLI Name> <noreply@company.com>`
    - check the exact final message text line by line before `git commit`
    - if any line is 81+ characters, rewrite and re-check before committing
 7. After committing, verify the stored message with `git show --format=fuller --no-patch HEAD`.
