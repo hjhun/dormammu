@@ -64,12 +64,13 @@ def build_parser() -> argparse.ArgumentParser:
             "Config injection:\n"
             "  General runtime config is loaded from ./dormammu.json, or from\n"
             "  $DORMAMMU_CONFIG_PATH, or from ~/.dormammu/config.\n"
-            "  Daemon queue runs use a separate JSON file passed with:\n"
-            "  dormammu daemonize --config daemonize.json\n"
+            "  Daemon queue runs use ~/.dormammu/daemonize.json by default, or\n"
+            "  override it with: dormammu daemonize --config daemonize.json\n"
             "\n"
             "Prompt input examples:\n"
             "  dormammu run-once --agent-cli codex --prompt \"Summarize this repo\"\n"
             "  dormammu run --agent-cli codex --prompt-file PROMPT.md\n"
+            "  dormammu daemonize --repo-root .\n"
             "  dormammu daemonize --repo-root . --config daemonize.json\n"
             "\n"
             "Use `dormammu <command> --help` for command-specific options."
@@ -504,11 +505,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Config files used by daemonize:\n"
-            "  --config daemonize.json        Required daemon workflow config\n"
+            "  ~/.dormammu/daemonize.json    Default daemon workflow config\n"
+            "  --config daemonize.json       Override daemon workflow config\n"
             "  ./dormammu.json               Optional general runtime config\n"
             "  $DORMAMMU_CONFIG_PATH         Optional override for the runtime config above\n"
             "\n"
             "Examples:\n"
+            "  dormammu daemonize --repo-root .\n"
             "  dormammu daemonize --repo-root . --config daemonize.json\n"
             "  DORMAMMU_CONFIG_PATH=./ops/dormammu.prod.json dormammu daemonize \\\n"
             "    --repo-root . --config ./ops/daemonize.prod.json"
@@ -519,8 +522,8 @@ def build_parser() -> argparse.ArgumentParser:
     daemonize.add_argument(
         "--config",
         type=Path,
-        required=True,
-        help="Path to the daemon JSON config file.",
+        default=None,
+        help="Path to the daemon JSON config file. Defaults to ~/.dormammu/daemonize.json.",
     )
     daemonize.add_argument(
         "--guidance-file",

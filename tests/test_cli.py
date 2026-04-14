@@ -41,6 +41,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("Config injection:", help_text)
         self.assertIn("./dormammu.json", help_text)
         self.assertIn("$DORMAMMU_CONFIG_PATH", help_text)
+        self.assertIn("~/.dormammu/daemonize.json", help_text)
         self.assertIn("dormammu daemonize --config daemonize.json", help_text)
 
     def test_daemonize_help_mentions_runtime_and_daemon_config_files(self) -> None:
@@ -50,9 +51,37 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 0)
         help_text = stdout.getvalue()
+        self.assertIn("~/.dormammu/daemonize.json", help_text)
         self.assertIn("--config daemonize.json", help_text)
         self.assertIn("./dormammu.json", help_text)
         self.assertIn("$DORMAMMU_CONFIG_PATH", help_text)
+
+    def test_daemonize_uses_default_global_daemon_config_when_flag_is_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            home = root / ".test-home"
+            daemon_config_path = home / ".dormammu" / "daemonize.json"
+            daemon_config_path.parent.mkdir(parents=True, exist_ok=True)
+            daemon_config_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "prompt_path": str(root / "queue" / "prompts"),
+                        "result_path": str(root / "queue" / "results"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch.dict(os.environ, {"HOME": str(home)}, clear=False),
+                mock.patch("dormammu._cli_handlers.DaemonRunner.run_forever", return_value=0) as run_forever,
+            ):
+                exit_code = main(["daemonize", "--repo-root", str(root)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(run_forever.call_count, 1)
 
     def test_show_config_prints_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -131,6 +160,19 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 2)
             self.assertIn("Daemon config file was not found", stderr.getvalue())
+
+    def test_daemonize_returns_error_when_default_global_config_file_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            home = root / ".test-home"
+
+            stderr = io.StringIO()
+            with mock.patch.dict(os.environ, {"HOME": str(home)}, clear=False), contextlib.redirect_stderr(stderr):
+                exit_code = main(["daemonize", "--repo-root", str(root)])
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn(str((home / ".dormammu" / "daemonize.json").resolve()), stderr.getvalue())
 
     def test_init_state_uses_packaged_templates_when_repo_has_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

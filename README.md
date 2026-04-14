@@ -248,10 +248,12 @@ dormammu resume --repo-root .
 ### 5. Run as a background daemon
 
 ```bash
-dormammu daemonize --repo-root . --config daemonize.json
+dormammu daemonize --repo-root .
 ```
 
-See [config/daemonize.json.example](config/daemonize.json.example) for a starting config.
+By default this reads `~/.dormammu/daemonize.json`. Use `--config daemonize.json`
+to override it. See [config/daemonize.json.example](config/daemonize.json.example)
+for a starting config.
 
 ## Commands
 
@@ -316,7 +318,7 @@ Full reference: `dormammu --help` or `dormammu <command> --help`.
 | Option | Description |
 |--------|-------------|
 | `--repo-root` | Repository root directory |
-| `--config` | Path to the daemon queue config file (`daemonize.json`) |
+| `--config` | Path to the daemon queue config file. Defaults to `~/.dormammu/daemonize.json` |
 | `--guidance-file` | Additional guidance files (repeatable) |
 | `--debug` | Write per-prompt progress logs under `result_path/../progress/` |
 

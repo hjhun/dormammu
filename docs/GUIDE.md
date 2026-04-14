@@ -409,10 +409,12 @@ Long-running daemon that watches a prompt directory and processes files
 through the supervised loop one at a time.
 
 ```bash
-dormammu daemonize --repo-root . --config daemonize.json
+dormammu daemonize --repo-root .
 ```
 
-See [Daemonize Mode](#daemonize-mode) for the full config reference.
+This uses `~/.dormammu/daemonize.json` by default. Use
+`--config daemonize.json` to override it. See [Daemonize Mode](#daemonize-mode)
+for the full config reference.
 
 ---
 

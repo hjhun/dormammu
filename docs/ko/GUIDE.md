@@ -276,10 +276,12 @@ Supervised 재시도 루프를 실행합니다.
 장기 실행 데몬입니다.
 
 ```bash
-dormammu daemonize --repo-root . --config daemonize.json
+dormammu daemonize --repo-root .
 ```
 
-자세한 설정은 [데몬 모드](#데몬-모드)를 참고하세요.
+기본값은 `~/.dormammu/daemonize.json`이며, 다른 파일을 쓰려면
+`--config daemonize.json`을 지정하면 됩니다. 자세한 설정은
+[데몬 모드](#데몬-모드)를 참고하세요.
 
 ---
 

@@ -59,6 +59,10 @@ from dormammu._cli_utils import (
 )
 
 
+def _default_daemon_config_path(config: AppConfig) -> Path:
+    return (config.home_dir / ".dormammu" / "daemonize.json").expanduser().resolve()
+
+
 def _pipeline_runtime(
     config: AppConfig,
     *,
@@ -548,8 +552,9 @@ def _handle_doctor(args: argparse.Namespace) -> int:
 
 def _handle_daemonize(args: argparse.Namespace) -> int:
     config = _with_guidance_overrides(_load_config(args.repo_root, discover=args.repo_root is not None), args.guidance_files)
+    daemon_config_path = args.config or _default_daemon_config_path(config)
     try:
-        daemon_config = load_daemon_config(args.config, app_config=config)
+        daemon_config = load_daemon_config(daemon_config_path, app_config=config)
     except (RuntimeError, ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
