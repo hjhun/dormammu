@@ -28,6 +28,7 @@ class DaemonAlreadyRunningError(RuntimeError):
     """Raised when a second daemon instance tries to start on the same queue."""
 
 from dormammu._utils import iso_now as _iso_now
+from dormammu.agent import CliAdapter
 from dormammu.config import AppConfig
 from dormammu.daemon.goals_scheduler import GoalsScheduler
 from dormammu.daemon.models import DaemonConfig, DaemonPromptResult
@@ -548,6 +549,7 @@ class DaemonRunner:
                 scoped_config.agents,
                 repository=session_repository,
                 progress_stream=self.progress_stream,
+                stop_event=self._shutdown_requested,
             ).run(
                 enriched_text,
                 stem=prompt_path.stem,
@@ -563,6 +565,7 @@ class DaemonRunner:
             prelude_agents,
             repository=session_repository,
             progress_stream=self.progress_stream,
+            stop_event=self._shutdown_requested,
         ).run_refine_and_plan(enriched_text, stem=prompt_path.stem)
 
         request = LoopRunRequest(
@@ -580,6 +583,11 @@ class DaemonRunner:
         return LoopRunner(
             scoped_config,
             repository=session_repository,
+            adapter=CliAdapter(
+                scoped_config,
+                live_output_stream=self.progress_stream,
+                stop_event=self._shutdown_requested,
+            ),
             progress_stream=self.progress_stream,
         ).run(request)
 

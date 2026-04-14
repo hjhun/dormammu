@@ -347,6 +347,75 @@ class DaemonRunnerTests(unittest.TestCase):
                 stdout_log.close()
                 stderr_log.close()
 
+    @unittest.skipUnless(os.name == "posix", "SIGTERM smoke test requires POSIX signals")
+    def test_daemonize_exits_promptly_on_sigterm_during_active_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            sleepy_cli = self._write_sleepy_loop_cli(root, sleep_seconds=30)
+            self._write_active_cli_config(root, sleepy_cli)
+            daemon_config_path = self._write_daemon_config(root, watch_backend="polling")
+            prompt_dir = root / "queue" / "prompts"
+            result_dir = root / "queue" / "results"
+            prompt_dir.mkdir(parents=True, exist_ok=True)
+            result_dir.mkdir(parents=True, exist_ok=True)
+
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(BACKEND)
+            env["HOME"] = str(root / ".test-home")
+            env["DORMAMMU_SESSIONS_DIR"] = str(root / "sessions")
+            stdout_log = (root / "daemonize.stdout.log").open("w+", encoding="utf-8")
+            stderr_log = (root / "daemonize.stderr.log").open("w+", encoding="utf-8")
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "dormammu",
+                    "daemonize",
+                    "--repo-root",
+                    str(root),
+                    "--config",
+                    str(daemon_config_path),
+                ],
+                cwd=root,
+                env=env,
+                stdout=stdout_log,
+                stderr=stderr_log,
+            )
+
+            prompt_path = prompt_dir / "001-interrupt.md"
+            prompt_path.write_text("Create hello.txt and finish.\n", encoding="utf-8")
+
+            try:
+                self._wait_for_log_text(root / "daemonize.stderr.log", "WORKER::started")
+                started = time.monotonic()
+                process.terminate()
+                process.wait(timeout=5)
+                elapsed = time.monotonic() - started
+
+                self.assertLess(
+                    elapsed,
+                    5,
+                    f"daemonize did not exit promptly after SIGTERM ({elapsed:.2f}s)",
+                )
+                self.assertEqual(process.returncode, 130)
+                self.assertTrue(prompt_path.exists(), "Interrupted prompt should remain for retry")
+                self.assertFalse(
+                    (result_dir / "001-interrupt_RESULT.md").exists(),
+                    "Interrupted prompt should not be finalized as a result report",
+                )
+
+                stderr_text = (root / "daemonize.stderr.log").read_text(encoding="utf-8")
+                self.assertIn("daemonize: received SIGTERM", stderr_text)
+                self.assertIn("WORKER::got-signal::15", stderr_text)
+                self.assertIn("daemonize interrupted", stderr_text)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+                stdout_log.close()
+                stderr_log.close()
+
     def _seed_repo(self, root: Path) -> None:
         subprocess.run(["git", "init"], cwd=root, capture_output=True, text=True, check=True)
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
@@ -492,6 +561,65 @@ class DaemonRunnerTests(unittest.TestCase):
                         TARGET_PATH.write_text("done\\n", encoding="utf-8")
                     if attempt >= PLAN_COMPLETION_ATTEMPT:
                         mark_plan_complete()
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_sleepy_loop_cli(self, root: Path, *, sleep_seconds: int, name: str = "sleepy-loop-agent") -> Path:
+        script = root / name
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                from pathlib import Path
+                import signal
+                import sys
+                import time
+
+                ROOT = Path({str(root)!r})
+
+                def is_prelude_prompt(prompt: str) -> bool:
+                    return any(
+                        marker in prompt
+                        for marker in (
+                            "You are a requirement refiner.",
+                            "You are a planning agent.",
+                            "You are an analyzer agent.",
+                        )
+                    )
+
+                def _on_term(signum, frame):
+                    print(f"WORKER::got-signal::{{signum}}", flush=True)
+                    raise SystemExit(143)
+
+                signal.signal(signal.SIGTERM, _on_term)
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: {name} [--prompt-file PATH]")
+                        return 0
+
+                    prompt = ""
+                    if "--prompt-file" in args:
+                        index = args.index("--prompt-file")
+                        prompt = Path(args[index + 1]).read_text(encoding="utf-8")
+                    else:
+                        prompt = sys.stdin.read()
+
+                    if is_prelude_prompt(prompt):
+                        print("PRELUDE::ok", flush=True)
+                        return 0
+
+                    print("WORKER::started", flush=True)
+                    time.sleep({sleep_seconds})
+                    print("WORKER::finished", flush=True)
                     return 0
 
                 raise SystemExit(main())

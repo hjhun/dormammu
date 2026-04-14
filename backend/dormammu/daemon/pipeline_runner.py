@@ -43,10 +43,12 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
+from dormammu.agent import CliAdapter
 from dormammu.daemon.evaluator import (
     EvaluatorRequest,
     EvaluatorStage,
@@ -87,11 +89,13 @@ class PipelineRunner:
         *,
         repository: StateRepository | None = None,
         progress_stream: TextIO | None = None,
+        stop_event: threading.Event | None = None,
     ) -> None:
         self._app_config = app_config
         self._agents = agents_config
         self._repository = repository or StateRepository(app_config)
         self._progress_stream = progress_stream or sys.stderr
+        self._stop_event = stop_event
 
     # ------------------------------------------------------------------
     # Public API
@@ -309,6 +313,11 @@ class PipelineRunner:
         result = LoopRunner(
             self._app_config,
             repository=self._repository,
+            adapter=CliAdapter(
+                self._app_config,
+                live_output_stream=self._progress_stream,
+                stop_event=self._stop_event,
+            ),
             progress_stream=self._progress_stream,
         ).run(request)
         self._log(f"pipeline: developer stage completed with status '{result.status}'")

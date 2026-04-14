@@ -6,10 +6,12 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import sys
 import time
+import threading
 from threading import Thread
 from typing import Callable, TextIO
 
@@ -49,6 +51,11 @@ CLI_RETRY_DELAY_SECONDS = 1.0
 CLI_RETRY_DELAY_MESSAGE = (
     f"Taking a short break for {int(CLI_RETRY_DELAY_SECONDS)} seconds before the next agent CLI call."
 )
+CLI_WAIT_POLL_INTERVAL_SECONDS = 0.1
+CLI_SHUTDOWN_GRACE_SECONDS = 2.0
+CLI_SHUTDOWN_MESSAGE = (
+    "\n[dormammu] Agent CLI process interrupted by daemon shutdown request.\n"
+)
 _cli_calls_started = 0
 
 
@@ -72,9 +79,16 @@ def _mirror_pipe(
 
 
 class CliAdapter:
-    def __init__(self, config: AppConfig, *, live_output_stream: TextIO | None = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        live_output_stream: TextIO | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> None:
         self.config = config
         self.live_output_stream = live_output_stream if live_output_stream is not None else sys.stderr
+        self.stop_event = stop_event
 
     def _subprocess_env(self) -> dict[str, str]:
         env = dict(os.environ)
@@ -239,6 +253,7 @@ class CliAdapter:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                start_new_session=(os.name == "posix"),
             )
             stdout_thread = Thread(
                 target=_mirror_pipe,
@@ -260,10 +275,14 @@ class CliAdapter:
                 process.stdin.close()
 
             timeout = self.config.process_timeout_seconds
+            shutdown_requested = False
             try:
-                return_code = process.wait(timeout=timeout)
+                return_code = self._wait_for_process(
+                    process,
+                    timeout=timeout,
+                )
             except subprocess.TimeoutExpired:
-                process.kill()
+                self._kill_process(process)
                 process.wait()
                 timed_out = True
                 return_code = -1
@@ -276,8 +295,24 @@ class CliAdapter:
                 if self.live_output_stream is not None:
                     self.live_output_stream.write(timeout_message)
                     self.live_output_stream.flush()
+            except KeyboardInterrupt:
+                shutdown_requested = True
+                self._terminate_process(process)
+                try:
+                    process.wait(timeout=CLI_SHUTDOWN_GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    self._kill_process(process)
+                    process.wait()
+                stdout_file.write(CLI_SHUTDOWN_MESSAGE)
+                stdout_file.flush()
+                if self.live_output_stream is not None:
+                    self.live_output_stream.write(CLI_SHUTDOWN_MESSAGE)
+                    self.live_output_stream.flush()
+                return_code = process.returncode if process.returncode is not None else 130
             stdout_thread.join()
             stderr_thread.join()
+            if shutdown_requested:
+                raise KeyboardInterrupt()
         completed_at = _iso_now()
 
         result = AgentRunResult(
@@ -302,6 +337,54 @@ class CliAdapter:
             encoding="utf-8",
         )
         return result
+
+    def _wait_for_process(
+        self,
+        process: subprocess.Popen[str],
+        *,
+        timeout: int | None,
+    ) -> int:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        idle_waiter = threading.Event()
+        while True:
+            if self.stop_event is not None and self.stop_event.is_set():
+                raise KeyboardInterrupt()
+            return_code = process.poll()
+            if return_code is not None:
+                return return_code
+            wait_timeout = CLI_WAIT_POLL_INTERVAL_SECONDS
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(process.args, timeout)
+                wait_timeout = min(wait_timeout, remaining)
+            if self.stop_event is not None:
+                if self.stop_event.wait(timeout=wait_timeout):
+                    raise KeyboardInterrupt()
+                continue
+            idle_waiter.wait(timeout=wait_timeout)
+
+    def _terminate_process(self, process: subprocess.Popen[str]) -> None:
+        self._signal_process(process, signal.SIGTERM)
+
+    def _kill_process(self, process: subprocess.Popen[str]) -> None:
+        self._signal_process(process, signal.SIGKILL)
+
+    def _signal_process(self, process: subprocess.Popen[str], signum: int) -> None:
+        if process.poll() is not None:
+            return
+        if os.name == "posix":
+            try:
+                os.killpg(process.pid, signum)
+                return
+            except ProcessLookupError:
+                return
+            except OSError:
+                pass
+        try:
+            process.send_signal(signum)
+        except OSError:
+            pass
 
     def _build_candidate_requests(self, request: AgentRunRequest) -> tuple[AgentRunRequest, ...]:
         candidates = [request]
