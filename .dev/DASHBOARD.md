@@ -2,16 +2,19 @@
 
 ## Actual Progress
 
-- Goal: Resume the interrupted repair for the Telegram `/goals` crash and the repeated refine -> plan loop behaviour, then restore supervisor-clean `.dev` state.
-- Prompt-driven scope: Resume from `Develop`, confirm the interrupted fix state, repair any remaining regression, rerun validation, and synchronize `.dev` before stopping.
+- Goal: Create one safe commit for the current repository state and push it to
+  `origin/main` without staging local-only workflow churn.
+- Prompt-driven scope: Replace the stale root `.dev` planning files for this
+  commit/push request, commit only the approved `.dev` operator-state
+  artifacts for this task, and push the resulting `main` tip to `origin/main`.
 - Active roadmap focus:
 - Phase 4. Supervisor Validation, Continuation Loop, and Resume
-- Current workflow phase: evaluate
-- Last completed workflow phase: commit
+- Current workflow phase: commit
+- Last completed workflow phase: final_verification
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: Evaluate the completed repair slice or continue with the next
-  user-directed task
+- Resume point: No further work is pending for this commit/push prompt unless
+  the approved scope changes.
 
 ## Workflow Phases
 
@@ -29,23 +32,38 @@ flowchart LR
 
 ## In Progress
 
-- No further code changes are pending for this repair slice.
-- Evaluation is the next available workflow step.
+- The approved `.dev` operator-state files for this prompt are committed and
+  pushed.
+- The excluded local-only files remain outside the commit scope.
+- The current branch tip matches `origin/main` after the push verification.
 
 ## Progress Notes
 
-- Phase 1 completed: Read `AGENTS.md` and `agents/AGENTS.md` before editing and resumed from the saved repository/session state instead of restarting the task.
-- Phase 2 completed: Followed the repository workflow rules during the resume, investigated the failed developer artifacts first, and confirmed the supervisor-required resume phase was `Develop`.
-- Phase 3 completed: Audited the interrupted repair and confirmed the `/goals` and loop-runner fixes were largely already present, then isolated the remaining failing verification to the `GoalsScheduler.trigger_now()` immediate-run path.
-- Phase 4 completed: Updated [backend/dormammu/daemon/goals_scheduler.py](/home/hjhun/samba/github/dormammu/backend/dormammu/daemon/goals_scheduler.py) so `trigger_now()` processes goals synchronously and re-arms the timer before returning, which restores the immediate init contract used by goals automation.
-- Phase 5 completed: Executed `pytest -q tests/test_goals_scheduler.py tests/test_goals_telegram.py tests/test_loop_runner.py -q` and `pytest -q tests/test_daemon.py tests/test_recovery.py tests/test_supervisor.py -q`, synchronized `PLAN.md`, `DASHBOARD.md`, and the active session metadata, and reran supervisor validation to an `approved` result.
-- Phase 6 completed: Prepared the scoped commit for the repaired slice after confirming only the intended code change and operator-facing `.dev` updates would be staged.
-- Repository rules followed for this run: `AGENTS.md`, `agents/AGENTS.md`
-- Relevant repository workflow reference: `.github/workflows/release.yml`
+- Phase 1 completed: Read `AGENTS.md` and `agents/AGENTS.md`, inspected the
+  saved supervisor artifacts, and traced the failed verification to incomplete
+  root `.dev/PLAN.md` items rather than a missing product-code fix.
+- Phase 2 completed: Inspected `main`, refreshed `origin/main`, and approved
+  the commit path set for this prompt as `.dev/DASHBOARD.md`,
+  `.dev/PLAN.md`, `.dev/TASKS.md`, and `.dev/WORKFLOWS.md` only.
+- Phase 3 completed: Re-verified that `main` is ahead of `origin/main` by one
+  validated commit, confirmed `origin/main` is still the push target, and
+  checked that the only in-scope edits are the root `.dev` workflow files.
+- Phase 4 completed: Created one intentional commit on `main` from the approved
+  `.dev/DASHBOARD.md`, `.dev/PLAN.md`, `.dev/TASKS.md`, and
+  `.dev/WORKFLOWS.md` path set only.
+- Phase 5 completed: Pushed `main` to `origin/main` and verified that the
+  local branch tip matches its upstream afterward.
+- Excluded from commit scope: `.dev/session.json`, `.dev/workflow_state.json`,
+  `.claude/settings.json`, and `.claude/settings.local.json`.
+- Current baseline commit before this prompt's new commit:
+  `8531ec573afba35d446c370d7cb78a87136775fa`.
+- Relevant repository workflow reference: `.github/workflows/release.yml`.
 
 ## Risks And Watchpoints
 
-- The active session machine-state files in the worktree still reflect
-  unrelated session churn and were intentionally excluded from the scoped
-  commit.
-- `.dev/workflow_state.json` remains machine truth and must stay aligned with the root `PLAN.md` mirror for future resumes.
+- Do not stage the dirty `.dev` machine-state files or `.claude/`; they are
+  local-only for this prompt unless the approved scope changes.
+- The pushed commit should contain only operator-facing workflow-state updates
+  for this task, not unrelated product-code or session-state churn.
+- Remaining local modifications after the push should be limited to the
+  explicitly excluded paths.
