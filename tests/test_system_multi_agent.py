@@ -31,6 +31,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 from dormammu.daemon.goals_config import GoalsConfig
 from dormammu.daemon.goals_scheduler import GoalsScheduler
@@ -168,13 +169,20 @@ class TestClaudeCommandConstruction:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
         prompt_text = "Implement the scheduler"
         args = self._call_planner(sched, prompt=prompt_text)
-        assert args[-1] == prompt_text
+        assert args[-1] == prepend_cli_identity(prompt_text, Path("claude"))
 
     def test_full_arg_order(self, tmp_path: Path) -> None:
         """Regression: exact order is claude --print --dangerously-skip-permissions --model M <prompt>."""
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
         args = self._call_planner(sched, prompt="P")
-        assert args == ["claude", "--print", "--dangerously-skip-permissions", "--model", "claude-sonnet-4-6", "P"]
+        assert args == [
+            "claude",
+            "--print",
+            "--dangerously-skip-permissions",
+            "--model",
+            "claude-sonnet-4-6",
+            prepend_cli_identity("P", Path("claude")),
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +236,7 @@ class TestCodexCommandConstruction:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
         prompt_text = "Design the architecture"
         args = self._call_architect(sched, prompt=prompt_text)
-        assert args[-1] == prompt_text
+        assert args[-1] == prepend_cli_identity(prompt_text, Path("codex"))
 
     def test_full_arg_order(self, tmp_path: Path) -> None:
         """Regression: exact order is codex exec --dangerously-bypass-... --skip-git-repo-check -m M <prompt>."""
@@ -239,7 +247,7 @@ class TestCodexCommandConstruction:
             "--dangerously-bypass-approvals-and-sandbox",
             "--skip-git-repo-check",
             "-m", "o4-mini",
-            "P",
+            prepend_cli_identity("P", Path("codex")),
         ]
 
 
@@ -274,7 +282,10 @@ class TestGeminiCommandConstruction:
         prompt_text = "Run all tests"
         args = self._call_tester(sched, prompt=prompt_text)
         assert "--prompt" in args
-        assert args[args.index("--prompt") + 1] == prompt_text
+        assert args[args.index("--prompt") + 1] == prepend_cli_identity(
+            prompt_text,
+            Path("gemini"),
+        )
 
     def test_approval_mode_yolo_present(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
@@ -303,7 +314,7 @@ class TestGeminiCommandConstruction:
             "--approval-mode", "yolo",
             "--include-directories", "/",
             "--model", "gemini-2.5-pro",
-            "--prompt", "P",
+            "--prompt", prepend_cli_identity("P", Path("gemini")),
         ]
 
 

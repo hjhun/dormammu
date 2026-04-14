@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 from dormammu.agent import CliAdapter
+from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.daemon.evaluator import (
     EvaluatorRequest,
     EvaluatorStage,
@@ -592,6 +593,7 @@ class PipelineRunner:
 
         executable_name = cli.name
         preset = preset_for_executable_name(executable_name)
+        prompt = prepend_cli_identity(prompt, cli)
 
         args: list[str] = [str(cli)]
         stdin_input: str | None = None

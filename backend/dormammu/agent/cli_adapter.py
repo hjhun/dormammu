@@ -24,6 +24,7 @@ from dormammu.agent.models import (
     AgentRunStarted,
     CliCapabilities,
 )
+from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.agent.presets import preset_for_executable_name
 from dormammu.config import AppConfig, CliInvocationConfig, FallbackCliConfig
 
@@ -207,7 +208,11 @@ class CliAdapter:
         self._pause_before_next_cli_call_if_needed()
         self.config.logs_dir.mkdir(parents=True, exist_ok=True)
         effective_workdir = (request.workdir or Path.cwd()).resolve()
-        request = replace(request, workdir=effective_workdir)
+        request = replace(
+            request,
+            workdir=effective_workdir,
+            prompt_text=prepend_cli_identity(request.prompt_text, request.cli_path),
+        )
 
         run_id = _run_id(request.run_label)
         prompt_path = self.config.logs_dir / f"{run_id}.prompt.txt"

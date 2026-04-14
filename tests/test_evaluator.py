@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.daemon.evaluator import (
     EvaluatorRequest,
     EvaluatorResult,
@@ -549,3 +550,14 @@ class TestEvaluatorStageRun:
         assert "07-evaluator" in str(result.report_path)
         assert req.date_str in result.report_path.name
         assert req.stem in result.report_path.name
+
+    def test_run_prefixes_prompt_with_cli_name(self, tmp_path: Path) -> None:
+        req = _make_request(tmp_path, cli=Path("claude"))
+        stage, _ = _make_stage(tmp_path)
+        prompt = stage._build_prompt(req)
+        with self._patch_run("VERDICT: partial") as mock_run:
+            stage._call_once(req, prompt)
+        assert mock_run.call_args[0][0][-1] == prepend_cli_identity(
+            prompt,
+            Path("claude"),
+        )

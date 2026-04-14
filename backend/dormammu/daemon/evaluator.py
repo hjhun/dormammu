@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
+from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.daemon.rules import build_rule_prompt, load_rule_text
 
 if TYPE_CHECKING:
@@ -169,6 +170,7 @@ class EvaluatorStage:
 
         executable_name = req.cli.name
         preset = preset_for_executable_name(executable_name)
+        prompt = prepend_cli_identity(prompt, req.cli)
 
         args: list[str] = [str(req.cli)]
         stdin_input: str | None = None

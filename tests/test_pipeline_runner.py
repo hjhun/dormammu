@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 from dormammu.daemon.pipeline_runner import (
     MAX_STAGE_ITERATIONS,
@@ -551,3 +552,25 @@ class TestDocumentWriting:
         content = doc.read_text(encoding="utf-8")
         assert "Tester" in content
         assert "agent output" in content
+
+    def test_call_once_prefixes_prompt_with_cli_name(self, tmp_path: Path) -> None:
+        agents = AgentsConfig()
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout="agent output", returncode=0)
+            runner._call_once(
+                role="tester",
+                cli=Path("claude"),
+                model=None,
+                prompt="test prompt",
+                stem="my-feature",
+                date_str="20260412",
+                slot="04",
+            )
+
+        assert mock_run.call_args[0][0][-1] == prepend_cli_identity(
+            "test prompt",
+            Path("claude"),
+        )

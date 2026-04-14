@@ -19,6 +19,7 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.agent import cli_adapter as cli_adapter_module
+from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.config import AppConfig
 from dormammu.state import StateRepository
 
@@ -56,7 +57,10 @@ class CliAdapterTests(unittest.TestCase):
             repository.record_latest_run(result)
 
             self.assertEqual(result.exit_code, 0)
-            self.assertIn("PROMPT::Write a tiny test plan.", result.stdout_path.read_text(encoding="utf-8"))
+            self.assertIn(
+                f"PROMPT::{prepend_cli_identity('Write a tiny test plan.', fake_cli)}",
+                result.stdout_path.read_text(encoding="utf-8"),
+            )
             self.assertIn("TAG::phase3", result.stdout_path.read_text(encoding="utf-8"))
             self.assertTrue(result.stderr_path.exists())
 
@@ -92,7 +96,7 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(list(result.command[:2]), [str(fake_cli), "exec"])
             self.assertIn("--dangerously-bypass-approvals-and-sandbox", result.command)
             self.assertIn(
-                "PROMPT::Summarize the repository.",
+                f"PROMPT::{prepend_cli_identity('Summarize the repository.', fake_cli)}",
                 result.stdout_path.read_text(encoding="utf-8"),
             )
             self.assertEqual(result.capabilities.preset_key, "codex")
@@ -234,7 +238,10 @@ class CliAdapterTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(result.fallback_trigger, "quota exceeded")
-            self.assertIn("PROMPT::Write a tiny test plan.", result.stdout_path.read_text(encoding="utf-8"))
+            self.assertIn(
+                f"PROMPT::{prepend_cli_identity('Write a tiny test plan.', fallback_two)}",
+                result.stdout_path.read_text(encoding="utf-8"),
+            )
 
     def test_run_once_waits_between_fallback_cli_attempts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -311,11 +318,11 @@ class CliAdapterTests(unittest.TestCase):
                     "--verbose",
                     "--timeout",
                     "1200",
-                    "Summarize the repository.",
+                    prepend_cli_identity("Summarize the repository.", fake_cli),
                 ],
             )
             self.assertIn(
-                "PROMPT::Summarize the repository.",
+                f"PROMPT::{prepend_cli_identity('Summarize the repository.', fake_cli)}",
                 result.stdout_path.read_text(encoding="utf-8"),
             )
             self.assertIn("YOLO::yes", result.stdout_path.read_text(encoding="utf-8"))
@@ -467,7 +474,10 @@ class CliAdapterTests(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 0)
             mirrored = stderr.getvalue()
-            self.assertIn("PROMPT::Watch the live terminal output.", mirrored)
+            self.assertIn(
+                f"PROMPT::{prepend_cli_identity('Watch the live terminal output.', fake_cli)}",
+                mirrored,
+            )
             self.assertIn("TRACE::stderr", mirrored)
 
     def test_run_once_waits_before_second_agent_cli_call_and_logs_message(self) -> None:
@@ -504,8 +514,8 @@ class CliAdapterTests(unittest.TestCase):
             self.sleep_mock.assert_called_once_with(cli_adapter_module.CLI_RETRY_DELAY_SECONDS)
             mirrored = stderr.getvalue()
             self.assertIn(cli_adapter_module.CLI_RETRY_DELAY_MESSAGE, mirrored)
-            self.assertIn("PROMPT::First call.", mirrored)
-            self.assertIn("PROMPT::Second call.", mirrored)
+            self.assertIn(f"PROMPT::{prepend_cli_identity('First call.', first_cli)}", mirrored)
+            self.assertIn(f"PROMPT::{prepend_cli_identity('Second call.', second_cli)}", mirrored)
 
     def test_run_once_applies_cli_override_when_configured_codex_path_is_a_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -544,7 +554,10 @@ class CliAdapterTests(unittest.TestCase):
                 [str(symlink_cli), "exec", "--full-auto"],
             )
             output_text = result.stdout_path.read_text(encoding="utf-8")
-            self.assertIn("PROMPT::Summarize the repository.", output_text)
+            self.assertIn(
+                f"PROMPT::{prepend_cli_identity('Summarize the repository.', symlink_cli)}",
+                output_text,
+            )
             self.assertIn("MODE::", output_text)
 
     def _seed_repo(self, root: Path) -> None:
