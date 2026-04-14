@@ -1,5 +1,5 @@
 """GoalsScheduler — background thread that watches a goals directory and
-periodically generates plan+design prompts for the daemon queue.
+periodically generates analysis+plan+design prompts for the daemon queue.
 
 Thread safety
 -------------
@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
+from dormammu.agent.role_config import AgentsConfig
+
 if TYPE_CHECKING:
     from dormammu.config import AppConfig
     from dormammu.daemon.goals_config import GoalsConfig
@@ -26,7 +28,7 @@ _WATCHER_POLL_SECONDS = 30
 
 
 class GoalsScheduler:
-    """Monitors a goals directory and generates plan+design prompts on a timer.
+    """Monitors a goals directory and generates analysis+plan+design prompts on a timer.
 
     Lifecycle
     ---------
@@ -227,68 +229,104 @@ class GoalsScheduler:
     # ------------------------------------------------------------------
 
     def _generate_prompt(self, goal_text: str, stem: str, date_str: str) -> str:
-        """Generate a plan+design prompt from goal content.
-
-        When an ``agents`` config is available and both planner and architect
-        CLIs are resolvable, this method calls each agent once (one-shot,
-        non-interactive) to produce planning and design documents, then
-        assembles a rich prompt from their outputs.
-
-        If no agents config is present (or CLIs cannot be resolved), a
-        structured prompt is built directly from the raw goal text so that
-        the developer agent can handle planning and design inline.
-        """
-        agents = getattr(self._app_config, "agents", None)
+        """Generate an analysis+plan+design prompt from goal content."""
+        agents = getattr(self._app_config, "agents", None) or AgentsConfig()
         active_cli = getattr(self._app_config, "active_agent_cli", None)
 
+        analysis_text: str | None = None
         plan_text: str | None = None
         design_text: str | None = None
 
-        if agents is not None:
-            planner_cfg = agents.for_role("planner")
-            architect_cfg = agents.for_role("architect")
-            planner_cli = planner_cfg.resolve_cli(active_cli)
-            architect_cli = architect_cfg.resolve_cli(active_cli)
+        analyzer_cfg = agents.for_role("analyzer")
+        planner_cfg = agents.for_role("planner")
+        architect_cfg = agents.for_role("architect")
+        analyzer_cli = analyzer_cfg.resolve_cli(active_cli)
+        planner_cli = planner_cfg.resolve_cli(active_cli)
+        architect_cli = architect_cfg.resolve_cli(active_cli)
 
-            if planner_cli is not None:
-                plan_text = self._call_role_agent(
-                    role="planner",
-                    cli=planner_cli,
-                    model=planner_cfg.model,
-                    prompt=self._planner_prompt(goal_text),
-                    stem=stem,
-                    date_str=date_str,
-                    slot="01",
-                )
+        if analyzer_cli is not None:
+            analysis_text = self._call_role_agent(
+                role="analyzer",
+                cli=analyzer_cli,
+                model=analyzer_cfg.model,
+                prompt=self._analyzer_prompt(goal_text),
+                stem=stem,
+                date_str=date_str,
+                slot="00",
+            )
 
-            if architect_cli is not None and plan_text is not None:
-                design_text = self._call_role_agent(
-                    role="architect",
-                    cli=architect_cli,
-                    model=architect_cfg.model,
-                    prompt=self._architect_prompt(goal_text, plan_text),
-                    stem=stem,
-                    date_str=date_str,
-                    slot="02",
-                )
+        if planner_cli is not None:
+            plan_text = self._call_role_agent(
+                role="planner",
+                cli=planner_cli,
+                model=planner_cfg.model,
+                prompt=self._planner_prompt(goal_text, analysis_text),
+                stem=stem,
+                date_str=date_str,
+                slot="01",
+            )
 
-        return self._build_prompt(goal_text, plan_text, design_text)
+        if architect_cli is not None and plan_text is not None:
+            design_text = self._call_role_agent(
+                role="architect",
+                cli=architect_cli,
+                model=architect_cfg.model,
+                prompt=self._architect_prompt(goal_text, analysis_text, plan_text),
+                stem=stem,
+                date_str=date_str,
+                slot="02",
+            )
 
-    def _planner_prompt(self, goal_text: str) -> str:
+        return self._build_prompt(goal_text, analysis_text, plan_text, design_text)
+
+    def _analyzer_prompt(self, goal_text: str) -> str:
         return (
-            "You are a planning agent. Analyse the following goal and produce a "
-            "detailed implementation plan.\n\n"
+            "You are an analyzer agent. Analyse the goal below and produce a "
+            "requirements-focused brief that a planner can immediately use.\n\n"
             "Include:\n"
-            "1. Requirements analysis\n"
-            "2. Phase breakdown with clear completion signals\n"
-            "3. Acceptance criteria\n"
-            "4. Risk assessment\n\n"
+            "1. Goal restatement\n"
+            "2. In-scope and out-of-scope boundaries\n"
+            "3. Concrete acceptance criteria\n"
+            "4. Constraints and dependencies\n"
+            "5. Risks, ambiguities, and open questions\n\n"
             f"# Goal\n\n{goal_text.strip()}\n\n"
+            "Output your analysis in Markdown. "
+            "Write all content in English regardless of the language of the goal above."
+        )
+
+    def _planner_prompt(self, goal_text: str, analysis_text: str | None) -> str:
+        analysis_section = (
+            f"# Requirements Analysis\n\n{analysis_text.strip()}\n\n"
+            if analysis_text
+            else ""
+        )
+        return (
+            "You are a planning agent. Use the goal and requirements analysis "
+            "below to produce the authoritative execution plan for this task.\n\n"
+            "Include:\n"
+            "1. Phase breakdown with clear completion signals\n"
+            "2. An explicit refine -> plan entry requirement for execution\n"
+            "3. A statement that the planner decides the downstream stages "
+            "after plan via .dev/WORKFLOWS.md\n"
+            "4. Acceptance criteria and validation strategy\n"
+            "5. Risks, blockers, and escalation points\n\n"
+            f"# Goal\n\n{goal_text.strip()}\n\n"
+            f"{analysis_section}"
             "Output your plan in Markdown. "
             "Write all content in English regardless of the language of the goal above."
         )
 
-    def _architect_prompt(self, goal_text: str, plan_text: str) -> str:
+    def _architect_prompt(
+        self,
+        goal_text: str,
+        analysis_text: str | None,
+        plan_text: str,
+    ) -> str:
+        analysis_section = (
+            f"# Requirements Analysis\n\n{analysis_text.strip()}\n\n"
+            if analysis_text
+            else ""
+        )
         return (
             "You are an architect agent. Based on the plan below, create a "
             "technical OOAD design.\n\n"
@@ -298,6 +336,7 @@ class GoalsScheduler:
             "3. State management and error handling\n"
             "4. Test strategy (unit, integration, system)\n\n"
             f"# Original Goal\n\n{goal_text.strip()}\n\n"
+            f"{analysis_section}"
             f"# Plan\n\n{plan_text.strip()}\n\n"
             "Output your design in Markdown. "
             "Write all content in English regardless of the language of the goal above."
@@ -406,6 +445,7 @@ class GoalsScheduler:
     @staticmethod
     def _build_prompt(
         goal_text: str,
+        analysis_text: str | None,
         plan_text: str | None,
         design_text: str | None,
     ) -> str:
@@ -413,7 +453,21 @@ class GoalsScheduler:
             "> **Language requirement:** All responses, code comments, "
             "documentation, and deliverables must be written in English."
         )
-        sections: list[str] = [language_notice, f"# Goal\n\n{goal_text.strip()}"]
+        workflow_contract = (
+            "## Workflow Contract\n\n"
+            "- Start every execution with the mandatory `refine -> plan` stages.\n"
+            "- `refine` must produce or update `.dev/REQUIREMENTS.md`.\n"
+            "- `plan` must produce or update `.dev/WORKFLOWS.md`, `.dev/PLAN.md`, and `.dev/DASHBOARD.md`.\n"
+            "- After `plan`, continue with `design -> ...` according to `.dev/WORKFLOWS.md`.\n"
+            "- Treat the planner as authoritative for the downstream stage sequence after `plan`.\n"
+        )
+        sections: list[str] = [
+            language_notice,
+            workflow_contract,
+            f"# Goal\n\n{goal_text.strip()}",
+        ]
+        if analysis_text:
+            sections.append(f"## Requirements Analysis\n\n{analysis_text.strip()}")
         if plan_text:
             sections.append(f"## Plan\n\n{plan_text.strip()}")
         if design_text:

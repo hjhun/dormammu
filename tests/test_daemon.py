@@ -425,6 +425,16 @@ class DaemonRunnerTests(unittest.TestCase):
                 _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
                 sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
 
+                def is_prelude_prompt(prompt: str) -> bool:
+                    return any(
+                        marker in prompt
+                        for marker in (
+                            "You are a requirement refiner.",
+                            "You are a planning agent.",
+                            "You are an analyzer agent.",
+                        )
+                    )
+
                 def mark_plan_complete() -> None:
                     if MARK_ROOT_PLAN:
                         plan_path = ROOT / ".dev" / "PLAN.md"
@@ -459,16 +469,23 @@ class DaemonRunnerTests(unittest.TestCase):
                         print("usage: fake-loop-agent [--prompt-file PATH]")
                         return 0
 
+                    prompt = ""
+                    if "--prompt-file" in args:
+                        index = args.index("--prompt-file")
+                        prompt = Path(args[index + 1]).read_text(encoding="utf-8")
+                    else:
+                        prompt = sys.stdin.read()
+
+                    if is_prelude_prompt(prompt):
+                        print("PRELUDE::ok")
+                        return 0
+
                     MARKER_PATH.write_text("used\\n", encoding="utf-8")
                     if COUNTER_PATH.exists():
                         attempt = int(COUNTER_PATH.read_text(encoding="utf-8").strip()) + 1
                     else:
                         attempt = 1
                     COUNTER_PATH.write_text(str(attempt), encoding="utf-8")
-
-                    if "--prompt-file" in args:
-                        index = args.index("--prompt-file")
-                        Path(args[index + 1]).read_text(encoding="utf-8")
 
                     print(f"ATTEMPT::{{attempt}}")
                     if attempt >= SUCCESS_ATTEMPT:

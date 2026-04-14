@@ -1,23 +1,23 @@
 {
   "session_id": "bootstrap-20260407-235000-kst",
   "created_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-11T20:56:10+09:00",
+  "updated_at": "2026-04-14T13:55:00+09:00",
   "run_type": "bootstrap",
   "status": "active",
   "state_schema_version": 7,
   "active_phase": "commit",
   "active_roadmap_phase_ids": [
-    "phase_5"
+    "phase_4"
   ],
-  "resume_token": "commit:daemon-prompt-progress-log",
+  "resume_token": "commit:mandatory-refine-plan-goals-analyzer",
   "last_safe_checkpoint": {
     "phase": "final_verification",
-    "timestamp": "2026-04-11T20:56:10+09:00",
-    "description": "Validated prompt-specific daemon progress logs, per-prompt reset behavior, and the updated operator docs."
+    "timestamp": "2026-04-14T13:55:00+09:00",
+    "description": "Validated runtime, goals, and public docs for the mandatory refine-plan and analyzer-led goals workflow slice."
   },
   "bootstrap": {
-    "goal": "Write daemonize debug progress logs to a progress directory beside the configured result directory and reset the log for each new prompt session.",
-    "captured_at": "2026-04-11T20:56:10+09:00",
+    "goal": "Make refine -> plan mandatory in run, run-once, and daemonize, and add an analyzer expert to goals prompt generation so planner-controlled workflows start from stronger prompts.",
+    "captured_at": "2026-04-14T13:45:00+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -30,34 +30,43 @@
   },
   "task_sync": {
     "source": ".dev/PLAN.md",
-    "resume_checkpoint": "Implementation and targeted validation are complete. Resume from commit preparation unless a follow-up changes prompt-specific daemon log placement or rotation rules.",
-    "total_tasks": 3,
-    "completed_tasks": 3,
+    "resume_checkpoint": "Implementation and targeted validation are complete. Resume from commit preparation unless the user redirects priority.",
+    "total_tasks": 5,
+    "completed_tasks": 5,
     "pending_tasks": 0,
     "all_completed": true,
     "next_pending_task": null,
     "items": [
       {
-        "text": "Phase 1. Route `daemonize --debug` progress logs to `<result_path>/../progress/<prompt>_progress.log`",
+        "text": "Phase 1. Add `analyzer` to the runtime role model and examples",
         "completed": true
       },
       {
-        "text": "Phase 2. Reset each prompt-specific progress log whenever its prompt session starts",
+        "text": "Phase 2. Make `refiner` and `planner` mandatory pipeline prelude stages",
         "completed": true
       },
       {
-        "text": "Phase 3. Lock the new daemon logging behavior with regression tests and documentation updates",
+        "text": "Phase 3. Enforce the mandatory prelude in CLI and daemon single-agent paths",
+        "completed": true
+      },
+      {
+        "text": "Phase 4. Upgrade goals prompt generation to use requirements analysis and planner-owned workflow contracts",
+        "completed": true
+      },
+      {
+        "text": "Phase 5. Refresh regression tests and fake CLI helpers for the new flow",
         "completed": true
       }
     ],
-    "synced_at": "2026-04-11T20:56:10+09:00"
+    "synced_at": "2026-04-14T13:45:00+09:00"
   },
-  "next_action": "Await direction on whether to prepare a commit for the prompt-specific daemon progress-log naming change.",
+  "next_action": "Prepare the validated mandatory refine-plan and goals analyzer slice for commit and push.",
   "notes": [
-    "Resume from commit preparation unless a higher-priority daemon logging change is requested.",
-    "Daemonize debug logging now writes to <result_path>/../progress/<prompt>_progress.log instead of a shared progress filename.",
-    "Each daemon prompt session recreates its own prompt-specific progress log before writing fresh stderr progress.",
-    "Validation passed for tests.test_daemon and tests.test_cli."
+    "Resume from commit preparation unless a higher-priority runtime workflow change is requested.",
+    "run, run-once, and daemonize single-agent paths now execute a mandatory refine-plan prelude before downstream work.",
+    "Goals prompt generation now supports analyzer -> planner -> architect and emits a workflow contract that makes planner authoritative after plan.",
+    "README.md, docs/GUIDE.md, and docs/ko/GUIDE.md now describe the new runtime and goals behavior.",
+    "Validation passed for targeted role-config, pipeline-runner, goals-scheduler, CLI, daemon, and Mermaid-doc test slices."
   ],
   "loop": {
     "status": "idle",

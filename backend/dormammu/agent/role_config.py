@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 ROLE_NAMES: tuple[str, ...] = (
     "refiner",
+    "analyzer",
     "planner",
     "architect",
     "developer",
@@ -48,6 +49,7 @@ class AgentsConfig:
     """Pipeline role agent configurations for all pipeline roles."""
 
     refiner: RoleAgentConfig = RoleAgentConfig()
+    analyzer: RoleAgentConfig = RoleAgentConfig()
     planner: RoleAgentConfig = RoleAgentConfig()
     architect: RoleAgentConfig = RoleAgentConfig()
     developer: RoleAgentConfig = RoleAgentConfig()

@@ -115,34 +115,55 @@ class TestGoalFileListing:
 
 class TestBuildPrompt:
     def test_goal_only(self) -> None:
-        result = GoalsScheduler._build_prompt("do something", None, None)
+        result = GoalsScheduler._build_prompt("do something", None, None, None)
         assert "# Goal" in result
         assert "do something" in result
 
     def test_language_notice_always_present(self) -> None:
-        for plan, design in [(None, None), ("p", None), ("p", "d")]:
-            result = GoalsScheduler._build_prompt("goal", plan, design)
+        for analysis, plan, design in [
+            (None, None, None),
+            ("a", "p", None),
+            ("a", "p", "d"),
+        ]:
+            result = GoalsScheduler._build_prompt("goal", analysis, plan, design)
             assert "Language requirement" in result
             assert "English" in result
 
     def test_language_notice_appears_before_goal(self) -> None:
-        result = GoalsScheduler._build_prompt("goal text", None, None)
+        result = GoalsScheduler._build_prompt("goal text", None, None, None)
         assert result.index("Language requirement") < result.index("# Goal")
 
+    def test_workflow_contract_always_present(self) -> None:
+        result = GoalsScheduler._build_prompt("goal", None, None, None)
+        assert "Workflow Contract" in result
+        assert "refine -> plan" in result
+
+    def test_with_analysis(self) -> None:
+        result = GoalsScheduler._build_prompt("goal", "analysis text", None, None)
+        assert "## Requirements Analysis" in result
+        assert "analysis text" in result
+
     def test_with_plan(self) -> None:
-        result = GoalsScheduler._build_prompt("goal", "plan text", None)
+        result = GoalsScheduler._build_prompt("goal", None, "plan text", None)
         assert "## Plan" in result
         assert "plan text" in result
 
     def test_with_plan_and_design(self) -> None:
-        result = GoalsScheduler._build_prompt("goal", "plan text", "design text")
+        result = GoalsScheduler._build_prompt(
+            "goal",
+            "analysis text",
+            "plan text",
+            "design text",
+        )
+        assert "## Requirements Analysis" in result
         assert "## Plan" in result
         assert "## Design" in result
         assert "design text" in result
 
     def test_strips_whitespace(self) -> None:
-        result = GoalsScheduler._build_prompt("  goal  ", "  plan  ", None)
+        result = GoalsScheduler._build_prompt("  goal  ", "  analysis  ", "  plan  ", None)
         assert "# Goal\n\ngoal" in result
+        assert "## Requirements Analysis\n\nanalysis" in result
         assert "## Plan\n\nplan" in result
 
 
@@ -286,6 +307,7 @@ class TestGeneratePromptWithAgents:
         sched, _, _ = _make_scheduler(tmp_path, agents=None)
         result = sched._generate_prompt("my goal", "my-goal", "20260412")
         assert "# Goal" in result
+        assert "Workflow Contract" in result
         assert "## Plan" not in result
 
     def test_agents_with_no_resolvable_cli_returns_goal_only(
@@ -319,6 +341,32 @@ class TestGeneratePromptWithAgents:
             mock_call.assert_called_once()
 
         assert "## Plan" in result
+        assert "PLAN OUTPUT" in result
+
+    def test_analyzer_output_included_before_plan(self, tmp_path: Path) -> None:
+        from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
+
+        agents = AgentsConfig(
+            analyzer=RoleAgentConfig(cli=Path("echo")),
+            planner=RoleAgentConfig(cli=Path("echo")),
+        )
+        app = _make_app_config(tmp_path, agents=agents)
+        app.active_agent_cli = None
+        goals_cfg = GoalsConfig(path=tmp_path / "goals", interval_minutes=1)
+        (tmp_path / "goals").mkdir()
+        sched = GoalsScheduler(goals_cfg, tmp_path / "prompts", app)
+
+        call_results = ["ANALYSIS OUTPUT", "PLAN OUTPUT"]
+
+        def fake_call(**kwargs: object) -> str:
+            return call_results.pop(0)
+
+        with patch.object(sched, "_call_role_agent", side_effect=fake_call) as mock_call:
+            result = sched._generate_prompt("my goal", "stem", "20260412")
+            assert mock_call.call_count == 2
+
+        assert result.index("## Requirements Analysis") < result.index("## Plan")
+        assert "ANALYSIS OUTPUT" in result
         assert "PLAN OUTPUT" in result
 
     def test_architect_called_after_planner(self, tmp_path: Path) -> None:

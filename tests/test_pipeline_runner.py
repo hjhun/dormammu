@@ -99,6 +99,31 @@ class TestAppendFeedback:
 
 
 # ---------------------------------------------------------------------------
+# Refiner / planner stages
+# ---------------------------------------------------------------------------
+
+
+class TestMandatoryPreludeStages:
+    def test_refiner_uses_active_cli_fallback(self, tmp_path: Path) -> None:
+        runner = _make_runner(tmp_path, active_agent_cli=Path("claude"))
+
+        with patch.object(runner, "_call_once", return_value="requirements") as mock_call:
+            output = runner._run_refiner("goal", stem="g", date_str="20260412")
+
+        assert output == "requirements"
+        assert mock_call.call_args.kwargs["cli"] == Path("claude")
+
+    def test_planner_uses_active_cli_fallback(self, tmp_path: Path) -> None:
+        runner = _make_runner(tmp_path, active_agent_cli=Path("claude"))
+
+        with patch.object(runner, "_call_once", return_value="plan") as mock_call:
+            output = runner._run_planner("goal", stem="g", date_str="20260412")
+
+        assert output == "plan"
+        assert mock_call.call_args.kwargs["cli"] == Path("claude")
+
+
+# ---------------------------------------------------------------------------
 # Tester stage
 # ---------------------------------------------------------------------------
 
@@ -206,9 +231,9 @@ class TestReviewerStage:
 
 class TestPipelineRun:
     def test_no_cli_anywhere_raises(self, tmp_path: Path) -> None:
-        """When no CLI is configured anywhere, developer raises RuntimeError."""
+        """When no CLI is configured anywhere, refiner fails first."""
         runner = _make_runner(tmp_path)  # active_agent_cli=None by default
-        with pytest.raises(RuntimeError, match="No CLI available for developer"):
+        with pytest.raises(RuntimeError, match="No CLI available for refiner"):
             runner.run("goal", stem="s", date_str="20260412")
 
     def test_successful_pipeline_all_pass(self, tmp_path: Path) -> None:

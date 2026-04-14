@@ -61,9 +61,9 @@ class TestAgentsConfig:
             assert cfg.for_role(role) == RoleAgentConfig()
 
     def test_for_role_returns_correct_config(self) -> None:
-        planner_cfg = RoleAgentConfig(cli=Path("claude"), model="claude-opus-4-5")
-        cfg = AgentsConfig(planner=planner_cfg)
-        assert cfg.for_role("planner") is planner_cfg
+        analyzer_cfg = RoleAgentConfig(cli=Path("claude"), model="claude-opus-4-5")
+        cfg = AgentsConfig(analyzer=analyzer_cfg)
+        assert cfg.for_role("analyzer") is analyzer_cfg
 
     def test_for_role_unknown_raises(self) -> None:
         cfg = AgentsConfig()
@@ -94,6 +94,7 @@ class TestParseAgentsConfig:
     def test_full_config(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "dormammu.json"
         payload = {
+            "analyzer": {"cli": "claude", "model": "claude-sonnet-4-5"},
             "planner": {"cli": "claude", "model": "claude-opus-4-5"},
             "architect": {"model": "claude-opus-4-5"},
             "developer": {"cli": "claude"},
@@ -103,6 +104,8 @@ class TestParseAgentsConfig:
         }
         result = parse_agents_config(payload, config_path=cfg_path)
         assert result is not None
+        assert result.analyzer.cli == Path("claude")
+        assert result.analyzer.model == "claude-sonnet-4-5"
         assert result.planner.cli == Path("claude")
         assert result.planner.model == "claude-opus-4-5"
         assert result.architect.cli is None

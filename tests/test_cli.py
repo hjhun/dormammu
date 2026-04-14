@@ -1676,6 +1676,16 @@ class CliTests(unittest.TestCase):
                 TARGET_PATH = ROOT / "done.txt"
                 SESSION_PATH = ROOT / ".dev" / "session.json"
 
+                def is_prelude_prompt(prompt: str) -> bool:
+                    return any(
+                        marker in prompt
+                        for marker in (
+                            "You are a requirement refiner.",
+                            "You are a planning agent.",
+                            "You are an analyzer agent.",
+                        )
+                    )
+
                 def mark_plan_complete() -> None:
                     if not SESSION_PATH.exists():
                         return
@@ -1703,18 +1713,23 @@ class CliTests(unittest.TestCase):
                         print("usage: fake-loop-agent [--prompt-file PATH]")
                         return 0
 
-                    if COUNTER_PATH.exists():
-                        attempt = int(COUNTER_PATH.read_text(encoding="utf-8").strip()) + 1
-                    else:
-                        attempt = 1
-                    COUNTER_PATH.write_text(str(attempt), encoding="utf-8")
-
                     prompt = ""
                     if "--prompt-file" in args:
                         index = args.index("--prompt-file")
                         prompt = Path(args[index + 1]).read_text(encoding="utf-8")
                     else:
                         prompt = sys.stdin.read()
+
+                    if is_prelude_prompt(prompt):
+                        print("PRELUDE::ok")
+                        print(f"PROMPT::{{prompt.strip()}}")
+                        return 0
+
+                    if COUNTER_PATH.exists():
+                        attempt = int(COUNTER_PATH.read_text(encoding="utf-8").strip()) + 1
+                    else:
+                        attempt = 1
+                    COUNTER_PATH.write_text(str(attempt), encoding="utf-8")
 
                     print(f"ATTEMPT::{{attempt}}")
                     print(f"PROMPT::{{prompt.strip()}}")

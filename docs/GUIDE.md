@@ -100,12 +100,13 @@ When `agents` is configured in `dormammu.json`, all run modes route each goal
 through a multi-role pipeline:
 
 ```
-refiner (opt-in) → planner (opt-in) → developer → tester → reviewer → committer
+refiner (mandatory) → planner (mandatory) → developer → tester → reviewer → committer
 ```
 
 The **refiner** converts the raw goal into structured requirements; the
-**planner** produces an adaptive workflow checklist. Both stages are opt-in —
-they run only when their CLI is explicitly configured.
+**planner** produces an adaptive workflow checklist. Both stages are mandatory
+runtime entry stages and fall back to `active_agent_cli` when their role CLI is
+not explicitly configured.
 
 ---
 
@@ -118,9 +119,9 @@ is configured in `dormammu.json`.
 
 | Mode | What runs |
 |------|-----------|
-| `run-once` | `CliAdapter` — one bounded agent call, no retry |
-| `run` | `LoopRunner` — supervised retry loop with a single agent |
-| `daemonize` | Not applicable; `agents` must be set for the daemon pipeline |
+| `run-once` | mandatory `refine -> plan`, then `CliAdapter` — one bounded agent call |
+| `run` | mandatory `refine -> plan`, then `LoopRunner` — supervised retry loop with a single agent |
+| `daemonize` | mandatory `refine -> plan`, then `LoopRunner` per queued prompt |
 
 ### With `agents` config
 
@@ -131,15 +132,17 @@ is configured in `dormammu.json`.
 | `daemonize` | `PipelineRunner` — one full pipeline pass per queued prompt |
 
 > **Override:** If `--agent-cli` is explicitly provided on the command line,
-> DORMAMMU uses the single-agent path (LoopRunner / CliAdapter) regardless of
-> the `agents` config. This lets you bypass the pipeline for one-off runs.
+> DORMAMMU still executes the mandatory `refine -> plan` prelude, then uses the
+> single-agent downstream path (LoopRunner / CliAdapter) regardless of the
+> `agents` config. This lets you bypass specialist downstream roles for one-off
+> runs without skipping planning.
 
 ### PipelineRunner stages
 
 ```mermaid
 flowchart TD
-    prompt([Prompt / Goal]) --> refiner["Refiner<br/>(opt-in: agents.refiner.cli)"]
-    refiner --> planner["Planner<br/>(opt-in: agents.planner.cli)"]
+    prompt([Prompt / Goal]) --> refiner["Refiner<br/>(mandatory)"]
+    refiner --> planner["Planner<br/>(mandatory)"]
     planner --> developer[Developer]
     developer --> tester[Tester]
     tester -- "OVERALL: FAIL" --> developer
@@ -153,6 +156,7 @@ Each stage writes its output to a numbered slot under `.dev/`:
 
 | Stage | Output path |
 |-------|------------|
+| analyzer | `.dev/00-analyzer/` |
 | refiner | `.dev/00-refiner/` → `.dev/REQUIREMENTS.md` |
 | planner | `.dev/01-planner/` → `.dev/WORKFLOWS.md` |
 | developer | `.dev/01-developer/` |
@@ -245,8 +249,9 @@ dormammu run-once \
   --prompt "Read the repo guidance and summarize the next implementation step."
 ```
 
-`run-once` executes a single bounded agent invocation with artifact capture
-but without a supervised retry loop.
+`run-once` always executes the mandatory `refine -> plan` prelude first, then
+runs a single bounded downstream agent invocation with artifact capture and no
+retry loop.
 
 ### 6. Run the supervised loop
 
@@ -349,7 +354,7 @@ Execute one agent invocation. Stores the prompt artifact, stdout, stderr, and
 run metadata. Does not retry.
 
 When `agents` is configured (and `--agent-cli` is not explicitly provided),
-`run-once` executes one full pipeline pass instead of a single agent call.
+`run-once` continues into one full pipeline pass after the mandatory prelude.
 
 ```bash
 dormammu run-once \
@@ -378,7 +383,7 @@ Key options:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--prompt` / `--prompt-file` | — | Inline prompt text or path to a prompt file |
-| `--agent-cli` | from config | CLI to drive; also bypasses PipelineRunner when set |
+| `--agent-cli` | from config | CLI to drive; still runs the mandatory prelude, then bypasses specialist downstream roles when set |
 | `--input-mode` | `auto` | Prompt pass mode: `auto` `file` `arg` `stdin` `positional` |
 | `--required-path` | — | File that must exist or change after the agent runs (repeatable) |
 | `--require-worktree-changes` | off | Fail validation if the worktree has no changes |
@@ -443,6 +448,7 @@ Full example:
     "insufficient credits"
   ],
   "agents": {
+    "analyzer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
     "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
     "planner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
     "developer": { "cli": "claude", "model": "claude-opus-4-6" },
@@ -464,8 +470,9 @@ Full example:
 | `agents` | Role-based pipeline CLI and model assignments |
 
 When `agents` is configured, all run modes use the role-based pipeline.
-`refiner` and `planner` are opt-in — they only run when their `cli` field
-is explicitly set.
+`analyzer` is used by goals automation before planning. `refiner` and
+`planner` are mandatory runtime stages and fall back to `active_agent_cli`
+when their role-specific CLI is not set.
 
 ### Daemon queue config (`daemonize.json`)
 
@@ -531,8 +538,9 @@ requirements document before any planning or coding begins.
 - Updates `.dev/DASHBOARD.md` to show requirements-confirmed status
 - Hands off to the Planning Agent when requirements are confirmed
 
-**Opt-in:** Only runs when `agents.refiner.cli` is explicitly set in
-`dormammu.json`. Skipped otherwise.
+**Runtime entry stage:** Always runs before downstream execution. Uses
+`agents.refiner.cli` when configured, otherwise falls back to
+`active_agent_cli`.
 
 Used when: a new scope has ambiguous goals, missing acceptance criteria, or
 unclear constraints that could derail implementation.
@@ -552,11 +560,29 @@ workflow checklist.
 - Writes a phase checklist to `.dev/PLAN.md` (`[ ] Phase N. <title>`)
 - Updates `.dev/DASHBOARD.md` with active phase and next action
 
-**Opt-in:** Only runs when `agents.planner.cli` is explicitly set in
-`dormammu.json`. Skipped otherwise.
+**Runtime entry stage:** Always runs after refinement. Uses
+`agents.planner.cli` when configured, otherwise falls back to
+`active_agent_cli`.
 
 Used when: requirements are clear and planning decisions are needed before
 implementation begins.
+
+### Analyzer Agent
+
+**Path:** configured through `agents.analyzer` in `dormammu.json`
+
+The Analyzer Agent is used by goals automation before planning starts.
+
+- Reads a scheduled goal file
+- Produces a requirements-focused brief for the planner
+- Surfaces scope boundaries, acceptance criteria, dependencies, and risks
+- Writes raw analysis output to `.dev/00-analyzer/<date>_<stem>.md`
+
+Used when: a goal is promoted from `goals.path` into the daemon prompt queue.
+
+The runtime pipeline still begins with `refine -> plan` after the prompt is
+queued; analyzer output strengthens the queued prompt rather than replacing the
+runtime refiner.
 
 ### Supervising Agent
 
@@ -838,8 +864,11 @@ through the multi-stage pipeline instead of the single-agent loop:
 
 ```mermaid
 flowchart LR
-    goal([Goal File]) --> refiner["Refiner (opt-in)"]
-    refiner --> planner["Planner (opt-in)"]
+    goal([Goal File]) --> analyzer["Analyzer (goals prelude)"]
+    analyzer --> planner_prompt["Planner (goals prelude)"]
+    planner_prompt --> architect["Architect (optional goals prelude)"]
+    architect --> refiner["Refiner (mandatory runtime stage)"]
+    refiner --> planner["Planner (mandatory runtime stage)"]
     planner --> dev[Developer]
     dev --> tester[Tester]
     tester -- "OVERALL: FAIL" --> dev
@@ -853,6 +882,7 @@ flowchart LR
 
 | Role | Output slot | Verdict | Re-entry trigger |
 |------|------------|---------|-----------------|
+| analyzer | `.dev/00-analyzer/` | — | — |
 | refiner | `.dev/00-refiner/` | — (writes REQUIREMENTS.md) | — |
 | planner | `.dev/01-planner/` | — (writes WORKFLOWS.md) | — |
 | developer | `.dev/01-developer/` | — | tester `FAIL` or reviewer `NEEDS_WORK` |
@@ -860,14 +890,15 @@ flowchart LR
 | reviewer | `.dev/05-reviewer/` | `VERDICT: APPROVED` / `VERDICT: NEEDS_WORK` | — |
 | committer | `.dev/06-committer/` | — | — |
 
-**Refiner** (opt-in): Reads the raw prompt and writes `.dev/REQUIREMENTS.md`
-with structured scope, acceptance criteria, and risk notes. Only runs when
-`agents.refiner.cli` is explicitly set.
+**Refiner** (mandatory): Reads the runtime prompt and writes
+`.dev/REQUIREMENTS.md` with structured scope, acceptance criteria, and risk
+notes. Uses `agents.refiner.cli` when configured, otherwise falls back to
+`active_agent_cli`.
 
-**Planner** (opt-in): Reads `.dev/REQUIREMENTS.md` (or the raw prompt) and
+**Planner** (mandatory): Reads `.dev/REQUIREMENTS.md` (or the raw prompt) and
 writes `.dev/WORKFLOWS.md` — an adaptive `[ ] Phase N.` checklist. Also
-updates `PLAN.md` and `DASHBOARD.md`. Only runs when `agents.planner.cli` is
-explicitly set.
+updates `PLAN.md` and `DASHBOARD.md`. Uses `agents.planner.cli` when
+configured, otherwise falls back to `active_agent_cli`.
 
 **Tester** runs as a black-box one-shot agent. It designs and executes test
 cases against the observable behavior described in the goal, then appends
@@ -889,9 +920,8 @@ For each role, the CLI is resolved in order:
 1. `agents.<role>.cli` from `dormammu.json`
 2. `active_agent_cli` as the global fallback
 
-For `refiner` and `planner`, there is **no fallback**: they only run when their
-`cli` is explicitly set. This preserves backward compatibility — existing
-single-CLI setups are unaffected.
+`refiner`, `planner`, and other runtime roles all fall back to
+`active_agent_cli` when no role-specific CLI is configured.
 
 ---
 
@@ -902,6 +932,16 @@ runs alongside the daemon. At each `interval_minutes` tick it scans the
 `goals.path` directory and promotes any `.md` files it finds into `prompt_path`
 for the next pipeline run. Files already processed (matched by `<date>_<stem>`)
 are skipped.
+
+Before the prompt is queued, goals automation can run an expert prelude:
+
+- `analyzer` turns the goal into a requirements-focused brief
+- `planner` turns that brief into an authoritative execution plan
+- `architect` can add technical design context when configured
+
+The queued prompt then instructs the runtime pipeline to start with mandatory
+`refine -> plan`, and to let the planner decide the downstream stages via
+`.dev/WORKFLOWS.md`.
 
 When an **Evaluating Agent** is configured, it runs after the committer stage
 and can generate a follow-up goal — enabling fully continuous, self-scheduling

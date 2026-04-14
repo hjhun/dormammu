@@ -21,6 +21,10 @@
       "cli": "claude",
       "model": "claude-sonnet-4-6"
     },
+    "analyzer": {
+      "cli": "claude",
+      "model": "claude-sonnet-4-6"
+    },
     "planner": {
       "cli": "claude",
       "model": "claude-sonnet-4-6"

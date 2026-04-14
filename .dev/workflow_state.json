@@ -2,7 +2,7 @@
   "version": 1,
   "state_schema_version": 7,
   "initialized_at": "2026-04-08T14:41:11+09:00",
-  "updated_at": "2026-04-13T21:05:00+09:00",
+  "updated_at": "2026-04-14T13:55:00+09:00",
   "mode": "supervised",
   "source_of_truth": {
     "goal": [
@@ -44,7 +44,7 @@
   },
   "roadmap": {
     "active_phase_ids": [
-      "phase_5"
+      "phase_4"
     ],
     "priority_order": [
       "phase_1",
@@ -60,11 +60,11 @@
     "skill": "supervising-agent",
     "verdict": "approved",
     "escalation": "approved",
-    "reason": "Public Mermaid UML labels now use HTML line breaks instead of escaped newline sequences, and targeted regression coverage confirms the docs no longer reintroduce broken label rendering."
+    "reason": "Mandatory refine-plan execution is now enforced for run, run-once, and daemonize, and goals prompt generation now supports analyzer-led requirements analysis plus planner-owned workflow contracts."
   },
   "bootstrap": {
-    "goal": "Fix broken line breaks in DORMAMMU Mermaid UML diagrams.",
-    "captured_at": "2026-04-13T21:05:00+09:00",
+    "goal": "Make refine -> plan mandatory in run, run-once, and daemonize, and add an analyzer expert to goals prompt generation so planner-controlled workflows start from stronger prompts.",
+    "captured_at": "2026-04-14T13:45:00+09:00",
     "state_root": ".dev",
     "repo_guidance": {
       "rule_files": [
@@ -110,7 +110,7 @@
       "synced_at": "2026-04-13T21:05:00+09:00"
     }
   },
-  "next_action": "Await direction on whether to prepare a commit for the Mermaid UML line-break fix.",
+  "next_action": "Prepare the validated mandatory refine-plan and goals analyzer slice for commit and push.",
   "blockers": [],
   "phase_history": [],
   "notes": [
@@ -119,9 +119,12 @@
     "PLAN.md should list prompt-derived development items in `[ ] Phase N. <title>` format.",
     "The installed guidance bundle and packaged asset copy should stay synchronized.",
     "Legacy TASKS.md snapshots should be migrated forward into PLAN.md without losing checklist state.",
-    "README.md and docs/GUIDE.md now use <br/> in Mermaid labels instead of escaped newline sequences.",
-    "Regression coverage now checks Mermaid blocks in public docs for escaped newline labels.",
-    "Validation completed successfully for tests/test_mermaid_docs.py and tests/test_ralph_improvements.py."
+    "Added analyzer to the role model and example configuration.",
+    "PipelineRunner now treats refiner and planner as mandatory stages with active CLI fallback.",
+    "run, run-once, and daemonize single-agent paths now execute a mandatory refine-plan prelude before downstream work.",
+    "GoalsScheduler can now generate prompts through analyzer -> planner -> architect and emits a workflow contract that makes planner authoritative after plan.",
+    "README.md, docs/GUIDE.md, and docs/ko/GUIDE.md now describe the new runtime and goals behavior.",
+    "Targeted validation passed for role-config, pipeline-runner, goals-scheduler, selected CLI flows, daemon flows, and Mermaid-doc coverage."
   ],
   "loop": {
     "status": "idle",

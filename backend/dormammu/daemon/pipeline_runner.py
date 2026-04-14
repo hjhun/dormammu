@@ -2,8 +2,8 @@
 
 Pipeline stages
 ---------------
-refiner   (optional, one-shot) →
-planner   (optional, one-shot) →
+refiner   (mandatory, one-shot) →
+planner   (mandatory, one-shot) →
 developer (supervised LoopRunner) →
 tester    (one-shot, loops back to developer on FAIL) →
 reviewer  (one-shot, loops back to developer on NEEDS_WORK) →
@@ -14,14 +14,13 @@ Each stage writes a document to ``.dev/<slot>-<role>/<date>_<stem>.md``.
 
 Refiner
 -------
-Converts the raw goal into a structured ``.dev/REQUIREMENTS.md``.  Skipped
-when ``agents.refiner`` has no resolvable CLI.
+Converts the raw goal into a structured ``.dev/REQUIREMENTS.md``.
 
 Planner
 -------
 Reads ``.dev/REQUIREMENTS.md`` (if present) and generates the adaptive
 ``.dev/WORKFLOWS.md`` stage sequence plus updates ``.dev/PLAN.md`` and
-``.dev/DASHBOARD.md``.  Skipped when ``agents.planner`` has no resolvable CLI.
+``.dev/DASHBOARD.md``.
 
 Developer
 ---------
@@ -98,6 +97,20 @@ class PipelineRunner:
     # Public API
     # ------------------------------------------------------------------
 
+    def run_refine_and_plan(
+        self,
+        goal_text: str,
+        *,
+        stem: str,
+        date_str: str | None = None,
+    ) -> None:
+        """Execute the mandatory refine -> plan prelude for a prompt."""
+        if date_str is None:
+            date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+
+        self._run_refiner(goal_text, stem=stem, date_str=date_str)
+        self._run_planner(goal_text, stem=stem, date_str=date_str)
+
     def run(
         self,
         prompt_text: str,
@@ -118,11 +131,8 @@ class PipelineRunner:
         dev_prompt = prompt_text
         loop_result: LoopRunResult | None = None
 
-        # ---- refiner (optional) ---------------------------------------------
-        self._run_refiner(prompt_text, stem=stem, date_str=date_str)
-
-        # ---- planner (optional) ---------------------------------------------
-        self._run_planner(prompt_text, stem=stem, date_str=date_str)
+        # ---- refiner + planner (mandatory) ----------------------------------
+        self.run_refine_and_plan(prompt_text, stem=stem, date_str=date_str)
 
         # ---- developer → tester loop ----------------------------------------
         for tester_iter in range(MAX_STAGE_ITERATIONS):
@@ -201,7 +211,7 @@ class PipelineRunner:
         return loop_result
 
     # ------------------------------------------------------------------
-    # Refiner stage (one-shot, optional)
+    # Refiner stage (one-shot, mandatory)
     # ------------------------------------------------------------------
 
     def _run_refiner(
@@ -212,17 +222,12 @@ class PipelineRunner:
         Produces ``.dev/REQUIREMENTS.md`` and saves the output document to
         ``.dev/00-refiner/<date>_<stem>.md``.
 
-        Returns the agent output string, or ``None`` if the refiner role has
-        no resolvable CLI (stage is skipped).
+        Returns the agent output string.
         """
         refiner_cfg = self._agents.for_role("refiner")
-        # Refiner is opt-in: only run when agents.refiner.cli is explicitly set.
-        # Do NOT fall back to active_agent_cli so that existing single-agent
-        # setups are unaffected.
-        cli = refiner_cfg.cli
+        cli = refiner_cfg.resolve_cli(self._app_config.active_agent_cli)
         if cli is None:
-            self._log("pipeline: refiner has no explicit CLI — skipping refine stage")
-            return None
+            raise RuntimeError("No CLI available for refiner role.")
 
         self._log("pipeline: refiner stage starting")
         prompt = self._refiner_prompt(goal_text, stem=stem, date_str=date_str)
@@ -239,7 +244,7 @@ class PipelineRunner:
         return output
 
     # ------------------------------------------------------------------
-    # Planner stage (one-shot, optional)
+    # Planner stage (one-shot, mandatory)
     # ------------------------------------------------------------------
 
     def _run_planner(
@@ -253,17 +258,12 @@ class PipelineRunner:
 
         Saves output to ``.dev/01-planner/<date>_<stem>.md``.
 
-        Returns the agent output string, or ``None`` if the planner role has
-        no resolvable CLI (stage is skipped).
+        Returns the agent output string.
         """
         planner_cfg = self._agents.for_role("planner")
-        # Planner is opt-in: only run when agents.planner.cli is explicitly set.
-        # Do NOT fall back to active_agent_cli so that existing single-agent
-        # setups are unaffected.
-        cli = planner_cfg.cli
+        cli = planner_cfg.resolve_cli(self._app_config.active_agent_cli)
         if cli is None:
-            self._log("pipeline: planner has no explicit CLI — skipping plan stage")
-            return None
+            raise RuntimeError("No CLI available for planner role.")
 
         self._log("pipeline: planner stage starting")
         requirements_text = self._read_requirements_doc()

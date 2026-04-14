@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from dataclasses import replace
 import json
 from pathlib import Path
 import signal
@@ -18,6 +19,7 @@ import sys
 from typing import TextIO
 
 from dormammu.agent import AgentRunRequest, CliAdapter
+from dormammu.agent.role_config import AgentsConfig, ROLE_NAMES
 from dormammu.agent.models import AgentRunStarted
 from dormammu.config import (
     AppConfig,
@@ -26,6 +28,7 @@ from dormammu.config import (
     write_active_agent_cli_config,
 )
 from dormammu.daemon import DaemonAlreadyRunningError, DaemonRunner, SessionProgressLogStream, load_daemon_config
+from dormammu.daemon.pipeline_runner import PipelineRunner
 from dormammu.telegram.stream import TelegramProgressStream
 from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt
@@ -54,6 +57,53 @@ from dormammu._cli_utils import (
     _with_guidance_overrides,
     _write_session_marker,
 )
+
+
+def _pipeline_runtime(
+    config: AppConfig,
+    *,
+    agent_cli_override: Path | None = None,
+) -> tuple[AppConfig, AgentsConfig]:
+    if agent_cli_override is not None:
+        runtime_agents = AgentsConfig(
+            **{
+                role: replace(
+                    (config.agents or AgentsConfig()).for_role(role),
+                    cli=agent_cli_override,
+                    model=None,
+                )
+                for role in ROLE_NAMES
+            }
+        )
+        runtime_config = config.with_overrides(
+            agents=runtime_agents,
+            active_agent_cli=agent_cli_override,
+        )
+        return runtime_config, runtime_agents
+
+    runtime_agents = config.agents or AgentsConfig()
+    runtime_config = config.with_overrides(agents=runtime_agents)
+    return runtime_config, runtime_agents
+
+
+def _run_mandatory_refine_and_plan(
+    *,
+    config: AppConfig,
+    repository: StateRepository,
+    prompt_text: str,
+    stem: str,
+    date_str: str,
+    agent_cli_override: Path | None = None,
+) -> None:
+    runtime_config, runtime_agents = _pipeline_runtime(
+        config,
+        agent_cli_override=agent_cli_override,
+    )
+    PipelineRunner(
+        runtime_config,
+        runtime_agents,
+        repository=repository,
+    ).run_refine_and_plan(prompt_text, stem=stem, date_str=date_str)
 
 
 def _handle_show_config(args: argparse.Namespace) -> int:
@@ -200,26 +250,23 @@ def _handle_run_once(args: argparse.Namespace) -> int:
             patterns_text=repository.read_patterns_text(),
         )
 
+        stem = (
+            prompt_source_path.stem
+            if prompt_source_path is not None
+            else (args.run_label or "run-once")
+        )
+        from datetime import datetime, timezone
+
+        date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+
         # When an agents config is present AND --agent-cli was not explicitly
-        # provided, route through PipelineRunner so the full refiner → planner
-        # → developer → … sequence runs once, consistent with run and daemonize
-        # modes.  An explicit --agent-cli flag signals single-agent intent and
-        # bypasses the pipeline.
+        # provided, route through the full role-based pipeline.
         if config.agents is not None and not args.agent_cli:
-            from datetime import datetime, timezone
-
-            from dormammu.daemon.pipeline_runner import PipelineRunner
-
-            stem = (
-                prompt_source_path.stem
-                if prompt_source_path is not None
-                else (args.run_label or "run-once")
-            )
-            date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
             try:
+                runtime_config, runtime_agents = _pipeline_runtime(config)
                 result = PipelineRunner(
-                    config,
-                    config.agents,
+                    runtime_config,
+                    runtime_agents,
                     repository=repository,
                 ).run(enriched_prompt, stem=stem, date_str=date_str)
             except (RuntimeError, ValueError, OSError) as exc:
@@ -229,7 +276,8 @@ def _handle_run_once(args: argparse.Namespace) -> int:
             print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
             return 0 if result.status == "completed" else 1
 
-        # Default: single-shot CliAdapter call (no pipeline, no retries).
+        # Default: still enforce the refine -> plan prelude, then run the
+        # requested single-shot developer execution.
         try:
             agent_cli = _resolve_agent_cli(config, args.agent_cli)
         except ValueError as exc:
@@ -242,6 +290,19 @@ def _handle_run_once(args: argparse.Namespace) -> int:
             cli_path=agent_cli,
             workdir=workdir,
         )
+
+        try:
+            _run_mandatory_refine_and_plan(
+                config=config,
+                repository=repository,
+                prompt_text=enriched_prompt,
+                stem=stem,
+                date_str=date_str,
+                agent_cli_override=agent_cli,
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
 
         request = AgentRunRequest(
             cli_path=agent_cli,
@@ -341,7 +402,24 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
         if config.agents is not None and not args.agent_cli:
             from datetime import datetime, timezone
 
-            from dormammu.daemon.pipeline_runner import PipelineRunner
+            stem = (
+                prompt_source_path.stem
+                if prompt_source_path is not None
+                else (args.run_label or "run")
+            )
+            date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+            try:
+                runtime_config, runtime_agents = _pipeline_runtime(config)
+                result = PipelineRunner(
+                    runtime_config,
+                    runtime_agents,
+                    repository=repository,
+                ).run(enriched_prompt, stem=stem, date_str=date_str)
+            except (RuntimeError, ValueError, OSError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+        else:
+            from datetime import datetime, timezone
 
             stem = (
                 prompt_source_path.stem
@@ -350,15 +428,18 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
             )
             date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
             try:
-                result = PipelineRunner(
-                    config,
-                    config.agents,
+                _run_mandatory_refine_and_plan(
+                    config=config,
                     repository=repository,
-                ).run(enriched_prompt, stem=stem, date_str=date_str)
+                    prompt_text=enriched_prompt,
+                    stem=stem,
+                    date_str=date_str,
+                    agent_cli_override=agent_cli,
+                )
             except (RuntimeError, ValueError, OSError) as exc:
                 print(str(exc), file=sys.stderr)
                 return 2
-        else:
+
             request = LoopRunRequest(
                 cli_path=agent_cli,
                 prompt_text=enriched_prompt,

@@ -10,6 +10,8 @@ import threading
 import time
 from typing import Generator, Mapping, TextIO
 
+from dormammu.agent.role_config import AgentsConfig
+
 try:
     import fcntl as _fcntl
     _HAS_FCNTL = True
@@ -532,7 +534,7 @@ class DaemonRunner:
             repo_root=scoped_config.repo_root,
         )
 
-        # When an agents config is present, use the role-based pipeline.
+        # When an agents config is present, use the full role-based pipeline.
         if scoped_config.agents is not None:
             goal_file_path = self._extract_goal_file_path(prompt_text)
             evaluator_config = (
@@ -552,8 +554,16 @@ class DaemonRunner:
                 evaluator_config=evaluator_config,
             )
 
-        # Default: single-agent LoopRunner (existing behaviour).
+        # Default: enforce refine -> plan before the single-agent loop.
         agent_cli = self._resolve_agent_cli(scoped_config)
+        prelude_agents = AgentsConfig()
+        PipelineRunner(
+            scoped_config.with_overrides(agents=prelude_agents),
+            prelude_agents,
+            repository=session_repository,
+            progress_stream=self.progress_stream,
+        ).run_refine_and_plan(enriched_text, stem=prompt_path.stem)
+
         request = LoopRunRequest(
             cli_path=agent_cli,
             prompt_text=enriched_text,
