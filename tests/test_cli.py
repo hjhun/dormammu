@@ -20,6 +20,7 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.cli import build_parser, main
 from dormammu.agent import cli_adapter as cli_adapter_module
+from dormammu.interactive_shell import InteractiveShellRunner
 
 
 class CliTests(unittest.TestCase):
@@ -1550,16 +1551,67 @@ class CliTests(unittest.TestCase):
         self.assertIsNotNone(run_args.handler)
         self.assertIsNotNone(resume_args.handler)
 
-    def test_main_without_arguments_prints_usage_only(self) -> None:
-        stdout = io.StringIO()
-        stderr = io.StringIO()
-
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+    def test_main_without_arguments_starts_interactive_shell(self) -> None:
+        with mock.patch("dormammu.cli.InteractiveShellRunner.run", return_value=0) as run:
             exit_code = main([])
 
         self.assertEqual(exit_code, 0)
-        self.assertIn("usage: dormammu", stdout.getvalue())
-        self.assertEqual(stderr.getvalue(), "")
+        run.assert_called_once()
+
+    def test_explicit_subcommand_bypasses_interactive_shell(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            with mock.patch("dormammu.cli.InteractiveShellRunner.run", return_value=0) as run:
+                exit_code = main(["show-config", "--repo-root", str(root)])
+
+        self.assertEqual(exit_code, 0)
+        run.assert_not_called()
+
+    def test_interactive_shell_config_set_updates_project_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            stdin = io.StringIO("/config set active_agent_cli /usr/bin/codex\n/exit\n")
+            stdout = io.StringIO()
+
+            exit_code = InteractiveShellRunner(repo_root=root, stdin=stdin, stdout=stdout, env=dict(os.environ)).run()
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads((root / "dormammu.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["active_agent_cli"], "/usr/bin/codex")
+            self.assertIn("config updated:", stdout.getvalue())
+
+    def test_interactive_shell_daemon_enqueue_writes_prompt_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            home = root / "home"
+            daemon_config_path = home / ".dormammu" / "daemonize.json"
+            prompt_path = root / "queue" / "prompts"
+            result_path = root / "queue" / "results"
+            daemon_config_path.parent.mkdir(parents=True, exist_ok=True)
+            daemon_config_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "prompt_path": str(prompt_path),
+                        "result_path": str(result_path),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            stdin = io.StringIO("/daemon enqueue test queued prompt\n/exit\n")
+            stdout = io.StringIO()
+            env = {**os.environ, "HOME": str(home)}
+
+            exit_code = InteractiveShellRunner(repo_root=root, stdin=stdin, stdout=stdout, env=env).run()
+
+            self.assertEqual(exit_code, 0)
+            queued = sorted(prompt_path.glob("*.md"))
+            self.assertEqual(len(queued), 1)
+            self.assertEqual(queued[0].read_text(encoding="utf-8").strip(), "test queued prompt")
+            self.assertIn("daemon prompt queued:", stdout.getvalue())
 
     def test_root_help_mentions_prompt_file_example(self) -> None:
         parser = build_parser()

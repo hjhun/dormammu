@@ -100,6 +100,60 @@ refiner (mandatory) → planner (mandatory) → developer → tester → reviewe
 
 ---
 
+## 인터랙티브 셸
+
+아무 서브커맨드 없이 `dormammu`를 실행하면 기본 인터랙티브 셸이 시작됩니다.
+명시적으로 들어가고 싶다면 다음처럼 실행할 수도 있습니다:
+
+```bash
+dormammu shell
+```
+
+셸은 의도적으로 가볍게 구성됩니다:
+
+- 상단 출력 영역: 로그, 요약, 데몬 상태
+- 하단 프롬프트: 자유 텍스트 입력과 슬래시 명령
+- 자유 텍스트 입력: 기본적으로 supervised `run` 요청으로 매핑
+
+핵심 셸 명령:
+
+| 명령 | 설명 |
+|------|------|
+| 자유 텍스트 | supervised `/run` 요청 제출 |
+| `/run <prompt>` | supervised 루프를 명시적으로 실행 |
+| `/run-once <prompt>` | 단일 bounded 실행 |
+| `/resume` | 최근 중단된 실행 재개 |
+| `/show-config` | 해석된 설정 출력 |
+| `/config get|set|add|remove|unset ...` | 지원되는 설정 키 읽기/변경 |
+| `/sessions` | 알려진 세션 목록 출력 |
+| `/daemon start|stop|status|logs|enqueue|queue` | 데몬 워커 제어 또는 상태 확인 |
+| `/exit` | 셸 종료 |
+
+`daemonize` 자체는 계속 워커 지향 큐 처리기로 남습니다. 인터랙티브 셸은
+`/daemon enqueue`, `/daemon logs`, `/daemon status` 같은 명령으로 이 워커를
+조작하는 운영자 제어면입니다.
+
+---
+
+## 실행 모드
+
+DORMAMMU에는 네 가지 운영자 진입 방식이 있습니다.
+
+| 모드 | 명령 | 설명 |
+|------|------|------|
+| 인터랙티브 셸 | `dormammu` 또는 `dormammu shell` | 상단 로그 출력, 하단 입력 프롬프트, 슬래시 명령을 제공하는 기본 터미널 셸 |
+| run-once | `dormammu run-once` | 아티팩트를 남기는 단일 bounded 실행 |
+| run | `dormammu run` | 검증과 continuation을 포함한 supervised 재시도 루프 |
+| daemonize | `dormammu daemonize` | 프롬프트 큐를 감시하는 장기 실행 데몬 |
+
+모든 실행 모드는 먼저 필수 `refine -> plan` 전주를 수행합니다. 그 이후:
+
+- `agents`가 설정되면 전체 `PipelineRunner`로 계속 진행합니다.
+- `agents`가 없으면 `run`과 `daemonize`는 단일 에이전트 `LoopRunner`로 진행합니다.
+- `agents`가 없으면 `run-once`는 단일 bounded `CliAdapter` 호출로 진행합니다.
+
+---
+
 ## 설치
 
 ### 빠른 설치 (권장)
@@ -243,9 +297,12 @@ goal 변경 후 상태를 초기화할 때 사용합니다.
 에이전트를 한 번 실행합니다. 프롬프트 아티팩트, stdout, stderr, 실행 메타데이터를
 저장합니다. 재시도하지 않습니다.
 
+`agents`가 설정되어 있고 `--agent-cli`를 명시적으로 주지 않으면, `run-once`도
+필수 `refine -> plan` 전주 뒤에 전체 파이프라인 한 번을 실행합니다.
+
 ### `dormammu run`
 
-Supervised 재시도 루프를 실행합니다.
+단일 에이전트 supervised 재시도 루프 또는 전체 파이프라인 한 번을 실행합니다.
 
 주요 옵션:
 
@@ -263,8 +320,18 @@ Supervised 재시도 루프를 실행합니다.
 | `--debug` | 저장소 루트에 `DORMAMMU.log` 기록 |
 
 > **참고:** `--agent-cli`를 명시적으로 제공하면 `agents` 설정이 있어도
-> 단일 에이전트 경로(LoopRunner / CliAdapter)를 사용합니다. 일회성 실행에서
-> 파이프라인을 우회할 때 활용합니다.
+> 필수 `refine -> plan` 전주는 계속 수행하지만, 그 이후에는 단일 에이전트
+> 경로(LoopRunner / CliAdapter)를 사용합니다. 일회성 실행에서 파이프라인을
+> 우회할 때 활용합니다.
+
+### `dormammu shell`
+
+기본 인터랙티브 셸을 명시적으로 시작합니다. 아무 인자 없이 `dormammu`를
+실행했을 때와 같은 셸입니다.
+
+```bash
+dormammu shell --repo-root .
+```
 
 ### `dormammu resume`
 

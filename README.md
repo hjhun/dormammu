@@ -73,12 +73,29 @@ Any other CLI can be used with `--extra-arg` pass-through.
 
 ## How It Works
 
+### Interactive Shell
+
+Running `dormammu` with no subcommand starts the default interactive shell. You
+can also start it explicitly with `dormammu shell`.
+
+- Upper area: logs, summaries, daemon status output
+- Lower prompt: free-text requests and slash commands
+- Free-text input: shorthand for a supervised `run`
+- Slash commands: `/config`, `/run`, `/run-once`, `/resume`, `/sessions`,
+  `/show-config`, `/daemon ...`, `/exit`
+
+`daemonize` remains a worker-oriented queue processor. The interactive shell is
+its operator control plane through `/daemon start`, `/daemon stop`,
+`/daemon status`, `/daemon logs`, `/daemon enqueue <prompt>`, and
+`/daemon queue`.
+
 ### Run Modes
 
-DORMAMMU has three execution modes:
+DORMAMMU has four operator entry styles:
 
 | Mode | Command | Description |
 |------|---------|-------------|
+| **interactive shell** | `dormammu` or `dormammu shell` | Default terminal shell with top log output, bottom input, and slash commands |
 | **run-once** | `dormammu run-once` | One bounded agent call with artifact capture, no retry |
 | **run** | `dormammu run` | Full supervised retry loop with validation and continuation |
 | **daemonize** | `dormammu daemonize` | Long-running daemon that watches a prompt queue |
@@ -239,13 +256,29 @@ dormammu run \
   --max-iterations 50
 ```
 
-### 4. Resume after interruption
+### 4. Use the interactive shell
+
+```bash
+dormammu
+```
+
+Common shell commands:
+
+```text
+/config get active_agent_cli
+/run Implement the next task in PLAN.md
+/daemon status
+/daemon enqueue Review the latest queued change
+/exit
+```
+
+### 5. Resume after interruption
 
 ```bash
 dormammu resume --repo-root .
 ```
 
-### 5. Run as a background daemon
+### 6. Run as a background daemon
 
 ```bash
 dormammu daemonize --repo-root .
@@ -269,12 +302,32 @@ for a starting config.
 | `run-once` | — | One bounded agent call with artifact capture, no retry loop |
 | `run` | `run-loop` | Full supervised retry loop with validation and continuation |
 | `resume` | `resume-loop` | Continue a previous `run` from saved loop state |
+| `shell` | — | Start the interactive shell explicitly |
 | `daemonize` | — | Long-running daemon that watches a prompt directory and processes a queue |
 | `start-session` | — | Archive the current session and begin a new named session |
 | `sessions` | — | List all saved session snapshots |
 | `restore-session` | — | Restore an older session into the active `.dev/` view |
 
 Full reference: `dormammu --help` or `dormammu <command> --help`.
+
+### Interactive Shell Commands
+
+| Command | Description |
+|---------|-------------|
+| free text | Submit a supervised `/run` request |
+| `/run <prompt>` | Run the supervised loop explicitly |
+| `/run-once <prompt>` | Run one bounded execution |
+| `/resume` | Resume the last interrupted run |
+| `/show-config` | Print the resolved runtime config |
+| `/config ...` | Get or mutate supported config keys |
+| `/sessions` | List sessions |
+| `/daemon start` | Start the daemon worker in the background |
+| `/daemon stop` | Request graceful daemon shutdown |
+| `/daemon status` | Show daemon pid, heartbeat, queue depth, and paths |
+| `/daemon logs` | Show the latest daemon log tail |
+| `/daemon enqueue <prompt>` | Queue a prompt file for daemon processing |
+| `/daemon queue` | List queued prompt files |
+| `/exit` | Leave the interactive shell |
 
 ### `run` Options
 

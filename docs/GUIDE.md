@@ -14,6 +14,7 @@ Korean-language guide is at [docs/ko/GUIDE.md](ko/GUIDE.md).
 
 - [What DORMAMMU Does](#what-dormammu-does)
 - [Core Concepts](#core-concepts)
+- [Interactive Shell](#interactive-shell)
 - [How It Works — Run Modes](#how-it-works--run-modes)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -110,10 +111,51 @@ not explicitly configured.
 
 ---
 
+## Interactive Shell
+
+Running `dormammu` with no subcommand starts the default interactive shell. You
+can also enter it explicitly with:
+
+```bash
+dormammu shell
+```
+
+The shell is intentionally lightweight:
+
+- top area for logs and summaries
+- bottom prompt for free-text input and slash commands
+- free-text input maps to supervised `run` behavior by default
+
+Core shell commands:
+
+| Command | Description |
+|-------|------------|
+| free text | Submit a supervised `/run` request |
+| `/run <prompt>` | Run the supervised loop explicitly |
+| `/run-once <prompt>` | Run one bounded execution |
+| `/resume` | Resume the latest interrupted run |
+| `/show-config` | Print the resolved config |
+| `/config get|set|add|remove|unset ...` | Read or mutate supported config keys |
+| `/sessions` | List known sessions |
+| `/daemon start|stop|status|logs|enqueue|queue` | Control or observe the daemon worker |
+| `/exit` | Exit the shell |
+
+`daemonize` itself remains a worker-oriented queue processor. The shell is the
+operator control plane for that worker: `/daemon enqueue` writes prompt files,
+and `/daemon logs` or `/daemon status` reads daemon output and metadata.
+
+---
+
 ## How It Works — Run Modes
 
-DORMAMMU has three execution modes. Their behavior depends on whether `agents`
+DORMAMMU has four operator entry styles. Their behavior depends on whether `agents`
 is configured in `dormammu.json`.
+
+### Interactive entry
+
+| Mode | What runs |
+|------|-----------|
+| `dormammu` or `dormammu shell` | `InteractiveShellRunner`, which delegates work back into the existing CLI/runtime stack |
 
 ### Without `agents` config
 
@@ -278,6 +320,22 @@ dormammu resume --repo-root .
 Reloads the saved loop state and continuation context, then restarts from the
 recovery path.
 
+### 8. Use the interactive shell
+
+```bash
+dormammu
+```
+
+Example shell session:
+
+```text
+/config get active_agent_cli
+/run Implement the next prompt-derived task safely.
+/daemon status
+/daemon enqueue Audit the queued prompt set.
+/exit
+```
+
 ---
 
 ## Commands Reference
@@ -401,6 +459,15 @@ Reload saved state and continue the previous run.
 
 ```bash
 dormammu resume --repo-root .
+```
+
+### `dormammu shell`
+
+Start the interactive shell explicitly. This is equivalent to running
+`dormammu` with no subcommand.
+
+```bash
+dormammu shell --repo-root .
 ```
 
 ### `dormammu daemonize`

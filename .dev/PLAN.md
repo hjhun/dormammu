@@ -2,16 +2,19 @@
 
 ## Prompt-Derived Implementation Plan
 
-- [O] Phase 1. Review the current evaluator, supervisor, and goals-scheduler
-  roles and confirm the approved checkpoint architecture
-- [O] Phase 2. Move one-shot runtime stage contracts into `agents/rules/` and
-  mirror them into packaged assets
-- [O] Phase 3. Implement the mandatory post-plan evaluator checkpoint and keep
-  the goals-only post-commit evaluator aligned with the rules-based contract
-- [O] Phase 4. Run the full repository test suite, fix regressions, and leave
-  `.dev` state synchronized with the completed work
+- [O] Phase 1. Read `AGENTS.md` and `agents/AGENTS.md`, inspect the saved run
+  artifacts, and identify the real verification failure for the current
+  interactive-shell rollout
+- [O] Phase 2. Re-validate the no-arg shell entrypoint, explicit subcommand
+  bypass, and install-script expectations against the current worktree
+- [O] Phase 3. Update operator-facing docs for the default `dormammu` shell
+  startup behavior and the new explicit `dormammu shell` entrypoint
+- [O] Phase 4. Replace the stale root `.dev` operator-state files so the
+  repository reflects the validated interactive-shell ship state
+- [ ] Phase 5. Create one intentional commit for the interactive-shell rollout
+  and push `main` to `origin/main`
 
 ## Resume Checkpoint
 
-Implementation and full validation are complete. Resume only if the user wants
-commit preparation or additional hardening beyond this evaluator/rules scope.
+Resume from Phase 5 unless validation uncovers a regression that requires a
+return to development.

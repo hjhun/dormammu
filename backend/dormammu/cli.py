@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Sequence
 import sys
 
+from dormammu.interactive_shell import InteractiveShellRunner
 from dormammu._cli_handlers import (
     _handle_daemonize,
     _handle_doctor,
@@ -51,10 +52,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dormammu",
         description=(
-            "CLI for running dormammu sessions, one-off agent executions, supervised retries, "
-            "and daemonized prompt queues."
+            "CLI for the dormammu interactive shell, supervised sessions, one-off agent "
+            "executions, and daemonized prompt queues."
         ),
         epilog=(
+            "Interactive shell:\n"
+            "  dormammu                     Start the default interactive shell\n"
+            "  dormammu shell               Start the interactive shell explicitly\n"
+            "\n"
             "Common command groups:\n"
             "  Runtime config: show-config, doctor, inspect-cli\n"
             "  One-shot / loop runs: run-once, run, resume\n"
@@ -540,6 +545,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     daemonize.set_defaults(handler=_handle_daemonize)
 
+    shell = subparsers.add_parser(
+        "shell",
+        help="Start the interactive dormammu shell.",
+    )
+    shell.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    shell.set_defaults(handler=lambda args: InteractiveShellRunner(repo_root=args.repo_root).run())
+
     return parser
 
 
@@ -547,7 +559,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args_list = list(argv) if argv is not None else sys.argv[1:]
     if not args_list:
-        parser.print_usage(sys.stdout)
-        return 0
+        return InteractiveShellRunner().run()
     args = parser.parse_args(args_list)
     return args.handler(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
