@@ -2,70 +2,65 @@
 
 ## Actual Progress
 
-- Goal: Ship the default interactive shell rollout by validating the
-  no-subcommand entrypoint, updating operator-facing docs, and creating the
-  requested commit/push.
-- Prompt-driven scope: Finish the interactive shell slice already present in
-  the worktree, verify that explicit subcommands still behave normally, update
-  operator-facing documentation for the new default startup behavior, and then
-  commit and push the validated change set.
+- Goal: Repair the release installer so `curl .../install.sh | bash` succeeds on
+  Python 3.10 when the build backend would otherwise fall back to
+  `bdist_wheel`.
+- Prompt-driven scope: Identify why the raw install path fails, update the
+  release install flow to use a robust build path, and validate the regression
+  with targeted tests.
 - Active roadmap focus:
-- Phase 4. Supervisor Validation, Continuation Loop, and Resume
-- Phase 5. CLI Operator Experience and Progress Visibility
-- Current workflow phase: commit
-- Last completed workflow phase: final_verification
+- Phase 6. Installer, Commands, and Environment Diagnostics
+- Current workflow phase: final_verify
+- Last completed workflow phase: final_verify
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: No further work is pending unless follow-up shell ergonomics or
-  broader rollout validation is requested.
+- Resume point: No further work is pending unless follow-up packaging coverage
+  or a real Python 3.10 runtime repro is requested.
 
 ## Workflow Phases
 
 ```mermaid
 flowchart LR
-    plan([Plan]) --> design([Design])
+    refine([Refine]) --> plan([Plan])
+    plan --> design([Design])
     design --> develop([Develop])
     design --> test_author([Test Author])
     develop --> test_review([Test & Review])
     test_author --> test_review
     test_review --> final_verify([Final Verify])
-    final_verify -->|approved| commit([Commit])
-    final_verify -->|rework| develop
 ```
 
 ## In Progress
 
-- The default no-arg entrypoint now launches the lightweight interactive shell.
-- Explicit subcommands still bypass the shell and continue through the existing
-  CLI handlers.
-- Validation and operator-facing docs are complete, and the repository is ready
-  for the requested commit/push.
+- Root `install.sh` now routes release installs through the venv interpreter's
+  `python -m pip install --use-pep517 --upgrade ...` path instead of relying on
+  `--no-build-isolation`.
+- A targeted regression test was added to pin that behavior so the raw GitHub
+  installer does not regress back to the legacy wheel build path.
+- Targeted install-script validation passed.
 
 ## Progress Notes
 
-- Phase 1 completed: Re-read `AGENTS.md` and `agents/AGENTS.md`, inspected the
-  saved supervisor artifacts, and confirmed the previous failure was stale root
-  `.dev` operator state rather than a broken shell implementation.
-- Phase 2 completed: Re-checked the interactive shell code path in
-  `backend/dormammu/cli.py` and `backend/dormammu/interactive_shell.py`,
-  including repo-root/config bootstrap behavior for no-arg startup.
-- Phase 3 completed: Executed targeted validation with
-  `python3 -m pytest tests/test_cli.py` and
-  `python3 -m pytest tests/test_install_script.py`; both suites passed.
-- Phase 4 completed: Updated operator-facing docs in `docs/ko/GUIDE.md` to
-  document the default `dormammu` shell entrypoint, `dormammu shell`, shell
-  commands, and the mandatory `refine -> plan` prelude behavior.
-- Phase 5 completed: Synchronized the root `.dev` operator-state files with the
-  validated interactive-shell rollout so the remaining workflow step is the
-  requested commit/push.
-- Relevant repository workflow reference: `.github/workflows/release.yml`.
+- Phase 1 completed: Inspected the root and local install scripts, existing
+  install tests, and current packaging metadata to isolate the failing release
+  path.
+- Phase 2 completed: Chose a packaging fix that forces modern PEP 517 install
+  behavior for release installs, while leaving the local editable installer
+  unchanged.
+- Phase 3 completed: Updated the release installer to run
+  `python -m pip install --use-pep517 --upgrade` from the venv interpreter for
+  both local-source and downloaded-archive release installs.
+- Phase 4 completed: Added a targeted regression test covering the release
+  install command shape.
+- Phase 5 completed: Ran `python3 -m pytest tests/test_install_script.py -q`
+  and confirmed the installer test suite passes after the release-install
+  change.
+- Validation evidence:
+- `python3 -m pytest tests/test_install_script.py -q` -> `4 passed`
 
 ## Risks And Watchpoints
 
-- The shell is intentionally lightweight in v1; it does not yet implement a
-  richer split-pane TUI or shell-specific persistent settings.
-- `/daemon logs` and `/daemon status` provide operator visibility, but broader
-  end-to-end daemon ergonomics still depend on future interactive polish work.
-- Local machine-state files under `.dev/session.json` and
-  `.dev/workflow_state.json` remain operator-local and should stay out of the
-  feature commit unless a later task explicitly requests session-state changes.
+- The current environment does not expose `python3.10`, so validation will be
+  performed with the repository test suite rather than an actual Python 3.10
+  runtime reproduction unless a 3.10 interpreter becomes available.
+- Do not stage the local `.codex` marker file.

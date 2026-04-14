@@ -16,6 +16,22 @@ LOCAL_INSTALL_SCRIPT = ROOT / "scripts" / "install.sh"
 
 
 class InstallScriptTests(unittest.TestCase):
+    def test_root_install_script_uses_pep517_release_installs(self) -> None:
+        script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn(
+            '"${VENV_DIR}/bin/python" -m pip install --use-pep517 --upgrade "${source_location}"',
+            script,
+        )
+        self.assertNotIn(
+            '"${VENV_DIR}/bin/pip" install --no-build-isolation --upgrade "${source_location}"',
+            script,
+        )
+        self.assertNotIn(
+            '"${VENV_DIR}/bin/pip" install --no-build-isolation --upgrade "${source_dir}"',
+            script,
+        )
+
     def test_local_install_script_upgrades_build_backend_before_editable_install(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)

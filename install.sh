@@ -43,6 +43,13 @@ ensure_build_backend() {
   "${VENV_DIR}/bin/python" -m pip install --upgrade "setuptools>=68" wheel
 }
 
+install_runtime_package() {
+  local source_location="$1"
+  # Force pip's modern PEP 517 path for release installs so source installs do
+  # not fall back to legacy `setup.py bdist_wheel` behavior on older runtimes.
+  "${VENV_DIR}/bin/python" -m pip install --use-pep517 --upgrade "${source_location}"
+}
+
 resolve_cli_path() {
   local cli_name="$1"
   local whereis_output token
@@ -402,7 +409,7 @@ main() {
 
   if [[ -d "${source_location}" ]]; then
     log "Installing dormammu from local source directory: ${source_location}"
-    "${VENV_DIR}/bin/pip" install --no-build-isolation --upgrade "${source_location}"
+    install_runtime_package "${source_location}"
   else
     TMP_DIR="$(mktemp -d)"
     local archive_path="${TMP_DIR}/dormammu.tar.gz"
@@ -410,7 +417,7 @@ main() {
     curl -fsSL "${source_location}" -o "${archive_path}"
     local source_dir
     source_dir="$(extract_archive "${archive_path}" "${TMP_DIR}")"
-    "${VENV_DIR}/bin/pip" install --no-build-isolation --upgrade "${source_dir}"
+    install_runtime_package "${source_dir}"
   fi
 
   link_binary

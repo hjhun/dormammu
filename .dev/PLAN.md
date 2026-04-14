@@ -2,19 +2,16 @@
 
 ## Prompt-Derived Implementation Plan
 
-- [O] Phase 1. Read `AGENTS.md` and `agents/AGENTS.md`, inspect the saved run
-  artifacts, and identify the real verification failure for the current
-  interactive-shell rollout
-- [O] Phase 2. Re-validate the no-arg shell entrypoint, explicit subcommand
-  bypass, and install-script expectations against the current worktree
-- [O] Phase 3. Update operator-facing docs for the default `dormammu` shell
-  startup behavior and the new explicit `dormammu shell` entrypoint
-- [O] Phase 4. Replace the stale root `.dev` operator-state files so the
-  repository reflects the validated interactive-shell ship state
-- [ ] Phase 5. Create one intentional commit for the interactive-shell rollout
-  and push `main` to `origin/main`
+- [O] Phase 1. Inspect the release installer, packaging metadata, and existing
+  tests to identify why raw `install.sh` fails on Python 3.10
+- [O] Phase 2. Update the release install path to avoid the legacy
+  `bdist_wheel` fallback and keep the local editable installer behavior intact
+- [O] Phase 3. Add regression coverage for the fixed release-install command
+  path
+- [O] Phase 4. Execute targeted validation and confirm the installer fix is
+  ready for final verification
 
 ## Resume Checkpoint
 
-Resume from Phase 5 unless validation uncovers a regression that requires a
-return to development.
+Targeted validation completed. Resume only if follow-up packaging validation is
+requested.
