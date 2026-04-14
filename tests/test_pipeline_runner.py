@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from dormammu.agent.prompt_identity import prepend_cli_identity
+from dormammu.daemon.cli_output import select_agent_output
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 from dormammu.daemon.pipeline_runner import (
     MAX_STAGE_ITERATIONS,
@@ -81,6 +82,14 @@ class TestModelArgs:
 
     def test_unknown_cli_returns_empty(self) -> None:
         assert _model_args("unknown-cli", "some-model") == []
+
+
+class TestSelectAgentOutput:
+    def test_prefers_non_empty_stdout(self) -> None:
+        assert select_agent_output("final output\n", "warning\n") == "final output\n"
+
+    def test_falls_back_to_stderr_when_stdout_is_blank(self) -> None:
+        assert select_agent_output(" \n\t", "stderr output\n") == "stderr output\n"
 
 
 # ---------------------------------------------------------------------------
@@ -602,3 +611,60 @@ class TestDocumentWriting:
             "test prompt",
             Path("claude"),
         )
+
+    def test_call_once_uses_stderr_when_stdout_is_blank(self, tmp_path: Path) -> None:
+        agents = AgentsConfig()
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout=" \n",
+                stderr="stage report from stderr\n",
+                returncode=0,
+            )
+            output = runner._call_once(
+                role="refiner",
+                cli=Path("claude"),
+                model=None,
+                prompt="test prompt",
+                stem="stderr-case",
+                date_str="20260412",
+                slot="00",
+            )
+
+        assert output == "stage report from stderr\n"
+        doc = tmp_path / ".dev" / "00-refiner" / "20260412_stderr-case.md"
+        assert "stage report from stderr" in doc.read_text(encoding="utf-8")
+
+    def test_call_once_emits_command_and_captured_output_to_progress_stream(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig()
+        app = _make_app_config(tmp_path, agents=agents)
+        progress = io.StringIO()
+        runner = PipelineRunner(app, agents, progress_stream=progress)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="stdout body\n",
+                stderr="stderr body\n",
+                returncode=0,
+            )
+            runner._call_once(
+                role="tester",
+                cli=Path("claude"),
+                model=None,
+                prompt="test prompt",
+                stem="log-case",
+                date_str="20260412",
+                slot="04",
+            )
+
+        log_text = progress.getvalue()
+        assert "=== pipeline tester cli ===" in log_text
+        assert "command: claude --print --dangerously-skip-permissions" in log_text
+        assert "=== pipeline tester stdout ===" in log_text
+        assert "stdout body" in log_text
+        assert "=== pipeline tester stderr ===" in log_text
+        assert "stderr body" in log_text

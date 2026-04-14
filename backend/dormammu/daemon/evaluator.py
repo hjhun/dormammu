@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 from dormammu.agent.prompt_identity import prepend_cli_identity
+from dormammu.daemon.cli_output import select_agent_output
 from dormammu.daemon.rules import build_rule_prompt, load_rule_text
 
 if TYPE_CHECKING:
@@ -208,7 +209,7 @@ class EvaluatorStage:
                 cwd=str(req.repo_root),
             )
             self._log(f"evaluator: agent exit code: {result.returncode}")
-            return result.stdout or ""
+            return select_agent_output(result.stdout, result.stderr)
         except Exception as exc:
             self._log(f"evaluator: agent call failed: {exc}")
             return None

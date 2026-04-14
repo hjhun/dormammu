@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, TextIO
 
 from dormammu.agent import CliAdapter
 from dormammu.agent.prompt_identity import prepend_cli_identity
+from dormammu.daemon.cli_output import select_agent_output
 from dormammu.daemon.evaluator import (
     EvaluatorRequest,
     EvaluatorStage,
@@ -622,6 +623,7 @@ class PipelineRunner:
             stdin_input = prompt
 
         try:
+            self._emit_cli_command(role=role, args=args, cwd=self._app_config.repo_root)
             result = subprocess.run(
                 args,
                 input=stdin_input,
@@ -629,7 +631,12 @@ class PipelineRunner:
                 text=True,
                 cwd=str(self._app_config.repo_root),
             )
-            output = result.stdout or ""
+            self._emit_cli_output(
+                role=role,
+                stdout_text=result.stdout or "",
+                stderr_text=result.stderr or "",
+            )
+            output = select_agent_output(result.stdout, result.stderr)
 
             # Persist the agent output as a role document.
             target_path = doc_path
@@ -803,6 +810,31 @@ class PipelineRunner:
 
     def _log(self, message: str) -> None:
         print(message, file=self._progress_stream)
+        self._progress_stream.flush()
+
+    def _emit_cli_command(self, *, role: str, args: list[str], cwd: Path) -> None:
+        lines = (
+            f"=== pipeline {role} cli ===",
+            f"command: {' '.join(args)}",
+            f"cwd: {cwd}",
+        )
+        for line in lines:
+            print(line, file=self._progress_stream)
+        self._progress_stream.flush()
+
+    def _emit_cli_output(
+        self,
+        *,
+        role: str,
+        stdout_text: str,
+        stderr_text: str,
+    ) -> None:
+        stdout_lines = stdout_text.rstrip() if stdout_text.strip() else "(empty)"
+        stderr_lines = stderr_text.rstrip() if stderr_text.strip() else "(empty)"
+        print(f"=== pipeline {role} stdout ===", file=self._progress_stream)
+        print(stdout_lines, file=self._progress_stream)
+        print(f"=== pipeline {role} stderr ===", file=self._progress_stream)
+        print(stderr_lines, file=self._progress_stream)
         self._progress_stream.flush()
 
 

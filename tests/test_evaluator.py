@@ -492,11 +492,17 @@ class TestGoalFileWriteBack:
 
 
 class TestEvaluatorStageRun:
-    def _patch_run(self, stdout: str, returncode: int = 0):
+    def _patch_run(
+        self,
+        stdout: str,
+        returncode: int = 0,
+        *,
+        stderr: str = "",
+    ):
         mock_result = MagicMock()
         mock_result.returncode = returncode
         mock_result.stdout = stdout
-        mock_result.stderr = ""
+        mock_result.stderr = stderr
         return patch("subprocess.run", return_value=mock_result)
 
     def test_run_completed_with_goal_achieved(self, tmp_path: Path) -> None:
@@ -561,3 +567,11 @@ class TestEvaluatorStageRun:
             prompt,
             Path("claude"),
         )
+
+    def test_call_once_uses_stderr_when_stdout_is_blank(self, tmp_path: Path) -> None:
+        req = _make_request(tmp_path, cli=Path("claude"))
+        stage, _ = _make_stage(tmp_path)
+        prompt = stage._build_prompt(req)
+        with self._patch_run(" \n", stderr="VERDICT: partial\n"):
+            output = stage._call_once(req, prompt)
+        assert output == "VERDICT: partial\n"
