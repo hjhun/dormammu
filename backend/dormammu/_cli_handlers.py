@@ -27,6 +27,7 @@ from dormammu.config import (
     set_config_value,
     write_active_agent_cli_config,
 )
+from dormammu.continuation import build_supervisor_handoff_prompt_from_agents
 from dormammu.daemon import DaemonAlreadyRunningError, DaemonRunner, SessionProgressLogStream, load_daemon_config
 from dormammu.daemon.pipeline_runner import PipelineRunner
 from dormammu.telegram.stream import TelegramProgressStream
@@ -310,7 +311,12 @@ def _handle_run_once(args: argparse.Namespace) -> int:
 
         request = AgentRunRequest(
             cli_path=agent_cli,
-            prompt_text=enriched_prompt,
+            prompt_text=build_supervisor_handoff_prompt_from_agents(
+                agents_dir=config.agents_dir,
+                workflow_state=repository.read_workflow_state(),
+                original_prompt_text=enriched_prompt,
+                patterns_text=repository.read_patterns_text(),
+            ),
             repo_root=config.repo_root,
             workdir=workdir,
             input_mode=args.input_mode,
@@ -446,7 +452,12 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
 
             request = LoopRunRequest(
                 cli_path=agent_cli,
-                prompt_text=enriched_prompt,
+                prompt_text=build_supervisor_handoff_prompt_from_agents(
+                    agents_dir=config.agents_dir,
+                    workflow_state=repository.read_workflow_state(),
+                    original_prompt_text=enriched_prompt,
+                    patterns_text=repository.read_patterns_text(),
+                ),
                 repo_root=config.repo_root,
                 workdir=workdir,
                 input_mode=args.input_mode,

@@ -141,3 +141,102 @@ def build_continuation_prompt(
         text="\n".join(lines) + "\n",
         source_run_id=latest_run.get("run_id"),
     )
+
+
+def build_supervisor_handoff_prompt(
+    *,
+    workflow_state: Mapping[str, Any],
+    original_prompt_text: str,
+    workflow_text: str,
+    skill_text: str,
+    patterns_text: str | None = None,
+) -> str:
+    workflow = workflow_state.get("workflow", {})
+    supervisor = workflow_state.get("supervisor", {})
+    bootstrap = workflow_state.get("bootstrap", {})
+    repo_guidance = (
+        bootstrap.get("repo_guidance", {})
+        if isinstance(bootstrap, Mapping)
+        else {}
+    )
+
+    guidance_lines: list[str] = []
+    if isinstance(repo_guidance, Mapping):
+        rule_files = repo_guidance.get("rule_files")
+        workflow_files = repo_guidance.get("workflow_files")
+        if isinstance(rule_files, list) and rule_files:
+            guidance_lines.append(
+                "Repository rules: " + ", ".join(str(item) for item in rule_files)
+            )
+        if isinstance(workflow_files, list) and workflow_files:
+            guidance_lines.append(
+                "Repository workflows: " + ", ".join(str(item) for item in workflow_files)
+            )
+
+    _default_placeholder = "(no patterns recorded yet"
+    patterns_section: list[str] = []
+    if patterns_text and patterns_text.strip() and _default_placeholder not in patterns_text:
+        patterns_section = [
+            "",
+            "Codebase patterns accumulated from prior agent runs (.dev/PATTERNS.md):",
+            "Review these patterns before making changes.",
+            "After completing your work, append any new patterns you discovered to .dev/PATTERNS.md.",
+            "",
+            patterns_text.rstrip(),
+            "",
+            "End of codebase patterns.",
+        ]
+
+    active_phase = workflow.get("active_phase", "unknown")
+    last_completed = workflow.get("last_completed_phase", "unknown")
+    resume_from = workflow.get("resume_from_phase", active_phase)
+    supervisor_verdict = supervisor.get("verdict", "unknown")
+
+    lines = [
+        "Mandatory refine -> plan has already completed for this run.",
+        "",
+        "Workflow guidance:",
+        workflow_text.strip(),
+        "",
+        "Skill guidance:",
+        skill_text.strip(),
+        "",
+        "Current state snapshot:",
+        f"Current workflow phase: {active_phase}",
+        f"Last completed workflow phase: {last_completed}",
+        f"Recommended resume phase: {resume_from}",
+        f"Latest supervisor verdict: {supervisor_verdict}",
+        "",
+        *guidance_lines,
+        *([""] if guidance_lines else []),
+        "Original prompt:",
+        original_prompt_text.strip() or "(empty prompt)",
+        *patterns_section,
+        "",
+        "Continue from the saved `.dev` state and follow the workflow and skill guidance above.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def build_supervisor_handoff_prompt_from_agents(
+    *,
+    agents_dir: Path,
+    workflow_state: Mapping[str, Any],
+    original_prompt_text: str,
+    patterns_text: str | None = None,
+) -> str:
+    from dormammu.daemon.rules import load_agent_guidance_text
+
+    workflow_text = load_agent_guidance_text(
+        agents_dir, "workflows/supervised-downstream.md"
+    )
+    skill_text = load_agent_guidance_text(
+        agents_dir, "skills/supervising-agent/SKILL.md"
+    )
+    return build_supervisor_handoff_prompt(
+        workflow_state=workflow_state,
+        original_prompt_text=original_prompt_text,
+        workflow_text=workflow_text,
+        skill_text=skill_text,
+        patterns_text=patterns_text,
+    )

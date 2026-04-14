@@ -20,6 +20,7 @@ another environment and the workflow guidance must travel with it.
 Start here, then route to the matching workflow document:
 
 - `workflows/refine-plan.md`
+- `workflows/supervised-downstream.md`
 - `workflows/develop-test-authoring.md`
 - `workflows/build-deploy-test-review.md`
 - `workflows/cleanup-commit.md`
@@ -68,6 +69,14 @@ This workflow uses:
 
 If requirements are already clear, skip refining and let the supervisor hand
 off from planning to `skills/designing-agent/SKILL.md`.
+
+### Supervised Downstream Handoff
+
+Use `workflows/supervised-downstream.md` when:
+
+- the mandatory `refine -> plan` prelude already completed
+- a single coding-agent runtime path will continue the remaining work
+- downstream execution must still obey the supervising-agent contract
 
 ### Development And Test Authoring
 

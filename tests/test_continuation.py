@@ -10,7 +10,10 @@ BACKEND = ROOT / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-from dormammu.continuation import build_continuation_prompt
+from dormammu.continuation import (
+    build_continuation_prompt,
+    build_supervisor_handoff_prompt_from_agents,
+)
 from dormammu.supervisor import SupervisorCheck, SupervisorReport
 
 
@@ -257,6 +260,36 @@ class ContinuationPromptEdgeCaseTests(unittest.TestCase):
         )
 
         self.assertNotIn(".dev/PATTERNS.md", continuation.text)
+
+
+class SupervisorHandoffPromptTests(ContinuationPromptEdgeCaseTests):
+    def test_handoff_prompt_uses_workflow_and_skill_documents(self) -> None:
+        prompt = build_supervisor_handoff_prompt_from_agents(
+            agents_dir=ROOT / "agents",
+            workflow_state={
+                "workflow": {
+                    "active_phase": "plan",
+                    "last_completed_phase": "plan",
+                    "resume_from_phase": "design",
+                },
+                "supervisor": {"verdict": "approved"},
+                "bootstrap": {
+                    "repo_guidance": {
+                        "rule_files": ["AGENTS.md"],
+                        "workflow_files": ["agents/workflows/supervised-downstream.md"],
+                    }
+                },
+            },
+            original_prompt_text="Implement the requested feature.",
+        )
+
+        self.assertIn(
+            "This workflow keeps downstream execution under the supervising-agent contract",
+            prompt,
+        )
+        self.assertIn("Orchestrates planning, design, development", prompt)
+        self.assertIn("Recommended resume phase: design", prompt)
+        self.assertIn("agents/workflows/supervised-downstream.md", prompt)
 
     def test_none_patterns_text_does_not_add_patterns_section(self) -> None:
         """When patterns_text is None, no patterns section appears."""

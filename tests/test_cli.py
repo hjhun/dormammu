@@ -880,6 +880,10 @@ class CliTests(unittest.TestCase):
             self.assertIn("Phase 3 test prompt", stdout_text)
             self.assertIn("Follow the guidance files below before making changes.", stdout_text)
             self.assertIn("bootstrap", stdout_text)
+            self.assertIn(
+                "This workflow keeps downstream execution under the supervising-agent contract",
+                stdout_text,
+            )
 
     def test_run_once_uses_configured_active_agent_cli_when_flag_is_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -912,6 +916,10 @@ class CliTests(unittest.TestCase):
             stdout_text = Path(payload["artifacts"]["stdout"]).read_text(encoding="utf-8")
             self.assertIn("Configured CLI prompt", stdout_text)
             self.assertIn("Follow the guidance files below before making changes.", stdout_text)
+            self.assertIn(
+                "This workflow keeps downstream execution under the supervising-agent contract",
+                stdout_text,
+            )
 
     def test_run_once_defaults_workdir_to_repo_root_when_invoked_elsewhere(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1353,6 +1361,10 @@ class CliTests(unittest.TestCase):
             self.assertIn("=== dormammu supervisor ===", progress)
             self.assertIn("ATTEMPT::1", progress)
             self.assertIn("ATTEMPT::2", progress)
+            self.assertIn(
+                "This workflow keeps downstream execution under the supervising-agent contract",
+                progress,
+            )
 
     def test_run_once_does_not_create_project_log_without_debug(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
