@@ -204,7 +204,8 @@ class DaemonRunner:
                         "daemon queue scan: waiting for prompt settle window "
                         f"before retry ({retry_after_seconds:.2f}s)"
                     )
-                    time.sleep(retry_after_seconds)
+                    if self._shutdown_requested.wait(timeout=retry_after_seconds):
+                        return processed
                     continue
                 return processed
             prompt_path = ready_prompt_paths[0]

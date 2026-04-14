@@ -216,6 +216,45 @@ class GracefulShutdownTests(unittest.TestCase):
             result = runner.run_pending_once(watcher_backend="polling")
             self.assertEqual(result, 0)
 
+    def test_run_pending_once_returns_early_when_shutdown_requested_during_settle_wait(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _seed_repo(root)
+            config_path = root / "daemonize.json"
+            config_path.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "prompt_path": "./queue/prompts",
+                    "result_path": "./queue/results",
+                    "watch": {"backend": "polling", "poll_interval_seconds": 1, "settle_seconds": 60},
+                    "queue": {"allowed_extensions": [".md"], "ignore_hidden_files": True},
+                }, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            app_config = _app_config(root)
+            daemon_config = load_daemon_config(config_path, app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=io.StringIO())
+            (daemon_config.prompt_path / "pending.md").write_text("# pending\n", encoding="utf-8")
+
+            elapsed: list[float] = []
+
+            def _run() -> None:
+                started = time.monotonic()
+                runner.run_pending_once(watcher_backend="polling")
+                elapsed.append(time.monotonic() - started)
+
+            thread = threading.Thread(target=_run)
+            thread.start()
+            time.sleep(0.1)
+            runner.request_shutdown()
+            thread.join(timeout=2.0)
+
+            self.assertFalse(thread.is_alive(), "run_pending_once is still blocked in settle wait")
+            self.assertTrue(elapsed, "run_pending_once did not return")
+            self.assertLess(elapsed[0], 2.0, f"run_pending_once took too long: {elapsed[0]:.2f}s")
+
 
 # ===========================================================================
 # 3. Heartbeat file
