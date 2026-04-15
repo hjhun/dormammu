@@ -364,30 +364,30 @@ class TelegramProgressStreamEdgeCaseTests(unittest.TestCase):
         stream, _, _ = _make_tps()
         session2_sent: list[str] = []
 
-        # Session 1: write a partial line (no newline)
-        stream.enable_streaming(chat_id=1, dashboard=True)
-        stream.write("=== dormammu command ===\n")
+        # Session 1: write a partial supervisor line (no newline)
+        stream.enable_streaming(chat_id=1)
+        stream.write("=== dormammu supervisor ===\n")
         stream.write("partial")  # no newline — sits in _line_buf
         stream.disable_streaming()  # flushes "partial" into session-1 messages
 
         # Session 2: swap to a new collector so only session-2 output is captured
         stream.set_send_fn(lambda _cid, text: session2_sent.append(text))
         stream.enable_streaming(chat_id=1)
-        stream.write("clean start\n")
+        stream.write("=== pipeline developer cli ===\n")
         stream.flush()
         stream.disable_streaming()
 
         combined2 = "\n".join(session2_sent)
         self.assertNotIn("partial", combined2,
                          "Session-1 partial line must not appear in session-2 messages")
-        self.assertIn("clean start", combined2)
+        self.assertIn("developer", combined2)
 
     # 4g. Empty content is not sent as a Telegram message
 
     def test_empty_buffer_does_not_produce_telegram_message(self) -> None:
         stream, _, sent = _make_tps()
-        stream.enable_streaming(chat_id=1, dashboard=True)
-        # Write only empty lines — filtered out
+        stream.enable_streaming(chat_id=1)
+        # Write only empty lines — not inside any recognised section, not forwarded
         stream.write("\n")
         stream.write("\n")
         stream.flush()
@@ -606,7 +606,8 @@ class TelegramProgressStreamIntegrationTests(unittest.TestCase):
             self.assertIn("attempt: 1", log_text)
 
             combined = "\n".join(sent)
-            self.assertIn("=== dormammu loop attempt ===", combined)
+            # Skill tail filter converts the loop boundary to a compact marker.
+            self.assertIn("🔄", combined)
 
     def test_session_log_methods_available_on_tps_when_base_is_session_log_stream(self) -> None:
         terminal = io.StringIO()

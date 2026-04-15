@@ -1,12 +1,13 @@
-"""Regression tests for /tail dashboard filtering in TelegramProgressStream.
+"""Tests for Telegram tail streaming filters.
 
 Scenarios covered:
   1. DashboardLineFilter unit tests — header / section body / metadata / agent output
-  2. TelegramProgressStream dashboard mode — DASHBOARD + PLAN bodies ARE included
-  3. TelegramProgressStream full mode — all lines reach buffer (no regression)
-  4. disable_streaming resets filter state
-  5. Re-enabling in a different mode switches filter correctly
-  6. Partial-line writes are reassembled before filtering
+  2. AgentDigestFilter unit tests — ring buffer, loop boundary, verbose suppression
+  3. SkillTailFilter unit tests — role banners, stdout digest, supervisor verdict
+  4. TelegramProgressStream with skill tail — pipeline role output, partial lines
+  5. disable_streaming resets state
+  6. Partial-line writes reassembled correctly
+  7. Flush / close correctness
 """
 from __future__ import annotations
 
@@ -20,7 +21,12 @@ BACKEND = ROOT / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-from dormammu.telegram.stream import DashboardLineFilter, TelegramProgressStream
+from dormammu.telegram.stream import (
+    AgentDigestFilter,
+    DashboardLineFilter,
+    SkillTailFilter,
+    TelegramProgressStream,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -153,466 +159,343 @@ class DashboardLineFilterTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 2. TelegramProgressStream dashboard mode
+# 2. AgentDigestFilter unit tests
 # ---------------------------------------------------------------------------
 
-class DashboardModeStreamTests(unittest.TestCase):
-    """Integration tests for dashboard=True streaming."""
+class AgentDigestFilterTests(unittest.TestCase):
+    """Unit tests for the ring-buffer digest filter."""
 
-    def _write_typical_loop_output(self, stream: TelegramProgressStream) -> None:
-        """Write the typical sequence produced by LoopRunner for one iteration."""
+    def test_snapshot_on_loop_boundary(self) -> None:
+        f = AgentDigestFilter(maxlines=10)
+        f.add_line("=== dormammu command ===\n")
+        f.add_line("line A\n")
+        f.add_line("line B\n")
+        snap = f.add_line("=== dormammu loop attempt ===\n")
+        self.assertIsNotNone(snap)
+        assert snap is not None
+        self.assertIn("line A", snap)
+        self.assertIn("line B", snap)
+
+    def test_verbose_lines_excluded(self) -> None:
+        f = AgentDigestFilter(maxlines=10)
+        f.add_line("=== dormammu command ===\n")
+        f.add_line("workdir: /tmp\n")
+        f.add_line("cli path: /usr/bin/claude\n")
+        f.add_line("real output\n")
+        snap = f.add_line("=== dormammu loop attempt ===\n")
+        assert snap is not None
+        self.assertNotIn("workdir", snap)
+        self.assertIn("real output", snap)
+
+    def test_maxlines_respected(self) -> None:
+        f = AgentDigestFilter(maxlines=3)
+        f.add_line("=== dormammu command ===\n")
+        for i in range(10):
+            f.add_line(f"line {i}\n")
+        snap = f.add_line("=== dormammu loop attempt ===\n")
+        assert snap is not None
+        self.assertIn("line 9", snap)
+        self.assertIn("line 8", snap)
+        self.assertIn("line 7", snap)
+        self.assertNotIn("line 0", snap)
+
+    def test_collect_final_returns_remaining(self) -> None:
+        f = AgentDigestFilter(maxlines=10)
+        f.add_line("=== dormammu command ===\n")
+        f.add_line("last line\n")
+        snap = f.collect_final()
+        self.assertIsNotNone(snap)
+        assert snap is not None
+        self.assertIn("last line", snap)
+
+    def test_collect_final_none_when_empty(self) -> None:
+        f = AgentDigestFilter(maxlines=10)
+        self.assertIsNone(f.collect_final())
+
+
+# ---------------------------------------------------------------------------
+# 3. SkillTailFilter unit tests
+# ---------------------------------------------------------------------------
+
+class SkillTailFilterTests(unittest.TestCase):
+    """Unit tests for the skill-aware tail filter."""
+
+    def test_pipeline_cli_section_emits_role_banner(self) -> None:
+        f = SkillTailFilter()
+        msg = f.add_line("=== pipeline developer cli ===\n")
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertIn("developer", msg)
+        self.assertIn("▶️", msg)
+
+    def test_pipeline_stdout_content_buffered_and_emitted_on_next_section(self) -> None:
+        f = SkillTailFilter()
+        f.add_line("=== pipeline developer stdout ===\n")
+        f.add_line("output line A\n")
+        f.add_line("output line B\n")
+        # Next section triggers flush of previous stdout buffer
+        msg = f.add_line("=== pipeline tester cli ===\n")
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertIn("output line A", msg)
+        self.assertIn("output line B", msg)
+        self.assertIn("developer", msg)
+
+    def test_pipeline_stdout_verbose_lines_excluded(self) -> None:
+        f = SkillTailFilter()
+        f.add_line("=== pipeline developer stdout ===\n")
+        f.add_line("workdir: /tmp/repo\n")
+        f.add_line("cli path: /usr/bin/claude\n")
+        f.add_line("real developer output\n")
+        msg = f.add_line("=== pipeline tester cli ===\n")
+        assert msg is not None
+        self.assertNotIn("workdir", msg)
+        self.assertIn("real developer output", msg)
+
+    def test_supervisor_section_content_emitted(self) -> None:
+        f = SkillTailFilter()
+        f.add_line("=== dormammu supervisor ===\n")
+        f.add_line("verdict: approved\n")
+        f.add_line("summary: All checks passed.\n")
+        # Flush via collect_final
+        msg = f.collect_final()
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertIn("verdict: approved", msg)
+        self.assertIn("🧑‍⚖️", msg)
+
+    def test_loop_boundary_emits_loop_marker(self) -> None:
+        f = SkillTailFilter()
+        msg = f.add_line("=== dormammu loop attempt ===\n")
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertIn("🔄", msg)
+
+    def test_collect_final_flushes_buffered_stdout(self) -> None:
+        f = SkillTailFilter()
+        f.add_line("=== pipeline committer stdout ===\n")
+        f.add_line("Commit created successfully.\n")
+        msg = f.collect_final()
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertIn("Commit created successfully", msg)
+        self.assertIn("committer", msg)
+
+    def test_cli_section_body_not_forwarded(self) -> None:
+        """Command / cwd lines inside a cli section must be silently dropped."""
+        f = SkillTailFilter()
+        f.add_line("=== pipeline planner cli ===\n")
+        msg = f.add_line("command: /usr/bin/claude --prompt /tmp/p.txt\n")
+        self.assertIsNone(msg)
+
+    def test_empty_stdout_produces_no_message(self) -> None:
+        """An empty stdout section must not produce an output message."""
+        f = SkillTailFilter()
+        f.add_line("=== pipeline planner stdout ===\n")
+        msg = f.add_line("=== pipeline tester cli ===\n")
+        # msg may contain the tester start banner but must not have an empty stdout block
+        if msg:
+            self.assertNotIn("planner stdout", msg)
+
+
+# ---------------------------------------------------------------------------
+# 4. TelegramProgressStream with skill tail
+# ---------------------------------------------------------------------------
+
+class SkillTailStreamTests(unittest.TestCase):
+    """Integration tests for TelegramProgressStream in skill-tail mode."""
+
+    def _write_pipeline_run(self, stream: TelegramProgressStream) -> None:
+        """Write a minimal pipeline sequence through the stream."""
         lines = [
-            "=== dormammu loop attempt ===\n",
-            "attempt: 1\n",
-            "retries used: 0/0\n",
-            "max iterations: 2\n",
-            "target project: /tmp/repo\n",
-            "session: dormammu-20260412\n",
-            "cli: /usr/bin/claude\n",
-            "workdir: /tmp/repo\n",
-            "=== DASHBOARD.md ===\n",
-            "# DASHBOARD\n",
-            "\n",
-            "## Actual Progress\n",
-            "\n",
-            "- Goal: Implement feature X\n",
-            "- Current workflow phase: develop\n",
-            "\n",
-            "=== PLAN.md ===\n",
-            "# PLAN\n",
-            "\n",
-            "- [ ] Phase 1. Implement feature X\n",
-            "\n",
-            "=== dormammu command ===\n",
-            "run id: 20260412-abc\n",
-            "cli path: /usr/bin/claude\n",
-            "workdir: /tmp/repo\n",
-            "prompt mode: file\n",
-            "command: /usr/bin/claude --prompt-file /tmp/p.txt\n",
-            "stdout log: /tmp/out.log\n",
-            "stderr log: /tmp/err.log\n",
-            # Agent output
+            "=== pipeline developer cli ===\n",
+            "command: claude --prompt /tmp/p.txt\n",
+            "cwd: /tmp/repo\n",
+            "=== pipeline developer stdout ===\n",
             "Analysing the codebase...\n",
-            "Creating done.txt\n",
+            "Created done.txt\n",
             "<promise>COMPLETE</promise>\n",
-            "=== dormammu promise ===\n",
-            "attempt: 1\n",
-            "Agent emitted <promise>COMPLETE</promise> — treating as self-declared completion.\n",
+            "=== pipeline developer stderr ===\n",
+            "(empty)\n",
+            "=== pipeline tester cli ===\n",
+            "command: claude --prompt /tmp/t.txt\n",
+            "=== pipeline tester stdout ===\n",
+            "All tests passed.\n",
+            "=== dormammu supervisor ===\n",
+            "verdict: approved\n",
+            "summary: Tests passed.\n",
         ]
         for line in lines:
             stream.write(line)
         stream.flush()
 
-    def test_dashboard_mode_includes_dashboard_content(self) -> None:
+    def test_skill_tail_shows_developer_role_banner(self) -> None:
         stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
-        self._write_typical_loop_output(stream)
+        stream.enable_streaming(chat_id=1)
+        self._write_pipeline_run(stream)
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("## Actual Progress", combined,
-                      "DASHBOARD.md body must be included in dashboard mode")
-        self.assertIn("- Goal: Implement feature X", combined,
-                      "DASHBOARD.md body must be included in dashboard mode")
+        self.assertIn("developer", combined)
+        self.assertIn("▶️", combined)
 
-    def test_dashboard_mode_includes_plan_content(self) -> None:
+    def test_skill_tail_shows_developer_output(self) -> None:
         stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
-        self._write_typical_loop_output(stream)
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertIn("Phase 1. Implement feature X", combined,
-                      "PLAN.md body must be included in dashboard mode")
-
-    def test_dashboard_mode_includes_attempt_info(self) -> None:
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
-        self._write_typical_loop_output(stream)
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertIn("attempt: 1", combined)
-        self.assertIn("session: dormammu-20260412", combined)
-
-    def test_dashboard_mode_includes_agent_output(self) -> None:
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
-        self._write_typical_loop_output(stream)
+        stream.enable_streaming(chat_id=1)
+        self._write_pipeline_run(stream)
         stream.disable_streaming()
 
         combined = "\n".join(sent)
         self.assertIn("Analysing the codebase", combined)
-        self.assertIn("Creating done.txt", combined)
-        self.assertIn("<promise>COMPLETE</promise>", combined)
+        self.assertIn("Created done.txt", combined)
 
-    def test_dashboard_mode_includes_promise_section(self) -> None:
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
-        self._write_typical_loop_output(stream)
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertIn("Agent emitted", combined)
-
-    def test_dashboard_mode_suppresses_verbose_framework_lines(self) -> None:
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
-        self._write_typical_loop_output(stream)
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertNotIn("stdout log:", combined,
-                         "stdout log path must be suppressed in dashboard mode")
-        self.assertNotIn("stderr log:", combined,
-                         "stderr log path must be suppressed in dashboard mode")
-        self.assertNotIn("cli path:", combined,
-                         "cli path must be suppressed in dashboard mode")
-
-
-# ---------------------------------------------------------------------------
-# 3. Full mode — no regression
-# ---------------------------------------------------------------------------
-
-class FullModeStreamTests(unittest.TestCase):
-    """Full streaming mode must forward everything unchanged."""
-
-    def test_full_mode_includes_dashboard_content(self) -> None:
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1)  # full mode (default)
-        stream.write("=== DASHBOARD.md ===\n")
-        stream.write("## Actual Progress\n")
-        stream.write("- Goal: Some goal\n")
-        stream.flush()
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertIn("## Actual Progress", combined)
-        self.assertIn("- Goal: Some goal", combined)
-
-    def test_full_mode_includes_plan_content(self) -> None:
+    def test_skill_tail_shows_tester_role_banner(self) -> None:
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
-        stream.write("=== PLAN.md ===\n")
-        stream.write("- [ ] Phase 1. Do the work\n")
-        stream.flush()
+        self._write_pipeline_run(stream)
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("Phase 1. Do the work", combined)
+        self.assertIn("tester", combined)
 
-    def test_full_mode_includes_verbose_framework_lines(self) -> None:
-        """Full mode must NOT suppress verbose lines — that is dashboard-only behavior."""
+    def test_skill_tail_shows_supervisor_verdict(self) -> None:
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
-        stream.write("=== dormammu command ===\n")
-        stream.write("workdir: /tmp/repo\n")
-        stream.write("cli path: /usr/bin/claude\n")
-        stream.flush()
+        self._write_pipeline_run(stream)
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("workdir: /tmp/repo", combined)
-        self.assertIn("cli path: /usr/bin/claude", combined)
+        self.assertIn("verdict: approved", combined)
+        self.assertIn("🧑‍⚖️", combined)
+
+    def test_skill_tail_suppresses_verbose_cli_metadata(self) -> None:
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1)
+        self._write_pipeline_run(stream)
+        stream.disable_streaming()
+
+        combined = "\n".join(sent)
+        self.assertNotIn("cwd:", combined)
+        self.assertNotIn("command:", combined)
 
 
 # ---------------------------------------------------------------------------
-# 4. disable_streaming resets filter state
+# 5. disable_streaming resets state
 # ---------------------------------------------------------------------------
 
 class StreamStateResetTests(unittest.TestCase):
 
-    def test_disable_streaming_resets_filter_so_re_enable_full_works(self) -> None:
-        """After disabling and re-enabling in full mode, no filter is active."""
+    def test_disable_streaming_stops_sending(self) -> None:
+        """After disabling, writes must not reach Telegram."""
         stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
+        stream.enable_streaming(chat_id=1)
         stream.disable_streaming()
-        stream.enable_streaming(chat_id=1)  # full mode
 
-        stream.write("=== DASHBOARD.md ===\n")
-        stream.write("- Goal: Check filter reset\n")
+        # Write pipeline output after disable — must not appear
+        stream.write("=== pipeline developer cli ===\n")
+        stream.write("should not be sent\n")
+        stream.flush()
+
+        combined = "\n".join(sent)
+        # Any content written after disable_streaming must not appear in sent
+        # (content from before disable may appear if flushed)
+        for msg in sent:
+            self.assertNotIn("should not be sent", msg)
+
+    def test_reenable_after_disable_works(self) -> None:
+        """Re-enabling after disable resumes delivery."""
+        stream, sent = _make_stream()
+        stream.enable_streaming(chat_id=1)
+        stream.disable_streaming()
+        stream.enable_streaming(chat_id=1)
+
+        stream.write("=== pipeline planner cli ===\n")
         stream.flush()
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("- Goal: Check filter reset", combined,
-                      "Full mode must include dashboard content after re-enable")
-
-    def test_disable_streaming_resets_filter_so_re_enable_dashboard_works(self) -> None:
-        """After disabling and re-enabling in dashboard mode, filter resets its state."""
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1)  # full mode first
-        stream.disable_streaming()
-        stream.enable_streaming(chat_id=1, dashboard=True)
-
-        stream.write("=== dormammu command ===\n")
-        stream.write("workdir: /tmp/repo\n")  # verbose line — must be suppressed
-        stream.flush()
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertNotIn("workdir: /tmp/repo", combined,
-                         "Dashboard mode must suppress verbose lines after re-enable")
+        self.assertIn("planner", combined)
 
 
 # ---------------------------------------------------------------------------
-# 5. Partial-line write reassembly
+# 6. Partial-line write reassembly
 # ---------------------------------------------------------------------------
 
 class PartialLineWriteTests(unittest.TestCase):
     """Lines split across multiple write() calls must be reassembled for filtering."""
 
-    def test_partial_dashboard_line_is_included(self) -> None:
-        """A dashboard body line split across writes is fully included."""
+    def test_partial_role_banner_line_is_processed(self) -> None:
+        """A pipeline section header split across writes is handled correctly."""
         stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
+        stream.enable_streaming(chat_id=1)
 
-        stream.write("=== DASHBOARD.md ===\n")
-        stream.write("- Goal: ")
-        stream.write("partial test\n")
+        stream.write("=== pipeline developer ")
+        stream.write("cli ===\n")
         stream.flush()
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("partial test", combined,
-                      "Split DASHBOARD.md body line must be included")
+        self.assertIn("developer", combined)
 
-    def test_partial_agent_output_line_is_included(self) -> None:
-        """Agent output line split across writes is included when outside dump sections."""
+    def test_partial_output_line_is_buffered(self) -> None:
+        """Agent output split across writes appears in the emitted digest."""
         stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
+        stream.enable_streaming(chat_id=1)
 
-        # Framework section first so we exit into agent output territory
-        stream.write("=== dormammu command ===\n")
-        stream.write("run id: abc\n")
-
-        # Agent output written as split writes — must be reassembled and included
-        stream.write("Working on ")
-        stream.write("the feature\n")
+        stream.write("=== pipeline developer stdout ===\n")
+        stream.write("partial ")
+        stream.write("output line\n")
         stream.flush()
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("Working on the feature", combined,
-                      "Split agent output line must be included")
-
-    def test_partial_suppressed_line_is_excluded(self) -> None:
-        """A verbose framework line split across writes is still excluded."""
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
-
-        stream.write("=== dormammu command ===\n")
-        stream.write("work")
-        stream.write("dir: /tmp/repo\n")
-        stream.flush()
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertNotIn("/tmp/repo", combined,
-                         "Split verbose line must be suppressed")
+        self.assertIn("partial output line", combined)
 
 
 # ---------------------------------------------------------------------------
-# 6. Flush correctness
+# 7. Flush / close correctness
 # ---------------------------------------------------------------------------
 
 class FlushCorrectnessTests(unittest.TestCase):
     """flush() and close() must not lose buffered or partial-line content."""
 
-    def test_explicit_flush_drains_partial_line_in_dashboard_mode(self) -> None:
-        """A partial line (no trailing \\n) in _line_buf is sent on flush()."""
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
-
-        stream.write("=== dormammu command ===\n")
-        stream.write("Partial output without newline")  # no \n — sits in _line_buf
-        stream.flush()
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertIn("Partial output without newline", combined,
-                      "flush() must drain partial line from _line_buf")
-
-    def test_explicit_flush_drains_partial_line_in_full_mode(self) -> None:
-        """Same guarantee in full (unfiltered) mode."""
+    def test_explicit_flush_drains_partial_supervisor_line(self) -> None:
+        """A partial supervisor line (no \\n) is sent on flush()."""
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
 
-        stream.write("Some output without newline")
+        stream.write("=== dormammu supervisor ===\n")
+        stream.write("verdict: approved")  # no \n — sits in _line_buf
         stream.flush()
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("Some output without newline", combined,
-                      "flush() must drain partial line in full mode")
+        self.assertIn("verdict: approved", combined)
 
-    def test_close_flushes_remaining_buffer(self) -> None:
+    def test_close_flushes_remaining_skill_buffer(self) -> None:
         """close() must send any content still in _buffer."""
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
 
-        stream.write("Last message before close\n")
+        stream.write("=== pipeline developer stdout ===\n")
+        stream.write("Last output before close\n")
         # Do NOT call flush — rely on close() to do it
         stream.close()
 
         combined = "\n".join(sent)
-        self.assertIn("Last message before close", combined,
-                      "close() must flush _buffer before stopping the timer")
+        self.assertIn("Last output before close", combined)
 
     def test_close_flushes_partial_line(self) -> None:
         """close() must send a partial line that was never terminated with \\n."""
         stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, dashboard=True)
+        stream.enable_streaming(chat_id=1)
 
-        stream.write("=== dormammu command ===\n")
-        stream.write("Unterminated output")  # no \n
+        stream.write("=== dormammu supervisor ===\n")
+        stream.write("Unterminated verdict")  # no \n
         stream.close()
 
         combined = "\n".join(sent)
-        self.assertIn("Unterminated output", combined,
-                      "close() must flush partial line from _line_buf")
-
-    def test_chunk_boundary_preserves_whitespace(self) -> None:
-        """Content at chunk boundaries must not have internal whitespace stripped."""
-        stream, sent = _make_stream()
-        stream = TelegramProgressStream(
-            io.StringIO(), chunk_size=20, flush_interval_seconds=9999
-        )
-        sent: list[str] = []
-        stream.set_send_fn(lambda cid, txt: sent.append(txt))
-        stream.enable_streaming(chat_id=1)
-
-        # Write exactly chunk_size chars then a bit more so two chunks are produced
-        stream.write("A" * 20 + "B" * 5 + "\n")
-        stream.flush()
-        stream.disable_streaming()
-
-        combined = "".join(sent)
-        self.assertIn("A" * 20, combined, "First chunk content must not be stripped")
-        self.assertIn("B" * 5, combined, "Second chunk content must not be stripped")
-
-
-# ---------------------------------------------------------------------------
-# 7. Digest mode
-# ---------------------------------------------------------------------------
-
-class DigestModeTests(unittest.TestCase):
-    """Tests for /tail digest — ring-buffer snapshot per loop boundary."""
-
-    def _write_loop(self, stream: TelegramProgressStream, attempt: int, agent_lines: list[str]) -> None:
-        """Write one full loop with the given agent output lines."""
-        stream.write(f"=== dormammu loop attempt ===\n")
-        stream.write(f"attempt: {attempt}\n")
-        stream.write("=== dormammu command ===\n")
-        stream.write("workdir: /tmp/repo\n")
-        stream.write("cli path: /usr/bin/codex\n")
-        for line in agent_lines:
-            stream.write(line + "\n")
-        stream.write("=== dormammu promise ===\n")
-        stream.write("Agent emitted <promise>COMPLETE</promise>\n")
-
-    def test_digest_emits_snapshot_on_loop_boundary(self) -> None:
-        """A snapshot is sent when the next loop boundary is detected."""
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, digest=True, digest_lines=10)
-
-        self._write_loop(stream, 1, ["line A", "line B", "line C"])
-        # Boundary for loop 2 triggers snapshot of loop 1
-        stream.write("=== dormammu loop attempt ===\n")
-        stream.flush()
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertIn("line A", combined)
-        self.assertIn("line B", combined)
-        self.assertIn("line C", combined)
-
-    def test_digest_excludes_verbose_framework_lines(self) -> None:
-        """workdir / cli path lines must not appear in the digest snapshot."""
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, digest=True, digest_lines=10)
-
-        self._write_loop(stream, 1, ["real agent output"])
-        stream.write("=== dormammu loop attempt ===\n")
-        stream.flush()
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertNotIn("workdir:", combined)
-        self.assertNotIn("cli path:", combined)
-
-    def test_digest_respects_maxlines(self) -> None:
-        """Only the last maxlines lines appear in the snapshot."""
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, digest=True, digest_lines=3)
-
-        many = [f"line {i}" for i in range(10)]
-        self._write_loop(stream, 1, many)
-        stream.write("=== dormammu loop attempt ===\n")
-        stream.flush()
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        # Only last 3 lines should appear
-        self.assertIn("line 9", combined)
-        self.assertIn("line 8", combined)
-        self.assertIn("line 7", combined)
-        self.assertNotIn("line 0", combined)
-        self.assertNotIn("line 4", combined)
-
-    def test_digest_collect_final_on_disable(self) -> None:
-        """Remaining buffered lines are emitted when disable_streaming() is called."""
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, digest=True, digest_lines=10)
-
-        # Write loop 1 without a following loop boundary
-        self._write_loop(stream, 1, ["final output line"])
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertIn("final output line", combined)
-
-    def test_digest_two_loops_two_snapshots(self) -> None:
-        """Each loop boundary produces its own snapshot."""
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, digest=True, digest_lines=10)
-
-        self._write_loop(stream, 1, ["loop1 result"])
-        self._write_loop(stream, 2, ["loop2 result"])
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertIn("loop1 result", combined)
-        self.assertIn("loop2 result", combined)
-
-    def test_digest_default_lines_is_ten(self) -> None:
-        """enable_streaming with digest=True and no digest_lines defaults to 10."""
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, digest=True)  # default maxlines=10
-
-        lines = [f"x{i}" for i in range(15)]
-        self._write_loop(stream, 1, lines)
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        # Last 10 of 15 lines
-        for i in range(5, 15):
-            self.assertIn(f"x{i}", combined)
-        # First 5 dropped
-        for i in range(5):
-            self.assertNotIn(f"x{i}\n", combined + "\n")
-
-    def test_digest_snapshot_format(self) -> None:
-        """Snapshot messages contain the '📡 Agent output' header and code fence."""
-        stream, sent = _make_stream()
-        stream.enable_streaming(chat_id=1, digest=True, digest_lines=10)
-
-        self._write_loop(stream, 1, ["some output"])
-        stream.disable_streaming()
-
-        combined = "\n".join(sent)
-        self.assertIn("📡 Agent output", combined)
-        self.assertIn("```", combined)
+        self.assertIn("Unterminated verdict", combined)
 
 
 if __name__ == "__main__":

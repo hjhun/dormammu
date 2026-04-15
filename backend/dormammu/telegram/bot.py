@@ -35,7 +35,7 @@ _HELP_TEXT = (
     "📊 /status — daemon status and active prompt\n"
     r"▶️ /run \<prompt\> — queue a new prompt for execution" "\n"
     "📋 /queue — list pending prompts\n"
-    r"📡 /tail \[on\|off\|dashboard\|digest \[n\]\] — stream output \(digest: last N agent lines per loop, default 10\)" "\n"
+    r"📡 /tail \[on\|off\] — stream skill progress \(on: show skill banners \+ output digest\)" "\n"
     r"📜 /logs \[n\] — last N lines of progress log \(default 50\)" "\n"
     r"📄 /result \[name\] — last \(or named\) result file content" "\n"
     r"🕐 /history \[n\] — last N execution results with status \(default 10\)" "\n"
@@ -54,17 +54,12 @@ _HISTORY_STARTED_RE = re.compile(r"^- Started at: `([^`]+)`", re.MULTILINE)
 _HISTORY_COMPLETED_RE = re.compile(r"^- Completed at: `([^`]+)`", re.MULTILINE)
 _HISTORY_VERDICT_RE = re.compile(r"^- Supervisor verdict: `([^`]+)`", re.MULTILINE)
 
-_MENU_KEYBOARD = [
+_MENU_KEYBOARD_BASE = [
     [
         {"text": "📊 Status", "callback_data": "status"},
         {"text": "📋 Queue", "callback_data": "queue"},
     ],
-    [
-        {"text": "📡 Tail on", "callback_data": "tail_on"},
-        {"text": "📡 Tail dashboard", "callback_data": "tail_dashboard"},
-        {"text": "📡 Tail digest", "callback_data": "tail_digest"},
-        {"text": "📡 Tail off", "callback_data": "tail_off"},
-    ],
+    # Row 1 placeholder — tail button is injected dynamically by _build_menu_keyboard.
     [
         {"text": "📜 Logs", "callback_data": "logs"},
         {"text": "🕐 History", "callback_data": "history"},
@@ -343,7 +338,7 @@ class TelegramBot:
                 BotCommand("status", "📊 daemon status"),
                 BotCommand("run", "▶️ run a prompt"),
                 BotCommand("queue", "📋 pending prompts"),
-                BotCommand("tail", "📡 log streaming"),
+                BotCommand("tail", "📡 stream skill progress (on/off)"),
                 BotCommand("logs", "📜 recent logs"),
                 BotCommand("result", "📄 last result"),
                 BotCommand("history", "🕐 execution history"),
@@ -411,12 +406,23 @@ class TelegramBot:
     # Command handlers
     # ------------------------------------------------------------------
 
+    def _build_menu_keyboard(self) -> list[list[dict[str, str]]]:
+        """Return the full menu layout with a dynamic tail-toggle row."""
+        streaming = self._stream.streaming_chat_id is not None
+        tail_row = [
+            {
+                "text": "📡 Tail: ON ✓" if streaming else "📡 Tail: OFF",
+                "callback_data": "tail",
+            }
+        ]
+        return [_MENU_KEYBOARD_BASE[0], tail_row] + list(_MENU_KEYBOARD_BASE[1:])
+
     def _build_menu_markup(self) -> Any:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         keyboard = [
             [InlineKeyboardButton(btn["text"], callback_data=btn["callback_data"]) for btn in row]
-            for row in _MENU_KEYBOARD
+            for row in self._build_menu_keyboard()
         ]
         return InlineKeyboardMarkup(keyboard)
 
@@ -458,17 +464,9 @@ class TelegramBot:
             await self._send_status(update, context)
         elif data == "queue":
             await self._send_queue(update, context)
-        elif data == "tail_on":
-            context.args = ["on"]
-            await self._send_tail(update, context)
-        elif data == "tail_dashboard":
-            context.args = ["dashboard"]
-            await self._send_tail(update, context)
-        elif data == "tail_digest":
-            context.args = ["digest"]
-            await self._send_tail(update, context)
-        elif data == "tail_off":
-            context.args = ["off"]
+        elif data == "tail":
+            streaming = self._stream.streaming_chat_id is not None
+            context.args = ["off"] if streaming else ["on"]
             await self._send_tail(update, context)
         elif data == "logs":
             context.args = []
@@ -571,35 +569,36 @@ class TelegramBot:
 
     async def _send_tail(self, update: Any, context: Any) -> None:
         chat_id = update.effective_chat.id
-        mode = context.args[0].lower() if context.args else "on"
+        mode = context.args[0].lower() if context.args else ""
+        if not mode:
+            # No argument — show current status.
+            streaming = self._stream.streaming_chat_id is not None
+            state = "ON ✓" if streaming else "OFF"
+            await self._reply(
+                update,
+                f"📡 Tail is currently *{state}*.\n"
+                "Use `/tail on` to start or `/tail off` to stop.",
+                reply_markup=self._build_menu_markup(),
+            )
+            return
         if mode == "off":
             self._stream.disable_streaming()
-            await self._reply(update, "📡 Log streaming disabled.")
-        elif mode == "dashboard":
-            self._stream.enable_streaming(chat_id, dashboard=True)
             await self._reply(
                 update,
-                "📡 Dashboard streaming enabled.\n"
-                "Shows loop number, PLAN.md and DASHBOARD.md content per loop,\n"
-                "agent output, and supervisor verdict.\n"
-                "Use /tail off to stop.",
-            )
-        elif mode == "digest":
-            try:
-                n = int(context.args[1]) if len(context.args) > 1 else 10
-                n = max(1, min(n, 50))
-            except (ValueError, IndexError):
-                n = 10
-            self._stream.enable_streaming(chat_id, digest=True, digest_lines=n)
-            await self._reply(
-                update,
-                f"📡 Digest streaming enabled (last {n} lines per loop).\n"
-                "Sends a snapshot of the most recent agent output at each loop boundary.\n"
-                "Use /tail off to stop.",
+                "📡 Tail *OFF* — streaming stopped.",
+                reply_markup=self._build_menu_markup(),
             )
         else:
+            # Any value other than "off" enables streaming.
             self._stream.enable_streaming(chat_id)
-            await self._reply(update, "📡 Log streaming enabled (full). Use /tail off to stop.")
+            await self._reply(
+                update,
+                "📡 Tail *ON* — streaming skill progress.\n"
+                "Shows each skill as it starts, a digest of its output when it "
+                "finishes, and supervisor verdicts.\n"
+                "Use `/tail off` or tap the Tail button to stop.",
+                reply_markup=self._build_menu_markup(),
+            )
 
     async def _cmd_logs(self, update: Any, context: Any) -> None:
         if not await self._guard(update):

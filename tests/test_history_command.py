@@ -492,8 +492,8 @@ class HistoryRegistrationTests(unittest.TestCase):
         self.assertIn("history", _HELP_TEXT.lower())
 
     def test_history_in_menu_keyboard(self) -> None:
-        from dormammu.telegram.bot import _MENU_KEYBOARD
-        all_callbacks = [btn["callback_data"] for row in _MENU_KEYBOARD for btn in row]
+        from dormammu.telegram.bot import _MENU_KEYBOARD_BASE
+        all_callbacks = [btn["callback_data"] for row in _MENU_KEYBOARD_BASE for btn in row]
         self.assertIn("history", all_callbacks)
 
     def test_history_callback_is_handled(self) -> None:

@@ -503,13 +503,13 @@ class RepoAndClearSessionsRegistrationTests(unittest.TestCase):
         self.assertIn("sessions", _HELP_TEXT.lower())
 
     def test_repo_in_menu_keyboard(self) -> None:
-        from dormammu.telegram.bot import _MENU_KEYBOARD
-        all_callbacks = [btn["callback_data"] for row in _MENU_KEYBOARD for btn in row]
+        from dormammu.telegram.bot import _MENU_KEYBOARD_BASE
+        all_callbacks = [btn["callback_data"] for row in _MENU_KEYBOARD_BASE for btn in row]
         self.assertIn("repo", all_callbacks)
 
     def test_clear_sessions_in_menu_keyboard(self) -> None:
-        from dormammu.telegram.bot import _MENU_KEYBOARD
-        all_callbacks = [btn["callback_data"] for row in _MENU_KEYBOARD for btn in row]
+        from dormammu.telegram.bot import _MENU_KEYBOARD_BASE
+        all_callbacks = [btn["callback_data"] for row in _MENU_KEYBOARD_BASE for btn in row]
         self.assertIn("clear_sessions", all_callbacks)
 
     def test_repo_pick_handled_in_callback(self) -> None:
