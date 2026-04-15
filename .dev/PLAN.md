@@ -2,16 +2,16 @@
 
 ## Prompt-Derived Implementation Plan
 
-- [O] Phase 1. Inspect the pipeline prelude rework loop and identify where the
-  fixed `3`-iteration cap is enforced
-- [O] Phase 2. Align the prelude evaluator re-entry cap with the pipeline's
-  iteration-max budget
-- [O] Phase 3. Add or adjust regression coverage for the new retry-limit
-  behavior
-- [O] Phase 4. Execute targeted validation and confirm the new iteration-limit
-  behavior is stable
+- [O] Phase 1. Analyze `ralph`'s loop, memory, and task-queue model against
+  `dormammu`
+- [O] Phase 2. Select the most valuable architecture-aligned gap to close
+- [O] Phase 3. Promote `.dev/TASKS.md` into a first-class runtime task queue
+- [O] Phase 4. Add and update regression coverage for bootstrap, sync, loop,
+  and supervisor behavior
+- [O] Phase 5. Execute targeted validation and confirm the Ralph-inspired
+  improvement is stable
 
 ## Resume Checkpoint
 
-Targeted pipeline validation completed. Resume only if commit prep or a
-follow-up pipeline-budget change is requested.
+Ralph comparison and TASKS-queue promotion are complete. Resume only for commit
+prep or additional follow-up improvements.

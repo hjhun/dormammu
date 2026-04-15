@@ -310,10 +310,11 @@ class Supervisor:
 
         state_root = Path(str(session_state.get("bootstrap", {}).get("state_root", ".dev")))
         plan_path = self.config.repo_root / state_root / "PLAN.md"
-        legacy_tasks_path = self.config.repo_root / state_root / "TASKS.md"
+        tasks_path = self.config.repo_root / state_root / "TASKS.md"
         dev_paths = [
             self.config.repo_root / state_root / "DASHBOARD.md",
-            plan_path if plan_path.exists() or not legacy_tasks_path.exists() else legacy_tasks_path,
+            plan_path,
+            tasks_path,
             self.config.repo_root / state_root / "session.json",
             self.config.repo_root / state_root / "workflow_state.json",
         ]
@@ -347,7 +348,7 @@ class Supervisor:
             tasks_complete_ok = total_tasks == 0 or bool(session_task_sync.get("all_completed"))
             if not tasks_complete_ok:
                 task_completion_details.append(
-                    f"completed {completed_tasks} of {total_tasks} prompt-derived PLAN task(s)"
+                    f"completed {completed_tasks} of {total_tasks} prompt-derived task queue item(s)"
                 )
                 if isinstance(next_pending_task, str) and next_pending_task.strip():
                     task_completion_details.append(f"next pending task: {next_pending_task}")
@@ -356,9 +357,9 @@ class Supervisor:
                 name="plan-completion",
                 ok=tasks_complete_ok,
                 summary=(
-                    "All prompt-derived PLAN tasks are complete."
+                    "All prompt-derived task queue items are complete."
                     if tasks_complete_ok
-                    else "Prompt-derived PLAN tasks are still incomplete."
+                    else "Prompt-derived task queue items are still incomplete."
                 ),
                 details=task_completion_details,
             )

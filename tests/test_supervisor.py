@@ -306,15 +306,19 @@ class SupervisorTests(unittest.TestCase):
 
     def _mark_plan_complete(self, repository: StateRepository) -> None:
         plan_path = repository.state_file("PLAN.md")
-        if not plan_path.exists():
+        tasks_path = repository.state_file("TASKS.md")
+        if not plan_path.exists() or not tasks_path.exists():
             session_id = repository.read_session_state().get("session_id")
             if isinstance(session_id, str) and session_id.strip():
-                plan_path = repository.for_session(session_id).state_file("PLAN.md")
-        rewritten_lines = [
-            line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
-            for line in plan_path.read_text(encoding="utf-8").splitlines()
-        ]
-        plan_path.write_text("\n".join(rewritten_lines) + "\n", encoding="utf-8")
+                session_repository = repository.for_session(session_id)
+                plan_path = session_repository.state_file("PLAN.md")
+                tasks_path = session_repository.state_file("TASKS.md")
+        for path in (plan_path, tasks_path):
+            rewritten_lines = [
+                line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+            path.write_text("\n".join(rewritten_lines) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

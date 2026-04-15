@@ -54,7 +54,7 @@ automation alike.
 | **Goals automation** | Schedule periodic goals that are automatically promoted into the daemon queue; manageable via Telegram |
 | **Fallback CLIs** | Automatically switch to a backup agent CLI when the primary hits quota or token exhaustion |
 | **Guidance injection** | Embed repository guidance (`AGENTS.md`, custom `--guidance-file`) into every agent prompt |
-| **Operator-visible state** | `DASHBOARD.md`, `PLAN.md`, `WORKFLOWS.md`, and `workflow_state.json` keep progress visible at a glance |
+| **Operator-visible state** | `DASHBOARD.md`, `PLAN.md`, `TASKS.md`, `WORKFLOWS.md`, and `workflow_state.json` keep progress visible at a glance |
 | **Session management** | Start named sessions, list saved snapshots, and restore older sessions at any time |
 | **Environment diagnostics** | `doctor` checks Python, CLI availability, repository writability, and workspace structure |
 
@@ -156,7 +156,7 @@ configured and otherwise falls back to `active_agent_cli`.
 
 **Planner** (mandatory): Reads `REQUIREMENTS.md` and produces `.dev/WORKFLOWS.md`,
 an adaptive, task-specific stage checklist (`[ ] Phase N. Role — agent`).
-Also updates `PLAN.md` and `DASHBOARD.md`. It uses `agents.planner.cli` when
+Also updates `PLAN.md`, `TASKS.md`, and `DASHBOARD.md`. It uses `agents.planner.cli` when
 configured and otherwise falls back to `active_agent_cli`.
 
 **Plan Evaluator** (goals-scheduler prompts only): Runs after planning for
@@ -465,6 +465,7 @@ Every run leaves behind inspectable artifacts:
 | `.dev/WORKFLOWS.md` | Adaptive stage checklist produced by the planning agent |
 | `.dev/DASHBOARD.md` | Operator-facing progress, active phase, next action, risks |
 | `.dev/PLAN.md` | Prompt-derived task checklist (`[ ]` / `[O]` phase items) |
+| `.dev/TASKS.md` | Prompt-derived development queue used for task sync and resume targeting |
 | `.dev/workflow_state.json` | Machine-readable workflow state (source of truth) |
 | `.dev/session.json` | Active session metadata |
 | `.dev/logs/` | Prompt, stdout, stderr, and run metadata artifacts |

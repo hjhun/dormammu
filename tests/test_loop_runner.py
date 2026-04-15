@@ -652,17 +652,20 @@ class LoopRunnerTests(unittest.TestCase):
                 TARGET_PATH = ROOT / "done.txt"
                 SESSION_PATH = ROOT / ".dev" / "session.json"
 
+                def mark_complete(path: Path) -> None:
+                    if not path.exists():
+                        return
+                    lines = path.read_text(encoding="utf-8").splitlines()
+                    rewritten = [
+                        line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                        for line in lines
+                    ]
+                    path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+
                 def mark_plan_complete() -> None:
                     if MARK_ROOT_PLAN:
-                        plan_path = ROOT / ".dev" / "PLAN.md"
-                        if not plan_path.exists():
-                            return
-                        lines = plan_path.read_text(encoding="utf-8").splitlines()
-                        rewritten = [
-                            line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
-                            for line in lines
-                        ]
-                        plan_path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+                        mark_complete(ROOT / ".dev" / "PLAN.md")
+                        mark_complete(ROOT / ".dev" / "TASKS.md")
                         return
                     if not SESSION_PATH.exists():
                         return
@@ -673,15 +676,8 @@ class LoopRunnerTests(unittest.TestCase):
                         return
                     _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
                     sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
-                    plan_path = sessions_dir / str(session_id) / "PLAN.md"
-                    if not plan_path.exists():
-                        return
-                    lines = plan_path.read_text(encoding="utf-8").splitlines()
-                    rewritten = [
-                        line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
-                        for line in lines
-                    ]
-                    plan_path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+                    mark_complete(sessions_dir / str(session_id) / "PLAN.md")
+                    mark_complete(sessions_dir / str(session_id) / "TASKS.md")
 
                 def main() -> int:
                     args = sys.argv[1:]
@@ -745,7 +741,7 @@ class LoopRunnerTests(unittest.TestCase):
         return script
 
     def _write_committing_loop_cli(self, root: Path, *, name: str = "fake-committing-agent") -> Path:
-        """Fake CLI that creates done.txt, marks PLAN complete, then git-commits everything.
+        """Fake CLI that creates done.txt, marks PLAN/TASKS complete, then git-commits everything.
 
         This simulates an agent that commits its changes so the worktree is clean
         when the supervisor runs.  The supervisor must detect the commit as progress
@@ -763,6 +759,16 @@ class LoopRunnerTests(unittest.TestCase):
                 TARGET_PATH = ROOT / "done.txt"
                 SESSION_PATH = ROOT / ".dev" / "session.json"
 
+                def mark_complete(path: Path) -> None:
+                    if not path.exists():
+                        return
+                    lines = path.read_text(encoding="utf-8").splitlines()
+                    rewritten = [
+                        line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                        for line in lines
+                    ]
+                    path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+
                 def mark_plan_complete() -> None:
                     if not SESSION_PATH.exists():
                         return
@@ -773,15 +779,8 @@ class LoopRunnerTests(unittest.TestCase):
                         return
                     _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
                     sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
-                    plan_path = sessions_dir / str(session_id) / "PLAN.md"
-                    if not plan_path.exists():
-                        return
-                    lines = plan_path.read_text(encoding="utf-8").splitlines()
-                    rewritten = [
-                        line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
-                        for line in lines
-                    ]
-                    plan_path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+                    mark_complete(sessions_dir / str(session_id) / "PLAN.md")
+                    mark_complete(sessions_dir / str(session_id) / "TASKS.md")
 
                 def main() -> int:
                     args = sys.argv[1:]

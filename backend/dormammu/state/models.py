@@ -392,7 +392,7 @@ def default_session_state(
             ),
         },
         "task_sync": OperatorTaskSyncState(
-            source=_state_path(state_root, "PLAN.md"),
+            source=_state_path(state_root, "TASKS.md"),
             resume_checkpoint=None,
             items=(),
         ).to_dict(synced_at=timestamp),
@@ -447,6 +447,7 @@ def default_workflow_state(
             "operator_state": [
                 _state_path(state_root, "DASHBOARD.md"),
                 _state_path(state_root, "PLAN.md"),
+                _state_path(state_root, "TASKS.md"),
             ],
         },
         "state_schema": {
@@ -456,7 +457,7 @@ def default_workflow_state(
                 "pending": "[ ]",
                 "completed": "[O]",
             },
-            "task_sync_source": _state_path(state_root, "PLAN.md"),
+            "task_sync_source": _state_path(state_root, "TASKS.md"),
         },
         "workflow": {
             "active_phase": "plan",
@@ -510,11 +511,12 @@ def default_workflow_state(
         "artifacts": {
             "dashboard": _state_path(state_root, "DASHBOARD.md"),
             "plan": _state_path(state_root, "PLAN.md"),
+            "tasks": _state_path(state_root, "TASKS.md"),
             "logs_dir": _state_path(state_root, "logs"),
         },
         "operator_sync": {
             "tasks": OperatorTaskSyncState(
-                source=_state_path(state_root, "PLAN.md"),
+                source=_state_path(state_root, "TASKS.md"),
                 resume_checkpoint=None,
                 items=(),
             ).to_dict(synced_at=timestamp),

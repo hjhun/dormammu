@@ -47,6 +47,7 @@ def _deep_merge(defaults: dict[str, Any], current: Mapping[str, Any]) -> dict[st
 class BootstrapArtifacts:
     dashboard: Path
     plan: Path
+    tasks: Path
     session: Path
     workflow_state: Path
     logs_dir: Path
@@ -56,7 +57,7 @@ class BootstrapArtifacts:
         payload = {
             "dashboard": str(self.dashboard),
             "plan": str(self.plan),
-            "tasks": str(self.plan),
+            "tasks": str(self.tasks),
             "session": str(self.session),
             "workflow_state": str(self.workflow_state),
             "logs_dir": str(self.logs_dir),
@@ -82,6 +83,7 @@ class StateRepository:
     ROOT_OPERATOR_MIRROR_FILENAMES = (
         "DASHBOARD.md",
         "PLAN.md",
+        "TASKS.md",
     )
 
     def __init__(self, config: AppConfig, session_id: str | None = None) -> None:
@@ -187,6 +189,7 @@ class StateRepository:
 
         dashboard_path = self.state_file("DASHBOARD.md")
         plan_path = self.state_file("PLAN.md")
+        tasks_path = self.state_file("TASKS.md")
         session_path = self.state_file("session.json")
         workflow_path = self.state_file("workflow_state.json")
         state_root = self._state_root_display()
@@ -233,6 +236,11 @@ class StateRepository:
             dashboard_context.render_values(),
         )
         self._ensure_template_file(plan_path, "plan.md.tmpl", plan_context.render_values())
+        self._ensure_tasks_file(
+            tasks_path,
+            plan_path=plan_path,
+            values=plan_context.render_values(),
+        )
 
         session_defaults = default_session_state(
             timestamp=timestamp,
@@ -264,7 +272,7 @@ class StateRepository:
         self._sync_operator_state(
             session_path=session_path,
             workflow_path=workflow_path,
-            plan_path=plan_path,
+            operator_task_path=self._operator_task_path(),
             timestamp=timestamp,
         )
         self._sync_root_index(timestamp=timestamp)
@@ -410,7 +418,7 @@ class StateRepository:
         self._sync_operator_state(
             session_path=self.state_file("session.json"),
             workflow_path=self.state_file("workflow_state.json"),
-            plan_path=self._operator_plan_path(),
+            operator_task_path=self._operator_task_path(),
             timestamp=sync_time,
         )
 
@@ -580,6 +588,7 @@ class StateRepository:
 
         dashboard_path = self.state_file("DASHBOARD.md")
         plan_path = self.state_file("PLAN.md")
+        tasks_path = self.state_file("TASKS.md")
         session_path = self.state_file("session.json")
         workflow_path = self.state_file("workflow_state.json")
         state_root = self._state_root_display()
@@ -601,6 +610,7 @@ class StateRepository:
             dashboard_context.render_values(),
         )
         self._write_template_file(plan_path, "plan.md.tmpl", plan_context.render_values())
+        self._write_template_file(tasks_path, "tasks.md.tmpl", plan_context.render_values())
 
         session_defaults = default_session_state(
             timestamp=timestamp,
@@ -632,7 +642,7 @@ class StateRepository:
         self._sync_operator_state(
             session_path=session_path,
             workflow_path=workflow_path,
-            plan_path=plan_path,
+            operator_task_path=tasks_path,
             timestamp=timestamp,
         )
 
@@ -641,11 +651,15 @@ class StateRepository:
 
     def _artifacts_for_dir(self, directory: Path) -> BootstrapArtifacts:
         plan_path = directory / "PLAN.md"
-        if not plan_path.exists() and (directory / "TASKS.md").exists():
-            plan_path.write_text((directory / "TASKS.md").read_text(encoding="utf-8"), encoding="utf-8")
+        tasks_path = directory / "TASKS.md"
+        if not plan_path.exists() and tasks_path.exists():
+            plan_path.write_text(tasks_path.read_text(encoding="utf-8"), encoding="utf-8")
+        if not tasks_path.exists() and plan_path.exists():
+            tasks_path.write_text(plan_path.read_text(encoding="utf-8"), encoding="utf-8")
         return BootstrapArtifacts(
             dashboard=directory / "DASHBOARD.md",
             plan=plan_path,
+            tasks=tasks_path,
             session=directory / "session.json",
             workflow_state=directory / "workflow_state.json",
             logs_dir=directory / "logs",
@@ -705,22 +719,31 @@ class StateRepository:
         *,
         session_path: Path,
         workflow_path: Path,
-        plan_path: Path,
+        operator_task_path: Path,
         timestamp: str,
     ) -> None:
-        plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
-        plan_mtime = plan_path.stat().st_mtime if plan_path.exists() else None
+        operator_text = (
+            operator_task_path.read_text(encoding="utf-8")
+            if operator_task_path.exists()
+            else ""
+        )
+        operator_mtime = (
+            operator_task_path.stat().st_mtime
+            if operator_task_path.exists()
+            else None
+        )
 
-        # Detect if PLAN.md was externally modified since we last recorded its mtime.
-        if plan_mtime is not None and session_path.exists():
+        # Detect if the operator task document was externally modified since the
+        # last sync. Re-read the file instead of attempting to reconcile edits.
+        if operator_mtime is not None and session_path.exists():
             try:
                 stored = self._read_json(session_path)
-                stored_mtime = stored.get("plan_mtime")
-                if stored_mtime is not None and abs(plan_mtime - float(stored_mtime)) > 1.0:
+                stored_mtime = stored.get("operator_state_mtime")
+                if stored_mtime is not None and abs(operator_mtime - float(stored_mtime)) > 1.0:
                     import sys
                     print(
-                        f"[dormammu] Warning: {plan_path.name} was modified externally "
-                        f"(stored mtime={stored_mtime:.3f}, current={plan_mtime:.3f}). "
+                        f"[dormammu] Warning: {operator_task_path.name} was modified externally "
+                        f"(stored mtime={stored_mtime:.3f}, current={operator_mtime:.3f}). "
                         "Manual edits will be preserved by re-reading the file.",
                         file=sys.stderr,
                     )
@@ -728,16 +751,16 @@ class StateRepository:
                 pass
 
         parsed_tasks = parse_tasks_document(
-            plan_text,
-            source=self._display_state_path(plan_path),
+            operator_text,
+            source=self._display_state_path(operator_task_path),
         )
         task_sync = parsed_tasks.current_workflow.to_dict(synced_at=timestamp)
 
         session_state = self._read_json(session_path)
         session_state["updated_at"] = timestamp
         session_state["task_sync"] = task_sync
-        if plan_mtime is not None:
-            session_state["plan_mtime"] = plan_mtime
+        if operator_mtime is not None:
+            session_state["operator_state_mtime"] = operator_mtime
         self._write_json(session_path, session_state)
 
         workflow_state = self._read_json(workflow_path)
@@ -850,6 +873,7 @@ class StateRepository:
                 "workflow_path": f"{state_root}/workflow_state.json",
                 "dashboard_path": f"{state_root}/DASHBOARD.md",
                 "plan_path": f"{state_root}/PLAN.md",
+                "tasks_path": f"{state_root}/TASKS.md",
                 "logs_dir": f"{state_root}/logs",
                 "goal": session_state.get("bootstrap", {}).get("goal"),
                 "updated_at": session_state.get("updated_at"),
@@ -872,6 +896,7 @@ class StateRepository:
                 "session_operator_state": [
                     f"{state_root}/DASHBOARD.md",
                     f"{state_root}/PLAN.md",
+                    f"{state_root}/TASKS.md",
                 ],
             },
             "session_index": {
@@ -883,6 +908,7 @@ class StateRepository:
                 "state_root": state_root,
                 "workflow_path": f"{state_root}/workflow_state.json",
                 "session_path": f"{state_root}/session.json",
+                "tasks_path": f"{state_root}/TASKS.md",
                 "goal": workflow_state.get("bootstrap", {}).get("goal"),
                 "updated_at": workflow_state.get("updated_at"),
             },
@@ -954,6 +980,15 @@ class StateRepository:
                 target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
             elif target.exists():
                 target.unlink()
+        source_tasks_path = source_dir / "TASKS.md"
+        target_tasks_path = target_dir / "TASKS.md"
+        if source_tasks_path.exists():
+            target_tasks_path.write_text(
+                source_tasks_path.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+        elif target_tasks_path.exists():
+            target_tasks_path.unlink()
         legacy_tasks_path = source_dir / "TASKS.md"
         target_plan_path = target_dir / "PLAN.md"
         if legacy_tasks_path.exists() and not target_plan_path.exists():
@@ -1065,12 +1100,34 @@ class StateRepository:
         if legacy_tasks_path.exists():
             plan_path.write_text(legacy_tasks_path.read_text(encoding="utf-8"), encoding="utf-8")
 
+    def _ensure_tasks_file(
+        self,
+        task_path: Path,
+        *,
+        plan_path: Path | None = None,
+        values: Mapping[str, str] | None = None,
+    ) -> None:
+        if task_path.exists():
+            return
+        if plan_path is not None and plan_path.exists():
+            task_path.write_text(plan_path.read_text(encoding="utf-8"), encoding="utf-8")
+            return
+        if values is not None:
+            self._write_template_file(task_path, "tasks.md.tmpl", values)
+
     def _operator_plan_path(self) -> Path:
         plan_path = self.state_file("PLAN.md")
         self._ensure_plan_file(plan_path)
         if plan_path.exists():
             return plan_path
         return self.state_file("TASKS.md")
+
+    def _operator_task_path(self) -> Path:
+        task_path = self.state_file("TASKS.md")
+        self._ensure_tasks_file(task_path, plan_path=self.state_file("PLAN.md"))
+        if task_path.exists():
+            return task_path
+        return self._operator_plan_path()
 
     def _display_state_path(self, path: Path) -> str:
         try:

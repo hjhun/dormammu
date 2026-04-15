@@ -1797,6 +1797,16 @@ class CliTests(unittest.TestCase):
                 def is_plan_evaluator_prompt(prompt: str) -> bool:
                     return "mandatory post-plan evaluator checkpoint" in prompt
 
+                def mark_complete(path: Path) -> None:
+                    if not path.exists():
+                        return
+                    lines = path.read_text(encoding="utf-8").splitlines()
+                    rewritten = [
+                        line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                        for line in lines
+                    ]
+                    path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+
                 def mark_plan_complete() -> None:
                     if not SESSION_PATH.exists():
                         return
@@ -1808,15 +1818,8 @@ class CliTests(unittest.TestCase):
                     import os
                     _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
                     sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
-                    plan_path = sessions_dir / str(session_id) / "PLAN.md"
-                    if not plan_path.exists():
-                        return
-                    lines = plan_path.read_text(encoding="utf-8").splitlines()
-                    rewritten = [
-                        line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
-                        for line in lines
-                    ]
-                    plan_path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+                    mark_complete(sessions_dir / str(session_id) / "PLAN.md")
+                    mark_complete(sessions_dir / str(session_id) / "TASKS.md")
 
                 def main() -> int:
                     args = sys.argv[1:]

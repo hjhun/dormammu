@@ -28,6 +28,7 @@ class StateRepositoryTests(unittest.TestCase):
 
             self.assertTrue(artifacts.dashboard.exists())
             self.assertTrue(artifacts.plan.exists())
+            self.assertTrue(artifacts.tasks.exists())
             self.assertTrue(artifacts.session.exists())
             self.assertTrue(artifacts.workflow_state.exists())
             self.assertTrue(artifacts.logs_dir.exists())
@@ -46,6 +47,10 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["pending_tasks"],
                 3,
+            )
+            self.assertEqual(
+                workflow_state["operator_sync"]["tasks"]["source"],
+                artifacts.tasks.relative_to(root).as_posix(),
             )
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["next_pending_task"],
@@ -110,6 +115,7 @@ class StateRepositoryTests(unittest.TestCase):
             artifacts = repository.ensure_bootstrap_state()
             session_plan_path = artifacts.plan
             self.assertIn("Finish the first slice", session_plan_path.read_text(encoding="utf-8"))
+            self.assertIn("Finish the first slice", artifacts.tasks.read_text(encoding="utf-8"))
 
             workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
             task_sync = workflow_state["operator_sync"]["tasks"]
@@ -218,7 +224,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(root_index["active_session_id"], original_session)
             self.assertFalse((root / ".dev" / "supervisor_report.md").exists())
 
-    def test_sync_operator_state_imports_newer_active_root_plan_mirror(self) -> None:
+    def test_sync_operator_state_imports_newer_active_root_task_mirror(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
@@ -228,21 +234,21 @@ class StateRepositoryTests(unittest.TestCase):
             repository.ensure_bootstrap_state(goal="Mirror root PLAN state")
 
             session_id = repository.read_session_state()["session_id"]
-            session_plan = root / "sessions" / session_id / "PLAN.md"
-            root_plan = root / ".dev" / "PLAN.md"
-            self.assertTrue(root_plan.exists())
+            session_tasks = root / "sessions" / session_id / "TASKS.md"
+            root_tasks = root / ".dev" / "TASKS.md"
+            self.assertTrue(root_tasks.exists())
 
-            root_plan.write_text(
-                root_plan.read_text(encoding="utf-8").replace("- [ ] ", "- [O] "),
+            root_tasks.write_text(
+                root_tasks.read_text(encoding="utf-8").replace("- [ ] ", "- [O] "),
                 encoding="utf-8",
             )
-            session_mtime_ns = session_plan.stat().st_mtime_ns
+            session_mtime_ns = session_tasks.stat().st_mtime_ns
             bumped_mtime = (session_mtime_ns + 5_000_000) / 1_000_000_000
-            os.utime(root_plan, (bumped_mtime, bumped_mtime))
+            os.utime(root_tasks, (bumped_mtime, bumped_mtime))
 
             repository.sync_operator_state()
 
-            self.assertEqual(root_plan.read_text(encoding="utf-8"), session_plan.read_text(encoding="utf-8"))
+            self.assertEqual(root_tasks.read_text(encoding="utf-8"), session_tasks.read_text(encoding="utf-8"))
             task_sync = repository.read_session_state()["task_sync"]
             self.assertTrue(task_sync["all_completed"])
             self.assertEqual(task_sync["pending_tasks"], 0)
@@ -337,10 +343,37 @@ class StateRepositoryTests(unittest.TestCase):
 
             refreshed_dashboard = artifacts.dashboard.read_text(encoding="utf-8")
             refreshed_plan = artifacts.plan.read_text(encoding="utf-8")
+            refreshed_tasks = artifacts.tasks.read_text(encoding="utf-8")
             self.assertNotIn("stale dashboard", refreshed_dashboard)
             self.assertNotIn("Stale work", refreshed_plan)
+            self.assertNotIn("Stale work", refreshed_tasks)
             self.assertIn("Updated goal", refreshed_dashboard)
             self.assertIn("Phase 1. Implement beta support", refreshed_plan)
+            self.assertIn("Phase 1. Implement beta support", refreshed_tasks)
+
+    def test_sync_operator_state_prefers_tasks_document_for_task_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="Queue source test")
+
+            artifacts.plan.write_text(
+                "# PLAN\n\n## Prompt-Derived Implementation Plan\n\n- [O] Phase 1. Plan-only item\n",
+                encoding="utf-8",
+            )
+            artifacts.tasks.write_text(
+                "# TASKS\n\n## Prompt-Derived Development Queue\n\n- [ ] Phase 1. Queue-owned item\n",
+                encoding="utf-8",
+            )
+
+            repository.sync_operator_state()
+
+            task_sync = repository.read_session_state()["task_sync"]
+            self.assertEqual(task_sync["source"], artifacts.tasks.relative_to(root).as_posix())
+            self.assertEqual(task_sync["next_pending_task"], "Phase 1. Queue-owned item")
 
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")

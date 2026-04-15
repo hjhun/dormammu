@@ -2,55 +2,60 @@
 
 ## Actual Progress
 
-- Goal: Make the `refine -> plan -> evaluate` rework loop use the same cap as
-  the pipeline iteration-max budget instead of a fixed `3`.
-- Prompt-driven scope: Inspect the pipeline retry implementation, align the
-  prelude evaluator re-entry limit with the developer iteration max, and
-  validate with targeted tests.
+- Goal: Compare the local `ralph` loop project with `dormammu` and implement a
+  meaningful gap-closing improvement.
+- Prompt-driven scope: Analyze Ralph's loop/task-state model, identify the most
+  relevant missing behavior in `dormammu`, and implement it with regression
+  coverage.
 - Active roadmap focus:
 - Phase 4. Supervisor Validation, Continuation Loop, and Resume
+- Phase 5. CLI Operator Experience and Progress Visibility
 - Current workflow phase: final_verify
 - Last completed workflow phase: final_verify
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: No further work is pending unless commit preparation or an
-  additional pipeline-config follow-up is requested.
+- Resume point: Work is complete unless the user wants commit preparation or a
+  broader Ralph-inspired follow-up.
 
 ## Workflow Phases
 
 ```mermaid
 flowchart LR
-    plan([Plan]) --> design([Design])
-    design --> develop([Develop])
+    compare([Compare Ralph]) --> design([Select Gap])
+    design --> develop([Promote TASKS Queue])
     develop --> test_review([Test & Review])
     test_review --> final_verify([Final Verify])
 ```
 
 ## In Progress
 
-- `PipelineRunner.MAX_STAGE_ITERATIONS` is now derived from the developer
-  stage's default max-iteration budget instead of hard-coding `3`.
-- The mandatory `plan evaluator` retry loop now inherits the same ceiling used
-  by the downstream tester/reviewer loops.
-- Full-test validation and operator-facing docs were updated to match the new
-  behavior.
+- Compared `ralph`'s shell loop, persistent learning model, and explicit task
+  queue against `dormammu`'s supervised/session-based runtime.
+- Chose `.dev/TASKS.md` promotion as the highest-value missing piece because it
+  maps Ralph's first-class work queue concept onto `dormammu`'s existing state
+  model without weakening supervision.
+- Updated the state repository, workflow state model, supervisor checks,
+  documentation, and tests so `TASKS.md` is now a real runtime-owned operator
+  queue.
 
 ## Progress Notes
 
-- Phase 1 completed: Located the fixed re-entry cap in
-  `backend/dormammu/daemon/pipeline_runner.py` and confirmed that
-  `LoopRunRequest.max_iterations` resolves to `max_retries + 1`.
-- Phase 2 completed: Replaced the fixed `3`-round cap with a value derived from
-  the developer stage default iteration budget so prelude and downstream loops
-  stay aligned.
-- Phase 3 completed: Added targeted regression coverage for the new coupling
-  and the full retry count in the `run_refine_and_plan()` REWORK path.
+- Comparison result: `ralph`'s main advantage over current `dormammu` was not
+  simpler looping but stronger task-queue concreteness across iterations.
+- Implementation result: bootstrap, mirror sync, task parsing, and session/root
+  metadata now create and track `.dev/TASKS.md` as a first-class file.
+- Runtime result: task sync now prefers `TASKS.md`, so resume targeting and
+  completion checks follow the queue document rather than only `PLAN.md`.
 - Validation evidence:
-- `python3 -m pytest` -> `651 passed`
+- `python3 -m pytest tests/test_state_repository.py tests/test_improvements.py -q`
+  -> `55 passed`
+- `python3 -m pytest tests/test_tasks.py tests/test_supervisor.py tests/test_loop_runner.py -q`
+  -> `23 passed`
+- `python3 -m pytest tests/test_ralph_improvements.py -q` -> `27 passed`
 
 ## Risks And Watchpoints
 
-- The pipeline still uses a module default iteration budget; if per-run
-  pipeline iteration overrides are added later, this coupling will need to move
-  from a constant to request-scoped state.
+- Existing session JSON machine state still reflects the prior completed task;
+  a future state-refresh run should regenerate it if this repository wants full
+  `.dev` machine/operator alignment for the new scope.
 - Do not stage the local `.codex` marker file.

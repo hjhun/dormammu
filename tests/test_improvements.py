@@ -286,12 +286,12 @@ class ContinuationPathSafetyTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# BUG-03: PLAN.md mtime-based change detection
+# BUG-03: operator task document mtime-based change detection
 # ---------------------------------------------------------------------------
 
 class PlanMtimeDetectionTests(unittest.TestCase):
-    def test_sync_operator_state_records_plan_mtime(self) -> None:
-        """After sync_operator_state, session.json contains plan_mtime."""
+    def test_sync_operator_state_records_operator_state_mtime(self) -> None:
+        """After sync_operator_state, session.json contains operator_state_mtime."""
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             _seed_repo(root)
@@ -300,13 +300,13 @@ class PlanMtimeDetectionTests(unittest.TestCase):
             repo.ensure_bootstrap_state(prompt_text="Write tests.", active_roadmap_phase_ids=["phase_3"])
             repo.sync_operator_state()
 
-            # The active session repository should have plan_mtime recorded
+            # The active session repository should have operator_state_mtime recorded
             session_state = repo.read_session_state()
-            self.assertIn("plan_mtime", session_state, "plan_mtime should be recorded in session.json")
-            self.assertIsInstance(session_state["plan_mtime"], float)
+            self.assertIn("operator_state_mtime", session_state, "operator_state_mtime should be recorded in session.json")
+            self.assertIsInstance(session_state["operator_state_mtime"], float)
 
     def test_sync_operator_state_emits_warning_on_external_modification(self) -> None:
-        """When PLAN.md is externally modified, a warning is printed to stderr."""
+        """When TASKS.md is externally modified, a warning is printed to stderr."""
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             _seed_repo(root)
@@ -318,16 +318,16 @@ class PlanMtimeDetectionTests(unittest.TestCase):
             # Manually write a fake old mtime into session.json to simulate drift
             session_state = repo.read_session_state()
             # Inject an old mtime (1 day ago) to simulate external modification
-            session_state["plan_mtime"] = session_state["plan_mtime"] - 86400.0
+            session_state["operator_state_mtime"] = session_state["operator_state_mtime"] - 86400.0
             repo.write_session_state(session_state)
 
-            # Now modify PLAN.md externally
+            # Now modify TASKS.md externally
             active_session_id = session_state.get("active_session_id") or session_state.get("session_id")
             if active_session_id:
-                plan_path = config.sessions_dir / str(active_session_id) / "PLAN.md"
-                if plan_path.exists():
-                    plan_path.write_text(
-                        plan_path.read_text(encoding="utf-8") + "\n<!-- manual edit -->\n",
+                tasks_path = config.sessions_dir / str(active_session_id) / "TASKS.md"
+                if tasks_path.exists():
+                    tasks_path.write_text(
+                        tasks_path.read_text(encoding="utf-8") + "\n<!-- manual edit -->\n",
                         encoding="utf-8",
                     )
 
