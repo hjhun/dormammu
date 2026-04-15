@@ -288,6 +288,35 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertEqual(result.attempts_completed, 1)
             self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "1")
 
+    def test_run_completes_when_agent_marks_only_plan_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(
+                root,
+                success_attempt=1,
+                plan_completion_attempt=1,
+                mark_tasks=False,
+            )
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file and finish the plan.",
+                    repo_root=root,
+                    run_label="plan-only-completion",
+                    max_retries=1,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.attempts_completed, 1)
+            self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "1")
+
     def test_failed_final_verification_sets_resume_phase_to_develop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -632,6 +661,7 @@ class LoopRunnerTests(unittest.TestCase):
         plan_completion_attempt: int | None = None,
         name: str = "fake-loop-agent",
         mark_root_plan: bool = False,
+        mark_tasks: bool = True,
     ) -> Path:
         script = root / name
         effective_plan_completion_attempt = (
@@ -648,6 +678,7 @@ class LoopRunnerTests(unittest.TestCase):
                 SUCCESS_ATTEMPT = {success_attempt}
                 PLAN_COMPLETION_ATTEMPT = {effective_plan_completion_attempt}
                 MARK_ROOT_PLAN = {mark_root_plan!r}
+                MARK_TASKS = {mark_tasks!r}
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
                 SESSION_PATH = ROOT / ".dev" / "session.json"
@@ -665,7 +696,8 @@ class LoopRunnerTests(unittest.TestCase):
                 def mark_plan_complete() -> None:
                     if MARK_ROOT_PLAN:
                         mark_complete(ROOT / ".dev" / "PLAN.md")
-                        mark_complete(ROOT / ".dev" / "TASKS.md")
+                        if MARK_TASKS:
+                            mark_complete(ROOT / ".dev" / "TASKS.md")
                         return
                     if not SESSION_PATH.exists():
                         return
@@ -677,7 +709,8 @@ class LoopRunnerTests(unittest.TestCase):
                     _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
                     sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
                     mark_complete(sessions_dir / str(session_id) / "PLAN.md")
-                    mark_complete(sessions_dir / str(session_id) / "TASKS.md")
+                    if MARK_TASKS:
+                        mark_complete(sessions_dir / str(session_id) / "TASKS.md")
 
                 def main() -> int:
                     args = sys.argv[1:]
@@ -828,6 +861,137 @@ class LoopRunnerTests(unittest.TestCase):
                     return 2
 
                 raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+
+    # ── stagnation / hard-cap tests ──────────────────────────────────────────
+
+    def test_stagnation_blocks_loop_when_pending_tasks_never_change(self) -> None:
+        """Loop must stop with 'blocked' when the same pending task repeats
+        _STAGNATION_WINDOW consecutive times — even with max_retries=-1."""
+        from dormammu.loop_runner import _STAGNATION_WINDOW
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            # This CLI never marks plan items complete and never creates done.txt,
+            # so the supervisor always returns rework_required.
+            stuck_cli = self._write_stuck_cli(root)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=stuck_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="stagnation-test",
+                    max_retries=-1,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "blocked")
+            # Loop ran exactly _STAGNATION_WINDOW attempts before detecting stagnation.
+            self.assertEqual(result.attempts_completed, _STAGNATION_WINDOW)
+
+    def test_hard_iteration_cap_stops_infinite_retry_mode(self) -> None:
+        """max_retries=-1 must not run past _HARD_ITERATION_CAP iterations.
+
+        This test uses a CLI that succeeds only on attempt > cap, which
+        would loop forever without the ceiling.  We patch _HARD_ITERATION_CAP
+        to a small value so the test completes quickly.
+        """
+        from dormammu import loop_runner as lr_module
+
+        original_cap = lr_module._HARD_ITERATION_CAP
+        original_window = lr_module._STAGNATION_WINDOW
+        try:
+            lr_module._HARD_ITERATION_CAP = 4
+            # Disable stagnation detection so the hard cap is the active guard.
+            lr_module._STAGNATION_WINDOW = 999
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                self._seed_repo(root)
+                stuck_cli = self._write_stuck_cli(root)
+
+                config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+                repository = StateRepository(config)
+                result = LoopRunner(config, repository=repository).run(
+                    LoopRunRequest(
+                        cli_path=stuck_cli,
+                        prompt_text="Create the required marker file.",
+                        repo_root=root,
+                        run_label="hard-cap-test",
+                        max_retries=-1,
+                        required_paths=("done.txt",),
+                        expected_roadmap_phase_id="phase_4",
+                    )
+                )
+
+                self.assertEqual(result.status, "failed")
+                # Cap of 4 means 1 original + 3 retries = 4 total attempts.
+                self.assertEqual(result.attempts_completed, 4)
+        finally:
+            lr_module._HARD_ITERATION_CAP = original_cap
+            lr_module._STAGNATION_WINDOW = original_window
+
+    def test_continuation_prompt_instructs_both_plan_and_tasks(self) -> None:
+        """Continuation prompt must tell agents to mark BOTH PLAN.md and TASKS.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            # Use a 2-attempt CLI so a continuation prompt is written after attempt 1.
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="dual-checklist-prompt-test",
+                    max_retries=1,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+                "active_session_id"
+            ]
+            continuation_text = (
+                config.sessions_dir / session_id / "continuation_prompt.txt"
+            ).read_text(encoding="utf-8")
+            self.assertIn("PLAN.md", continuation_text)
+            self.assertIn("TASKS.md", continuation_text)
+
+    def _write_stuck_cli(self, root: Path, *, name: str = "fake-stuck-agent") -> Path:
+        """Fake CLI that never creates done.txt and never marks plan items complete.
+
+        Used to trigger stagnation detection and the hard iteration cap.
+        """
+        script = root / name
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                args = sys.argv[1:]
+                if "--help" in args:
+                    print("usage: {name} [--prompt-file PATH]")
+                    raise SystemExit(0)
+
+                print("Thinking about it...")
+                raise SystemExit(0)
                 """
             ),
             encoding="utf-8",

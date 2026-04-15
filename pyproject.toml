@@ -30,6 +30,7 @@ where = ["backend"]
 [tool.setuptools.package-data]
 dormammu = [
   "assets/templates/dev/*.tmpl",
+  "assets/templates/continuation/*.tmpl",
   "assets/agents/AGENTS.md",
   "assets/agents/workflows/*.md",
   "assets/agents/rules/*.md",

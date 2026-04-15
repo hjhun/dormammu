@@ -722,6 +722,7 @@ class StateRepository:
         operator_task_path: Path,
         timestamp: str,
     ) -> None:
+        operator_task_path = self._resolve_operator_sync_source(operator_task_path)
         operator_text = (
             operator_task_path.read_text(encoding="utf-8")
             if operator_task_path.exists()
@@ -769,6 +770,60 @@ class StateRepository:
         workflow_state["operator_sync"]["tasks"] = task_sync
         self._write_json(workflow_path, workflow_state)
         self._sync_root_index(timestamp=timestamp)
+
+    def _resolve_operator_sync_source(self, preferred_path: Path) -> Path:
+        """Choose the best operator checklist source for task-sync state.
+
+        Historically dormammu parsed only ``TASKS.md`` here, but continuation
+        prompts instruct agents to mark completion in ``PLAN.md``.  This
+        asymmetry is the primary cause of infinite retry loops: the agent marks
+        PLAN.md complete, but the supervisor still reads TASKS.md as incomplete,
+        so the verdict is always ``rework_required``.
+
+        RALPH INSIGHT: use a single source of truth.  Ralph uses ``prd.json``
+        exclusively.  Dormammu maintains two parallel files (PLAN.md and
+        TASKS.md) for historical reasons.  The safe resolution strategy is:
+
+        1. Pick the file with the **fewest pending** ``- [ ]`` items (i.e. the
+           most-complete checklist) — this is the one the agent has been
+           actively updating.
+        2. Break ties with the most-recently modified file (TASKS.md wins on
+           equal mtime to preserve pre-existing behaviour when both files are
+           identical).
+
+        Selecting by mtime alone is fragile: a tool that reads TASKS.md but
+        does not write it will bump its mtime and cause the supervisor to pick
+        an incomplete file over a fully-complete PLAN.md, permanently blocking
+        the loop.
+        """
+        candidates: list[Path] = []
+        seen: set[Path] = set()
+        for path in (preferred_path, self.state_file("PLAN.md"), self.state_file("TASKS.md")):
+            resolved = path.resolve()
+            if resolved in seen or not path.exists():
+                continue
+            seen.add(resolved)
+            candidates.append(path)
+
+        if not candidates:
+            return preferred_path
+        if len(candidates) == 1:
+            return candidates[0]
+
+        def _pending_count(path: Path) -> int:
+            """Count unchecked ``- [ ]`` items — lower means more progress."""
+            try:
+                return path.read_text(encoding="utf-8").count("- [ ] ")
+            except OSError:
+                return 999
+
+        # Primary key: fewest pending items (most complete).
+        # Secondary key: most-recently modified (TASKS.md tiebreaker preserved).
+        best = min(
+            candidates,
+            key=lambda p: (_pending_count(p), -p.stat().st_mtime_ns, p.name != "TASKS.md"),
+        )
+        return best if best.exists() else preferred_path
 
     def _generated_session_id(self, timestamp: str) -> str:
         compact = timestamp.replace("-", "").replace(":", "").replace("+", "-").replace("T", "-")

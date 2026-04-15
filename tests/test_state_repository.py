@@ -351,7 +351,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertIn("Phase 1. Implement beta support", refreshed_plan)
             self.assertIn("Phase 1. Implement beta support", refreshed_tasks)
 
-    def test_sync_operator_state_prefers_tasks_document_for_task_queue(self) -> None:
+    def test_sync_operator_state_prefers_newer_plan_document_when_tasks_is_stale(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
@@ -368,12 +368,55 @@ class StateRepositoryTests(unittest.TestCase):
                 "# TASKS\n\n## Prompt-Derived Development Queue\n\n- [ ] Phase 1. Queue-owned item\n",
                 encoding="utf-8",
             )
+            plan_stat = artifacts.plan.stat()
+            bumped_mtime = (plan_stat.st_mtime_ns + 5_000_000) / 1_000_000_000
+            os.utime(artifacts.plan, (bumped_mtime, bumped_mtime))
 
             repository.sync_operator_state()
 
             task_sync = repository.read_session_state()["task_sync"]
-            self.assertEqual(task_sync["source"], artifacts.tasks.relative_to(root).as_posix())
-            self.assertEqual(task_sync["next_pending_task"], "Phase 1. Queue-owned item")
+            self.assertEqual(task_sync["source"], artifacts.plan.relative_to(root).as_posix())
+            self.assertTrue(task_sync["all_completed"])
+            self.assertIsNone(task_sync["next_pending_task"])
+
+    def test_sync_operator_state_prefers_more_complete_file_even_when_it_is_older(self) -> None:
+        """Regression: _resolve_operator_sync_source must prefer the file with
+        fewer pending items over the file with a newer mtime.
+
+        Before the fix, a recently-touched but incomplete TASKS.md would beat a
+        fully-complete PLAN.md, causing the supervisor to always see pending
+        tasks and return rework_required indefinitely — the root cause of the
+        infinite retry loop reported when agents only update PLAN.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="Completion priority test")
+
+            # PLAN.md is fully complete.
+            artifacts.plan.write_text(
+                "# PLAN\n\n## Prompt-Derived Implementation Plan\n\n- [O] Phase 1. Done item\n",
+                encoding="utf-8",
+            )
+            # TASKS.md still has a pending item, AND it has a newer mtime
+            # (simulates an agent that read/touched TASKS.md after writing PLAN.md).
+            artifacts.tasks.write_text(
+                "# TASKS\n\n## Prompt-Derived Development Queue\n\n- [ ] Phase 1. Pending item\n",
+                encoding="utf-8",
+            )
+            tasks_stat = artifacts.tasks.stat()
+            bumped_mtime = (tasks_stat.st_mtime_ns + 5_000_000) / 1_000_000_000
+            os.utime(artifacts.tasks, (bumped_mtime, bumped_mtime))
+
+            repository.sync_operator_state()
+
+            task_sync = repository.read_session_state()["task_sync"]
+            # Must have selected PLAN.md (fewer pending), not the newer TASKS.md.
+            self.assertEqual(task_sync["source"], artifacts.plan.relative_to(root).as_posix())
+            self.assertTrue(task_sync["all_completed"])
+            self.assertIsNone(task_sync["next_pending_task"])
 
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")

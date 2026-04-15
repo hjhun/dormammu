@@ -13,6 +13,28 @@ from dormammu.continuation import build_continuation_prompt
 from dormammu.state import StateRepository
 from dormammu.supervisor import Supervisor, SupervisorReport, SupervisorRequest
 
+# ── Termination constants ────────────────────────────────────────────────────
+#
+# RALPH INSIGHT: Every agent loop must have an upper bound.
+# Source: github.com/snarktank/ralph — ralph uses MAX_ITERATIONS (default 10).
+# Dormammu's default budget is 50 iterations (see _resolve_loop_retry_budget).
+# The -1 "infinite" sentinel is still bounded by _HARD_ITERATION_CAP so that
+# a misconfigured or runaway loop cannot spin forever and consume unbounded API
+# quota.  Operators who legitimately need more iterations should supply a
+# positive --max-iterations value larger than this ceiling instead of -1.
+#
+# STAGNATION: Even within the allowed budget a loop that makes no measurable
+# forward progress is wasting cycles and money.  If the same (pending_tasks,
+# next_pending_task) snapshot repeats _STAGNATION_WINDOW consecutive iterations
+# the loop is cycling in place; we surface this as a "blocked" result so the
+# operator can intervene rather than burning the full retry budget silently.
+
+_HARD_ITERATION_CAP: int = 100
+"""Absolute maximum iterations even when max_retries=-1 (ralph-derived safety ceiling)."""
+
+_STAGNATION_WINDOW: int = 3
+"""Consecutive identical task-state snapshots that trigger a stagnation bail-out."""
+
 
 @dataclass(frozen=True, slots=True)
 class LoopRunRequest:
@@ -161,6 +183,10 @@ class LoopRunner:
         retries_used = max(start_attempt - 1, 0)
         continuation_prompt_path: Path | None = None
         report_path: Path | None = None
+        # Rolling window of (pending_tasks, next_pending_task) snapshots used by
+        # stagnation detection.  Reset on each call to run() so resumed loops
+        # don't inherit a stale window from a previous interrupted run.
+        _stagnation_window: list[tuple[int, str | None]] = []
 
         while True:
             self._persist_loop_state(
@@ -326,8 +352,59 @@ class LoopRunner:
                     continuation_prompt_path=continuation_prompt_path,
                 )
 
-            next_task = runtime_repository.read_session_state().get("task_sync", {}).get("next_pending_task")
+            task_sync_now = runtime_repository.read_session_state().get("task_sync", {})
+            next_task = task_sync_now.get("next_pending_task")
             workflow_state = runtime_repository.read_workflow_state()
+
+            # ── Stagnation detection ──────────────────────────────────────────
+            # If the same (pending_tasks, next_pending_task) snapshot repeats
+            # _STAGNATION_WINDOW consecutive times the agent is cycling in place
+            # without making forward progress.  Bail out as "blocked" so the
+            # operator can intervene, rather than burning the full retry budget.
+            _pending_now = int(task_sync_now.get("pending_tasks", 0) or 0)
+            _stagnation_snapshot: tuple[int, str | None] = (_pending_now, next_task)
+            _stagnation_window.append(_stagnation_snapshot)
+            if len(_stagnation_window) > _STAGNATION_WINDOW:
+                _stagnation_window.pop(0)
+            if (
+                _pending_now > 0
+                and len(_stagnation_window) >= _STAGNATION_WINDOW
+                and len(set(_stagnation_window)) == 1
+            ):
+                stagnation_msg = (
+                    f"Loop stagnated: the same {_pending_now} pending task(s) "
+                    f"persisted unchanged across {_STAGNATION_WINDOW} consecutive "
+                    "iterations with no forward progress. "
+                    "Verify that the agent can write to PLAN.md and TASKS.md, "
+                    "or increase the task scope before resuming."
+                )
+                self._write_progress([
+                    "=== dormammu stagnation ===",
+                    stagnation_msg,
+                ])
+                self._persist_loop_state(
+                    status="blocked",
+                    request=request,
+                    attempts_completed=attempt_number,
+                    retries_used=retries_used,
+                    latest_run_id=result.run_id,
+                    report=report,
+                    report_path=report_path,
+                    continuation_prompt_path=continuation_prompt_path,
+                    next_action=stagnation_msg,
+                )
+                return LoopRunResult(
+                    status="blocked",
+                    attempts_completed=attempt_number,
+                    retries_used=retries_used,
+                    max_retries=request.max_retries,
+                    max_iterations=request.max_iterations,
+                    latest_run_id=result.run_id,
+                    supervisor_verdict=report.verdict,
+                    report_path=report_path,
+                    continuation_prompt_path=continuation_prompt_path,
+                )
+
             continuation = build_continuation_prompt(
                 latest_run=workflow_state["latest_run"],
                 report=report,
@@ -335,6 +412,7 @@ class LoopRunner:
                 original_prompt_text=request.prompt_text,
                 repo_guidance=workflow_state.get("bootstrap", {}).get("repo_guidance"),
                 patterns_text=runtime_repository.read_patterns_text(),
+                templates_dir=self.config.templates_dir,
             )
             continuation_prompt_path = runtime_repository.write_continuation_prompt(continuation.text)
 
@@ -478,6 +556,13 @@ class LoopRunner:
         self.progress_stream.flush()
 
     def _should_retry(self, max_retries: int, retries_used: int) -> bool:
+        # Hard ceiling enforced even for the "infinite" (-1) sentinel so that a
+        # misconfigured loop cannot spin indefinitely.  retries_used equals
+        # (total_attempts - 1), so this fires after _HARD_ITERATION_CAP runs.
+        # Ralph pattern: always bound your loop — the -1 flag is a convenience,
+        # not a promise of unlimited execution.
+        if max_retries == -1 and retries_used >= _HARD_ITERATION_CAP - 1:
+            return False
         if max_retries == -1:
             return True
         return retries_used < max_retries

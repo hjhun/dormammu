@@ -2,10 +2,38 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from string import Template
 from typing import Any, Mapping
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.supervisor import SupervisorReport
+
+# Packaged fallback directory — always resolvable relative to this module so
+# that the template is found even when the repo's templates/ directory is
+# absent (e.g. installed as a wheel).
+_PACKAGED_TEMPLATES_DIR = Path(__file__).resolve().parent / "assets" / "templates"
+
+
+def _load_template(templates_dir: Path | None, relative_path: str) -> Template:
+    """Load a Template from *templates_dir* with a packaged-asset fallback.
+
+    Resolution order (mirrors StateRepository._template_path):
+    1. ``<templates_dir>/<relative_path>`` — project-local override
+    2. ``<packaged>/<relative_path>``       — bundled asset (always present)
+    """
+    candidates: list[Path] = []
+    if templates_dir is not None:
+        candidates.append(templates_dir / relative_path)
+    candidates.append(_PACKAGED_TEMPLATES_DIR / relative_path)
+
+    for path in candidates:
+        try:
+            return Template(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+
+    searched = ", ".join(str(p) for p in candidates)
+    raise FileNotFoundError(f"Continuation template not found: {searched}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,21 +75,38 @@ def build_continuation_prompt(
     original_prompt_text: str | None = None,
     repo_guidance: Mapping[str, Any] | None = None,
     patterns_text: str | None = None,
+    templates_dir: Path | None = None,
 ) -> ContinuationPrompt:
+    """Build a continuation prompt by rendering the bundled template file.
+
+    All agent-facing instruction text lives in
+    ``templates/continuation/continuation-prompt.md.tmpl`` so it can be
+    reviewed and overridden without touching Python source.  This function
+    computes only the dynamic substitution values.
+
+    Args:
+        templates_dir: Project-local templates directory (``AppConfig.templates_dir``).
+            When supplied, a project-level override of the template is checked
+            first.  Falls back to the packaged asset when absent or missing.
+    """
     prior_prompt = (original_prompt_text or "").strip()
     if not prior_prompt:
         prior_prompt = load_prompt_text(latest_run).strip()
     artifacts = latest_run.get("artifacts", {})
-    findings: list[str] = []
+
+    # ── findings ─────────────────────────────────────────────────────────────
+    findings_lines: list[str] = []
     for check in report.checks:
         if not check.ok:
-            findings.append(f"- {check.name}: {check.summary}")
+            findings_lines.append(f"- {check.name}: {check.summary}")
             for detail in check.details:
-                findings.append(f"  - {detail}")
+                findings_lines.append(f"  - {detail}")
+    if not findings_lines:
+        findings_lines.append(
+            "- No failing checks were recorded, but another supervised attempt was requested."
+        )
 
-    if not findings:
-        findings.append("- No failing checks were recorded, but another supervised attempt was requested.")
-
+    # ── optional guidance section ─────────────────────────────────────────────
     guidance_lines: list[str] = []
     if isinstance(repo_guidance, Mapping):
         rule_files = repo_guidance.get("rule_files")
@@ -72,11 +117,15 @@ def build_continuation_prompt(
             guidance_lines.append(
                 "Repository workflows: " + ", ".join(str(item) for item in workflow_files)
             )
+    # When guidance is present, append a blank line so the next paragraph is
+    # visually separated in the rendered prompt.
+    guidance_section = ("\n".join(guidance_lines) + "\n\n") if guidance_lines else ""
 
+    # ── optional patterns section ─────────────────────────────────────────────
     _default_placeholder = "(no patterns recorded yet"
-    patterns_section: list[str] = []
+    patterns_section = ""
     if patterns_text and patterns_text.strip() and _default_placeholder not in patterns_text:
-        patterns_section = [
+        patterns_section = "\n".join([
             "",
             "Codebase patterns accumulated from prior agent runs (.dev/PATTERNS.md):",
             "Review these patterns before making changes.",
@@ -85,60 +134,46 @@ def build_continuation_prompt(
             patterns_text.rstrip(),
             "",
             "End of codebase patterns.",
-        ]
+            "",
+        ])
 
-    task_line = next_task or "Review the latest supervisor report and continue from the saved state."
+    # ── scalar substitution values ────────────────────────────────────────────
     phase_line = report.recommended_next_phase or "manual review"
-    lines = [
-        "You are continuing a previous coding-agent attempt inside the same repository.",
-        "Continue from the saved repository state instead of starting over.",
-        (
-            "Work inside the current repository and its active workdir by default. "
-            "If the original task explicitly requires a specific external system path "
-            "such as /proc, access only that path."
+    resume_instruction = (
+        "Return to the Develop phase, repair the implementation, update validation if needed, "
+        "and pass final verification again before you stop."
+        if report.recommended_next_phase == "develop"
+        else "Resume from the recommended phase and keep the workflow state aligned as you progress."
+    )
+    task_line = next_task or "Review the latest supervisor report and continue from the saved state."
+
+    template = _load_template(
+        templates_dir,
+        "continuation/continuation-prompt.md.tmpl",
+    )
+    text = template.safe_substitute(
+        latest_run_id=latest_run.get("run_id", "unknown"),
+        prompt_artifact=_safe_artifact_ref(artifacts.get("prompt")),
+        stdout_artifact=_safe_artifact_ref(artifacts.get("stdout")),
+        stderr_artifact=_safe_artifact_ref(artifacts.get("stderr")),
+        supervisor_report=(
+            _safe_artifact_ref(report.report_path)
+            if report.report_path
+            else ".dev/supervisor_report.md"
         ),
-        (
-            "Do not inspect or modify unrelated paths outside the repository such as "
-            "/tmp, /bin, or arbitrary parent directories."
-        ),
-        "If your CLI supports a planning mode, leave planning mode now and make the required repository edits directly.",
-        "Each time you complete a PLAN.md item, describe the completed work clearly in DASHBOARD.md and then mark that PLAN.md line as [O].",
-        "Do not leave a PLAN.md item unchecked if the work is actually finished, and do not mark [O] before the repository and DASHBOARD.md both reflect the completion.",
-        "",
-        f"Latest run id: {latest_run.get('run_id', 'unknown')}",
-        f"Previous prompt artifact: {_safe_artifact_ref(artifacts.get('prompt'))}",
-        f"Previous stdout artifact: {_safe_artifact_ref(artifacts.get('stdout'))}",
-        f"Previous stderr artifact: {_safe_artifact_ref(artifacts.get('stderr'))}",
-        f"Supervisor report: {_safe_artifact_ref(report.report_path) if report.report_path else '.dev/supervisor_report.md'}",
-        "",
-        f"Supervisor verdict: {report.verdict}",
-        f"Supervisor summary: {report.summary}",
-        f"Recommended resume phase: {phase_line}",
-        "",
-        *guidance_lines,
-        *([""] if guidance_lines else []),
-        "Investigate the root cause of every failing verification before making more changes.",
-        "Address these findings before you finish:",
-        *findings,
-        "",
-        (
-            "Return to the Develop phase, repair the implementation, update validation if needed, "
-            "and pass final verification again before you stop."
-            if report.recommended_next_phase == "develop"
-            else "Resume from the recommended phase and keep the workflow state aligned as you progress."
-        ),
-        "",
-        f"Next unchecked task: {task_line}",
-        *patterns_section,
-        "",
-        "Original prompt:",
-        prior_prompt or "(previous prompt artifact was empty)",
-        "",
-        "Return only after updating the repository state needed to satisfy the supervisor checks.",
-    ]
+        supervisor_verdict=report.verdict,
+        supervisor_summary=report.summary,
+        phase_line=phase_line,
+        guidance_section=guidance_section,
+        findings="\n".join(findings_lines),
+        resume_instruction=resume_instruction,
+        task_line=task_line,
+        patterns_section=patterns_section,
+        prior_prompt=prior_prompt or "(previous prompt artifact was empty)",
+    )
     return ContinuationPrompt(
         generated_at=_iso_now(),
-        text="\n".join(lines) + "\n",
+        text=text,
         source_run_id=latest_run.get("run_id"),
     )
 

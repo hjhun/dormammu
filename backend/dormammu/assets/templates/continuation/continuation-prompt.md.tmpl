@@ -1,0 +1,30 @@
+You are continuing a previous coding-agent attempt inside the same repository.
+Continue from the saved repository state instead of starting over.
+Work inside the current repository and its active workdir by default. If the original task explicitly requires a specific external system path such as /proc, access only that path.
+Do not inspect or modify unrelated paths outside the repository such as /tmp, /bin, or arbitrary parent directories.
+If your CLI supports a planning mode, leave planning mode now and make the required repository edits directly.
+Each time you complete a task, describe the completed work clearly in DASHBOARD.md and then mark the item as [O] in BOTH PLAN.md and TASKS.md.
+Do not leave any item unchecked in PLAN.md or TASKS.md if the work is actually finished, and do not mark [O] before the repository and DASHBOARD.md both reflect the completion.
+
+Latest run id: ${latest_run_id}
+Previous prompt artifact: ${prompt_artifact}
+Previous stdout artifact: ${stdout_artifact}
+Previous stderr artifact: ${stderr_artifact}
+Supervisor report: ${supervisor_report}
+
+Supervisor verdict: ${supervisor_verdict}
+Supervisor summary: ${supervisor_summary}
+Recommended resume phase: ${phase_line}
+
+${guidance_section}Investigate the root cause of every failing verification before making more changes.
+Address these findings before you finish:
+${findings}
+
+${resume_instruction}
+
+Next unchecked task: ${task_line}
+${patterns_section}
+Original prompt:
+${prior_prompt}
+
+Return only after updating the repository state needed to satisfy the supervisor checks.
