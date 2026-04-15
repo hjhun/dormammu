@@ -536,10 +536,10 @@ class DaemonRunner:
             guidance_files=scoped_config.guidance_files,
             repo_root=scoped_config.repo_root,
         )
+        goal_file_path = self._extract_goal_file_path(prompt_text)
 
         # When an agents config is present, use the full role-based pipeline.
         if scoped_config.agents is not None:
-            goal_file_path = self._extract_goal_file_path(prompt_text)
             evaluator_config = (
                 self.daemon_config.goals.evaluator
                 if self.daemon_config.goals is not None
@@ -567,7 +567,11 @@ class DaemonRunner:
             repository=session_repository,
             progress_stream=self.progress_stream,
             stop_event=self._shutdown_requested,
-        ).run_refine_and_plan(enriched_text, stem=prompt_path.stem)
+        ).run_refine_and_plan(
+            enriched_text,
+            stem=prompt_path.stem,
+            enable_plan_evaluator=goal_file_path is not None,
+        )
 
         request = LoopRunRequest(
             cli_path=agent_cli,

@@ -101,7 +101,9 @@ DORMAMMU has four operator entry styles:
 | **daemonize** | `dormammu daemonize` | Long-running daemon that watches a prompt queue |
 
 Every execution mode now begins with a mandatory `refine -> plan` prelude.
-After that prelude:
+The post-plan evaluator is not part of normal `run` or `run-once` execution.
+It is enabled only for goals-scheduler prompts, where evaluator output is used
+to gate scheduled-goal progression. After the prelude:
 
 - when `agents` is configured, DORMAMMU continues through the full
   **PipelineRunner**
@@ -142,6 +144,9 @@ flowchart TD
     reviewer -- "VERDICT: NEEDS_WORK" --> developer
     reviewer -- "VERDICT: APPROVED" --> committer[Committer]
     committer --> done([Done])
+    planner -. "goals-scheduler prompts only" .-> planeval["Plan Evaluator"]
+    planeval -- "DECISION: REWORK" --> planner
+    planeval -- "DECISION: PROCEED" --> developer
 ```
 
 **Refiner** (mandatory): Converts the raw goal into a structured
@@ -153,6 +158,11 @@ configured and otherwise falls back to `active_agent_cli`.
 an adaptive, task-specific stage checklist (`[ ] Phase N. Role — agent`).
 Also updates `PLAN.md` and `DASHBOARD.md`. It uses `agents.planner.cli` when
 configured and otherwise falls back to `active_agent_cli`.
+
+**Plan Evaluator** (goals-scheduler prompts only): Runs after planning for
+scheduled goals. It can return `DECISION: PROCEED` or `DECISION: REWORK`,
+causing the planner to re-enter before development starts. Interactive
+`run` and `run-once` commands skip this evaluator stage.
 
 **Developer**: Implements the active scope, guided by `REQUIREMENTS.md` and
 `WORKFLOWS.md` when available.

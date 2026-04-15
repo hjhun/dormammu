@@ -3,8 +3,8 @@
 Pipeline stages
 ---------------
 refiner   (mandatory, one-shot) →
-planner   (mandatory, one-shot, loops with evaluator on REWORK) →
-evaluator (mandatory plan checkpoint, one-shot) →
+planner   (mandatory, one-shot; loops with evaluator on REWORK only for goals) →
+evaluator (mandatory plan checkpoint for goals-scheduler prompts, one-shot) →
 developer (supervised LoopRunner) →
 tester    (one-shot, loops back to developer on FAIL) →
 reviewer  (one-shot, loops back to developer on NEEDS_WORK) →
@@ -114,21 +114,25 @@ class PipelineRunner:
         *,
         stem: str,
         date_str: str | None = None,
+        enable_plan_evaluator: bool = False,
     ) -> None:
         """Execute the mandatory refine -> plan prelude for a prompt."""
         if date_str is None:
             date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
 
         self._run_refiner(goal_text, stem=stem, date_str=date_str)
+        self._run_planner(
+            goal_text,
+            stem=stem,
+            date_str=date_str,
+            checkpoint_feedback_text=None,
+        )
+        if not enable_plan_evaluator:
+            self._log("pipeline: plan evaluator disabled for non-goals prompt")
+            return
 
         evaluator_feedback_text: str | None = None
         for iteration in range(MAX_STAGE_ITERATIONS):
-            self._run_planner(
-                goal_text,
-                stem=stem,
-                date_str=date_str,
-                checkpoint_feedback_text=evaluator_feedback_text,
-            )
             verdict, report_text = self._run_plan_evaluator(
                 goal_text,
                 stem=stem,
@@ -145,6 +149,12 @@ class PipelineRunner:
                     "— re-entering planner"
                 )
                 evaluator_feedback_text = report_text
+                self._run_planner(
+                    goal_text,
+                    stem=stem,
+                    date_str=date_str,
+                    checkpoint_feedback_text=evaluator_feedback_text,
+                )
                 continue
             raise RuntimeError(
                 "Mandatory plan evaluator requested REWORK after the maximum "
@@ -173,7 +183,12 @@ class PipelineRunner:
         loop_result: LoopRunResult | None = None
 
         # ---- refiner + planner (mandatory) ----------------------------------
-        self.run_refine_and_plan(prompt_text, stem=stem, date_str=date_str)
+        self.run_refine_and_plan(
+            prompt_text,
+            stem=stem,
+            date_str=date_str,
+            enable_plan_evaluator=goal_file_path is not None,
+        )
 
         # ---- developer → tester loop ----------------------------------------
         for tester_iter in range(MAX_STAGE_ITERATIONS):
@@ -333,13 +348,13 @@ class PipelineRunner:
         return output
 
     # ------------------------------------------------------------------
-    # Plan evaluator stage (one-shot, mandatory)
+    # Plan evaluator stage (one-shot, goals-scheduler context only)
     # ------------------------------------------------------------------
 
     def _run_plan_evaluator(
         self, goal_text: str, *, stem: str, date_str: str
     ) -> tuple[str, str]:
-        """Run the mandatory evaluator checkpoint after planning.
+        """Run the mandatory evaluator checkpoint after planning for goals.
 
         Returns ``(verdict, report_text)`` where verdict is ``"proceed"`` or
         ``"rework"``. Missing or ambiguous decisions fail closed as rework.

@@ -99,6 +99,7 @@ def _run_mandatory_refine_and_plan(
     stem: str,
     date_str: str,
     agent_cli_override: Path | None = None,
+    enable_plan_evaluator: bool = False,
 ) -> None:
     runtime_config, runtime_agents = _pipeline_runtime(
         config,
@@ -108,7 +109,12 @@ def _run_mandatory_refine_and_plan(
         runtime_config,
         runtime_agents,
         repository=repository,
-    ).run_refine_and_plan(prompt_text, stem=stem, date_str=date_str)
+    ).run_refine_and_plan(
+        prompt_text,
+        stem=stem,
+        date_str=date_str,
+        enable_plan_evaluator=enable_plan_evaluator,
+    )
 
 
 def _handle_show_config(args: argparse.Namespace) -> int:
@@ -304,6 +310,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
                 stem=stem,
                 date_str=date_str,
                 agent_cli_override=agent_cli,
+                enable_plan_evaluator=False,
             )
         except (RuntimeError, ValueError, OSError) as exc:
             print(str(exc), file=sys.stderr)

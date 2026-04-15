@@ -184,11 +184,42 @@ class TestMandatoryPreludeStages:
                 ],
             ) as mock_eval,
         ):
-            runner.run_refine_and_plan("goal", stem="g", date_str="20260412")
+            runner.run_refine_and_plan(
+                "goal",
+                stem="g",
+                date_str="20260412",
+                enable_plan_evaluator=True,
+            )
 
         mock_refiner.assert_called_once()
         assert mock_planner.call_count == 2
         assert mock_eval.call_count == 2
+
+    def test_run_refine_and_plan_skips_plan_evaluator_for_non_goals_prompts(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(
+            refiner=RoleAgentConfig(cli=Path("echo")),
+            planner=RoleAgentConfig(cli=Path("echo")),
+            evaluator=RoleAgentConfig(cli=Path("echo")),
+        )
+        runner = _make_runner(tmp_path, agents=agents)
+
+        with (
+            patch.object(runner, "_run_refiner", return_value="requirements") as mock_refiner,
+            patch.object(runner, "_run_planner", return_value="plan") as mock_planner,
+            patch.object(runner, "_run_plan_evaluator") as mock_eval,
+        ):
+            runner.run_refine_and_plan(
+                "goal",
+                stem="g",
+                date_str="20260412",
+                enable_plan_evaluator=False,
+            )
+
+        mock_refiner.assert_called_once()
+        mock_planner.assert_called_once()
+        mock_eval.assert_not_called()
 
     def test_run_refine_and_plan_raises_after_max_rework(self, tmp_path: Path) -> None:
         agents = AgentsConfig(
@@ -208,7 +239,12 @@ class TestMandatoryPreludeStages:
             ),
         ):
             with pytest.raises(RuntimeError, match="Mandatory plan evaluator"):
-                runner.run_refine_and_plan("goal", stem="g", date_str="20260412")
+                runner.run_refine_and_plan(
+                    "goal",
+                    stem="g",
+                    date_str="20260412",
+                    enable_plan_evaluator=True,
+                )
 
     def test_run_refine_and_plan_retries_up_to_stage_iteration_limit(
         self, tmp_path: Path
@@ -230,7 +266,12 @@ class TestMandatoryPreludeStages:
             ) as mock_eval,
         ):
             with pytest.raises(RuntimeError, match="Mandatory plan evaluator"):
-                runner.run_refine_and_plan("goal", stem="g", date_str="20260412")
+                runner.run_refine_and_plan(
+                    "goal",
+                    stem="g",
+                    date_str="20260412",
+                    enable_plan_evaluator=True,
+                )
 
         assert mock_planner.call_count == MAX_STAGE_ITERATIONS
         assert mock_eval.call_count == MAX_STAGE_ITERATIONS
@@ -380,6 +421,57 @@ class TestPipelineRun:
         assert mock_tester.call_count == 1
         assert mock_reviewer.call_count == 1
         assert mock_committer.call_count == 1
+
+    def test_non_goal_pipeline_run_disables_plan_evaluator(self, tmp_path: Path) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(cli=Path("claude")),
+            tester=RoleAgentConfig(cli=Path("claude")),
+            reviewer=RoleAgentConfig(cli=Path("claude")),
+            committer=RoleAgentConfig(cli=Path("claude")),
+        )
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+
+        with (
+            patch.object(runner, "run_refine_and_plan") as mock_prelude,
+            patch.object(runner, "_run_developer", return_value=_make_loop_result("completed")),
+            patch.object(runner, "_run_tester", return_value=("pass", "OVERALL: PASS")),
+            patch.object(runner, "_run_reviewer", return_value=("approved", "VERDICT: APPROVED")),
+            patch.object(runner, "_run_committer"),
+        ):
+            runner.run("goal", stem="s", date_str="20260412")
+
+        assert mock_prelude.call_args.kwargs["enable_plan_evaluator"] is False
+
+    def test_goal_pipeline_run_enables_plan_evaluator(self, tmp_path: Path) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(cli=Path("claude")),
+            tester=RoleAgentConfig(cli=Path("claude")),
+            reviewer=RoleAgentConfig(cli=Path("claude")),
+            committer=RoleAgentConfig(cli=Path("claude")),
+        )
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+
+        goal_file = tmp_path / "goal.md"
+        goal_file.write_text("goal\n", encoding="utf-8")
+
+        with (
+            patch.object(runner, "run_refine_and_plan") as mock_prelude,
+            patch.object(runner, "_run_developer", return_value=_make_loop_result("completed")),
+            patch.object(runner, "_run_tester", return_value=("pass", "OVERALL: PASS")),
+            patch.object(runner, "_run_reviewer", return_value=("approved", "VERDICT: APPROVED")),
+            patch.object(runner, "_run_committer"),
+            patch.object(runner, "_run_evaluator"),
+        ):
+            runner.run(
+                "goal",
+                stem="s",
+                date_str="20260412",
+                goal_file_path=goal_file,
+            )
+
+        assert mock_prelude.call_args.kwargs["enable_plan_evaluator"] is True
 
     def test_tester_fail_triggers_developer_reentry(self, tmp_path: Path) -> None:
         agents = AgentsConfig(
