@@ -320,6 +320,376 @@ class SupervisorTests(unittest.TestCase):
             ]
             path.write_text("\n".join(rewritten_lines) + "\n", encoding="utf-8")
 
+    def _write_workflows_md(self, repository: StateRepository, *, all_complete: bool) -> None:
+        """Write a WORKFLOWS.md with phases either all done or with one pending."""
+        dev_dir = repository.state_file("WORKFLOWS.md").parent
+        dev_dir.mkdir(parents=True, exist_ok=True)
+        if all_complete:
+            content = "\n".join([
+                "# Workflows",
+                "",
+                "## Task: test task",
+                "",
+                "[O] Phase 0. Refine — refining-agent",
+                "[O] Phase 1. Plan — planning-agent",
+                "[O] Phase 2. Develop — developing-agent",
+                "[O] Phase 3. Commit — committing-agent",
+                "",
+            ])
+        else:
+            content = "\n".join([
+                "# Workflows",
+                "",
+                "## Task: test task",
+                "",
+                "[O] Phase 0. Refine — refining-agent",
+                "[O] Phase 1. Plan — planning-agent",
+                "[ ] Phase 2. Develop — developing-agent",
+                "[ ] Phase 3. Commit — committing-agent",
+                "",
+            ])
+        repository.state_file("WORKFLOWS.md").write_text(content, encoding="utf-8")
+
+
+class SupervisorWorkflowsCompletionSmokeTests(unittest.TestCase):
+    """Smoke tests for the WORKFLOWS.md-based completion signal added to the supervisor."""
+
+    def _setup(self, root: Path, *, prompt_text: str = "Implement X.", stdout_text: str = "Done.\n") -> tuple:
+        """Bootstrap a minimal repo, seed a latest run, and return (config, repository)."""
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
+        templates = root / "templates" / "dev"
+        templates.mkdir(parents=True, exist_ok=True)
+        (templates / "dashboard.md.tmpl").write_text("# DASHBOARD\n${goal}\n", encoding="utf-8")
+        (templates / "plan.md.tmpl").write_text("# PLAN\n${task_items}\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Dormammu Tests"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "tests@dormammu.test"], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "seed"], check=True)
+
+        config = AppConfig.load(repo_root=root)
+        repository = StateRepository(config)
+        repository.ensure_bootstrap_state(
+            active_roadmap_phase_ids=["phase_4"],
+            prompt_text=prompt_text,
+        )
+
+        logs_dir = root / ".dev" / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime, timedelta, timezone
+        started_at = datetime.now(timezone.utc) + timedelta(seconds=2)
+        completed_at = started_at + timedelta(seconds=1)
+        prompt_path = logs_dir / "seed.prompt.txt"
+        stdout_path = logs_dir / "seed.stdout.log"
+        stderr_path = logs_dir / "seed.stderr.log"
+        metadata_path = logs_dir / "seed.meta.json"
+        prompt_path.write_text(prompt_text + "\n", encoding="utf-8")
+        stdout_path.write_text(stdout_text, encoding="utf-8")
+        stderr_path.write_text("", encoding="utf-8")
+        payload = {
+            "run_id": "smoke-run",
+            "cli_path": str(root / "fake-agent"),
+            "workdir": str(root),
+            "prompt_mode": "file",
+            "command": [str(root / "fake-agent")],
+            "exit_code": 0,
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "artifacts": {
+                "prompt": str(prompt_path),
+                "stdout": str(stdout_path),
+                "stderr": str(stderr_path),
+                "metadata": str(metadata_path),
+            },
+            "capabilities": {},
+        }
+        metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        session_state = repository.read_session_state()
+        workflow_state = repository.read_workflow_state()
+        session_state["latest_run"] = payload
+        workflow_state["latest_run"] = payload
+        repository.write_session_state(session_state)
+        repository.write_workflow_state(workflow_state)
+        return config, repository
+
+    def _write_workflows(self, repository: StateRepository, *, all_complete: bool) -> None:
+        dev_dir = repository.state_file("WORKFLOWS.md").parent
+        dev_dir.mkdir(parents=True, exist_ok=True)
+        if all_complete:
+            content = (
+                "# Workflows\n\n## Task: smoke\n\n"
+                "[O] Phase 0. Refine\n"
+                "[O] Phase 1. Plan\n"
+                "[O] Phase 2. Develop\n"
+                "[O] Phase 3. Commit\n"
+            )
+        else:
+            content = (
+                "# Workflows\n\n## Task: smoke\n\n"
+                "[O] Phase 0. Refine\n"
+                "[O] Phase 1. Plan\n"
+                "[ ] Phase 2. Develop\n"
+                "[ ] Phase 3. Commit\n"
+            )
+        repository.state_file("WORKFLOWS.md").write_text(content, encoding="utf-8")
+
+    def _mark_plan_complete(self, repository: StateRepository) -> None:
+        for name in ("PLAN.md", "TASKS.md"):
+            path = repository.state_file(name)
+            if path.exists():
+                rewritten = [
+                    line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                    for line in path.read_text(encoding="utf-8").splitlines()
+                ]
+                path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    # ── smoke test 1 ──────────────────────────────────────────────────────────
+    def test_approved_when_workflows_all_complete_no_question(self) -> None:
+        """WORKFLOWS.md all [O] + clean run + no questions → approved.
+
+        This is the primary regression guard for the infinite-loop fix:
+        an action-oriented prompt whose agent work only touches .dev/ files
+        should not block completion once all workflow phases are checked off.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, repository = self._setup(
+                root,
+                prompt_text="구현을 정비해주세요.",
+                stdout_text="All phases complete. No further action needed.\n",
+            )
+            self._mark_plan_complete(repository)
+            self._write_workflows(repository, all_complete=True)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(
+                report.verdict,
+                "approved",
+                f"Expected approved but got {report.verdict!r}. "
+                f"Failing checks: {[c.name for c in report.checks if not c.ok]}",
+            )
+            self.assertTrue(
+                any(check.name == "workflows-completion" and check.ok for check in report.checks),
+                "workflows-completion check should be present and OK",
+            )
+
+    # ── smoke test 2 ──────────────────────────────────────────────────────────
+    def test_rework_required_when_workflows_complete_but_agent_asked_question(self) -> None:
+        """WORKFLOWS.md all [O] but agent output ends with a clarifying question → rework.
+
+        Even when the checklist looks done, an unresolved question signals that
+        the agent stalled and may have marked phases prematurely.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, repository = self._setup(
+                root,
+                prompt_text="구현을 정비해주세요.",
+                stdout_text="어떻게 진행할까요?\n",
+            )
+            self._mark_plan_complete(repository)
+            self._write_workflows(repository, all_complete=True)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(
+                report.verdict,
+                "rework_required",
+                "Agent ended with a question — should require rework even if workflows look complete.",
+            )
+
+    # ── smoke test 3 ──────────────────────────────────────────────────────────
+    def test_rework_required_when_workflows_still_pending(self) -> None:
+        """WORKFLOWS.md has pending [ ] phases → rework_required."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, repository = self._setup(
+                root,
+                prompt_text="Implement X.",
+                stdout_text="Started the implementation.\n",
+            )
+            self._write_workflows(repository, all_complete=False)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "rework_required")
+            self.assertTrue(
+                any(check.name == "workflows-completion" and not check.ok for check in report.checks),
+                "workflows-completion check should be present and FAIL",
+            )
+
+    # ── smoke test 4 ──────────────────────────────────────────────────────────
+    def test_approved_when_workflows_complete_required_paths_satisfied(self) -> None:
+        """WORKFLOWS.md all [O] + required output file exists → approved."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, repository = self._setup(
+                root,
+                prompt_text="Create done.txt.",
+                stdout_text="Created done.txt.\n",
+            )
+            (root / "done.txt").write_text("done\n", encoding="utf-8")
+            self._mark_plan_complete(repository)
+            self._write_workflows(repository, all_complete=True)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(report.verdict, "approved")
+
+    # ── smoke test 5 ──────────────────────────────────────────────────────────
+    def test_rework_required_when_workflows_complete_but_required_path_missing(self) -> None:
+        """WORKFLOWS.md all [O] but a required output path is still missing → rework."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, repository = self._setup(
+                root,
+                prompt_text="Create done.txt.",
+                stdout_text="Created done.txt.\n",
+            )
+            # done.txt intentionally NOT created
+            self._mark_plan_complete(repository)
+            self._write_workflows(repository, all_complete=True)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(report.verdict, "rework_required")
+            self.assertTrue(
+                any(check.name == "required-paths" and not check.ok for check in report.checks),
+            )
+
+
+class PipelineRunnerNoStageDirSmokeTests(unittest.TestCase):
+    """Smoke tests verifying that refiner and planner do not create numbered stage dirs."""
+
+    def _seed_git_repo(self, root: Path) -> None:
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+        rules_dir = root / "agents" / "rules"
+        rules_dir.mkdir(parents=True, exist_ok=True)
+        for name in ("refiner-runtime.md", "planner-runtime.md"):
+            (rules_dir / name).write_text(f"# {name}\nDo the task.\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "t@t.test"], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "seed"], check=True)
+
+    # ── smoke test 6 ──────────────────────────────────────────────────────────
+    def test_call_once_save_doc_false_creates_no_directory(self) -> None:
+        """_call_once with save_doc=False must not create any numbered stage directory."""
+        import sys as _sys
+        BACKEND = Path(__file__).resolve().parents[1] / "backend"
+        if str(BACKEND) not in _sys.path:
+            _sys.path.insert(0, str(BACKEND))
+
+        from unittest.mock import MagicMock, patch
+        from dormammu.daemon.pipeline_runner import PipelineRunner
+        from dormammu.config import AppConfig
+        from dormammu.agent.role_config import AgentsConfig
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_git_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            agents = MagicMock(spec=AgentsConfig)
+
+            runner = PipelineRunner(config, agents)
+
+            fake_cli = root / "fake-agent"
+            fake_cli.write_text("#!/bin/sh\necho 'ok'\n", encoding="utf-8")
+            fake_cli.chmod(0o755)
+
+            with patch("subprocess.run") as mock_run:
+                mock_result = MagicMock()
+                mock_result.stdout = "done\n"
+                mock_result.stderr = ""
+                mock_run.return_value = mock_result
+
+                runner._call_once(
+                    role="refiner",
+                    cli=fake_cli,
+                    model=None,
+                    prompt="Refine this.",
+                    stem="test",
+                    date_str="20260415",
+                    slot="00",
+                    save_doc=False,
+                )
+
+            dev_dir = root / ".dev"
+            refiner_dir = dev_dir / "00-refiner"
+            self.assertFalse(
+                refiner_dir.exists(),
+                f".dev/00-refiner/ must NOT be created when save_doc=False, but found {refiner_dir}",
+            )
+
+    # ── smoke test 7 ──────────────────────────────────────────────────────────
+    def test_call_once_save_doc_true_creates_directory(self) -> None:
+        """_call_once with save_doc=True (default) still creates the numbered dir (regression guard)."""
+        import sys as _sys
+        BACKEND = Path(__file__).resolve().parents[1] / "backend"
+        if str(BACKEND) not in _sys.path:
+            _sys.path.insert(0, str(BACKEND))
+
+        from unittest.mock import MagicMock, patch
+        from dormammu.daemon.pipeline_runner import PipelineRunner
+        from dormammu.config import AppConfig
+        from dormammu.agent.role_config import AgentsConfig
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_git_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            agents = MagicMock(spec=AgentsConfig)
+
+            runner = PipelineRunner(config, agents)
+
+            fake_cli = root / "fake-agent"
+            fake_cli.write_text("#!/bin/sh\necho 'ok'\n", encoding="utf-8")
+            fake_cli.chmod(0o755)
+
+            with patch("subprocess.run") as mock_run:
+                mock_result = MagicMock()
+                mock_result.stdout = "done\n"
+                mock_result.stderr = ""
+                mock_run.return_value = mock_result
+
+                runner._call_once(
+                    role="tester",
+                    cli=fake_cli,
+                    model=None,
+                    prompt="Run tests.",
+                    stem="test",
+                    date_str="20260415",
+                    slot="04",
+                    save_doc=True,
+                )
+
+            tester_dir = root / ".dev" / "04-tester"
+            self.assertTrue(
+                tester_dir.exists(),
+                ".dev/04-tester/ should be created when save_doc=True",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

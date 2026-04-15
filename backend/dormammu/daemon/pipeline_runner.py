@@ -295,6 +295,7 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
             slot="00",
+            save_doc=False,
         )
         self._log("pipeline: refiner stage completed")
         return output
@@ -343,6 +344,7 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
             slot="01",
+            save_doc=False,
         )
         self._log("pipeline: planner stage completed")
         return output
@@ -604,8 +606,15 @@ class PipelineRunner:
         date_str: str,
         slot: str,
         doc_path: Path | None = None,
+        save_doc: bool = True,
     ) -> str:
-        """Run an agent CLI once and return its stdout."""
+        """Run an agent CLI once and return its stdout.
+
+        When ``save_doc=False`` the agent output is not persisted to a stage
+        document file.  Use this for roles (refiner, planner) whose important
+        outputs are the files they write directly (REQUIREMENTS.md, PLAN.md,
+        etc.) rather than a numbered stage report directory.
+        """
         from dormammu.agent.presets import preset_for_executable_name
 
         executable_name = cli.name
@@ -653,19 +662,20 @@ class PipelineRunner:
             )
             output = select_agent_output(result.stdout, result.stderr)
 
-            # Persist the agent output as a role document.
-            target_path = doc_path
-            if target_path is None:
-                doc_dir = self._app_config.base_dev_dir / f"{slot}-{role}"
-                doc_dir.mkdir(parents=True, exist_ok=True)
-                target_path = doc_dir / f"{date_str}_{stem}.md"
-            else:
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(
-                f"# {role.capitalize()} — {stem}\n\n{output}",
-                encoding="utf-8",
-            )
-            self._log(f"pipeline: {role} document → {target_path}")
+            if save_doc:
+                # Persist the agent output as a role document.
+                target_path = doc_path
+                if target_path is None:
+                    doc_dir = self._app_config.base_dev_dir / f"{slot}-{role}"
+                    doc_dir.mkdir(parents=True, exist_ok=True)
+                    target_path = doc_dir / f"{date_str}_{stem}.md"
+                else:
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(
+                    f"# {role.capitalize()} — {stem}\n\n{output}",
+                    encoding="utf-8",
+                )
+                self._log(f"pipeline: {role} document → {target_path}")
             return output
         finally:
             if tmp_path is not None and tmp_path.exists():
@@ -677,17 +687,13 @@ class PipelineRunner:
 
     def _refiner_prompt(self, goal_text: str, *, stem: str, date_str: str) -> str:
         rule_text = self._load_rule("refiner-runtime.md")
-        report_path = self._stage_doc_path("00", "refiner", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
             sections=(
                 ("Goal", goal_text),
                 (
                     "Expected Outputs",
-                    (
-                        "- `.dev/REQUIREMENTS.md`\n"
-                        f"- Stage report: `{report_path}`"
-                    ),
+                    "- `.dev/REQUIREMENTS.md`",
                 ),
             ),
         )
@@ -702,7 +708,6 @@ class PipelineRunner:
         checkpoint_feedback_text: str | None = None,
     ) -> str:
         rule_text = self._load_rule("planner-runtime.md")
-        report_path = self._stage_doc_path("01", "planner", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
             sections=(
@@ -714,8 +719,7 @@ class PipelineRunner:
                     (
                         "- `.dev/WORKFLOWS.md`\n"
                         "- `.dev/PLAN.md`\n"
-                        "- `.dev/DASHBOARD.md`\n"
-                        f"- Stage report: `{report_path}`"
+                        "- `.dev/DASHBOARD.md`"
                     ),
                 ),
             ),

@@ -302,6 +302,16 @@ class Supervisor:
         self._worktree_diff_cache: tuple[list[str], bool, list[str]] | None = None
         self._worktree_diff_cache_time: float = 0.0
 
+    @staticmethod
+    def _check_workflows_completion(workflows_path: Path) -> bool:
+        """Return True when WORKFLOWS.md exists and has no pending [ ] phase items."""
+        if not workflows_path.exists():
+            return False
+        text = workflows_path.read_text(encoding="utf-8")
+        pending = re.findall(r"^\[ \]", text, re.MULTILINE)
+        done = re.findall(r"^\[O\]", text, re.MULTILINE)
+        return len(pending) == 0 and len(done) > 0
+
     def validate(self, request: SupervisorRequest) -> SupervisorReport:
         self.repository.sync_operator_state()
         session_state = self.repository.read_session_state()
@@ -311,6 +321,18 @@ class Supervisor:
         state_root = Path(str(session_state.get("bootstrap", {}).get("state_root", ".dev")))
         plan_path = self.config.repo_root / state_root / "PLAN.md"
         tasks_path = self.config.repo_root / state_root / "TASKS.md"
+        # WORKFLOWS.md is an operator-facing process map mirrored at the repo's
+        # .dev/ root.  Prefer the root mirror so that the check reflects what the
+        # operator sees and edits, falling back to the session-scoped copy when
+        # the mirror is absent (e.g. fresh session that hasn't synced yet).
+        workflows_root_mirror = self.config.base_dev_dir / "WORKFLOWS.md"
+        workflows_session_path = self.config.repo_root / state_root / "WORKFLOWS.md"
+        workflows_path = (
+            workflows_root_mirror
+            if workflows_root_mirror.exists()
+            else workflows_session_path
+        )
+        workflows_all_complete = self._check_workflows_completion(workflows_path)
         dev_paths = [
             self.config.repo_root / state_root / "DASHBOARD.md",
             plan_path,
@@ -558,8 +580,31 @@ class Supervisor:
             )
         )
 
+        # WORKFLOWS.md completion check — an independent signal derived directly
+        # from the operator-facing process map.  When all phases are marked [O]
+        # this acts as a strong completion signal even if task-sync state has
+        # not yet been flushed into session.json.
+        checks.append(
+            SupervisorCheck(
+                name="workflows-completion",
+                ok=workflows_all_complete,
+                summary=(
+                    "WORKFLOWS.md phases are all marked complete."
+                    if workflows_all_complete
+                    else "WORKFLOWS.md has pending [ ] phase items or is absent."
+                ),
+                details=(
+                    [str(workflows_path)]
+                    if not workflows_all_complete
+                    else []
+                ),
+            )
+        )
+
         final_verification_details: list[str] = []
-        if not tasks_complete_ok:
+        if not tasks_complete_ok and not workflows_all_complete:
+            # Accept WORKFLOWS.md as an alternative completion signal when the
+            # task-sync counters have not yet been updated.
             final_verification_details.append("Prompt-derived PLAN work is not complete yet.")
         if not latest_run_ok:
             final_verification_details.append("Latest run metadata is missing or mismatched.")
@@ -567,7 +612,11 @@ class Supervisor:
             final_verification_details.append("Latest run artifacts or exit status do not prove a clean run.")
         if missing_required_paths:
             final_verification_details.append("Required output paths are still missing.")
-        if not prompt_alignment_ok:
+        # Only require prompt-outcome-alignment when the plan/workflow is not yet
+        # complete.  Once all checklist items are done, trust the checklist over
+        # this heuristic to prevent false rework loops caused by .dev/-only changes.
+        plan_or_workflows_done = tasks_complete_ok or workflows_all_complete
+        if not prompt_alignment_ok and not plan_or_workflows_done:
             final_verification_details.append("Prompt outcome did not match the expected completion shape.")
         final_verification_ok = not final_verification_details
         checks.append(
@@ -592,6 +641,9 @@ class Supervisor:
             latest_run_present=latest_run_present,
             artifact_ok=artifact_ok,
             git_ok=git_ok,
+            workflows_all_complete=workflows_all_complete,
+            tasks_complete_ok=tasks_complete_ok,
+            has_unresolved_questions=bool(question_lines),
         )
         recommended_next_phase = self._recommend_next_phase(checks=checks, verdict=verdict)
         return SupervisorReport(
@@ -669,6 +721,9 @@ class Supervisor:
         latest_run_present: bool,
         artifact_ok: bool,
         git_ok: bool,
+        workflows_all_complete: bool = False,
+        tasks_complete_ok: bool = False,
+        has_unresolved_questions: bool = False,
     ) -> tuple[str, str, str]:
         checks_by_name = {check.name: check for check in checks}
         if (
@@ -690,6 +745,30 @@ class Supervisor:
                 "manual_review_needed",
                 "Git diff evidence could not be collected deterministically.",
             )
+
+        # Early approval path: when the operator-facing process map (WORKFLOWS.md)
+        # shows every phase complete, OR when the task-sync queue is fully done,
+        # AND the latest run exited cleanly with all required outputs present,
+        # AND the agent did not end with an unresolved question.
+        #
+        # Bypassing prompt-outcome-alignment here prevents false rework loops when
+        # all of the agent's work in the current iteration is confined to .dev/
+        # state files (no non-.dev/ file changes → prompt-alignment would fail
+        # even though everything is genuinely done).
+        #
+        # We keep the unresolved-questions guard: if the agent asked a clarifying
+        # question instead of completing work, we must NOT approve even when the
+        # plan appears complete, because the plan may have been marked prematurely.
+        plan_or_workflows_done = workflows_all_complete or tasks_complete_ok
+        artifacts_clean = checks_by_name["latest-run-artifacts"].ok
+        paths_ok = checks_by_name["required-paths"].ok
+        if plan_or_workflows_done and artifacts_clean and paths_ok and not has_unresolved_questions:
+            return (
+                "approved",
+                "approved",
+                "All required work is complete — WORKFLOWS.md/PLAN.md fully checked off and artifacts are clean.",
+            )
+
         failing_checks = [check for check in checks if not check.ok]
         if failing_checks:
             return (
@@ -718,6 +797,7 @@ class Supervisor:
             "bootstrap-files": "plan",
             "task-sync": "plan",
             "plan-completion": "develop",
+            "workflows-completion": "develop",
             "phase-pointer": "plan",
             "roadmap-focus": "plan",
             "latest-run-state": "test_and_review",

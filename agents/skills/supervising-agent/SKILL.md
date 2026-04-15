@@ -45,7 +45,8 @@ Re-enter earlier phases whenever later work exposes missing design, failed valid
 6. Do not advance from test authoring to test/review on authored tests alone; require executed evidence.
 7. If final verification fails, identify the cause and route back to development when implementation changes are needed.
 8. On interruption, preserve the last safe checkpoint and resume from the earliest uncertain step.
-9. Update `.dev/DASHBOARD.md` with the real current phase, verdict, next action, escalation status, and other live progress context that matters for resuming work.
+9. After each stage completes successfully, mark the corresponding phase in `.dev/PLAN.md` as `[O]` and update `.dev/WORKFLOWS.md` to reflect the same. This keeps both files in sync so the runtime supervisor can detect completion accurately.
+10. Update `.dev/DASHBOARD.md` with the real current phase, verdict, next action, escalation status, and other live progress context that matters for resuming work.
 
 ## Supervisor Rules
 

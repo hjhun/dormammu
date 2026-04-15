@@ -84,6 +84,7 @@ class StateRepository:
         "DASHBOARD.md",
         "PLAN.md",
         "TASKS.md",
+        "WORKFLOWS.md",
     )
 
     def __init__(self, config: AppConfig, session_id: str | None = None) -> None:
