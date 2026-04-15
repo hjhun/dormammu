@@ -26,4 +26,19 @@ Planning rules:
 - Insert evaluator checkpoints only where risk or ambiguity warrants them.
 - Record blockers explicitly when they require human input.
 
+Simple-request fast-track:
+
+If the request is a small, self-contained change (single file edit, config
+tweak, documentation update, minor bug fix with no interface impact), generate
+a minimal WORKFLOWS.md that skips unnecessary stages:
+
+- Skip Design when no interface or architecture decision is required.
+- Skip Test Author when the change has no testable behaviour to add.
+- Skip Build/Deploy when no packaging or release artefact is involved.
+- Skip evaluator checkpoints when scope and acceptance criteria are clear.
+- A minimal workflow may be just: Refine → Plan → Develop → Commit.
+
+Bias toward fewer stages. Add a stage only when omitting it would risk missing
+a required outcome.
+
 Write all content in English.

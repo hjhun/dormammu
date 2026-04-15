@@ -630,20 +630,19 @@ class PipelineRunnerNoStageDirSmokeTests(unittest.TestCase):
                     prompt="Refine this.",
                     stem="test",
                     date_str="20260415",
-                    slot="00",
                     save_doc=False,
                 )
 
             dev_dir = root / ".dev"
-            refiner_dir = dev_dir / "00-refiner"
+            logs_dir = dev_dir / "logs"
             self.assertFalse(
-                refiner_dir.exists(),
-                f".dev/00-refiner/ must NOT be created when save_doc=False, but found {refiner_dir}",
+                logs_dir.exists(),
+                f".dev/logs/ must NOT be created when save_doc=False, but found {logs_dir}",
             )
 
     # ── smoke test 7 ──────────────────────────────────────────────────────────
     def test_call_once_save_doc_true_creates_directory(self) -> None:
-        """_call_once with save_doc=True (default) still creates the numbered dir (regression guard)."""
+        """_call_once with save_doc=True (default) creates .dev/logs/ (regression guard)."""
         import sys as _sys
         BACKEND = Path(__file__).resolve().parents[1] / "backend"
         if str(BACKEND) not in _sys.path:
@@ -680,14 +679,18 @@ class PipelineRunnerNoStageDirSmokeTests(unittest.TestCase):
                     prompt="Run tests.",
                     stem="test",
                     date_str="20260415",
-                    slot="04",
                     save_doc=True,
                 )
 
-            tester_dir = root / ".dev" / "04-tester"
+            logs_dir = root / ".dev" / "logs"
             self.assertTrue(
-                tester_dir.exists(),
-                ".dev/04-tester/ should be created when save_doc=True",
+                logs_dir.exists(),
+                ".dev/logs/ should be created when save_doc=True",
+            )
+            doc = logs_dir / "20260415_tester_test.md"
+            self.assertTrue(
+                doc.exists(),
+                f"Expected document {doc} to exist in .dev/logs/",
             )
 
 

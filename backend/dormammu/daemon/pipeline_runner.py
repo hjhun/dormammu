@@ -294,7 +294,6 @@ class PipelineRunner:
             prompt=prompt,
             stem=stem,
             date_str=date_str,
-            slot="00",
             save_doc=False,
         )
         self._log("pipeline: refiner stage completed")
@@ -343,7 +342,6 @@ class PipelineRunner:
             prompt=prompt,
             stem=stem,
             date_str=date_str,
-            slot="01",
             save_doc=False,
         )
         self._log("pipeline: planner stage completed")
@@ -376,7 +374,7 @@ class PipelineRunner:
         )
         report_path = (
             self._app_config.base_dev_dir
-            / "07-evaluator"
+            / "logs"
             / f"check_plan_{date_str}_{stem}.md"
         )
         output = self._call_once(
@@ -386,7 +384,6 @@ class PipelineRunner:
             prompt=prompt,
             stem=stem,
             date_str=date_str,
-            slot="07",
             doc_path=report_path,
         )
 
@@ -458,7 +455,6 @@ class PipelineRunner:
             prompt=prompt,
             stem=stem,
             date_str=date_str,
-            slot="04",
         )
 
         if _TESTER_FAIL_RE.search(output):
@@ -494,7 +490,6 @@ class PipelineRunner:
             prompt=prompt,
             stem=stem,
             date_str=date_str,
-            slot="05",
         )
 
         if _REVIEWER_reject_RE.search(output):
@@ -522,7 +517,6 @@ class PipelineRunner:
             prompt=prompt,
             stem=stem,
             date_str=date_str,
-            slot="06",
         )
 
     # ------------------------------------------------------------------
@@ -604,7 +598,6 @@ class PipelineRunner:
         prompt: str,
         stem: str,
         date_str: str,
-        slot: str,
         doc_path: Path | None = None,
         save_doc: bool = True,
     ) -> str:
@@ -613,7 +606,7 @@ class PipelineRunner:
         When ``save_doc=False`` the agent output is not persisted to a stage
         document file.  Use this for roles (refiner, planner) whose important
         outputs are the files they write directly (REQUIREMENTS.md, PLAN.md,
-        etc.) rather than a numbered stage report directory.
+        etc.) rather than a stage report file.
         """
         from dormammu.agent.presets import preset_for_executable_name
 
@@ -663,12 +656,12 @@ class PipelineRunner:
             output = select_agent_output(result.stdout, result.stderr)
 
             if save_doc:
-                # Persist the agent output as a role document.
+                # Persist the agent output as a role document under .dev/logs/.
                 target_path = doc_path
                 if target_path is None:
-                    doc_dir = self._app_config.base_dev_dir / f"{slot}-{role}"
+                    doc_dir = self._app_config.base_dev_dir / "logs"
                     doc_dir.mkdir(parents=True, exist_ok=True)
-                    target_path = doc_dir / f"{date_str}_{stem}.md"
+                    target_path = doc_dir / f"{date_str}_{role}_{stem}.md"
                 else:
                     target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_text(
@@ -736,7 +729,7 @@ class PipelineRunner:
         rule_text = self._load_rule("evaluator-check-plan.md")
         report_path = (
             self._app_config.base_dev_dir
-            / "07-evaluator"
+            / "logs"
             / f"check_plan_{date_str}_{stem}.md"
         )
         return build_rule_prompt(
@@ -750,7 +743,7 @@ class PipelineRunner:
 
     def _tester_prompt(self, goal_text: str, *, stem: str, date_str: str) -> str:
         rule_text = self._load_rule("tester-runtime.md")
-        report_path = self._stage_doc_path("04", "tester", stem=stem, date_str=date_str)
+        report_path = self._stage_doc_path("tester", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
             sections=(
@@ -768,7 +761,7 @@ class PipelineRunner:
         date_str: str,
     ) -> str:
         rule_text = self._load_rule("reviewer-runtime.md")
-        report_path = self._stage_doc_path("05", "reviewer", stem=stem, date_str=date_str)
+        report_path = self._stage_doc_path("reviewer", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
             sections=(
@@ -780,7 +773,7 @@ class PipelineRunner:
 
     def _committer_prompt(self, stem: str, *, date_str: str) -> str:
         rule_text = self._load_rule("committer-runtime.md")
-        report_path = self._stage_doc_path("06", "committer", stem=stem, date_str=date_str)
+        report_path = self._stage_doc_path("committer", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
             sections=(
@@ -802,7 +795,7 @@ class PipelineRunner:
 
     def _read_architect_doc(self, stem: str, date_str: str) -> str | None:
         """Return architect document text if it exists, else None."""
-        doc = self._app_config.base_dev_dir / "02-architect" / f"{date_str}_{stem}.md"
+        doc = self._app_config.base_dev_dir / "logs" / f"{date_str}_architect_{stem}.md"
         if doc.exists():
             return doc.read_text(encoding="utf-8")
         return None
@@ -810,8 +803,8 @@ class PipelineRunner:
     def _load_rule(self, rule_name: str) -> str:
         return load_rule_text(self._app_config.agents_dir, rule_name)
 
-    def _stage_doc_path(self, slot: str, role: str, *, stem: str, date_str: str) -> Path:
-        return self._app_config.base_dev_dir / f"{slot}-{role}" / f"{date_str}_{stem}.md"
+    def _stage_doc_path(self, role: str, *, stem: str, date_str: str) -> Path:
+        return self._app_config.base_dev_dir / "logs" / f"{date_str}_{role}_{stem}.md"
 
     @staticmethod
     def _append_feedback(

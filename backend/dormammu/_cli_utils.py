@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 from pathlib import Path
+import shutil
 import sys
 from typing import Iterator, Sequence, TextIO
 
@@ -180,6 +181,17 @@ def _ensure_resume_session_scope(
     return config, repository
 
 
+def _clear_dev_dir(base_dev_dir: Path) -> None:
+    """Remove all contents under base_dev_dir for a fresh run."""
+    if not base_dev_dir.exists():
+        return
+    for item in base_dev_dir.iterdir():
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+
+
 def _prepare_run_session_scope(
     config: AppConfig,
     *,
@@ -189,6 +201,11 @@ def _prepare_run_session_scope(
     roadmap_phases: Sequence[str] | None,
     default_phase: str,
 ) -> tuple[AppConfig, StateRepository]:
+    # Clear all .dev/ state for a fresh run (skip when a specific session_id
+    # is requested, which signals intentional continuation).
+    if requested_session_id is None:
+        _clear_dev_dir(config.base_dev_dir)
+
     root_repository = StateRepository(config)
     active_roadmap_phases = list(roadmap_phases or [default_phase])
 

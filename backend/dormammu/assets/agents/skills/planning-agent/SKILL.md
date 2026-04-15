@@ -106,6 +106,21 @@ mandatory final evaluator at runtime after the commit stage.
 - Keep `PLAN.md` focused on prompt-derived development work.
 - Keep `WORKFLOWS.md` focused on the process sequence, not task content.
 
+## Simple Request Fast-Track
+
+For small, self-contained changes (single-file edits, config tweaks,
+documentation updates, minor bug fixes with no interface impact), generate a
+**minimal** `WORKFLOWS.md`:
+
+- Omit **Design** when no interface or architecture decision is required.
+- Omit **Test Author** when the change has no new testable behaviour.
+- Omit **Build/Deploy** when no packaging or release artefact is needed.
+- Omit **evaluator checkpoints** when scope and acceptance criteria are clear.
+- The shortest valid workflow is: `Refine → Plan → Develop → Commit`.
+
+Bias toward fewer stages. Add a stage only when omitting it risks a missed
+outcome. Do not pad the workflow to look thorough.
+
 ## Expected Outputs
 
 - A generated or refreshed `.dev/WORKFLOWS.md`

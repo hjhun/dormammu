@@ -360,15 +360,15 @@ class TestReviewerStage:
         runner = PipelineRunner(app, agents, progress_stream=stream)
 
         # Create a fake architect doc
-        arch_dir = tmp_path / ".dev" / "02-architect"
-        arch_dir.mkdir(parents=True)
-        (arch_dir / "20260412_my-feat.md").write_text(
+        logs_dir = tmp_path / ".dev" / "logs"
+        logs_dir.mkdir(parents=True)
+        (logs_dir / "20260412_architect_my-feat.md").write_text(
             "# Architect Design", encoding="utf-8"
         )
 
         captured: list[str] = []
 
-        def fake_call_once(*, role, cli, model, prompt, stem, date_str, slot):
+        def fake_call_once(*, role, cli, model, prompt, stem, date_str, doc_path=None, save_doc=True):
             captured.append(prompt)
             return "VERDICT: APPROVED"
 
@@ -673,10 +673,9 @@ class TestDocumentWriting:
                 prompt="test prompt",
                 stem="my-feature",
                 date_str="20260412",
-                slot="04",
             )
 
-        doc = tmp_path / ".dev" / "04-tester" / "20260412_my-feature.md"
+        doc = tmp_path / ".dev" / "logs" / "20260412_tester_my-feature.md"
         assert doc.exists()
         content = doc.read_text(encoding="utf-8")
         assert "Tester" in content
@@ -696,7 +695,6 @@ class TestDocumentWriting:
                 prompt="test prompt",
                 stem="my-feature",
                 date_str="20260412",
-                slot="04",
             )
 
         assert mock_run.call_args[0][0][-1] == prepend_cli_identity(
@@ -722,11 +720,10 @@ class TestDocumentWriting:
                 prompt="test prompt",
                 stem="stderr-case",
                 date_str="20260412",
-                slot="00",
             )
 
         assert output == "stage report from stderr\n"
-        doc = tmp_path / ".dev" / "00-refiner" / "20260412_stderr-case.md"
+        doc = tmp_path / ".dev" / "logs" / "20260412_refiner_stderr-case.md"
         assert "stage report from stderr" in doc.read_text(encoding="utf-8")
 
     def test_call_once_emits_command_and_captured_output_to_progress_stream(
@@ -750,7 +747,6 @@ class TestDocumentWriting:
                 prompt="test prompt",
                 stem="log-case",
                 date_str="20260412",
-                slot="04",
             )
 
         log_text = progress.getvalue()
