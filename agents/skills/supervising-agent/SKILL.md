@@ -29,7 +29,8 @@ Re-enter earlier phases whenever later work exposes missing design, failed valid
 
 ## Workflow
 
-1. Load the current `.dev` state and detect whether this is a new run or a resume.
+1. Print `[[Supervisor]]` to standard output.
+2. Load the current `.dev` state and detect whether this is a new run or a resume.
 2. Verify that the dashboard's actual-progress view, the task checklist, and machine state are consistent enough to continue.
 3. Choose the next skill based on the active phase, blockers, and completion evidence.
 4. After design, treat development and test authoring as paired implementation tracks when the scope needs both product code and test code.

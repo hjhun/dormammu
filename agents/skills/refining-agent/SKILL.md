@@ -24,7 +24,8 @@ Related skills:
 
 ## Workflow
 
-1. Read the raw request and any existing `.dev/` context.
+1. Print `[[Refiner]]` to standard output.
+2. Read the raw request and any existing `.dev/` context.
 2. Identify ambiguities, missing constraints, and open decisions that would block
    planning or design.
 3. Ask 3–6 targeted clarifying questions. Offer lettered options (a/b/c) where

@@ -20,7 +20,8 @@ Related skills:
 
 ## Workflow
 
-1. Inspect the working tree and confirm which files belong to the active scope.
+1. Print `[[Committer]]` to standard output.
+2. Inspect the working tree and confirm which files belong to the active scope.
 2. Ensure `.dev/DASHBOARD.md` shows the real completion status and `.dev/PLAN.md` shows the correct prompt-derived phase completion state before committing.
 3. Stage only the intended files.
 4. If intended `.dev` state files are ignored by Git, add them explicitly with

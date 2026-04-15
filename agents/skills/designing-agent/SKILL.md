@@ -20,7 +20,8 @@ Related skills:
 
 ## Workflow
 
-1. Read the active tasks and identify the design decisions that unblock them.
+1. Print `[[Designer]]` to standard output.
+2. Read the active tasks and identify the design decisions that unblock them.
 2. Define boundaries: modules, interfaces, data contracts, state files, failure handling, and test seams.
 3. Prefer designs that support resumability, idempotent reruns, and supervisor verification.
 4. Capture the chosen design in concise project documentation or artifact files.

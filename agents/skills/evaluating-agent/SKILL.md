@@ -28,6 +28,10 @@ Use this skill in two contexts:
 | `.dev/supervisor_report.md` | Latest supervisor verdict and checks |
 | `git log -3 --oneline --stat` | Recent commits and changed files |
 
+## Activation
+
+Print `[[Evaluator]]` to standard output before any other action.
+
 ## Modes
 
 ### Mid-Pipeline Check

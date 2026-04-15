@@ -23,7 +23,8 @@ Related skills:
 
 ## Workflow
 
-1. Read `.dev/REQUIREMENTS.md` if it exists; fall back to the raw user goal and
+1. Print `[[Planner]]` to standard output.
+2. Read `.dev/REQUIREMENTS.md` if it exists; fall back to the raw user goal and
    constraints if not.
 2. Read any existing `.dev/DASHBOARD.md`, `.dev/PLAN.md`, and
    `.dev/workflow_state.json`.

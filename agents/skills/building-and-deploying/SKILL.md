@@ -21,7 +21,8 @@ Related skills:
 
 ## Workflow
 
-1. Identify the expected deliverable: local package, installer, archive, release artifact, or deployment bundle.
+1. Print `[[Builder]]` to standard output.
+2. Identify the expected deliverable: local package, installer, archive, release artifact, or deployment bundle.
 2. Build only from the current checked-out state; do not hide missing prerequisites.
 3. Capture build commands, outputs, and failures in `.dev/logs/` or release notes.
 4. Update `.dev/DASHBOARD.md` with actual build status, artifact paths, and next actions.
