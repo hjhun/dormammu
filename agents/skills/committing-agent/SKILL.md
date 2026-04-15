@@ -59,6 +59,13 @@ Related skills:
    - check the exact final message text line by line before `git commit`
    - if any line is 81+ characters, rewrite and re-check before committing
 7. After committing, verify the stored message with `git show --format=fuller --no-patch HEAD`.
+8. If this is **not** a goals-scheduler run, print the loop-completion signal as
+   the very last line of output so the dormammu runtime stops the loop cleanly:
+   ```
+   <promise>COMPLETE</promise>
+   ```
+   Omit this signal when a goals-scheduler trigger is active (the evaluating-agent
+   runs next and the runtime must not stop early).
 8. Update `.dev` commit status intentionally:
    - before the commit, `pending` is acceptable
    - after the commit, record the real hash and summary in machine state when
@@ -90,4 +97,7 @@ Related skills:
 
 ## Done Criteria
 
-This skill is complete when the requested commit is created or the exact blocker to committing is documented.
+This skill is complete when:
+1. The requested commit is created (or the exact blocker is documented), and
+2. `<promise>COMPLETE</promise>` has been printed as the final output line
+   (non-goals-scheduler runs only).

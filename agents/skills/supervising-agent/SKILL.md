@@ -66,6 +66,21 @@ Re-enter earlier phases whenever later work exposes missing design, failed valid
 - `blocked`
 - `manual_review_needed`
 
+## Loop Completion Signal
+
+After the commit phase succeeds, check whether this run was triggered by the
+goals-scheduler:
+
+- **Not goals-scheduler** (normal manual run): the committing-agent will emit
+  `<promise>COMPLETE</promise>` as its final output line. The dormammu runtime
+  detects this and stops the loop. Do not advance to any further stage.
+- **Goals-scheduler run**: omit the signal. Route to the final `evaluating-agent`
+  step as listed in `.dev/WORKFLOWS.md`.
+
+A goals-scheduler run is identified by the presence of an automated goal file
+passed in the session context (e.g. a `.goals/` entry) rather than a direct
+user request at the terminal.
+
 ## Done Criteria
 
 This skill is complete when the next correct phase is explicit, the state is synchronized, and the project can continue without ambiguity.

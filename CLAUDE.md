@@ -67,7 +67,9 @@ refined.
 7. Test/Review  → agents/skills/testing-and-reviewing/SKILL.md
 8. Final Verify → supervising-agent final gate
 9. Commit       → agents/skills/committing-agent/SKILL.md
-10. Evaluate    → agents/skills/evaluating-agent/SKILL.md
+                  ↳ emit <promise>COMPLETE</promise> after a successful commit
+                    (goals-scheduler active: skip signal, proceed to step 10)
+10. [Evaluate  → agents/skills/evaluating-agent/SKILL.md — goals-scheduler only]
 ```
 
 - The supervisor is the controller for all multi-stage implementations.
@@ -91,6 +93,10 @@ Each phase transition requires evidence:
 - `test_review → final_verify`: Executed validation has clear results
 - `final_verify → commit`: Completed slice passed final operational verification
 - `commit`: Diff scope and validation both support version control
+- `commit → done`: After a successful commit the committing-agent emits
+  `<promise>COMPLETE</promise>` so the dormammu runtime stops the loop.
+  Exception: when a goals-scheduler trigger is active, omit the signal and
+  proceed to the final `evaluating-agent` step instead.
 
 If a mid-pipeline evaluator checkpoint is in WORKFLOWS.md:
 - `DECISION: PROCEED` from evaluating-agent → advance to next stage

@@ -13,8 +13,9 @@ Use this skill in two contexts:
    `.dev/WORKFLOWS.md` for the planned checkpoints).
 2. **Final evaluation** — assesses whether the completed implementation achieved
    the original goal and optionally generates the next development cycle. Runs
-   after the committer stage, either automatically (goals-scheduler trigger) or
-   when the `WORKFLOWS.md` final step is reached.
+   after the committer stage only when a goals-scheduler trigger is active.
+   Manually-invoked runs do not reach this stage; the supervisor stops the loop
+   after commit instead.
 
 ## Inputs
 
