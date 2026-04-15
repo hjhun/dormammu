@@ -4,9 +4,7 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import re
-import signal
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,23 +34,14 @@ _HELP_TEXT = (
     r"▶️ /run \<prompt\> — queue a new prompt for execution" "\n"
     "📋 /queue — list pending prompts\n"
     r"📡 /tail \[on\|off\] — stream skill progress \(on: show skill banners \+ output digest\)" "\n"
-    r"📜 /logs \[n\] — last N lines of progress log \(default 50\)" "\n"
     r"📄 /result \[name\] — last \(or named\) result file content" "\n"
-    r"🕐 /history \[n\] — last N execution results with status \(default 10\)" "\n"
     "🗂️ /sessions — recent session list\n"
     r"🗂️ /repo \[path\] — switch working repo \(or pick from sibling list\)" "\n"
     r"🗑️ /clear\_sessions — delete all session data for the current repo" "\n"
     "🎯 /goals — list, add, or delete goal files\n"
-    "🛑 /stop — send interrupt to the running prompt\n"
     "🔌 /shutdown — finish current prompt then stop the daemon\n"
     "❓ /help — this message"
 )
-
-# Patterns for parsing result markdown files in _send_history.
-_HISTORY_STATUS_RE = re.compile(r"^- Status: `([^`]+)`", re.MULTILINE)
-_HISTORY_STARTED_RE = re.compile(r"^- Started at: `([^`]+)`", re.MULTILINE)
-_HISTORY_COMPLETED_RE = re.compile(r"^- Completed at: `([^`]+)`", re.MULTILINE)
-_HISTORY_VERDICT_RE = re.compile(r"^- Supervisor verdict: `([^`]+)`", re.MULTILINE)
 
 _MENU_KEYBOARD_BASE = [
     [
@@ -61,8 +50,6 @@ _MENU_KEYBOARD_BASE = [
     ],
     # Row 1 placeholder — tail button is injected dynamically by _build_menu_keyboard.
     [
-        {"text": "📜 Logs", "callback_data": "logs"},
-        {"text": "🕐 History", "callback_data": "history"},
         {"text": "🗂️ Sessions", "callback_data": "sessions"},
     ],
     [
@@ -73,7 +60,6 @@ _MENU_KEYBOARD_BASE = [
         {"text": "🎯 Goals", "callback_data": "goals"},
     ],
     [
-        {"text": "🛑 Stop", "callback_data": "stop"},
         {"text": "🔌 Shutdown", "callback_data": "shutdown"},
     ],
 ]
@@ -253,7 +239,7 @@ class TelegramBot:
         """Background asyncio task: send queued messages at a controlled rate.
 
         Yielding ``asyncio.sleep(_SEND_INTERVAL_S)`` after every send lets the
-        event loop process incoming Telegram updates (e.g. /status, /stop)
+        event loop process incoming Telegram updates (e.g. /status)
         between outgoing messages, keeping the bot responsive during long runs.
         """
         assert self._send_queue is not None
@@ -312,14 +298,11 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("run", self._cmd_run))
         self._app.add_handler(CommandHandler("queue", self._cmd_queue))
         self._app.add_handler(CommandHandler("tail", self._cmd_tail))
-        self._app.add_handler(CommandHandler("logs", self._cmd_logs))
         self._app.add_handler(CommandHandler("result", self._cmd_result))
-        self._app.add_handler(CommandHandler("history", self._cmd_history))
         self._app.add_handler(CommandHandler("sessions", self._cmd_sessions))
         self._app.add_handler(CommandHandler("repo", self._cmd_repo))
         self._app.add_handler(CommandHandler("clear_sessions", self._cmd_clear_sessions))
         self._app.add_handler(CommandHandler("goals", self._cmd_goals))
-        self._app.add_handler(CommandHandler("stop", self._cmd_stop))
         self._app.add_handler(CommandHandler("shutdown", self._cmd_shutdown))
         self._app.add_handler(CallbackQueryHandler(self._cmd_callback))
         # Record any incoming message so the sender is tracked for broadcasts.
@@ -339,14 +322,11 @@ class TelegramBot:
                 BotCommand("run", "▶️ run a prompt"),
                 BotCommand("queue", "📋 pending prompts"),
                 BotCommand("tail", "📡 stream skill progress (on/off)"),
-                BotCommand("logs", "📜 recent logs"),
                 BotCommand("result", "📄 last result"),
-                BotCommand("history", "🕐 execution history"),
                 BotCommand("sessions", "🗂️ session list"),
                 BotCommand("repo", "🗂️ switch working repo"),
                 BotCommand("clear_sessions", "🗑️ clear session data"),
                 BotCommand("goals", "🎯 list/add/delete goals"),
-                BotCommand("stop", "🛑 stop execution"),
                 BotCommand("shutdown", "🔌 graceful daemon shutdown"),
                 BotCommand("help", "❓ help"),
             ])
@@ -468,12 +448,6 @@ class TelegramBot:
             streaming = self._stream.streaming_chat_id is not None
             context.args = ["off"] if streaming else ["on"]
             await self._send_tail(update, context)
-        elif data == "logs":
-            context.args = []
-            await self._send_logs(update, context)
-        elif data == "history":
-            context.args = []
-            await self._send_history(update, context)
         elif data == "sessions":
             await self._send_sessions(update, context)
         elif data == "repo":
@@ -493,8 +467,6 @@ class TelegramBot:
             chat_id = update.effective_chat.id
             self._goals_pending.pop(chat_id, None)
             await self._reply(update, "🎯 Goals deletion cancelled.")
-        elif data == "stop":
-            await self._send_stop(update, context)
         elif data == "shutdown":
             await self._send_shutdown(update, context)
 
@@ -600,41 +572,6 @@ class TelegramBot:
                 reply_markup=self._build_menu_markup(),
             )
 
-    async def _cmd_logs(self, update: Any, context: Any) -> None:
-        if not await self._guard(update):
-            return
-        await self._send_logs(update, context)
-
-    async def _send_logs(self, update: Any, context: Any) -> None:
-        try:
-            n = int(context.args[0]) if context.args else 50
-            n = max(1, min(n, 200))
-        except (ValueError, IndexError):
-            await self._reply(update, "Usage: /logs [n]  — lines to show, 1–200")
-            return
-        progress_dir = self._daemon_config.result_path.parent / "progress"
-        log_path: Path | None = None
-        if progress_dir.exists():
-            candidates = sorted(
-                progress_dir.glob("*_progress.log"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            if candidates:
-                log_path = candidates[0]
-        if log_path is None or not log_path.exists():
-            await self._reply(update, "📜 No progress log available (run with --debug to enable).")
-            return
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-        tail = "\n".join(text.splitlines()[-n:])
-        if not tail.strip():
-            await self._reply(update, "📜 Log is empty.")
-            return
-        max_chars = 3800
-        if len(tail) > max_chars:
-            tail = "..." + tail[-max_chars:]
-        await self._reply(update, f"```\n{tail}\n```")
-
     async def _cmd_result(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
@@ -665,74 +602,6 @@ class TelegramBot:
         if len(content) > max_chars:
             content = content[:max_chars] + "\n…(truncated)"
         await self._reply(update, f"📄 {result_path.name}\n\n{content}", parse_mode=None)
-
-    async def _cmd_history(self, update: Any, context: Any) -> None:
-        if not await self._guard(update):
-            return
-        await self._send_history(update, context)
-
-    async def _send_history(self, update: Any, context: Any) -> None:
-        try:
-            n = int(context.args[0]) if context.args else 10
-            n = max(1, min(n, 50))
-        except (ValueError, IndexError):
-            await self._reply(update, "Usage: /history [n]  — entries to show, 1–50")
-            return
-        result_dir = self._daemon_config.result_path
-        if not result_dir.exists():
-            await self._reply(update, "🕐 No results directory found.")
-            return
-        candidates = sorted(
-            result_dir.glob("*_RESULT.md"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )[:n]
-        if not candidates:
-            await self._reply(update, "🕐 No history found.")
-            return
-
-        _status_icons = {
-            "done": "✅",
-            "failed": "❌",
-            "in_progress": "▶️",
-            "error": "⚠️",
-        }
-
-        lines = [f"🕐 *Execution history (last {len(candidates)})*", ""]
-        for path in reversed(candidates):  # oldest first for chronological readability
-            try:
-                content = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            status_m = _HISTORY_STATUS_RE.search(content)
-            started_m = _HISTORY_STARTED_RE.search(content)
-            completed_m = _HISTORY_COMPLETED_RE.search(content)
-            verdict_m = _HISTORY_VERDICT_RE.search(content)
-
-            status = status_m.group(1) if status_m else "?"
-            started = started_m.group(1) if started_m else "?"
-            completed = completed_m.group(1) if completed_m else ""
-            verdict = verdict_m.group(1) if verdict_m else ""
-
-            # Strip _RESULT.md suffix to get the original prompt filename
-            prompt_name = path.name
-            if prompt_name.endswith("_RESULT.md"):
-                prompt_name = prompt_name[: -len("_RESULT.md")]
-
-            icon = _status_icons.get(status, "❓")
-            entry = f"{icon} `{prompt_name}`"
-            if verdict:
-                entry += f"\n  Verdict: {verdict}"
-            entry += f"\n  Started: {started}"
-            if completed and completed != "not completed":
-                entry += f" → {completed}"
-            lines.append(entry)
-
-        text = "\n".join(lines)
-        max_chars = 3800
-        if len(text) > max_chars:
-            text = text[:max_chars] + "\n…(truncated)"
-        await self._reply(update, text)
 
     async def _cmd_sessions(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
@@ -909,20 +778,6 @@ class TelegramBot:
                 update,
                 f"🗑️ Cleared {len(session_dirs)} session(s) from `{sessions_dir}`.",
             )
-
-    async def _cmd_stop(self, update: Any, context: Any) -> None:
-        if not await self._guard(update):
-            return
-        await self._send_stop(update, context)
-
-    async def _send_stop(self, update: Any, context: Any) -> None:
-        in_progress = list(self._runner.in_progress_snapshot())
-        if not in_progress:
-            await self._reply(update, "🛑 No active prompt to stop.")
-            return
-        names = ", ".join(_md(p.name) for p in in_progress)
-        await self._reply(update, f"🛑 Sending interrupt to active prompt: {names}")
-        os.kill(os.getpid(), signal.SIGINT)
 
     async def _cmd_shutdown(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
