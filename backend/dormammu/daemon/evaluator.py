@@ -3,7 +3,7 @@
 Runs as the final stage of the pipeline **only** when the pipeline was
 triggered by the goals scheduler.  Reads current repository state (PLAN.md,
 DASHBOARD.md, supervisor report, git log), asks the configured agent CLI to
-evaluate goal achievement, writes a report to ``.dev/07-evaluator/``, and
+evaluate goal achievement, writes a report to ``.dev/logs/``, and
 optionally updates the original goal file so the goals scheduler can schedule
 the next iteration.
 
@@ -83,7 +83,7 @@ class EvaluatorResult:
 
     status: str                  # completed | failed | skipped
     verdict: str                 # goal_achieved | partial | not_achieved | unknown
-    report_path: Path | None     # .dev/07-evaluator/<date>_<stem>.md
+    report_path: Path | None     # .dev/logs/<date>_evaluator_<stem>.md
     goal_file_updated: bool      # True when the goal file was rewritten
 
 
@@ -146,7 +146,7 @@ class EvaluatorStage:
         workflows_text = self._read_file(req.dev_dir / "WORKFLOWS.md")
         supervisor_report = self._read_file(req.dev_dir / "supervisor_report.md")
         git_summary = self._read_git_summary(req.repo_root)
-        output_path = req.dev_dir / "07-evaluator" / f"{req.date_str}_{req.stem}.md"
+        output_path = req.dev_dir / "logs" / f"{req.date_str}_evaluator_{req.stem}.md"
         return build_rule_prompt(
             rule_text,
             sections=(
@@ -229,9 +229,9 @@ class EvaluatorStage:
 
     def _write_report(self, req: EvaluatorRequest, output: str) -> Path | None:
         try:
-            doc_dir = req.dev_dir / "07-evaluator"
+            doc_dir = req.dev_dir / "logs"
             doc_dir.mkdir(parents=True, exist_ok=True)
-            doc_path = doc_dir / f"{req.date_str}_{req.stem}.md"
+            doc_path = doc_dir / f"{req.date_str}_evaluator_{req.stem}.md"
             doc_path.write_text(
                 f"# Evaluator — {req.stem}\n\n{output}",
                 encoding="utf-8",

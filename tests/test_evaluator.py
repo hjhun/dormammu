@@ -553,7 +553,7 @@ class TestEvaluatorStageRun:
         with self._patch_run("VERDICT: partial"):
             result = stage.run(req)
         assert result.report_path is not None
-        assert "07-evaluator" in str(result.report_path)
+        assert "logs" in str(result.report_path)
         assert req.date_str in result.report_path.name
         assert req.stem in result.report_path.name
 

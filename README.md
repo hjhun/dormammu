@@ -488,10 +488,7 @@ Every run leaves behind inspectable artifacts:
 | `.dev/TASKS.md` | Prompt-derived development queue used for task sync and resume targeting |
 | `.dev/workflow_state.json` | Machine-readable workflow state (source of truth) |
 | `.dev/session.json` | Active session metadata |
-| `.dev/logs/` | Prompt, stdout, stderr, run metadata, and pipeline stage documents (tester, reviewer, committer, evaluator) |
-| `.dev/00-analyzer/` | Analyzer snapshots produced during goals prompt pre-processing |
-| `.dev/01-planner/` | Planner snapshots produced during goals prompt pre-processing |
-| `.dev/02-architect/` | Architect design snapshots produced during goals prompt pre-processing |
+| `.dev/logs/` | Prompt, stdout, stderr, run metadata, and all stage output documents (analyzer, tester, reviewer, committer, evaluator) |
 | `DORMAMMU.log` | Project-level execution log (written with `--debug`) |
 
 ## Common Patterns

@@ -239,7 +239,6 @@ class GoalsScheduler:
                 prompt=self._analyzer_prompt(goal_text),
                 stem=stem,
                 date_str=date_str,
-                slot="00",
             )
 
         if planner_cli is not None:
@@ -250,7 +249,6 @@ class GoalsScheduler:
                 prompt=self._planner_prompt(goal_text, analysis_text),
                 stem=stem,
                 date_str=date_str,
-                slot="01",
             )
 
         if architect_cli is not None and plan_text is not None:
@@ -261,7 +259,6 @@ class GoalsScheduler:
                 prompt=self._architect_prompt(goal_text, analysis_text, plan_text),
                 stem=stem,
                 date_str=date_str,
-                slot="02",
             )
 
         return self._build_prompt(goal_text, analysis_text, plan_text, design_text)
@@ -338,7 +335,6 @@ class GoalsScheduler:
         prompt: str,
         stem: str,
         date_str: str,
-        slot: str,
     ) -> str | None:
         """Run an agent CLI once and return its stdout, or None on failure."""
         from dormammu.agent.presets import preset_for_executable_name
@@ -408,9 +404,9 @@ class GoalsScheduler:
             output = result.stdout or ""
 
             # Persist the agent's output as a role document.
-            doc_dir = self._app_config.base_dev_dir / f"{slot}-{role}"
+            doc_dir = self._app_config.base_dev_dir / "logs"
             doc_dir.mkdir(parents=True, exist_ok=True)
-            doc_path = doc_dir / f"{date_str}_{stem}.md"
+            doc_path = doc_dir / f"{date_str}_{role}_{stem}.md"
             doc_path.write_text(
                 f"# {role.capitalize()} — {stem}\n\n{output}",
                 encoding="utf-8",

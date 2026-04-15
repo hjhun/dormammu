@@ -273,8 +273,7 @@ class PipelineRunner:
     ) -> str | None:
         """Run the refiner agent once.
 
-        Produces ``.dev/REQUIREMENTS.md`` and saves the output document to
-        ``.dev/00-refiner/<date>_<stem>.md``.
+        Produces ``.dev/REQUIREMENTS.md``.
 
         Returns the agent output string.
         """
@@ -314,8 +313,6 @@ class PipelineRunner:
         Reads ``.dev/REQUIREMENTS.md`` (produced by the refiner) if it exists,
         then instructs the agent to generate ``.dev/WORKFLOWS.md`` and update
         ``.dev/PLAN.md`` / ``.dev/DASHBOARD.md``.
-
-        Saves output to ``.dev/01-planner/<date>_<stem>.md``.
 
         Returns the agent output string.
         """

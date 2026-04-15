@@ -455,7 +455,7 @@ class TestGoalsSchedulerMultiAgentRegression:
                 mock_dt.now.return_value.timezone = None
                 sched._process_goals()
 
-        doc = tmp_path / ".dev" / "01-planner" / "20260412_feature.md"
+        doc = tmp_path / ".dev" / "logs" / "20260412_planner_feature.md"
         assert doc.exists(), "planner document not written"
         assert "Phase 1" in doc.read_text(encoding="utf-8")
 
@@ -471,7 +471,7 @@ class TestGoalsSchedulerMultiAgentRegression:
                 mock_dt.now.return_value.timezone = None
                 sched._process_goals()
 
-        doc = tmp_path / ".dev" / "02-architect" / "20260412_feature.md"
+        doc = tmp_path / ".dev" / "logs" / "20260412_architect_feature.md"
         assert doc.exists(), "architect document not written"
         assert "Module A" in doc.read_text(encoding="utf-8")
 
@@ -507,7 +507,6 @@ class TestGoalsSchedulerMultiAgentRegression:
                 prompt="test",
                 stem="goal",
                 date_str="20260412",
-                slot="01",
             )
 
         kwargs = mock_run.call_args[1]

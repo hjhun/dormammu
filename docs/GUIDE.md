@@ -194,17 +194,17 @@ flowchart TD
     committer --> done([Done])
 ```
 
-Each stage writes its output to a numbered slot under `.dev/`:
+Each stage writes its output to `.dev/logs/`:
 
 | Stage | Output path |
 |-------|------------|
-| analyzer | `.dev/00-analyzer/` |
-| refiner | `.dev/00-refiner/` → `.dev/REQUIREMENTS.md` |
-| planner | `.dev/01-planner/` → `.dev/WORKFLOWS.md` |
-| developer | `.dev/01-developer/` |
-| tester | `.dev/04-tester/` |
-| reviewer | `.dev/05-reviewer/` |
-| committer | `.dev/06-committer/` |
+| analyzer | `.dev/logs/<date>_analyzer_<stem>.md` |
+| refiner | `.dev/REQUIREMENTS.md` |
+| planner | `.dev/WORKFLOWS.md` |
+| tester | `.dev/logs/<date>_tester_<stem>.md` |
+| reviewer | `.dev/logs/<date>_reviewer_<stem>.md` |
+| committer | `.dev/logs/<date>_committer_<stem>.md` |
+| evaluator | `.dev/logs/<date>_evaluator_<stem>.md` |
 
 ---
 
@@ -645,7 +645,7 @@ The Analyzer Agent is used by goals automation before planning starts.
 - Reads a scheduled goal file
 - Produces a requirements-focused brief for the planner
 - Surfaces scope boundaries, acceptance criteria, dependencies, and risks
-- Writes raw analysis output to `.dev/00-analyzer/<date>_<stem>.md`
+- Writes raw analysis output to `.dev/logs/<date>_analyzer_<stem>.md`
 
 Used when: a goal is promoted from `goals.path` into the daemon prompt queue.
 
@@ -750,7 +750,7 @@ Finalizes a validated scope into an intentional git commit.
 Assesses goal achievement after a pipeline run completes. Supports two modes:
 
 - **Mid-pipeline check**: writes `DECISION: PROCEED` or `DECISION: REWORK` to
-  `.dev/07-evaluator/check_<stage>_<date>.md` — used when a WORKFLOWS.md
+  `.dev/logs/check_<stage>_<date>.md` — used when a WORKFLOWS.md
   checkpoint is reached
 - **Final evaluation**: writes `VERDICT: goal_achieved / partial / not_achieved`
   with a structured report — used at end-of-pipeline
@@ -939,15 +939,15 @@ flowchart LR
 
 ### Roles
 
-| Role | Output slot | Verdict | Re-entry trigger |
-|------|------------|---------|-----------------|
-| analyzer | `.dev/00-analyzer/` | — | — |
-| refiner | `.dev/00-refiner/` | — (writes REQUIREMENTS.md) | — |
-| planner | `.dev/01-planner/` | — (writes WORKFLOWS.md) | — |
-| developer | `.dev/01-developer/` | — | tester `FAIL` or reviewer `NEEDS_WORK` |
-| tester | `.dev/04-tester/` | `OVERALL: PASS` / `OVERALL: FAIL` | — |
-| reviewer | `.dev/05-reviewer/` | `VERDICT: APPROVED` / `VERDICT: NEEDS_WORK` | — |
-| committer | `.dev/06-committer/` | — | — |
+| Role | Output | Verdict | Re-entry trigger |
+|------|--------|---------|-----------------|
+| analyzer | `.dev/logs/<date>_analyzer_<stem>.md` | — | — |
+| refiner | `.dev/REQUIREMENTS.md` | — | — |
+| planner | `.dev/WORKFLOWS.md` | — | — |
+| developer | (state files in `.dev/`) | — | tester `FAIL` or reviewer `NEEDS_WORK` |
+| tester | `.dev/logs/<date>_tester_<stem>.md` | `OVERALL: PASS` / `OVERALL: FAIL` | — |
+| reviewer | `.dev/logs/<date>_reviewer_<stem>.md` | `VERDICT: APPROVED` / `VERDICT: NEEDS_WORK` | — |
+| committer | `.dev/logs/<date>_committer_<stem>.md` | — | — |
 
 **Refiner** (mandatory): Reads the runtime prompt and writes
 `.dev/REQUIREMENTS.md` with structured scope, acceptance criteria, and risk
@@ -965,7 +965,7 @@ cases against the observable behavior described in the goal, then appends
 sends the developer back with the tester report appended.
 
 **Reviewer** performs a code review against the goal and any available
-architect design document (`.dev/02-architect/<date>_<stem>.md`). It appends
+architect design document (`.dev/logs/<date>_architect_<stem>.md`). It appends
 `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK` as its last line. `NEEDS_WORK`
 sends the developer back for another round.
 
@@ -1046,11 +1046,8 @@ dormammu run \
 | `.dev/PLAN.md` | Prompt-derived phase checklist (`[ ]` pending, `[O]` complete) |
 | `.dev/workflow_state.json` | Machine-readable workflow state — the source of truth |
 | `.dev/session.json` | Active session metadata |
-| `.dev/logs/` | Per-run prompt, stdout, stderr, and metadata artifacts |
+| `.dev/logs/` | Per-run prompt, stdout, stderr, metadata, and stage output documents |
 | `.dev/sessions/` | Archived session snapshots |
-| `.dev/00-refiner/` | Raw output from the refining agent |
-| `.dev/01-planner/` | Raw output from the planning agent |
-| `.dev/07-evaluator/` | Evaluation reports from the Evaluating Agent |
 
 ### WORKFLOWS.md format
 

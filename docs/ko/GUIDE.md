@@ -483,15 +483,15 @@ analyzer (goals prelude) → planner (goals prelude) → architect (optional)
 
 ### 역할
 
-| 역할 | 출력 슬롯 | verdict | 재진입 조건 |
-|------|----------|---------|-----------|
-| analyzer | `.dev/00-analyzer/` | — | — |
-| refiner | `.dev/00-refiner/` → `REQUIREMENTS.md` | — | — |
-| planner | `.dev/01-planner/` → `WORKFLOWS.md` | — | — |
-| developer | `.dev/01-developer/` | — | tester `FAIL` 또는 reviewer `NEEDS_WORK` |
-| tester | `.dev/04-tester/` | `OVERALL: PASS` / `OVERALL: FAIL` | — |
-| reviewer | `.dev/05-reviewer/` | `VERDICT: APPROVED` / `VERDICT: NEEDS_WORK` | — |
-| committer | `.dev/06-committer/` | — | — |
+| 역할 | 출력 | verdict | 재진입 조건 |
+|------|------|---------|-----------|
+| analyzer | `.dev/logs/<date>_analyzer_<stem>.md` | — | — |
+| refiner | `.dev/REQUIREMENTS.md` | — | — |
+| planner | `.dev/WORKFLOWS.md` | — | — |
+| developer | (`.dev/` 내 상태 파일) | — | tester `FAIL` 또는 reviewer `NEEDS_WORK` |
+| tester | `.dev/logs/<date>_tester_<stem>.md` | `OVERALL: PASS` / `OVERALL: FAIL` | — |
+| reviewer | `.dev/logs/<date>_reviewer_<stem>.md` | `VERDICT: APPROVED` / `VERDICT: NEEDS_WORK` | — |
+| committer | `.dev/logs/<date>_committer_<stem>.md` | — | — |
 
 **Refiner** (mandatory): runtime prompt를 읽어 `.dev/REQUIREMENTS.md`에 범위,
 수용 기준, 제약 사항, 리스크를 정리합니다. `agents.refiner.cli`가 설정되면
@@ -507,7 +507,7 @@ analyzer (goals prelude) → planner (goals prelude) → architect (optional)
 `OVERALL: PASS` 또는 `OVERALL: FAIL`을 씁니다. `FAIL` verdict가 나오면
 tester 리포트를 원본 프롬프트에 붙여서 developer가 다시 실행합니다.
 
-**Reviewer**는 goal과 아키텍트 설계 문서(`.dev/02-architect/<date>_<stem>.md`)를
+**Reviewer**는 goal과 아키텍트 설계 문서(`.dev/logs/<date>_architect_<stem>.md`)를
 기준으로 코드 리뷰를 수행합니다. 마지막 줄에 `VERDICT: APPROVED` 또는
 `VERDICT: NEEDS_WORK`를 씁니다. `NEEDS_WORK`이면 developer가 다시 진입합니다.
 
@@ -582,9 +582,7 @@ dormammu run \
 | `.dev/PLAN.md` | 프롬프트 기반 단계 체크리스트 (`[ ]` 미완료, `[O]` 완료) |
 | `.dev/workflow_state.json` | 기계 기준 워크플로우 상태 — 진실의 근원 |
 | `.dev/session.json` | 활성 세션 메타데이터 |
-| `.dev/logs/` | 실행별 프롬프트, stdout, stderr, 메타데이터 아티팩트 |
-| `.dev/00-refiner/` | refining agent의 원시 출력 |
-| `.dev/01-planner/` | planning agent의 원시 출력 |
+| `.dev/logs/` | 실행별 프롬프트, stdout, stderr, 메타데이터 및 단계 출력 문서 |
 
 디버그 로그:
 
