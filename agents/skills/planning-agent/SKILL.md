@@ -67,17 +67,18 @@ Generated workflow for this task. Update checkboxes as each stage completes.
 
 [ ] Phase 0. Refine — refining-agent
 [O] Phase 1. Plan — planning-agent
-[ ] Phase 2. Design — designing-agent
-[ ] Phase 3. Supervisor gate
-[ ] Phase 4. Develop — developing-agent  ↓ parallel
-[ ] Phase 5. Test Author — test-authoring-agent  ↑ parallel
-[ ] Phase 6. Supervisor gate
-[ ] Phase 7. Test and Review — testing-and-reviewing
-[ ] Phase 8. Supervisor gate
-[ ] Phase 9. Evaluator check — evaluating-agent (mid-pipeline)
-[ ] Phase 10. Commit — committing-agent
-                        ↳ supervisor stops loop here (goals-scheduler only continues to Phase 11)
-[ ] Phase 11. Evaluate — evaluating-agent (goals-scheduler runs only)
+[ ] Phase 2. Evaluator check — evaluating-agent (mandatory post-plan)
+[ ] Phase 3. Design — designing-agent
+[ ] Phase 4. Supervisor gate
+[ ] Phase 5. Develop — developing-agent  ↓ parallel
+[ ] Phase 6. Test Author — test-authoring-agent  ↑ parallel
+[ ] Phase 7. Supervisor gate
+[ ] Phase 8. Test and Review — testing-and-reviewing
+[ ] Phase 9. Supervisor gate
+[ ] Phase 10. Evaluator check — evaluating-agent (mid-pipeline, insert when needed)
+[ ] Phase 11. Commit — committing-agent
+                         ↳ supervisor stops loop here (goals-scheduler only continues to Phase 12)
+[ ] Phase 12. Evaluate — evaluating-agent (goals-scheduler runs only)
 ```
 
 ### Evaluator Checkpoint Guidance

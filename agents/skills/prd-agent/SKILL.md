@@ -20,8 +20,9 @@ Related skills:
 
 ## Workflow
 
-1. Ask 3–5 clarifying questions to understand scope, acceptance criteria, and non-goals. Offer lettered options (a/b/c) where possible to keep answers quick.
-2. Draft a PRD in `tasks/prd-<feature-name>.md` with these sections:
+1. Print `[[PRD]]` to standard output.
+2. Ask 3–5 clarifying questions to understand scope, acceptance criteria, and non-goals. Offer lettered options (a/b/c) where possible to keep answers quick.
+3. Draft a PRD in `tasks/prd-<feature-name>.md` with these sections:
    - **Overview** — one-paragraph summary of the feature and its purpose
    - **Goals** — 3–5 measurable outcomes this feature achieves
    - **User Stories** — ordered list of implementable stories (see format below)
@@ -29,8 +30,8 @@ Related skills:
    - **Technical Considerations** — key constraints, dependencies, or design decisions
    - **Success Metrics** — how to verify the feature is working correctly
    - **Open Questions** — unresolved decisions that need answers before or during development
-3. Validate each user story against the sizing rules below.
-4. Save the final PRD to `tasks/prd-<feature-name>.md`.
+4. Validate each user story against the sizing rules below.
+5. Save the final PRD to `tasks/prd-<feature-name>.md`.
 
 ## User Story Format
 

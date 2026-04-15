@@ -16,6 +16,7 @@ Related skills:
 
 - The approved plan and active tasks
 - [PROJECT.md](../../../.dev/PROJECT.md)
+- `.dev/TASKS.md` when present
 - Existing source files and `.dev/` state
 
 ## Workflow

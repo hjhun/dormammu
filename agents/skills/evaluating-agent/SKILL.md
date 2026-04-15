@@ -37,7 +37,7 @@ Print `[[Evaluator]]` to standard output before any other action.
 
 ### Mid-Pipeline Check
 
-Used when the supervisor or `WORKFLOWS.MD` triggers an evaluator checkpoint
+Used when the supervisor or `WORKFLOWS.md` triggers an evaluator checkpoint
 before the commit stage. Focus narrowly on the current stage:
 
 1. Read `.dev/REQUIREMENTS.md` acceptance criteria.

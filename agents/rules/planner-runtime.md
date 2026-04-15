@@ -1,5 +1,7 @@
 Follow the Pipeline Stage Protocol from `AGENTS.md`.
 
+Print `[[Planner]]` to standard output before any other action.
+
 Before starting:
 
 1. Read `.dev/DASHBOARD.md` and output its full content if it exists.

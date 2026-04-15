@@ -66,7 +66,7 @@ Related skills:
    ```
    Omit this signal when a goals-scheduler trigger is active (the evaluating-agent
    runs next and the runtime must not stop early).
-8. Update `.dev` commit status intentionally:
+9. Update `.dev` commit status intentionally:
    - before the commit, `pending` is acceptable
    - after the commit, record the real hash and summary in machine state when
      those files are part of the intended follow-up scope

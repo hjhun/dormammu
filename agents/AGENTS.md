@@ -38,8 +38,9 @@ given task are recorded in `.dev/WORKFLOWS.md` after planning completes.
 
 ```
 refine → plan → evaluator(plan) → design → develop + test-author → test-review → final verify → commit → evaluate
-                       ↑                         ↑                              ↑
-          mandatory semantic checkpoint     supervisor gates             final evaluator when required
+                     ↑                           ↑                       ↑                ↑
+              mandatory post-plan          supervisor gates       optional mid-pipeline   goals-scheduler only
+               checkpoint (always)                                  evaluator checkpoint
 ```
 
 Stages are not fixed. The planning agent generates an adaptive workflow in
@@ -140,6 +141,9 @@ Current packaged rule files:
 
 - `rules/refiner-runtime.md`
 - `rules/planner-runtime.md`
+- `rules/designer-runtime.md`
+- `rules/developer-runtime.md`
+- `rules/test-author-runtime.md`
 - `rules/tester-runtime.md`
 - `rules/reviewer-runtime.md`
 - `rules/committer-runtime.md`
@@ -148,13 +152,14 @@ Current packaged rule files:
 
 ## Pipeline Stage Protocol
 
-At the start of every pipeline stage (tester, reviewer, committer, evaluator),
-the agent must:
+At the start of every pipeline stage, the agent must:
 
-1. Read `.dev/DASHBOARD.md` and output its full content.
-2. Read `.dev/PLAN.md` and output its full content.
-3. Read `.dev/WORKFLOWS.md` and output its full content.
-4. Then proceed with the stage task.
+1. Print `[[AgentName]]` to standard output (e.g. `[[Planner]]`, `[[Designer]]`).
+2. Read `.dev/DASHBOARD.md` and output its full content (skip if file does not
+   exist yet — refine and plan stages run before it is created).
+3. Read `.dev/PLAN.md` and output its full content (same conditional as above).
+4. Read `.dev/WORKFLOWS.md` and output its full content (same conditional).
+5. Then proceed with the stage task.
 
 This makes the current workflow state visible in each stage's stored output
 document, so operators can track progress across the full pipeline without
