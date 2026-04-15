@@ -42,7 +42,6 @@ result-handling logic.
 """
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 import tempfile
@@ -53,6 +52,13 @@ from typing import TYPE_CHECKING, TextIO
 
 from dormammu.agent import CliAdapter
 from dormammu.agent.prompt_identity import prepend_cli_identity
+from dormammu.daemon._patterns import (
+    CHECKPOINT_PROCEED_RE as _CHECKPOINT_PROCEED_RE,
+    CHECKPOINT_REWORK_RE as _CHECKPOINT_REWORK_RE,
+    GOAL_SOURCE_TAG_RE as _GOAL_SOURCE_TAG_RE,
+    REVIEWER_REJECT_RE as _REVIEWER_REJECT_RE,
+    TESTER_FAIL_RE as _TESTER_FAIL_RE,
+)
 from dormammu.daemon.cli_output import select_agent_output
 from dormammu.daemon.evaluator import (
     EvaluatorRequest,
@@ -68,14 +74,6 @@ if TYPE_CHECKING:
     from dormammu.agent.role_config import AgentsConfig
     from dormammu.config import AppConfig
     from dormammu.daemon.goals_config import EvaluatorConfig
-
-# Patterns used to parse one-shot agent output.
-_TESTER_FAIL_RE = re.compile(r"OVERALL\s*:\s*FAIL", re.IGNORECASE)
-_TESTER_PASS_RE = re.compile(r"OVERALL\s*:\s*PASS", re.IGNORECASE)
-_REVIEWER_reject_RE = re.compile(r"VERDICT\s*:\s*NEEDS[_\s]WORK", re.IGNORECASE)
-_REVIEWER_APPROVE_RE = re.compile(r"VERDICT\s*:\s*APPROVED", re.IGNORECASE)
-_CHECKPOINT_REWORK_RE = re.compile(r"DECISION\s*:\s*REWORK", re.IGNORECASE)
-_CHECKPOINT_PROCEED_RE = re.compile(r"DECISION\s*:\s*PROCEED", re.IGNORECASE)
 
 _DEFAULT_MAX_RETRIES = 49
 MAX_STAGE_ITERATIONS = _DEFAULT_MAX_RETRIES + 1
@@ -492,7 +490,7 @@ class PipelineRunner:
             date_str=date_str,
         )
 
-        if _REVIEWER_reject_RE.search(output):
+        if _REVIEWER_REJECT_RE.search(output):
             return "needs_work", output
         return "approved", output
 
@@ -867,13 +865,6 @@ _MODEL_FLAGS: dict[str, str] = {
     "codex": "-m",
     "aider": "--model",
 }
-
-# Matches the metadata comment prepended by GoalsScheduler.
-_GOAL_SOURCE_TAG_RE = re.compile(
-    r"^<!--\s*dormammu:goal_source=[^\s>]+\s*-->\n\n?",
-    re.MULTILINE,
-)
-
 
 def _strip_goal_source_tag(text: str) -> str:
     """Remove the dormammu:goal_source metadata comment from prompt text."""

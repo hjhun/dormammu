@@ -48,6 +48,33 @@ from dormammu._cli_utils import (  # noqa: F401
 )
 
 
+def _add_repo_root(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+
+
+def _add_agent_cli(
+    parser: argparse.ArgumentParser,
+    *,
+    help: str = "Path to the external CLI. Optional when active_agent_cli is configured.",
+) -> None:
+    parser.add_argument("--agent-cli", type=Path, default=None, help=help)
+
+
+def _add_guidance_files(parser: argparse.ArgumentParser, *, help: str) -> None:
+    parser.add_argument(
+        "--guidance-file",
+        dest="guidance_files",
+        action="append",
+        type=Path,
+        default=None,
+        help=help,
+    )
+
+
+def _add_debug(parser: argparse.ArgumentParser, *, help: str) -> None:
+    parser.add_argument("--debug", action="store_true", help=help)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dormammu",
@@ -101,15 +128,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    show_config.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
-    show_config.add_argument(
-        "--guidance-file",
-        dest="guidance_files",
-        action="append",
-        type=Path,
-        default=None,
-        help="Repeatable Markdown guidance file to use instead of repo autodiscovery when it has content.",
-    )
+    _add_repo_root(show_config)
+    _add_guidance_files(show_config, help="Repeatable Markdown guidance file to use instead of repo autodiscovery when it has content.")
     show_config.set_defaults(handler=_handle_show_config)
 
     set_config = subparsers.add_parser(
@@ -155,11 +175,11 @@ def build_parser() -> argparse.ArgumentParser:
         dest="global_scope",
         help="Write to ~/.dormammu/config instead of the project dormammu.json.",
     )
-    set_config.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    _add_repo_root(set_config)
     set_config.set_defaults(handler=_handle_set_config)
 
     init_state = subparsers.add_parser("init-state", help="Create or merge the bootstrap .dev state.")
-    init_state.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    _add_repo_root(init_state)
     init_state.add_argument("--goal", default=None, help="Goal text to include in the generated dashboard.")
     init_state.add_argument(
         "--roadmap-phase",
@@ -168,21 +188,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Active roadmap phase id to record. Repeat for multiple values.",
     )
-    init_state.add_argument(
-        "--guidance-file",
-        dest="guidance_files",
-        action="append",
-        type=Path,
-        default=None,
-        help="Repeatable Markdown guidance file to use instead of repo autodiscovery when it has content.",
-    )
+    _add_guidance_files(init_state, help="Repeatable Markdown guidance file to use instead of repo autodiscovery when it has content.")
     init_state.set_defaults(handler=_handle_init_state)
 
     start_session = subparsers.add_parser(
         "start-session",
         help="Archive the current active session and start a fresh active `.dev` session.",
     )
-    start_session.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    _add_repo_root(start_session)
     start_session.add_argument("--goal", default=None, help="Goal text to include in the generated dashboard.")
     start_session.add_argument(
         "--roadmap-phase",
@@ -196,28 +209,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional explicit session id for the new active session.",
     )
-    start_session.add_argument(
-        "--guidance-file",
-        dest="guidance_files",
-        action="append",
-        type=Path,
-        default=None,
-        help="Repeatable Markdown guidance file to use instead of repo autodiscovery when it has content.",
-    )
+    _add_guidance_files(start_session, help="Repeatable Markdown guidance file to use instead of repo autodiscovery when it has content.")
     start_session.set_defaults(handler=_handle_start_session)
 
     sessions = subparsers.add_parser(
         "sessions",
         help="List archived and active session snapshots.",
     )
-    sessions.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    _add_repo_root(sessions)
     sessions.set_defaults(handler=_handle_sessions)
 
     restore_session = subparsers.add_parser(
         "restore-session",
         help="Restore a saved session snapshot into the active root `.dev` state.",
     )
-    restore_session.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    _add_repo_root(restore_session)
     restore_session.add_argument(
         "--session-id",
         required=True,
@@ -233,7 +239,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Provide the prompt inline with --prompt or load it from disk with --prompt-file."
         ),
     )
-    run_once.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    _add_repo_root(run_once)
     run_once.add_argument(
         "--session-id",
         default=None,
@@ -251,12 +257,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Bootstrap roadmap phase id when the target session has no saved state yet.",
     )
-    run_once.add_argument(
-        "--agent-cli",
-        type=Path,
-        default=None,
-        help="Path to the external CLI. Optional when active_agent_cli is configured.",
-    )
+    _add_agent_cli(run_once)
     prompt_group = run_once.add_mutually_exclusive_group(required=True)
     prompt_group.add_argument("--prompt", default=None, help="Prompt text to execute.")
     prompt_group.add_argument(
@@ -297,19 +298,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Use --extra-arg=VALUE when the value starts with '-'."
         ),
     )
-    run_once.add_argument(
-        "--guidance-file",
-        dest="guidance_files",
-        action="append",
-        type=Path,
-        default=None,
-        help="Repeatable Markdown guidance file to embed into the run prompt when it has content.",
-    )
-    run_once.add_argument(
-        "--debug",
-        action="store_true",
-        help="Mirror command stderr into a repository-root DORMAMMU.log file.",
-    )
+    _add_guidance_files(run_once, help="Repeatable Markdown guidance file to embed into the run prompt when it has content.")
+    _add_debug(run_once, help="Mirror command stderr into a repository-root DORMAMMU.log file.")
     run_once.set_defaults(handler=_handle_run_once)
 
     run_loop = subparsers.add_parser(
@@ -321,7 +311,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Provide the prompt inline with --prompt or load it from disk with --prompt-file."
         ),
     )
-    run_loop.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    _add_repo_root(run_loop)
     run_loop.add_argument(
         "--session-id",
         default=None,
@@ -409,19 +399,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Require git worktree changes before the supervisor approves the run.",
     )
-    run_loop.add_argument(
-        "--guidance-file",
-        dest="guidance_files",
-        action="append",
-        type=Path,
-        default=None,
-        help="Repeatable Markdown guidance file to embed into the run prompt when it has content.",
-    )
-    run_loop.add_argument(
-        "--debug",
-        action="store_true",
-        help="Mirror command stderr into a repository-root DORMAMMU.log file.",
-    )
+    _add_guidance_files(run_loop, help="Repeatable Markdown guidance file to embed into the run prompt when it has content.")
+    _add_debug(run_loop, help="Mirror command stderr into a repository-root DORMAMMU.log file.")
     run_loop.set_defaults(handler=_handle_run_loop)
 
     resume_loop = subparsers.add_parser(
@@ -429,7 +408,7 @@ def build_parser() -> argparse.ArgumentParser:
         aliases=["resume-loop"],
         help="Resume the most recent supervised loop run from saved .dev state.",
     )
-    resume_loop.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    _add_repo_root(resume_loop)
     resume_loop.add_argument(
         "--max-iterations",
         type=int,
@@ -447,32 +426,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Resume this saved session id without switching the active root `.dev` view.",
     )
-    resume_loop.add_argument(
-        "--guidance-file",
-        dest="guidance_files",
-        action="append",
-        type=Path,
-        default=None,
-        help="Repeatable Markdown guidance file to refresh bootstrap guidance before resuming.",
-    )
-    resume_loop.add_argument(
-        "--debug",
-        action="store_true",
-        help="Mirror command stderr into a repository-root DORMAMMU.log file.",
-    )
+    _add_guidance_files(resume_loop, help="Repeatable Markdown guidance file to refresh bootstrap guidance before resuming.")
+    _add_debug(resume_loop, help="Mirror command stderr into a repository-root DORMAMMU.log file.")
     resume_loop.set_defaults(handler=_handle_resume_loop)
 
     inspect_cli = subparsers.add_parser(
         "inspect-cli",
         help="Inspect an external coding-agent CLI for prompt handling and approval hints.",
     )
-    inspect_cli.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
-    inspect_cli.add_argument(
-        "--agent-cli",
-        type=Path,
-        default=None,
-        help="Path to the external CLI. Optional when active_agent_cli is configured.",
-    )
+    _add_repo_root(inspect_cli)
+    _add_agent_cli(inspect_cli)
     inspect_cli.add_argument(
         "--workdir",
         type=Path,
@@ -490,13 +453,8 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor",
         help="Check whether the local environment is ready to run dormammu.",
     )
-    doctor.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
-    doctor.add_argument(
-        "--agent-cli",
-        type=Path,
-        default=None,
-        help="Path to the external coding-agent CLI to validate.",
-    )
+    _add_repo_root(doctor)
+    _add_agent_cli(doctor, help="Path to the external coding-agent CLI to validate.")
     doctor.set_defaults(handler=_handle_doctor)
 
     daemonize = subparsers.add_parser(
@@ -523,33 +481,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    daemonize.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    _add_repo_root(daemonize)
     daemonize.add_argument(
         "--config",
         type=Path,
         default=None,
         help="Path to the daemon JSON config file. Defaults to ~/.dormammu/daemonize.json.",
     )
-    daemonize.add_argument(
-        "--guidance-file",
-        dest="guidance_files",
-        action="append",
-        type=Path,
-        default=None,
-        help="Repeatable Markdown guidance file to embed into daemon phase prompts when it has content.",
-    )
-    daemonize.add_argument(
-        "--debug",
-        action="store_true",
-        help="Mirror daemon stderr into <result_path>/../progress/<prompt>_progress.log and reset it for each new prompt session.",
-    )
+    _add_guidance_files(daemonize, help="Repeatable Markdown guidance file to embed into daemon phase prompts when it has content.")
+    _add_debug(daemonize, help="Mirror daemon stderr into <result_path>/../progress/<prompt>_progress.log and reset it for each new prompt session.")
     daemonize.set_defaults(handler=_handle_daemonize)
 
     shell = subparsers.add_parser(
         "shell",
         help="Start the interactive dormammu shell.",
     )
-    shell.add_argument("--repo-root", type=Path, default=None, help="Repository root to use.")
+    _add_repo_root(shell)
     shell.set_defaults(handler=lambda args: InteractiveShellRunner(repo_root=args.repo_root).run())
 
     return parser

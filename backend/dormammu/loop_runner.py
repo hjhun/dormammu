@@ -36,6 +36,36 @@ _STAGNATION_WINDOW: int = 3
 """Consecutive identical task-state snapshots that trigger a stagnation bail-out."""
 
 
+class _StagnationDetector:
+    """Sliding-window detector that identifies when a loop makes no forward progress.
+
+    Stagnation is defined as the same ``(pending_tasks, next_pending_task)``
+    snapshot repeating :attr:`window_size` consecutive iterations with at
+    least one pending task remaining.
+
+    Create one instance per :meth:`LoopRunner.run` call so each run starts
+    with a clean window and resumed loops don't inherit stale state.
+    """
+
+    def __init__(self, window_size: int = _STAGNATION_WINDOW) -> None:
+        self._window_size = window_size
+        self._window: list[tuple[int, str | None]] = []
+
+    def record(self, pending_tasks: int, next_pending_task: str | None) -> None:
+        """Record the current task-state snapshot, evicting the oldest entry."""
+        self._window.append((pending_tasks, next_pending_task))
+        if len(self._window) > self._window_size:
+            self._window.pop(0)
+
+    def is_stagnant(self, pending_tasks: int) -> bool:
+        """Return True when the window is full and every snapshot is identical."""
+        return (
+            pending_tasks > 0
+            and len(self._window) >= self._window_size
+            and len(set(self._window)) == 1
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class LoopRunRequest:
     cli_path: Path
@@ -183,10 +213,9 @@ class LoopRunner:
         retries_used = max(start_attempt - 1, 0)
         continuation_prompt_path: Path | None = None
         report_path: Path | None = None
-        # Rolling window of (pending_tasks, next_pending_task) snapshots used by
-        # stagnation detection.  Reset on each call to run() so resumed loops
-        # don't inherit a stale window from a previous interrupted run.
-        _stagnation_window: list[tuple[int, str | None]] = []
+        # Reset per run() call so resumed loops don't inherit stale state.
+        # Read _STAGNATION_WINDOW at call time so tests can patch it dynamically.
+        stagnation = _StagnationDetector(window_size=_STAGNATION_WINDOW)
 
         while True:
             self._persist_loop_state(
@@ -357,23 +386,12 @@ class LoopRunner:
             workflow_state = runtime_repository.read_workflow_state()
 
             # ── Stagnation detection ──────────────────────────────────────────
-            # If the same (pending_tasks, next_pending_task) snapshot repeats
-            # _STAGNATION_WINDOW consecutive times the agent is cycling in place
-            # without making forward progress.  Bail out as "blocked" so the
-            # operator can intervene, rather than burning the full retry budget.
             _pending_now = int(task_sync_now.get("pending_tasks", 0) or 0)
-            _stagnation_snapshot: tuple[int, str | None] = (_pending_now, next_task)
-            _stagnation_window.append(_stagnation_snapshot)
-            if len(_stagnation_window) > _STAGNATION_WINDOW:
-                _stagnation_window.pop(0)
-            if (
-                _pending_now > 0
-                and len(_stagnation_window) >= _STAGNATION_WINDOW
-                and len(set(_stagnation_window)) == 1
-            ):
+            stagnation.record(_pending_now, next_task)
+            if stagnation.is_stagnant(_pending_now):
                 stagnation_msg = (
                     f"Loop stagnated: the same {_pending_now} pending task(s) "
-                    f"persisted unchanged across {_STAGNATION_WINDOW} consecutive "
+                    f"persisted unchanged across {stagnation._window_size} consecutive "
                     "iterations with no forward progress. "
                     "Verify that the agent can write to PLAN.md and TASKS.md, "
                     "or increase the task scope before resuming."

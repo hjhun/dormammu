@@ -1096,10 +1096,12 @@ class StateRepository:
             return None
         return payload
 
-    def _read_json(self, path: Path) -> dict[str, Any]:
+    @staticmethod
+    def _read_json(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
 
-    def _write_json(self, path: Path, payload: Mapping[str, Any]) -> None:
+    @staticmethod
+    def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
         path.write_text(
             json.dumps(dict(payload), indent=2, ensure_ascii=True) + "\n",
             encoding="utf-8",

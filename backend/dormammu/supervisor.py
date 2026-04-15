@@ -142,42 +142,35 @@ def _find_question_lines(*texts: str) -> list[str]:
     return matches
 
 
+def _is_meaningful_path(path: str) -> bool:
+    """Return True when a file path represents a meaningful code change.
+
+    Filters out dormammu's own state files and logs so that supervisor checks
+    based on worktree diffs are not confused by bookkeeping writes.
+    """
+    return (
+        bool(path)
+        and path != "DORMAMMU.log"
+        and not path.startswith(".dev/")
+        and not path.endswith("supervisor_report.md")
+        and not path.endswith("continuation_prompt.txt")
+    )
+
+
 def _meaningful_committed_files(file_paths: Sequence[str]) -> list[str]:
     """Filter bare paths emitted by ``git log --name-only`` (no status prefix)."""
-    meaningful: list[str] = []
-    for entry in file_paths:
-        candidate = entry.strip()
-        if not candidate:
-            continue
-        if candidate == "DORMAMMU.log":
-            continue
-        if candidate.startswith(".dev/"):
-            continue
-        if candidate.endswith("supervisor_report.md"):
-            continue
-        if candidate.endswith("continuation_prompt.txt"):
-            continue
-        meaningful.append(candidate)
-    return meaningful
+    return [entry.strip() for entry in file_paths if _is_meaningful_path(entry.strip())]
 
 
 def _meaningful_changed_files(changed_files: Sequence[str]) -> list[str]:
+    """Filter git-status lines (with 3-char XY prefix) to meaningful paths."""
     meaningful: list[str] = []
     for entry in changed_files:
         candidate = entry[3:].strip() if len(entry) > 3 else entry.strip()
-        if not candidate:
-            continue
         if " -> " in candidate:
             candidate = candidate.split(" -> ", 1)[1].strip()
-        if candidate == "DORMAMMU.log":
-            continue
-        if candidate.startswith(".dev/"):
-            continue
-        if candidate.endswith("supervisor_report.md"):
-            continue
-        if candidate.endswith("continuation_prompt.txt"):
-            continue
-        meaningful.append(candidate)
+        if _is_meaningful_path(candidate):
+            meaningful.append(candidate)
     return meaningful
 
 

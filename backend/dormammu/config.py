@@ -579,7 +579,7 @@ class AppConfig:
                 config_payload.get("telegram"),
                 config_path=config_file,
             ),
-            agents=_parse_agents_config_lazy(
+            agents=_parse_agents_config(
                 config_payload.get("agents"),
                 config_path=config_file,
             ),
@@ -623,12 +623,12 @@ class AppConfig:
         }
 
 
-def _parse_agents_config_lazy(
+def _parse_agents_config(
     value: Any,
     *,
     config_path: Path | None,
-) -> AgentsConfig | None:
-    """Lazy wrapper to avoid circular import at module load time."""
+) -> "AgentsConfig | None":
+    """Parse the agents config block, importing lazily to avoid circular imports."""
     from dormammu.agent.role_config import parse_agents_config  # noqa: PLC0415
 
     return parse_agents_config(value, config_path=config_path)

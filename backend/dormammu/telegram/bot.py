@@ -5,6 +5,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import signal
 import threading
 from datetime import datetime, timezone
@@ -46,6 +47,12 @@ _HELP_TEXT = (
     "🔌 /shutdown — finish current prompt then stop the daemon\n"
     "❓ /help — this message"
 )
+
+# Patterns for parsing result markdown files in _send_history.
+_HISTORY_STATUS_RE = re.compile(r"^- Status: `([^`]+)`", re.MULTILINE)
+_HISTORY_STARTED_RE = re.compile(r"^- Started at: `([^`]+)`", re.MULTILINE)
+_HISTORY_COMPLETED_RE = re.compile(r"^- Completed at: `([^`]+)`", re.MULTILINE)
+_HISTORY_VERDICT_RE = re.compile(r"^- Supervisor verdict: `([^`]+)`", re.MULTILINE)
 
 _MENU_KEYBOARD = [
     [
@@ -666,8 +673,6 @@ class TelegramBot:
         await self._send_history(update, context)
 
     async def _send_history(self, update: Any, context: Any) -> None:
-        import re
-
         try:
             n = int(context.args[0]) if context.args else 10
             n = max(1, min(n, 50))
@@ -687,10 +692,6 @@ class TelegramBot:
             await self._reply(update, "🕐 No history found.")
             return
 
-        _status_re = re.compile(r"^- Status: `([^`]+)`", re.MULTILINE)
-        _started_re = re.compile(r"^- Started at: `([^`]+)`", re.MULTILINE)
-        _completed_re = re.compile(r"^- Completed at: `([^`]+)`", re.MULTILINE)
-        _verdict_re = re.compile(r"^- Supervisor verdict: `([^`]+)`", re.MULTILINE)
         _status_icons = {
             "done": "✅",
             "failed": "❌",
@@ -704,10 +705,10 @@ class TelegramBot:
                 content = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            status_m = _status_re.search(content)
-            started_m = _started_re.search(content)
-            completed_m = _completed_re.search(content)
-            verdict_m = _verdict_re.search(content)
+            status_m = _HISTORY_STATUS_RE.search(content)
+            started_m = _HISTORY_STARTED_RE.search(content)
+            completed_m = _HISTORY_COMPLETED_RE.search(content)
+            verdict_m = _HISTORY_VERDICT_RE.search(content)
 
             status = status_m.group(1) if status_m else "?"
             started = started_m.group(1) if started_m else "?"

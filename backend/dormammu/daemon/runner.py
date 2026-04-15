@@ -4,7 +4,6 @@ import contextlib
 from datetime import datetime, timezone
 import os
 from pathlib import Path
-import re
 import sys
 import threading
 import time
@@ -31,6 +30,10 @@ from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import CliAdapter
 from dormammu.config import AppConfig
 from dormammu.continuation import build_supervisor_handoff_prompt_from_agents
+from dormammu.daemon._patterns import (
+    GOAL_SOURCE_RE as _GOAL_SOURCE_RE,
+    RESULT_STATUS_RE as _RESULT_STATUS_RE,
+)
 from dormammu.daemon.goals_scheduler import GoalsScheduler
 from dormammu.daemon.models import DaemonConfig, DaemonPromptResult
 from dormammu.daemon.pipeline_runner import PipelineRunner
@@ -44,13 +47,6 @@ from dormammu.state.models import summarize_prompt_goal
 
 
 DEFAULT_DAEMON_MAX_RETRIES = 49
-_RESULT_STATUS_RE = re.compile(r"^- Status: `([^`]+)`$", re.MULTILINE)
-
-# Matches the goal_source metadata tag prepended by GoalsScheduler.
-_GOAL_SOURCE_RE = re.compile(
-    r"^<!--\s*dormammu:goal_source=([^\s>]+)\s*-->",
-    re.MULTILINE,
-)
 
 
 class _PromptSkipped(Exception):
