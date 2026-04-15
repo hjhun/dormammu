@@ -185,7 +185,9 @@ transitions.
 
 ```mermaid
 flowchart TD
-    Start([New Scope]) --> refine[Refining Agent]
+    Start([New Scope]) --> prd["PRD Agent (optional)<br/>writes user stories / PRD"]
+    prd --> refine[Refining Agent]
+    Start -. skip PRD .-> refine
     refine --> plan[Planning Agent]
     plan --> design[Designing Agent]
     design --> develop[Developing Agent]
@@ -207,6 +209,21 @@ flowchart TD
     supervisor -. orchestrates .-> review
     supervisor -. orchestrates .-> commit
 ```
+
+**PRD Agent** (optional): Converts a rough feature idea into a structured PRD
+with user stories sized for a single agent session. Invoke before refinement
+when scope is unclear. Hands off to the Planning Agent once finalized.
+
+The `agents/` bundle also ships five pre-composed **workflows** that group
+related skills into common entry patterns:
+
+| Workflow | Purpose |
+|----------|---------|
+| `refine-plan.md` | Refine requirements and generate an adaptive WORKFLOWS.md |
+| `develop-test-authoring.md` | Parallel development and test authoring track |
+| `build-deploy-test-review.md` | Build, deploy, validate, and review |
+| `cleanup-commit.md` | Final cleanup and commit after validation passes |
+| `supervised-downstream.md` | Continue downstream execution under supervisor contract after `refine → plan` has already completed |
 
 See [docs/GUIDE.md](docs/GUIDE.md) for a full description of each agent role.
 
@@ -409,13 +426,15 @@ Resolved in this order:
     "usage limit", "quota exceeded", "rate limit exceeded"
   ],
   "agents": {
-    "analyzer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
     "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "analyzer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
     "planner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "architect": { "cli": "claude", "model": "claude-sonnet-4-6" },
     "developer": { "cli": "claude", "model": "claude-opus-4-6" },
     "tester":    { "cli": "claude", "model": "claude-sonnet-4-6" },
     "reviewer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
-    "committer": { "cli": "claude" }
+    "committer": { "cli": "claude" },
+    "evaluator": { "cli": "claude", "model": "claude-sonnet-4-6" }
   }
 }
 ```
@@ -425,10 +444,12 @@ use the role-based pipeline. Providing `--agent-cli` on the command line reverts
 to the single-agent downstream path for that invocation after the mandatory
 `refine -> plan` prelude completes.
 
-`analyzer` is used by goals automation to turn a scheduled goal into a
-requirements-focused brief before planning. `refiner` and `planner` are now
-mandatory runtime stages and fall back to `active_agent_cli` when no
-role-specific CLI is configured.
+`analyzer`, `planner`, and `architect` are used by goals automation to turn a
+scheduled goal into a stronger execution prompt before runtime starts.
+`refiner` and `planner` are mandatory runtime stages and fall back to
+`active_agent_cli` when no role-specific CLI is configured. `evaluator` is
+mandatory for goals-scheduler prompts (plan checkpoint and post-commit review)
+and is skipped for interactive `run` and `run-once` commands.
 
 ### Daemon queue config (`daemonize.json`)
 
@@ -460,7 +481,6 @@ Every run leaves behind inspectable artifacts:
 
 | Path | Contents |
 |------|----------|
-| `.dev/00-analyzer/` | Requirements analysis snapshots produced during goals prompt generation |
 | `.dev/REQUIREMENTS.md` | Structured requirements produced by the refining agent |
 | `.dev/WORKFLOWS.md` | Adaptive stage checklist produced by the planning agent |
 | `.dev/DASHBOARD.md` | Operator-facing progress, active phase, next action, risks |
@@ -468,7 +488,10 @@ Every run leaves behind inspectable artifacts:
 | `.dev/TASKS.md` | Prompt-derived development queue used for task sync and resume targeting |
 | `.dev/workflow_state.json` | Machine-readable workflow state (source of truth) |
 | `.dev/session.json` | Active session metadata |
-| `.dev/logs/` | Prompt, stdout, stderr, and run metadata artifacts |
+| `.dev/logs/` | Prompt, stdout, stderr, run metadata, and pipeline stage documents (tester, reviewer, committer, evaluator) |
+| `.dev/00-analyzer/` | Analyzer snapshots produced during goals prompt pre-processing |
+| `.dev/01-planner/` | Planner snapshots produced during goals prompt pre-processing |
+| `.dev/02-architect/` | Architect design snapshots produced during goals prompt pre-processing |
 | `DORMAMMU.log` | Project-level execution log (written with `--debug`) |
 
 ## Common Patterns
