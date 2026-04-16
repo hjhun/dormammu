@@ -412,6 +412,26 @@ def default_session_state(
     }
 
 
+def default_intake_state(prompt_text: str | None) -> dict[str, Any]:
+    """Return the default ``intake`` block for workflow state.
+
+    Performs request classification when *prompt_text* is provided; otherwise
+    falls back to ``direct_response`` with a note that no prompt was given.
+    """
+    from dormammu.intake import classify_request  # local import avoids circulars
+
+    if prompt_text:
+        classification = classify_request(prompt_text)
+        return classification.to_dict()
+    return {
+        "request_class": "direct_response",
+        "confidence": 0.5,
+        "rationale": "No prompt provided at bootstrap; defaulting to direct_response.",
+        "has_interface_risk": False,
+        "requires_test_strategy": False,
+    }
+
+
 def default_workflow_state(
     *,
     timestamp: str,
@@ -536,4 +556,5 @@ def default_workflow_state(
             "status": "not_run",
         },
         "latest_continuation_prompt": None,
+        "intake": default_intake_state(prompt_text),
     }
