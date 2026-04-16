@@ -10,16 +10,16 @@ Thread safety
 """
 from __future__ import annotations
 
-import subprocess
 import sys
-import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
-from dormammu.agent.prompt_identity import prepend_cli_identity
+from dormammu.agent import CliAdapter
+from dormammu.agent.models import AgentRunRequest
 from dormammu.agent.role_config import AgentsConfig
+from dormammu.daemon.cli_output import model_args, select_agent_output
 
 if TYPE_CHECKING:
     from dormammu.config import AppConfig
@@ -226,10 +226,10 @@ class GoalsScheduler:
 
         analyzer_cfg = agents.for_role("analyzer")
         planner_cfg = agents.for_role("planner")
-        architect_cfg = agents.for_role("architect")
+        designer_cfg = agents.for_role("designer")
         analyzer_cli = analyzer_cfg.resolve_cli(active_cli)
         planner_cli = planner_cfg.resolve_cli(active_cli)
-        architect_cli = architect_cfg.resolve_cli(active_cli)
+        designer_cli = designer_cfg.resolve_cli(active_cli)
 
         if analyzer_cli is not None:
             analysis_text = self._call_role_agent(
@@ -251,12 +251,12 @@ class GoalsScheduler:
                 date_str=date_str,
             )
 
-        if architect_cli is not None and plan_text is not None:
+        if designer_cli is not None and plan_text is not None:
             design_text = self._call_role_agent(
-                role="architect",
-                cli=architect_cli,
-                model=architect_cfg.model,
-                prompt=self._architect_prompt(goal_text, analysis_text, plan_text),
+                role="designer",
+                cli=designer_cli,
+                model=designer_cfg.model,
+                prompt=self._designer_prompt(goal_text, analysis_text, plan_text),
                 stem=stem,
                 date_str=date_str,
             )
@@ -300,7 +300,7 @@ class GoalsScheduler:
             "Write all content in English regardless of the language of the goal above."
         )
 
-    def _architect_prompt(
+    def _designer_prompt(
         self,
         goal_text: str,
         analysis_text: str | None,
@@ -312,7 +312,7 @@ class GoalsScheduler:
             else ""
         )
         return (
-            "You are an architect agent. Based on the plan below, create a "
+            "You are a designing agent. Based on the plan below, create a "
             "technical OOAD design.\n\n"
             "Include:\n"
             "1. Module/class design with responsibilities\n"
@@ -336,95 +336,57 @@ class GoalsScheduler:
         stem: str,
         date_str: str,
     ) -> str | None:
-        """Run an agent CLI once and return its stdout, or None on failure."""
-        from dormammu.agent.presets import preset_for_executable_name
+        """Run an agent CLI once via :class:`CliAdapter` and return its output.
 
-        executable_name = cli.name
-        preset = preset_for_executable_name(executable_name)
-        prompt = prepend_cli_identity(prompt, cli)
+        Uses the same command-building, prompt-injection, and output-capture
+        primitives as :class:`~dormammu.daemon.pipeline_runner.PipelineRunner`
+        so both execution paths share a single implementation.
 
-        args: list[str] = [str(cli)]
-        stdin_input: str | None = None
-        tmp_path: Path | None = None
-
-        if preset is not None:
-            args.extend(preset.command_prefix)
-            args.extend(preset.default_extra_args)
-
-        if model is not None:
-            model_flag = _model_flag_for(executable_name)
-            if model_flag:
-                args.extend([model_flag, model])
-
-        # Deliver the prompt: positional > file flag > stdin
-        if preset is not None and preset.prompt_positional:
-            args.append(prompt)
-        elif preset is not None and preset.prompt_file_flag:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".md", delete=False, encoding="utf-8"
-            ) as tmp:
-                tmp.write(prompt)
-                tmp_path = Path(tmp.name)
-            args.extend([preset.prompt_file_flag, str(tmp_path)])
-        elif preset is not None and preset.prompt_arg_flag:
-            args.extend([preset.prompt_arg_flag, prompt])
-        else:
-            stdin_input = prompt
-
-        _ROLE_AGENT_TIMEOUT_SECONDS = self._goals_config.agent_timeout_seconds
-
+        Returns the agent's output text, or ``None`` on failure.
+        """
+        self._log(f"goals scheduler: [{role}] starting")
+        adapter = CliAdapter(
+            self._app_config,
+            live_output_stream=self._progress_stream,
+            stop_event=self._stop_event,
+        )
+        request = AgentRunRequest(
+            cli_path=cli,
+            prompt_text=prompt,
+            repo_root=self._app_config.repo_root,
+            extra_args=tuple(model_args(cli.name, model)),
+            run_label=f"goals-{role}",
+        )
         try:
-            cmd_display = subprocess.list2cmdline(args)
-            self._log(f"goals scheduler: [{role}] command: {cmd_display}")
-            run_kwargs: dict = dict(
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=str(self._app_config.repo_root),
-                timeout=_ROLE_AGENT_TIMEOUT_SECONDS,
-            )
-            if stdin_input is not None:
-                run_kwargs["input"] = stdin_input
-            else:
-                run_kwargs["stdin"] = subprocess.DEVNULL
-            result = subprocess.run(args, **run_kwargs)
-
-            self._log(
-                f"goals scheduler: [{role}] exit code: {result.returncode}"
-            )
-            if result.stdout.strip():
-                self._log(f"goals scheduler: [{role}] stdout:\n{result.stdout.rstrip()}")
-            else:
-                self._log(f"goals scheduler: [{role}] stdout: (empty)")
-            if result.stderr.strip():
-                self._log(f"goals scheduler: [{role}] stderr:\n{result.stderr.rstrip()}")
-            else:
-                self._log(f"goals scheduler: [{role}] stderr: (empty)")
-
-            output = result.stdout or ""
-
-            # Persist the agent's output as a role document.
-            doc_dir = self._app_config.base_dev_dir / "logs"
-            doc_dir.mkdir(parents=True, exist_ok=True)
-            doc_path = doc_dir / f"{date_str}_{role}_{stem}.md"
-            doc_path.write_text(
-                f"# {role.capitalize()} — {stem}\n\n{output}",
-                encoding="utf-8",
-            )
-            self._log(f"goals scheduler: [{role}] document written to {doc_path}")
-            return output or None
-        except subprocess.TimeoutExpired:
-            self._log(
-                f"goals scheduler: [{role}] timed out after "
-                f"{_ROLE_AGENT_TIMEOUT_SECONDS}s — skipping"
-            )
-            return None
+            result = adapter.run_once(request)
         except Exception as exc:
             self._log(f"goals scheduler: [{role}] call failed: {exc}")
             return None
-        finally:
-            if tmp_path is not None and tmp_path.exists():
-                tmp_path.unlink(missing_ok=True)
+
+        stdout = result.stdout_path.read_text(encoding="utf-8") if result.stdout_path.exists() else ""
+        stderr = result.stderr_path.read_text(encoding="utf-8") if result.stderr_path.exists() else ""
+        output = select_agent_output(stdout, stderr)
+
+        self._log(f"goals scheduler: [{role}] exit code: {result.exit_code}")
+        if stdout.strip():
+            self._log(f"goals scheduler: [{role}] stdout:\n{stdout.rstrip()}")
+        else:
+            self._log(f"goals scheduler: [{role}] stdout: (empty)")
+        if stderr.strip():
+            self._log(f"goals scheduler: [{role}] stderr:\n{stderr.rstrip()}")
+        else:
+            self._log(f"goals scheduler: [{role}] stderr: (empty)")
+
+        # Persist the agent's output as a role document.
+        doc_dir = self._app_config.base_dev_dir / "logs"
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        doc_path = doc_dir / f"{date_str}_{role}_{stem}.md"
+        doc_path.write_text(
+            f"# {role.capitalize()} — {stem}\n\n{output}",
+            encoding="utf-8",
+        )
+        self._log(f"goals scheduler: [{role}] document written to {doc_path}")
+        return output or None
 
     @staticmethod
     def _build_prompt(
@@ -486,13 +448,3 @@ class GoalsScheduler:
         self._progress_stream.flush()
 
 
-def _model_flag_for(executable_name: str) -> str | None:
-    """Return the CLI-specific model selection flag, or None if unknown."""
-    _MODEL_FLAGS: dict[str, str] = {
-        "claude": "--model",
-        "claude-code": "--model",
-        "gemini": "--model",
-        "codex": "-m",
-        "aider": "--model",
-    }
-    return _MODEL_FLAGS.get(executable_name.lower())

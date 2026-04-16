@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -591,6 +592,20 @@ class PipelineRunnerNoStageDirSmokeTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(root), "add", "."], check=True)
         subprocess.run(["git", "-C", str(root), "commit", "-qm", "seed"], check=True)
 
+    def _make_adapter_result(self, tmpdir: Path, stdout: str = "", stderr: str = "") -> Any:
+        """Create a mock AgentRunResult with real temp files for stdout/stderr."""
+        out_dir = tmpdir / "_adapter_out"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        from unittest.mock import MagicMock
+        result = MagicMock()
+        stdout_file = out_dir / "stdout.txt"
+        stderr_file = out_dir / "stderr.txt"
+        stdout_file.write_text(stdout, encoding="utf-8")
+        stderr_file.write_text(stderr, encoding="utf-8")
+        result.stdout_path = stdout_file
+        result.stderr_path = stderr_file
+        return result
+
     # ── smoke test 6 ──────────────────────────────────────────────────────────
     def test_call_once_save_doc_false_creates_no_directory(self) -> None:
         """_call_once with save_doc=False must not create any numbered stage directory."""
@@ -617,11 +632,8 @@ class PipelineRunnerNoStageDirSmokeTests(unittest.TestCase):
             fake_cli.write_text("#!/bin/sh\necho 'ok'\n", encoding="utf-8")
             fake_cli.chmod(0o755)
 
-            with patch("subprocess.run") as mock_run:
-                mock_result = MagicMock()
-                mock_result.stdout = "done\n"
-                mock_result.stderr = ""
-                mock_run.return_value = mock_result
+            with patch("dormammu.agent.cli_adapter.CliAdapter.run_once") as mock_run:
+                mock_run.return_value = self._make_adapter_result(root, stdout="done\n")
 
                 runner._call_once(
                     role="refiner",
@@ -666,11 +678,8 @@ class PipelineRunnerNoStageDirSmokeTests(unittest.TestCase):
             fake_cli.write_text("#!/bin/sh\necho 'ok'\n", encoding="utf-8")
             fake_cli.chmod(0o755)
 
-            with patch("subprocess.run") as mock_run:
-                mock_result = MagicMock()
-                mock_result.stdout = "done\n"
-                mock_result.stderr = ""
-                mock_run.return_value = mock_result
+            with patch("dormammu.agent.cli_adapter.CliAdapter.run_once") as mock_run:
+                mock_run.return_value = self._make_adapter_result(root, stdout="done\n")
 
                 runner._call_once(
                     role="tester",

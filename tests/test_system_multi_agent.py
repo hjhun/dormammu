@@ -6,32 +6,30 @@ CLI and that outputs chain through the planning → design stages.
 Role assignments under test
 ---------------------------
   Claude  → planner   (plan generation)
-  Codex   → architect (technical design, receives Claude's plan in prompt)
-  Gemini  → tester / reviewer (command construction verified directly)
+  Codex   → designer  (technical design, receives Claude's plan in prompt)
+  Gemini  → tester / reviewer
 
-All subprocess calls are intercepted — no real CLI is executed.
+All CliAdapter.run_once calls are intercepted — no real CLI is executed.
 
 Regression coverage
 -------------------
-* Exact command-line arguments for claude / codex / gemini (model flags,
-  preset prefix/extra args, prompt delivery mode).
-* Planner output is embedded in the architect prompt.
+* GoalsScheduler routes each role to the correct CLI via AgentRunRequest.
+* Model flag construction (--model / -m) is correct per CLI.
+* Planner output is embedded in the designer prompt.
 * Final queued prompt contains both ``## Plan`` and ``## Design`` sections.
-* Role documents are written to the correct ``.dev/<slot>-<role>/`` paths.
-* Architect is skipped when the planner produces no output.
-* Per-role agent timeout comes from ``GoalsConfig.agent_timeout_seconds``.
+* Role documents are written to ``.dev/logs/<date>_<role>_<stem>.md``.
+* Designer is skipped when the planner produces no output.
+* CliAdapter failures are caught and return None (graceful degradation).
 """
 from __future__ import annotations
 
 import io
-import subprocess
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 from dormammu.daemon.goals_config import GoalsConfig
 from dormammu.daemon.goals_scheduler import GoalsScheduler
@@ -74,8 +72,8 @@ def _agents(
     *,
     planner_cli: str = "claude",
     planner_model: str = "claude-sonnet-4-6",
-    architect_cli: str = "codex",
-    architect_model: str = "o4-mini",
+    designer_cli: str = "codex",
+    designer_model: str = "o4-mini",
     developer_cli: str = "codex",
     developer_model: str = "o4-mini",
     tester_cli: str = "gemini",
@@ -85,7 +83,7 @@ def _agents(
 ) -> AgentsConfig:
     return AgentsConfig(
         planner=RoleAgentConfig(cli=Path(planner_cli), model=planner_model),
-        architect=RoleAgentConfig(cli=Path(architect_cli), model=architect_model),
+        designer=RoleAgentConfig(cli=Path(designer_cli), model=designer_model),
         developer=RoleAgentConfig(cli=Path(developer_cli), model=developer_model),
         tester=RoleAgentConfig(cli=Path(tester_cli), model=tester_model),
         reviewer=RoleAgentConfig(cli=Path(reviewer_cli), model=reviewer_model),
@@ -114,208 +112,112 @@ def _make_scheduler(
     return sched, goals_dir, prompt_path
 
 
-def _ok(stdout: str = "", stderr: str = "", returncode: int = 0) -> MagicMock:
-    """Return a fake ``subprocess.CompletedProcess``."""
-    r = MagicMock(spec=subprocess.CompletedProcess)
-    r.stdout = stdout
-    r.stderr = stderr
-    r.returncode = returncode
-    return r
+def _make_result(tmp_path: Path, output: str = "", run_idx: int = 0) -> MagicMock:
+    """Return a mock AgentRunResult with real temp files for stdout/stderr."""
+    out_dir = tmp_path / f"_adapter_out_{run_idx}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result = MagicMock()
+    stdout_file = out_dir / "stdout.txt"
+    stderr_file = out_dir / "stderr.txt"
+    stdout_file.write_text(output, encoding="utf-8")
+    stderr_file.write_text("", encoding="utf-8")
+    result.stdout_path = stdout_file
+    result.stderr_path = stderr_file
+    result.exit_code = 0
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Claude command construction
+# AgentRunRequest construction
 # ---------------------------------------------------------------------------
 
 
-class TestClaudeCommandConstruction:
-    """claude (planner): --print prefix, positional prompt, --model flag."""
+class TestCallRoleAgentRequest:
+    """_call_role_agent delegates to CliAdapter.run_once with a correct AgentRunRequest."""
 
-    def _call_planner(self, sched: GoalsScheduler, prompt: str = "Plan this") -> list[str]:
-        with patch("subprocess.run", return_value=_ok(_CLAUDE_PLAN)) as mock_run:
-            sched._call_role_agent(
-                role="planner",
-                cli=Path("claude"),
-                model="claude-sonnet-4-6",
-                prompt=prompt,
-                stem="goal",
-                date_str="20260412",
-                slot="01",
-            )
+    def _capture_request(
+        self, sched: GoalsScheduler, tmp_path: Path, **kwargs: Any
+    ) -> Any:
+        """Call _call_role_agent and return the AgentRunRequest passed to run_once."""
+        with patch("dormammu.agent.cli_adapter.CliAdapter.run_once") as mock_run:
+            mock_run.return_value = _make_result(tmp_path)
+            sched._call_role_agent(**kwargs)
         return mock_run.call_args[0][0]
 
-    def test_executable_is_claude(self, tmp_path: Path) -> None:
+    def test_claude_planner_cli_path(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_planner(sched)
-        assert args[0] == "claude"
-
-    def test_print_prefix_present(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_planner(sched)
-        assert "--print" in args
-
-    def test_dangerously_skip_permissions_present(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_planner(sched)
-        assert "--dangerously-skip-permissions" in args
-
-    def test_model_flag_is_double_dash_model(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_planner(sched)
-        assert "--model" in args
-        assert args[args.index("--model") + 1] == "claude-sonnet-4-6"
-
-    def test_prompt_is_last_positional_arg(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        prompt_text = "Implement the scheduler"
-        args = self._call_planner(sched, prompt=prompt_text)
-        assert args[-1] == prepend_cli_identity(prompt_text, Path("claude"))
-
-    def test_full_arg_order(self, tmp_path: Path) -> None:
-        """Regression: exact order is claude --print --dangerously-skip-permissions --model M <prompt>."""
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_planner(sched, prompt="P")
-        assert args == [
-            "claude",
-            "--print",
-            "--dangerously-skip-permissions",
-            "--model",
-            "claude-sonnet-4-6",
-            prepend_cli_identity("P", Path("claude")),
-        ]
-
-
-# ---------------------------------------------------------------------------
-# Codex command construction
-# ---------------------------------------------------------------------------
-
-
-class TestCodexCommandConstruction:
-    """codex (architect / developer): exec subcommand, positional prompt, -m flag."""
-
-    def _call_architect(self, sched: GoalsScheduler, prompt: str = "Design this") -> list[str]:
-        with patch("subprocess.run", return_value=_ok(_CODEX_DESIGN)) as mock_run:
-            sched._call_role_agent(
-                role="architect",
-                cli=Path("codex"),
-                model="o4-mini",
-                prompt=prompt,
-                stem="goal",
-                date_str="20260412",
-                slot="02",
-            )
-        return mock_run.call_args[0][0]
-
-    def test_executable_is_codex(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_architect(sched)
-        assert args[0] == "codex"
-
-    def test_exec_subcommand_present(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_architect(sched)
-        assert "exec" in args
-
-    def test_bypass_approvals_flag_present(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_architect(sched)
-        assert "--dangerously-bypass-approvals-and-sandbox" in args
-
-    def test_skip_git_repo_check_present(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_architect(sched)
-        assert "--skip-git-repo-check" in args
-
-    def test_model_flag_is_short_m(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_architect(sched)
-        assert "-m" in args
-        assert args[args.index("-m") + 1] == "o4-mini"
-
-    def test_prompt_is_last_positional_arg(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        prompt_text = "Design the architecture"
-        args = self._call_architect(sched, prompt=prompt_text)
-        assert args[-1] == prepend_cli_identity(prompt_text, Path("codex"))
-
-    def test_full_arg_order(self, tmp_path: Path) -> None:
-        """Regression: exact order is codex exec --dangerously-bypass-... --skip-git-repo-check -m M <prompt>."""
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_architect(sched, prompt="P")
-        assert args == [
-            "codex", "exec",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--skip-git-repo-check",
-            "-m", "o4-mini",
-            prepend_cli_identity("P", Path("codex")),
-        ]
-
-
-# ---------------------------------------------------------------------------
-# Gemini command construction
-# ---------------------------------------------------------------------------
-
-
-class TestGeminiCommandConstruction:
-    """gemini (tester / reviewer): --prompt flag, --approval-mode yolo, --model flag."""
-
-    def _call_tester(self, sched: GoalsScheduler, prompt: str = "Test this") -> list[str]:
-        with patch("subprocess.run", return_value=_ok(_GEMINI_REVIEW)) as mock_run:
-            sched._call_role_agent(
-                role="tester",
-                cli=Path("gemini"),
-                model="gemini-2.5-pro",
-                prompt=prompt,
-                stem="goal",
-                date_str="20260412",
-                slot="03",
-            )
-        return mock_run.call_args[0][0]
-
-    def test_executable_is_gemini(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_tester(sched)
-        assert args[0] == "gemini"
-
-    def test_prompt_delivered_via_flag(self, tmp_path: Path) -> None:
-        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        prompt_text = "Run all tests"
-        args = self._call_tester(sched, prompt=prompt_text)
-        assert "--prompt" in args
-        assert args[args.index("--prompt") + 1] == prepend_cli_identity(
-            prompt_text,
-            Path("gemini"),
+        req = self._capture_request(
+            sched, tmp_path,
+            role="planner", cli=Path("claude"), model="claude-sonnet-4-6",
+            prompt="Plan this", stem="goal", date_str="20260412",
         )
+        assert req.cli_path == Path("claude")
 
-    def test_approval_mode_yolo_present(self, tmp_path: Path) -> None:
+    def test_claude_model_in_extra_args(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_tester(sched)
-        assert "--approval-mode" in args
-        assert args[args.index("--approval-mode") + 1] == "yolo"
+        req = self._capture_request(
+            sched, tmp_path,
+            role="planner", cli=Path("claude"), model="claude-sonnet-4-6",
+            prompt="Plan this", stem="goal", date_str="20260412",
+        )
+        assert "--model" in req.extra_args
+        assert "claude-sonnet-4-6" in req.extra_args
 
-    def test_include_directories_slash_present(self, tmp_path: Path) -> None:
+    def test_codex_designer_cli_path(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_tester(sched)
-        assert "--include-directories" in args
-        assert args[args.index("--include-directories") + 1] == "/"
+        req = self._capture_request(
+            sched, tmp_path,
+            role="designer", cli=Path("codex"), model="o4-mini",
+            prompt="Design this", stem="goal", date_str="20260412",
+        )
+        assert req.cli_path == Path("codex")
 
-    def test_model_flag_is_double_dash_model(self, tmp_path: Path) -> None:
+    def test_codex_model_uses_short_m_flag(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_tester(sched)
-        assert "--model" in args
-        assert args[args.index("--model") + 1] == "gemini-2.5-pro"
+        req = self._capture_request(
+            sched, tmp_path,
+            role="designer", cli=Path("codex"), model="o4-mini",
+            prompt="Design this", stem="goal", date_str="20260412",
+        )
+        assert "-m" in req.extra_args
+        assert "o4-mini" in req.extra_args
 
-    def test_full_arg_order(self, tmp_path: Path) -> None:
-        """Regression: exact order is gemini --approval-mode yolo --include-directories / --model M --prompt <prompt>."""
+    def test_gemini_model_uses_double_dash_model(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        args = self._call_tester(sched, prompt="P")
-        assert args == [
-            "gemini",
-            "--approval-mode", "yolo",
-            "--include-directories", "/",
-            "--model", "gemini-2.5-pro",
-            "--prompt", prepend_cli_identity("P", Path("gemini")),
-        ]
+        req = self._capture_request(
+            sched, tmp_path,
+            role="tester", cli=Path("gemini"), model="gemini-2.5-pro",
+            prompt="Test this", stem="goal", date_str="20260412",
+        )
+        assert "--model" in req.extra_args
+        assert "gemini-2.5-pro" in req.extra_args
+
+    def test_prompt_text_forwarded(self, tmp_path: Path) -> None:
+        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
+        req = self._capture_request(
+            sched, tmp_path,
+            role="planner", cli=Path("claude"), model=None,
+            prompt="My custom prompt", stem="goal", date_str="20260412",
+        )
+        assert req.prompt_text == "My custom prompt"
+
+    def test_no_model_yields_empty_extra_args(self, tmp_path: Path) -> None:
+        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
+        req = self._capture_request(
+            sched, tmp_path,
+            role="planner", cli=Path("claude"), model=None,
+            prompt="P", stem="goal", date_str="20260412",
+        )
+        assert req.extra_args == ()
+
+    def test_adapter_failure_returns_none(self, tmp_path: Path) -> None:
+        sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
+        with patch("dormammu.agent.cli_adapter.CliAdapter.run_once", side_effect=RuntimeError("boom")):
+            result = sched._call_role_agent(
+                role="planner", cli=Path("claude"), model=None,
+                prompt="P", stem="goal", date_str="20260412",
+            )
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -324,78 +226,79 @@ class TestGeminiCommandConstruction:
 
 
 class TestMultiAgentOutputChaining:
-    """Claude's plan must appear verbatim inside Codex's architect prompt."""
+    """Claude's plan must appear verbatim inside Codex's designer prompt."""
+
+    @staticmethod
+    def _run_generate(
+        sched: GoalsScheduler,
+        tmp_path: Path,
+        outputs: dict[str, str] | None = None,
+    ) -> tuple[list[Any], str]:
+        """Run _generate_prompt, intercept run_once, return (captured_requests, result)."""
+        captured: list[Any] = []
+        run_idx = [0]
+        out_map: dict[str, str] = {"claude": _CLAUDE_PLAN, "codex": _CODEX_DESIGN}
+        if outputs:
+            out_map.update(outputs)
+
+        def fake_run_once(req: Any) -> MagicMock:
+            captured.append(req)
+            idx = run_idx[0]
+            run_idx[0] += 1
+            output = out_map.get(req.cli_path.name, "")
+            return _make_result(tmp_path, output, idx)
+
+        with patch(
+            "dormammu.agent.cli_adapter.CliAdapter.run_once", side_effect=fake_run_once
+        ):
+            result = sched._generate_prompt("Build a feature", "feature", "20260412")
+
+        return captured, result
 
     def test_first_call_targets_claude(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        captured: list[list[str]] = []
-
-        def fake_run(args: list[str], **kwargs: object) -> MagicMock:
-            captured.append(args)
-            return _ok(_CLAUDE_PLAN if args[0] == "claude" else _CODEX_DESIGN)
-
-        with patch("subprocess.run", side_effect=fake_run):
-            sched._generate_prompt("Build a feature", "feature", "20260412")
-
-        assert captured[0][0] == "claude"
+        captured, _ = self._run_generate(sched, tmp_path)
+        assert captured[0].cli_path == Path("claude")
 
     def test_second_call_targets_codex(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        captured: list[list[str]] = []
-
-        def fake_run(args: list[str], **kwargs: object) -> MagicMock:
-            captured.append(args)
-            return _ok(_CLAUDE_PLAN if args[0] == "claude" else _CODEX_DESIGN)
-
-        with patch("subprocess.run", side_effect=fake_run):
-            sched._generate_prompt("Build a feature", "feature", "20260412")
-
+        captured, _ = self._run_generate(sched, tmp_path)
         assert len(captured) == 2
-        assert captured[1][0] == "codex"
+        assert captured[1].cli_path == Path("codex")
 
-    def test_architect_prompt_embeds_planner_output(self, tmp_path: Path) -> None:
+    def test_designer_prompt_embeds_planner_output(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        captured: list[list[str]] = []
-
-        def fake_run(args: list[str], **kwargs: object) -> MagicMock:
-            captured.append(list(args))
-            return _ok(_CLAUDE_PLAN if args[0] == "claude" else _CODEX_DESIGN)
-
-        with patch("subprocess.run", side_effect=fake_run):
-            sched._generate_prompt("Build a feature", "feature", "20260412")
-
-        # Codex uses positional prompt (last arg)
-        architect_prompt = captured[1][-1]
-        assert _CLAUDE_PLAN.strip() in architect_prompt
+        captured, _ = self._run_generate(sched, tmp_path)
+        designer_prompt = captured[1].prompt_text
+        assert _CLAUDE_PLAN.strip() in designer_prompt
 
     def test_final_prompt_contains_plan_and_design_sections(
         self, tmp_path: Path
     ) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-
-        with patch("subprocess.run", side_effect=[_ok(_CLAUDE_PLAN), _ok(_CODEX_DESIGN)]):
-            result = sched._generate_prompt("Build a feature", "feature", "20260412")
-
+        _, result = self._run_generate(sched, tmp_path)
         assert "## Plan" in result
         assert "## Design" in result
         assert "Phase 1" in result    # from _CLAUDE_PLAN
         assert "Module A" in result   # from _CODEX_DESIGN
 
-    def test_architect_not_called_when_planner_produces_no_output(
+    def test_designer_not_called_when_planner_produces_no_output(
         self, tmp_path: Path
     ) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
-        call_count = 0
+        run_idx = [0]
 
-        def fake_run(args: list[str], **kwargs: object) -> MagicMock:
-            nonlocal call_count
-            call_count += 1
-            return _ok("")  # empty stdout → planner returns None
+        def fake_run_once(req: Any) -> MagicMock:
+            idx = run_idx[0]
+            run_idx[0] += 1
+            return _make_result(tmp_path, "", idx)  # empty → planner returns None
 
-        with patch("subprocess.run", side_effect=fake_run):
+        with patch(
+            "dormammu.agent.cli_adapter.CliAdapter.run_once", side_effect=fake_run_once
+        ) as mock_run:
             result = sched._generate_prompt("Build a feature", "feature", "20260412")
 
-        assert call_count == 1          # only planner called
+        assert mock_run.call_count == 1  # only planner called
         assert "## Design" not in result
 
 
@@ -407,16 +310,52 @@ class TestMultiAgentOutputChaining:
 class TestGoalsSchedulerMultiAgentRegression:
     """Full regression: ``.md`` goal file is processed and written to the queue."""
 
+    @staticmethod
+    def _patch_run_once(
+        tmp_path: Path,
+        per_cli_outputs: dict[str, list[str]] | None = None,
+    ):
+        """Return a patch context manager for CliAdapter.run_once with per-CLI outputs."""
+        counters: dict[str, int] = {}
+        run_idx = [0]
+        per_cli: dict[str, list[str]] = per_cli_outputs or {
+            "claude": [_CLAUDE_PLAN],
+            "codex": [_CODEX_DESIGN],
+        }
+
+        def fake_run_once(req: Any) -> MagicMock:
+            name = req.cli_path.name
+            seq = per_cli.get(name, [""])
+            idx_in_seq = counters.get(name, 0)
+            counters[name] = idx_in_seq + 1
+            output = seq[idx_in_seq] if idx_in_seq < len(seq) else ""
+            result = _make_result(tmp_path, output, run_idx[0])
+            run_idx[0] += 1
+            return result
+
+        return patch(
+            "dormammu.agent.cli_adapter.CliAdapter.run_once", side_effect=fake_run_once
+        )
+
+    @staticmethod
+    def _mock_datetime():
+        """Return a patch context manager that fixes the date to 20260412."""
+        return patch("dormammu.daemon.goals_scheduler.datetime")
+
+    @staticmethod
+    def _apply_date_mock(mock_dt: Any) -> None:
+        mock_dt.now.return_value.strftime.return_value = "20260412"
+        mock_dt.now.return_value.timezone = None
+
     def test_queued_prompt_contains_plan_and_design(self, tmp_path: Path) -> None:
         sched, goals_dir, prompt_path = _make_scheduler(tmp_path, agents_cfg=_agents())
         (goals_dir / "improve-system.md").write_text(
             "Improve system performance", encoding="utf-8"
         )
 
-        with patch("subprocess.run", side_effect=[_ok(_CLAUDE_PLAN), _ok(_CODEX_DESIGN)]):
-            with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
-                mock_dt.now.return_value.strftime.return_value = "20260412"
-                mock_dt.now.return_value.timezone = None
+        with self._patch_run_once(tmp_path):
+            with self._mock_datetime() as mock_dt:
+                self._apply_date_mock(mock_dt)
                 sched._process_goals()
 
         queued = list(prompt_path.glob("*.md"))
@@ -431,10 +370,9 @@ class TestGoalsSchedulerMultiAgentRegression:
         sched, goals_dir, prompt_path = _make_scheduler(tmp_path, agents_cfg=_agents())
         (goals_dir / "feature.md").write_text("목표: 시스템 개선", encoding="utf-8")
 
-        with patch("subprocess.run", side_effect=[_ok(_CLAUDE_PLAN), _ok(_CODEX_DESIGN)]):
-            with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
-                mock_dt.now.return_value.strftime.return_value = "20260412"
-                mock_dt.now.return_value.timezone = None
+        with self._patch_run_once(tmp_path):
+            with self._mock_datetime() as mock_dt:
+                self._apply_date_mock(mock_dt)
                 sched._process_goals()
 
         content = list(prompt_path.glob("*.md"))[0].read_text(encoding="utf-8")
@@ -449,40 +387,40 @@ class TestGoalsSchedulerMultiAgentRegression:
         sched, goals_dir, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
         (goals_dir / "feature.md").write_text("Add feature X", encoding="utf-8")
 
-        with patch("subprocess.run", side_effect=[_ok(_CLAUDE_PLAN), _ok(_CODEX_DESIGN)]):
-            with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
-                mock_dt.now.return_value.strftime.return_value = "20260412"
-                mock_dt.now.return_value.timezone = None
+        with self._patch_run_once(tmp_path):
+            with self._mock_datetime() as mock_dt:
+                self._apply_date_mock(mock_dt)
                 sched._process_goals()
 
         doc = tmp_path / ".dev" / "logs" / "20260412_planner_feature.md"
         assert doc.exists(), "planner document not written"
         assert "Phase 1" in doc.read_text(encoding="utf-8")
 
-    def test_architect_role_document_written_with_codex_output(
+    def test_designer_role_document_written_with_codex_output(
         self, tmp_path: Path
     ) -> None:
         sched, goals_dir, _ = _make_scheduler(tmp_path, agents_cfg=_agents())
         (goals_dir / "feature.md").write_text("Add feature X", encoding="utf-8")
 
-        with patch("subprocess.run", side_effect=[_ok(_CLAUDE_PLAN), _ok(_CODEX_DESIGN)]):
-            with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
-                mock_dt.now.return_value.strftime.return_value = "20260412"
-                mock_dt.now.return_value.timezone = None
+        with self._patch_run_once(tmp_path):
+            with self._mock_datetime() as mock_dt:
+                self._apply_date_mock(mock_dt)
                 sched._process_goals()
 
-        doc = tmp_path / ".dev" / "logs" / "20260412_architect_feature.md"
-        assert doc.exists(), "architect document not written"
+        doc = tmp_path / ".dev" / "logs" / "20260412_designer_feature.md"
+        assert doc.exists(), "designer document not written"
         assert "Module A" in doc.read_text(encoding="utf-8")
 
     def test_only_goal_section_when_planner_fails(self, tmp_path: Path) -> None:
         sched, goals_dir, prompt_path = _make_scheduler(tmp_path, agents_cfg=_agents())
         (goals_dir / "feature.md").write_text("Add feature X", encoding="utf-8")
 
-        with patch("subprocess.run", return_value=_ok("", "fatal error", returncode=1)):
-            with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
-                mock_dt.now.return_value.strftime.return_value = "20260412"
-                mock_dt.now.return_value.timezone = None
+        with patch(
+            "dormammu.agent.cli_adapter.CliAdapter.run_once",
+            side_effect=RuntimeError("fatal error"),
+        ):
+            with self._mock_datetime() as mock_dt:
+                self._apply_date_mock(mock_dt)
                 sched._process_goals()
 
         queued = list(prompt_path.glob("*.md"))
@@ -492,45 +430,6 @@ class TestGoalsSchedulerMultiAgentRegression:
         assert "## Design" not in content
         assert "Add feature X" in content
 
-    def test_agent_timeout_from_config_passed_to_subprocess(
-        self, tmp_path: Path
-    ) -> None:
-        sched, _, _ = _make_scheduler(
-            tmp_path, agents_cfg=_agents(), agent_timeout_seconds=999
-        )
-
-        with patch("subprocess.run", return_value=_ok(_CLAUDE_PLAN)) as mock_run:
-            sched._call_role_agent(
-                role="planner",
-                cli=Path("claude"),
-                model=None,
-                prompt="test",
-                stem="goal",
-                date_str="20260412",
-            )
-
-        kwargs = mock_run.call_args[1]
-        assert kwargs.get("timeout") == 999
-
-    def test_timeout_logs_role_and_seconds(self, tmp_path: Path) -> None:
-        sched, goals_dir, _ = _make_scheduler(
-            tmp_path, agents_cfg=_agents(), agent_timeout_seconds=42
-        )
-        (goals_dir / "feature.md").write_text("Add feature X", encoding="utf-8")
-
-        with patch(
-            "subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=42),
-        ):
-            with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
-                mock_dt.now.return_value.strftime.return_value = "20260412"
-                mock_dt.now.return_value.timezone = None
-                sched._process_goals()
-
-        log = sched._progress_stream.getvalue()
-        assert "timed out" in log
-        assert "42s" in log
-
     def test_multiple_goal_files_each_invoke_full_pipeline(
         self, tmp_path: Path
     ) -> None:
@@ -538,16 +437,16 @@ class TestGoalsSchedulerMultiAgentRegression:
         (goals_dir / "goal-a.md").write_text("Goal A", encoding="utf-8")
         (goals_dir / "goal-b.md").write_text("Goal B", encoding="utf-8")
 
-        # Two goals × two stages = four subprocess calls
-        responses = [
-            _ok(_CLAUDE_PLAN), _ok(_CODEX_DESIGN),
-            _ok(_CLAUDE_PLAN), _ok(_CODEX_DESIGN),
-        ]
-
-        with patch("subprocess.run", side_effect=responses) as mock_run:
-            with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
-                mock_dt.now.return_value.strftime.return_value = "20260412"
-                mock_dt.now.return_value.timezone = None
+        # Two goals × two stages (planner + designer) = four run_once calls
+        with self._patch_run_once(
+            tmp_path,
+            per_cli_outputs={
+                "claude": [_CLAUDE_PLAN, _CLAUDE_PLAN],
+                "codex": [_CODEX_DESIGN, _CODEX_DESIGN],
+            },
+        ) as mock_run:
+            with self._mock_datetime() as mock_dt:
+                self._apply_date_mock(mock_dt)
                 sched._process_goals()
 
         assert mock_run.call_count == 4

@@ -12,6 +12,7 @@ import pytest
 from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.daemon.cli_output import select_agent_output
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
+from dormammu.daemon.models import StageResult
 from dormammu.daemon.pipeline_runner import (
     MAX_STAGE_ITERATIONS,
     PipelineRunner,
@@ -143,11 +144,9 @@ class TestMandatoryPreludeStages:
         with patch.object(
             runner, "_call_once", return_value="checkpoint ok\nDECISION: PROCEED"
         ):
-            verdict, _ = runner._run_plan_evaluator(
-                "goal", stem="g", date_str="20260412"
-            )
+            stage = runner._run_plan_evaluator("goal", stem="g", date_str="20260412")
 
-        assert verdict == "proceed"
+        assert stage.verdict == "proceed"
 
     def test_plan_evaluator_ambiguous_output_fails_closed_to_rework(
         self, tmp_path: Path
@@ -156,11 +155,9 @@ class TestMandatoryPreludeStages:
         runner = _make_runner(tmp_path, agents=agents)
 
         with patch.object(runner, "_call_once", return_value="checkpoint without verdict"):
-            verdict, _ = runner._run_plan_evaluator(
-                "goal", stem="g", date_str="20260412"
-            )
+            stage = runner._run_plan_evaluator("goal", stem="g", date_str="20260412")
 
-        assert verdict == "rework"
+        assert stage.verdict == "rework"
 
     def test_run_refine_and_plan_retries_until_evaluator_proceeds(
         self, tmp_path: Path
@@ -179,8 +176,8 @@ class TestMandatoryPreludeStages:
                 runner,
                 "_run_plan_evaluator",
                 side_effect=[
-                    ("rework", "DECISION: REWORK"),
-                    ("proceed", "DECISION: PROCEED"),
+                    StageResult(role="evaluator", verdict="rework", output="DECISION: REWORK"),
+                    StageResult(role="evaluator", verdict="proceed", output="DECISION: PROCEED"),
                 ],
             ) as mock_eval,
         ):
@@ -235,7 +232,7 @@ class TestMandatoryPreludeStages:
             patch.object(
                 runner,
                 "_run_plan_evaluator",
-                return_value=("rework", "DECISION: REWORK"),
+                return_value=StageResult(role="evaluator", verdict="rework", output="DECISION: REWORK"),
             ),
         ):
             with pytest.raises(RuntimeError, match="Mandatory plan evaluator"):
@@ -262,7 +259,7 @@ class TestMandatoryPreludeStages:
             patch.object(
                 runner,
                 "_run_plan_evaluator",
-                return_value=("rework", "DECISION: REWORK"),
+                return_value=StageResult(role="evaluator", verdict="rework", output="DECISION: REWORK"),
             ) as mock_eval,
         ):
             with pytest.raises(RuntimeError, match="Mandatory plan evaluator"):
@@ -292,30 +289,30 @@ class TestTesterStage:
         agents = AgentsConfig(tester=RoleAgentConfig(cli=Path("echo")))
         runner = _make_runner(tmp_path, agents=agents)
         with patch.object(runner, "_call_once", return_value="All tests passed.\nOVERALL: PASS"):
-            verdict, _ = runner._run_tester("goal", stem="g", date_str="20260412")
-        assert verdict == "pass"
+            stage = runner._run_tester("goal", stem="g", date_str="20260412")
+        assert stage is not None and stage.verdict == "pass"
 
     def test_fail_verdict_on_overall_fail(self, tmp_path: Path) -> None:
         agents = AgentsConfig(tester=RoleAgentConfig(cli=Path("echo")))
         runner = _make_runner(tmp_path, agents=agents)
         with patch.object(runner, "_call_once", return_value="Test X failed.\nOVERALL: FAIL"):
-            verdict, _ = runner._run_tester("goal", stem="g", date_str="20260412")
-        assert verdict == "fail"
+            stage = runner._run_tester("goal", stem="g", date_str="20260412")
+        assert stage is not None and stage.verdict == "fail"
 
     def test_pass_verdict_when_neither_marker_present(self, tmp_path: Path) -> None:
         """Ambiguous output defaults to pass (conservative)."""
         agents = AgentsConfig(tester=RoleAgentConfig(cli=Path("echo")))
         runner = _make_runner(tmp_path, agents=agents)
         with patch.object(runner, "_call_once", return_value="No verdict line."):
-            verdict, _ = runner._run_tester("goal", stem="g", date_str="20260412")
-        assert verdict == "pass"
+            stage = runner._run_tester("goal", stem="g", date_str="20260412")
+        assert stage is not None and stage.verdict == "pass"
 
     def test_case_insensitive_fail(self, tmp_path: Path) -> None:
         agents = AgentsConfig(tester=RoleAgentConfig(cli=Path("echo")))
         runner = _make_runner(tmp_path, agents=agents)
         with patch.object(runner, "_call_once", return_value="overall: fail"):
-            verdict, _ = runner._run_tester("goal", stem="g", date_str="20260412")
-        assert verdict == "fail"
+            stage = runner._run_tester("goal", stem="g", date_str="20260412")
+        assert stage is not None and stage.verdict == "fail"
 
 
 # ---------------------------------------------------------------------------
@@ -333,8 +330,8 @@ class TestReviewerStage:
         agents = AgentsConfig(reviewer=RoleAgentConfig(cli=Path("echo")))
         runner = _make_runner(tmp_path, agents=agents)
         with patch.object(runner, "_call_once", return_value="Looks good.\nVERDICT: APPROVED"):
-            verdict, _ = runner._run_reviewer("goal", stem="g", date_str="20260412")
-        assert verdict == "approved"
+            stage = runner._run_reviewer("goal", stem="g", date_str="20260412")
+        assert stage is not None and stage.verdict == "approved"
 
     def test_needs_work_verdict(self, tmp_path: Path) -> None:
         agents = AgentsConfig(reviewer=RoleAgentConfig(cli=Path("echo")))
@@ -342,28 +339,28 @@ class TestReviewerStage:
         with patch.object(
             runner, "_call_once", return_value="Issues found.\nVERDICT: NEEDS_WORK"
         ):
-            verdict, _ = runner._run_reviewer("goal", stem="g", date_str="20260412")
-        assert verdict == "needs_work"
+            stage = runner._run_reviewer("goal", stem="g", date_str="20260412")
+        assert stage is not None and stage.verdict == "needs_work"
 
     def test_approved_when_neither_marker_present(self, tmp_path: Path) -> None:
         """Ambiguous output defaults to approved (conservative)."""
         agents = AgentsConfig(reviewer=RoleAgentConfig(cli=Path("echo")))
         runner = _make_runner(tmp_path, agents=agents)
         with patch.object(runner, "_call_once", return_value="No verdict."):
-            verdict, _ = runner._run_reviewer("goal", stem="g", date_str="20260412")
-        assert verdict == "approved"
+            stage = runner._run_reviewer("goal", stem="g", date_str="20260412")
+        assert stage is not None and stage.verdict == "approved"
 
-    def test_architect_doc_included_in_prompt(self, tmp_path: Path) -> None:
+    def test_designer_doc_included_in_prompt(self, tmp_path: Path) -> None:
         agents = AgentsConfig(reviewer=RoleAgentConfig(cli=Path("echo")))
         app = _make_app_config(tmp_path, agents=agents)
         stream = io.StringIO()
         runner = PipelineRunner(app, agents, progress_stream=stream)
 
-        # Create a fake architect doc
+        # Create a fake designer doc (renamed from architect)
         logs_dir = tmp_path / ".dev" / "logs"
         logs_dir.mkdir(parents=True)
-        (logs_dir / "20260412_architect_my-feat.md").write_text(
-            "# Architect Design", encoding="utf-8"
+        (logs_dir / "20260412_designer_my-feat.md").write_text(
+            "# Designer Document", encoding="utf-8"
         )
 
         captured: list[str] = []
@@ -375,7 +372,67 @@ class TestReviewerStage:
         with patch.object(runner, "_call_once", side_effect=fake_call_once):
             runner._run_reviewer("goal", stem="my-feat", date_str="20260412")
 
-        assert "Architect Design" in captured[0]
+        assert "Designer Document" in captured[0]
+
+
+# ---------------------------------------------------------------------------
+# StageResult model (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+class TestStageResult:
+    def test_fields_accessible(self) -> None:
+        stage = StageResult(role="tester", verdict="pass", output="OVERALL: PASS")
+        assert stage.role == "tester"
+        assert stage.verdict == "pass"
+        assert stage.output == "OVERALL: PASS"
+        assert stage.report_path is None
+
+    def test_report_path_stored(self, tmp_path: Path) -> None:
+        path = tmp_path / "report.md"
+        stage = StageResult(role="evaluator", verdict="proceed", output="ok", report_path=path)
+        assert stage.report_path == path
+
+    def test_to_dict_excludes_output(self) -> None:
+        stage = StageResult(role="reviewer", verdict="approved", output="long output text")
+        d = stage.to_dict()
+        assert d["role"] == "reviewer"
+        assert d["verdict"] == "approved"
+        assert "output" not in d
+
+    def test_immutable(self) -> None:
+        stage = StageResult(role="tester", verdict="fail", output="")
+        with pytest.raises((AttributeError, TypeError)):
+            stage.verdict = "pass"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Role taxonomy (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+class TestRoleTaxonomy:
+    def test_designer_role_is_valid(self) -> None:
+        from dormammu.agent.role_config import AgentsConfig, ROLE_NAMES
+        assert "designer" in ROLE_NAMES
+        cfg = AgentsConfig()
+        assert cfg.for_role("designer").cli is None
+
+    def test_architect_role_no_longer_valid(self) -> None:
+        from dormammu.agent.role_config import AgentsConfig
+        with pytest.raises(ValueError, match="Unknown role"):
+            AgentsConfig().for_role("architect")
+
+    def test_analyzer_role_still_valid(self) -> None:
+        from dormammu.agent.role_config import AgentsConfig
+        cfg = AgentsConfig()
+        assert cfg.for_role("analyzer").cli is None
+
+    def test_all_expected_roles_present(self) -> None:
+        from dormammu.agent.role_config import ROLE_NAMES
+        expected = {"refiner", "analyzer", "planner", "designer", "developer",
+                    "tester", "reviewer", "committer", "evaluator"}
+        assert set(ROLE_NAMES) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -406,10 +463,12 @@ class TestPipelineRun:
             patch.object(runner, "run_refine_and_plan") as mock_prelude,
             patch.object(runner, "_run_developer", return_value=dev_result) as mock_dev,
             patch.object(
-                runner, "_run_tester", return_value=("pass", "OVERALL: PASS")
+                runner, "_run_tester",
+                return_value=StageResult(role="tester", verdict="pass", output="OVERALL: PASS"),
             ) as mock_tester,
             patch.object(
-                runner, "_run_reviewer", return_value=("approved", "VERDICT: APPROVED")
+                runner, "_run_reviewer",
+                return_value=StageResult(role="reviewer", verdict="approved", output="VERDICT: APPROVED"),
             ) as mock_reviewer,
             patch.object(runner, "_run_committer") as mock_committer,
         ):
@@ -435,8 +494,8 @@ class TestPipelineRun:
         with (
             patch.object(runner, "run_refine_and_plan") as mock_prelude,
             patch.object(runner, "_run_developer", return_value=_make_loop_result("completed")),
-            patch.object(runner, "_run_tester", return_value=("pass", "OVERALL: PASS")),
-            patch.object(runner, "_run_reviewer", return_value=("approved", "VERDICT: APPROVED")),
+            patch.object(runner, "_run_tester", return_value=StageResult(role="tester", verdict="pass", output="")),
+            patch.object(runner, "_run_reviewer", return_value=StageResult(role="reviewer", verdict="approved", output="")),
             patch.object(runner, "_run_committer"),
         ):
             runner.run("goal", stem="s", date_str="20260412")
@@ -459,8 +518,8 @@ class TestPipelineRun:
         with (
             patch.object(runner, "run_refine_and_plan") as mock_prelude,
             patch.object(runner, "_run_developer", return_value=_make_loop_result("completed")),
-            patch.object(runner, "_run_tester", return_value=("pass", "OVERALL: PASS")),
-            patch.object(runner, "_run_reviewer", return_value=("approved", "VERDICT: APPROVED")),
+            patch.object(runner, "_run_tester", return_value=StageResult(role="tester", verdict="pass", output="")),
+            patch.object(runner, "_run_reviewer", return_value=StageResult(role="reviewer", verdict="approved", output="")),
             patch.object(runner, "_run_committer"),
             patch.object(runner, "_run_evaluator"),
         ):
@@ -482,8 +541,8 @@ class TestPipelineRun:
         runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
 
         tester_responses = [
-            ("fail", "OVERALL: FAIL"),
-            ("pass", "OVERALL: PASS"),
+            StageResult(role="tester", verdict="fail", output="OVERALL: FAIL"),
+            StageResult(role="tester", verdict="pass", output="OVERALL: PASS"),
         ]
 
         with (
@@ -514,8 +573,8 @@ class TestPipelineRun:
         runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
 
         reviewer_responses = [
-            ("needs_work", "VERDICT: NEEDS_WORK"),
-            ("approved", "VERDICT: APPROVED"),
+            StageResult(role="reviewer", verdict="needs_work", output="VERDICT: NEEDS_WORK"),
+            StageResult(role="reviewer", verdict="approved", output="VERDICT: APPROVED"),
         ]
 
         with (
@@ -576,7 +635,8 @@ class TestPipelineRun:
                 runner, "_run_developer", return_value=_make_loop_result("completed")
             ) as mock_dev,
             patch.object(
-                runner, "_run_tester", return_value=("fail", "OVERALL: FAIL")
+                runner, "_run_tester",
+                return_value=StageResult(role="tester", verdict="fail", output="OVERALL: FAIL"),
             ) as mock_tester,
             patch.object(runner, "_run_reviewer", return_value=None),
             patch.object(runner, "_run_committer"),
@@ -605,7 +665,8 @@ class TestPipelineRun:
             ) as mock_dev,
             patch.object(runner, "_run_tester", return_value=None),
             patch.object(
-                runner, "_run_reviewer", return_value=("needs_work", "VERDICT: NEEDS_WORK")
+                runner, "_run_reviewer",
+                return_value=StageResult(role="reviewer", verdict="needs_work", output="VERDICT: NEEDS_WORK"),
             ) as mock_reviewer,
             patch.object(runner, "_run_committer") as mock_committer,
         ):
@@ -634,8 +695,8 @@ class TestPipelineRun:
             return _make_loop_result("completed")
 
         tester_responses = [
-            ("fail", "failure details here"),
-            ("pass", "OVERALL: PASS"),
+            StageResult(role="tester", verdict="fail", output="failure details here"),
+            StageResult(role="tester", verdict="pass", output="OVERALL: PASS"),
         ]
 
         with (
@@ -658,14 +719,27 @@ class TestPipelineRun:
 # ---------------------------------------------------------------------------
 
 
+def _make_adapter_result(tmp_path: Path, stdout: str = "", stderr: str = "") -> Any:
+    """Create a mock AgentRunResult with real temp files for stdout/stderr."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    stdout_file = tmp_path / "stdout.txt"
+    stderr_file = tmp_path / "stderr.txt"
+    stdout_file.write_text(stdout, encoding="utf-8")
+    stderr_file.write_text(stderr, encoding="utf-8")
+    result = MagicMock()
+    result.stdout_path = stdout_file
+    result.stderr_path = stderr_file
+    return result
+
+
 class TestDocumentWriting:
     def test_call_once_writes_role_doc(self, tmp_path: Path) -> None:
         agents = AgentsConfig()
         app = _make_app_config(tmp_path, agents=agents)
         runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="agent output", returncode=0)
+        with patch("dormammu.agent.cli_adapter.CliAdapter.run_once") as mock_run:
+            mock_run.return_value = _make_adapter_result(tmp_path / "r1", stdout="agent output")
             runner._call_once(
                 role="tester",
                 cli=Path("claude"),
@@ -681,13 +755,14 @@ class TestDocumentWriting:
         assert "Tester" in content
         assert "agent output" in content
 
-    def test_call_once_prefixes_prompt_with_cli_name(self, tmp_path: Path) -> None:
+    def test_call_once_passes_prompt_to_adapter_request(self, tmp_path: Path) -> None:
+        """_call_once forwards the raw prompt to AgentRunRequest; CliAdapter applies identity."""
         agents = AgentsConfig()
         app = _make_app_config(tmp_path, agents=agents)
         runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="agent output", returncode=0)
+        with patch("dormammu.agent.cli_adapter.CliAdapter.run_once") as mock_run:
+            mock_run.return_value = _make_adapter_result(tmp_path / "r2", stdout="agent output")
             runner._call_once(
                 role="tester",
                 cli=Path("claude"),
@@ -697,21 +772,20 @@ class TestDocumentWriting:
                 date_str="20260412",
             )
 
-        assert mock_run.call_args[0][0][-1] == prepend_cli_identity(
-            "test prompt",
-            Path("claude"),
-        )
+        request = mock_run.call_args[0][0]
+        assert request.prompt_text == "test prompt"
+        assert request.cli_path == Path("claude")
 
     def test_call_once_uses_stderr_when_stdout_is_blank(self, tmp_path: Path) -> None:
         agents = AgentsConfig()
         app = _make_app_config(tmp_path, agents=agents)
         runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
+        with patch("dormammu.agent.cli_adapter.CliAdapter.run_once") as mock_run:
+            mock_run.return_value = _make_adapter_result(
+                tmp_path / "r3",
                 stdout=" \n",
                 stderr="stage report from stderr\n",
-                returncode=0,
             )
             output = runner._call_once(
                 role="refiner",
@@ -734,11 +808,11 @@ class TestDocumentWriting:
         progress = io.StringIO()
         runner = PipelineRunner(app, agents, progress_stream=progress)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
+        with patch("dormammu.agent.cli_adapter.CliAdapter.run_once") as mock_run:
+            mock_run.return_value = _make_adapter_result(
+                tmp_path / "r4",
                 stdout="stdout body\n",
                 stderr="stderr body\n",
-                returncode=0,
             )
             runner._call_once(
                 role="tester",
@@ -751,7 +825,7 @@ class TestDocumentWriting:
 
         log_text = progress.getvalue()
         assert "=== pipeline tester cli ===" in log_text
-        assert "command: claude --print --dangerously-skip-permissions" in log_text
+        assert "command: claude" in log_text
         assert "=== pipeline tester stdout ===" in log_text
         assert "stdout body" in log_text
         assert "=== pipeline tester stderr ===" in log_text

@@ -94,8 +94,8 @@ against the observable behaviour described in the goal, then writes its last
 output line as `OVERALL: PASS` or `OVERALL: FAIL`. A `FAIL` verdict causes the
 developer to re-enter with the tester report appended to the original prompt.
 
-**Reviewer** performs a one-shot code review against the goal and the architect
-design document (`.dev/02-architect/<date>_<stem>.md` if present). Its last
+**Reviewer** performs a one-shot code review against the goal and the designer
+document (`.dev/logs/<date>_designer_<stem>.md` if present). Its last
 output line must be `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK`.
 
 **Re-entry limit**: `MAX_STAGE_ITERATIONS` is derived from the active

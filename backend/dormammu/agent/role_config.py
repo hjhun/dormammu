@@ -6,9 +6,9 @@ from typing import Any, Mapping
 
 ROLE_NAMES: tuple[str, ...] = (
     "refiner",
-    "analyzer",
+    "analyzer",   # goals-scheduler path only (not used in the interactive pipeline)
     "planner",
-    "architect",
+    "designer",   # aligns with designing-agent skill and designer-runtime.md rule
     "developer",
     "tester",
     "reviewer",
@@ -51,7 +51,7 @@ class AgentsConfig:
     refiner: RoleAgentConfig = RoleAgentConfig()
     analyzer: RoleAgentConfig = RoleAgentConfig()
     planner: RoleAgentConfig = RoleAgentConfig()
-    architect: RoleAgentConfig = RoleAgentConfig()
+    designer: RoleAgentConfig = RoleAgentConfig()
     developer: RoleAgentConfig = RoleAgentConfig()
     tester: RoleAgentConfig = RoleAgentConfig()
     reviewer: RoleAgentConfig = RoleAgentConfig()

@@ -41,6 +41,32 @@ class QueuedPrompt:
 
 
 @dataclass(frozen=True, slots=True)
+class StageResult:
+    """Result from a one-shot pipeline stage (tester, reviewer, evaluator, etc.).
+
+    ``verdict`` is stage-specific:
+
+    - evaluator/plan checkpoint: ``"proceed"`` or ``"rework"``
+    - tester: ``"pass"`` or ``"fail"``
+    - reviewer: ``"approved"`` or ``"needs_work"``
+    - committer: ``"committed"``
+    - refiner / planner: ``"done"``
+    """
+
+    role: str
+    verdict: str
+    output: str
+    report_path: Path | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "verdict": self.verdict,
+            "report_path": str(self.report_path) if self.report_path else None,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PhaseExecutionResult:
     phase_name: str
     cli_path: Path

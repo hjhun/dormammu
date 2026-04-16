@@ -10,8 +10,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dormammu.daemon.cli_output import model_args
 from dormammu.daemon.goals_config import GoalsConfig
-from dormammu.daemon.goals_scheduler import GoalsScheduler, _model_flag_for
+from dormammu.daemon.goals_scheduler import GoalsScheduler
 
 
 # ---------------------------------------------------------------------------
@@ -47,25 +48,28 @@ def _make_scheduler(
 
 
 # ---------------------------------------------------------------------------
-# _model_flag_for
+# model_args (shared flag helper, formerly _model_flag_for in goals_scheduler)
 # ---------------------------------------------------------------------------
 
 
-class TestModelFlagFor:
-    def test_claude(self) -> None:
-        assert _model_flag_for("claude") == "--model"
+class TestModelArgs:
+    def test_claude_flag(self) -> None:
+        assert model_args("claude", "m") == ["--model", "m"]
 
-    def test_claude_code(self) -> None:
-        assert _model_flag_for("claude-code") == "--model"
+    def test_claude_code_flag(self) -> None:
+        assert model_args("claude-code", "m") == ["--model", "m"]
 
-    def test_codex(self) -> None:
-        assert _model_flag_for("codex") == "-m"
+    def test_codex_flag(self) -> None:
+        assert model_args("codex", "m") == ["-m", "m"]
 
-    def test_gemini(self) -> None:
-        assert _model_flag_for("gemini") == "--model"
+    def test_gemini_flag(self) -> None:
+        assert model_args("gemini", "m") == ["--model", "m"]
 
-    def test_unknown(self) -> None:
-        assert _model_flag_for("unknown-cli") is None
+    def test_unknown_returns_empty(self) -> None:
+        assert model_args("unknown-cli", "m") == []
+
+    def test_none_model_returns_empty(self) -> None:
+        assert model_args("claude", None) == []
 
 
 # ---------------------------------------------------------------------------
@@ -369,12 +373,12 @@ class TestGeneratePromptWithAgents:
         assert "ANALYSIS OUTPUT" in result
         assert "PLAN OUTPUT" in result
 
-    def test_architect_called_after_planner(self, tmp_path: Path) -> None:
+    def test_designer_called_after_planner(self, tmp_path: Path) -> None:
         from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 
         agents = AgentsConfig(
             planner=RoleAgentConfig(cli=Path("echo")),
-            architect=RoleAgentConfig(cli=Path("echo")),
+            designer=RoleAgentConfig(cli=Path("echo")),
         )
         app = _make_app_config(tmp_path, agents=agents)
         app.active_agent_cli = None
@@ -394,14 +398,14 @@ class TestGeneratePromptWithAgents:
         assert "## Plan" in result
         assert "## Design" in result
 
-    def test_architect_skipped_when_planner_returns_none(
+    def test_designer_skipped_when_planner_returns_none(
         self, tmp_path: Path
     ) -> None:
         from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 
         agents = AgentsConfig(
             planner=RoleAgentConfig(cli=Path("echo")),
-            architect=RoleAgentConfig(cli=Path("echo")),
+            designer=RoleAgentConfig(cli=Path("echo")),
         )
         app = _make_app_config(tmp_path, agents=agents)
         app.active_agent_cli = None
@@ -411,7 +415,7 @@ class TestGeneratePromptWithAgents:
 
         with patch.object(sched, "_call_role_agent", return_value=None) as mock_call:
             result = sched._generate_prompt("my goal", "stem", "20260412")
-            # architect should not be called if planner returned None
+            # designer should not be called if planner returned None
             assert mock_call.call_count == 1
 
         assert "## Design" not in result

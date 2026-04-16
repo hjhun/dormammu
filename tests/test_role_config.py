@@ -96,7 +96,7 @@ class TestParseAgentsConfig:
         payload = {
             "analyzer": {"cli": "claude", "model": "claude-sonnet-4-5"},
             "planner": {"cli": "claude", "model": "claude-opus-4-5"},
-            "architect": {"model": "claude-opus-4-5"},
+            "designer": {"model": "claude-opus-4-5"},
             "developer": {"cli": "claude"},
             "tester": {},
             "reviewer": {"cli": "claude", "model": "claude-sonnet-4-5"},
@@ -108,8 +108,8 @@ class TestParseAgentsConfig:
         assert result.analyzer.model == "claude-sonnet-4-5"
         assert result.planner.cli == Path("claude")
         assert result.planner.model == "claude-opus-4-5"
-        assert result.architect.cli is None
-        assert result.architect.model == "claude-opus-4-5"
+        assert result.designer.cli is None
+        assert result.designer.model == "claude-opus-4-5"
         assert result.developer.cli == Path("claude")
         assert result.developer.model is None
         assert result.tester == RoleAgentConfig()

@@ -520,10 +520,12 @@ Full example:
     "analyzer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
     "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
     "planner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "designer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
     "developer": { "cli": "claude", "model": "claude-opus-4-6" },
     "tester":    { "cli": "claude", "model": "claude-sonnet-4-6" },
     "reviewer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
-    "committer": { "cli": "claude" }
+    "committer": { "cli": "claude" },
+    "evaluator": { "cli": "claude", "model": "claude-sonnet-4-6" }
   }
 }
 ```
@@ -539,9 +541,11 @@ Full example:
 | `agents` | Role-based pipeline CLI and model assignments |
 
 When `agents` is configured, all run modes use the role-based pipeline.
-`analyzer` is used by goals automation before planning. `refiner` and
-`planner` are mandatory runtime stages and fall back to `active_agent_cli`
-when their role-specific CLI is not set.
+`analyzer`, `planner` (goals prelude), and `designer` are used by goals
+automation to strengthen the queued prompt before runtime starts. `refiner`
+and `planner` are mandatory runtime stages and fall back to `active_agent_cli`
+when their role-specific CLI is not set. `evaluator` is mandatory for
+goals-scheduler prompts and is skipped for interactive `run` and `run-once`.
 
 ### Daemon queue config (`daemonize.json`)
 
@@ -925,8 +929,8 @@ through the multi-stage pipeline instead of the single-agent loop:
 flowchart LR
     goal([Goal File]) --> analyzer["Analyzer (goals prelude)"]
     analyzer --> planner_prompt["Planner (goals prelude)"]
-    planner_prompt --> architect["Architect (optional goals prelude)"]
-    architect --> refiner["Refiner (mandatory runtime stage)"]
+    planner_prompt --> designer["Designer (optional goals prelude)"]
+    designer --> refiner["Refiner (mandatory runtime stage)"]
     refiner --> planner["Planner (mandatory runtime stage)"]
     planner --> dev[Developer]
     dev --> tester[Tester]
@@ -944,6 +948,7 @@ flowchart LR
 | analyzer | `.dev/logs/<date>_analyzer_<stem>.md` | — | — |
 | refiner | `.dev/REQUIREMENTS.md` | — | — |
 | planner | `.dev/WORKFLOWS.md` | — | — |
+| designer | `.dev/logs/<date>_designer_<stem>.md` | — | — |
 | developer | (state files in `.dev/`) | — | tester `FAIL` or reviewer `NEEDS_WORK` |
 | tester | `.dev/logs/<date>_tester_<stem>.md` | `OVERALL: PASS` / `OVERALL: FAIL` | — |
 | reviewer | `.dev/logs/<date>_reviewer_<stem>.md` | `VERDICT: APPROVED` / `VERDICT: NEEDS_WORK` | — |
@@ -965,7 +970,7 @@ cases against the observable behavior described in the goal, then appends
 sends the developer back with the tester report appended.
 
 **Reviewer** performs a code review against the goal and any available
-architect design document (`.dev/logs/<date>_architect_<stem>.md`). It appends
+design document (`.dev/logs/<date>_designer_<stem>.md`). It appends
 `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK` as its last line. `NEEDS_WORK`
 sends the developer back for another round.
 
@@ -996,7 +1001,7 @@ Before the prompt is queued, goals automation can run an expert prelude:
 
 - `analyzer` turns the goal into a requirements-focused brief
 - `planner` turns that brief into an authoritative execution plan
-- `architect` can add technical design context when configured
+- `designer` can add technical design context when configured
 
 The queued prompt then instructs the runtime pipeline to start with mandatory
 `refine -> plan`, and to let the planner decide the downstream stages via

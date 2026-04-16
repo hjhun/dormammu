@@ -51,6 +51,11 @@ _MENU_KEYBOARD_BASE = [
     # Row 1 placeholder — tail button is injected dynamically by _build_menu_keyboard.
     [
         {"text": "🎯 Goals", "callback_data": "goals"},
+        {"text": "🗂️ Repo", "callback_data": "repo"},
+    ],
+    [
+        {"text": "🗑️ Clear Sessions", "callback_data": "clear_sessions"},
+        {"text": "🔌 Shutdown", "callback_data": "shutdown"},
     ],
 ]
 

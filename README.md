@@ -49,7 +49,7 @@ automation alike.
 | **Multi-CLI adapter** | Drive `codex`, `claude`, `gemini`, and `cline` through a unified runtime with preset-aware command building |
 | **Refine & Plan stages** | A refining agent converts raw goals into `REQUIREMENTS.md`; a planning agent generates an adaptive `WORKFLOWS.md` checklist |
 | **Role-based pipeline** | Route goals through `refiner → planner → developer → tester → reviewer → committer` with automated feedback loops |
-| **Goals analysis experts** | Use `analyzer → planner → architect` to turn scheduled goals into stronger execution prompts before runtime starts |
+| **Goals analysis experts** | Use `analyzer → planner → designer` to turn scheduled goals into stronger execution prompts before runtime starts |
 | **Daemonize mode** | Watch a prompt directory, queue incoming files in deterministic order, and run each through the supervised pipeline |
 | **Goals automation** | Schedule periodic goals that are automatically promoted into the daemon queue; manageable via Telegram |
 | **Fallback CLIs** | Automatically switch to a backup agent CLI when the primary hits quota or token exhaustion |
@@ -170,7 +170,7 @@ causing the planner to re-enter before development starts. Interactive
 **Tester**: Black-box validation — appends `OVERALL: PASS` or `OVERALL: FAIL`
 as its last output line. A `FAIL` routes the developer back with the report.
 
-**Reviewer**: Code review against the goal and any architect design document.
+**Reviewer**: Code review against the goal and any design document.
 Appends `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK`. After the configured
 iteration-max round-trips, the pipeline advances unconditionally.
 
@@ -429,7 +429,7 @@ Resolved in this order:
     "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
     "analyzer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
     "planner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
-    "architect": { "cli": "claude", "model": "claude-sonnet-4-6" },
+    "designer": { "cli": "claude", "model": "claude-sonnet-4-6" },
     "developer": { "cli": "claude", "model": "claude-opus-4-6" },
     "tester":    { "cli": "claude", "model": "claude-sonnet-4-6" },
     "reviewer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
@@ -444,7 +444,7 @@ use the role-based pipeline. Providing `--agent-cli` on the command line reverts
 to the single-agent downstream path for that invocation after the mandatory
 `refine -> plan` prelude completes.
 
-`analyzer`, `planner`, and `architect` are used by goals automation to turn a
+`analyzer`, `planner`, and `designer` are used by goals automation to turn a
 scheduled goal into a stronger execution prompt before runtime starts.
 `refiner` and `planner` are mandatory runtime stages and fall back to
 `active_agent_cli` when no role-specific CLI is configured. `evaluator` is
@@ -488,7 +488,7 @@ Every run leaves behind inspectable artifacts:
 | `.dev/TASKS.md` | Prompt-derived development queue used for task sync and resume targeting |
 | `.dev/workflow_state.json` | Machine-readable workflow state (source of truth) |
 | `.dev/session.json` | Active session metadata |
-| `.dev/logs/` | Prompt, stdout, stderr, run metadata, and all stage output documents (analyzer, tester, reviewer, committer, evaluator) |
+| `.dev/logs/` | Prompt, stdout, stderr, run metadata, and all stage output documents (analyzer, designer, tester, reviewer, committer, evaluator) |
 | `DORMAMMU.log` | Project-level execution log (written with `--debug`) |
 
 ## Common Patterns

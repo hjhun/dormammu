@@ -42,16 +42,14 @@ result-handling logic.
 """
 from __future__ import annotations
 
-import subprocess
 import sys
-import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 from dormammu.agent import CliAdapter
-from dormammu.agent.prompt_identity import prepend_cli_identity
+from dormammu.agent.models import AgentRunRequest
 from dormammu.daemon._patterns import (
     CHECKPOINT_PROCEED_RE as _CHECKPOINT_PROCEED_RE,
     CHECKPOINT_REWORK_RE as _CHECKPOINT_REWORK_RE,
@@ -59,7 +57,8 @@ from dormammu.daemon._patterns import (
     REVIEWER_REJECT_RE as _REVIEWER_REJECT_RE,
     TESTER_FAIL_RE as _TESTER_FAIL_RE,
 )
-from dormammu.daemon.cli_output import select_agent_output
+from dormammu.daemon.cli_output import model_args as _model_args, select_agent_output
+from dormammu.daemon.models import StageResult
 from dormammu.daemon.evaluator import (
     EvaluatorRequest,
     EvaluatorStage,
@@ -131,12 +130,12 @@ class PipelineRunner:
 
         evaluator_feedback_text: str | None = None
         for iteration in range(MAX_STAGE_ITERATIONS):
-            verdict, report_text = self._run_plan_evaluator(
+            stage = self._run_plan_evaluator(
                 goal_text,
                 stem=stem,
                 date_str=date_str,
             )
-            if verdict == "proceed":
+            if stage.verdict == "proceed":
                 self._log(
                     f"pipeline: plan evaluator PROCEED (iteration {iteration + 1})"
                 )
@@ -146,7 +145,7 @@ class PipelineRunner:
                     f"pipeline: plan evaluator REWORK (iteration {iteration + 1}) "
                     "— re-entering planner"
                 )
-                evaluator_feedback_text = report_text
+                evaluator_feedback_text = stage.output
                 self._run_planner(
                     goal_text,
                     stem=stem,
@@ -198,12 +197,11 @@ class PipelineRunner:
                 )
                 return loop_result
 
-            tester_report = self._run_tester(prompt_text, stem=stem, date_str=date_str)
-            if tester_report is None:
+            tester_stage = self._run_tester(prompt_text, stem=stem, date_str=date_str)
+            if tester_stage is None:
                 # Tester not configured — skip tester stage
                 break
-            verdict, report_text = tester_report
-            if verdict == "pass":
+            if tester_stage.verdict == "pass":
                 self._log(f"pipeline: tester PASS (iteration {tester_iter + 1})")
                 break
             if tester_iter < MAX_STAGE_ITERATIONS - 1:
@@ -212,7 +210,7 @@ class PipelineRunner:
                     "— re-entering developer"
                 )
                 dev_prompt = self._append_feedback(
-                    prompt_text, report_text, source="tester"
+                    prompt_text, tester_stage.output, source="tester"
                 )
             else:
                 self._log(
@@ -222,14 +220,13 @@ class PipelineRunner:
 
         # ---- developer → reviewer loop --------------------------------------
         for reviewer_iter in range(MAX_STAGE_ITERATIONS):
-            reviewer_report = self._run_reviewer(
+            reviewer_stage = self._run_reviewer(
                 prompt_text, stem=stem, date_str=date_str
             )
-            if reviewer_report is None:
+            if reviewer_stage is None:
                 # Reviewer not configured — skip
                 break
-            verdict, report_text = reviewer_report
-            if verdict == "approved":
+            if reviewer_stage.verdict == "approved":
                 self._log(f"pipeline: reviewer APPROVED (iteration {reviewer_iter + 1})")
                 break
             if reviewer_iter < MAX_STAGE_ITERATIONS - 1:
@@ -238,7 +235,7 @@ class PipelineRunner:
                     "— re-entering developer"
                 )
                 dev_prompt = self._append_feedback(
-                    prompt_text, report_text, source="reviewer"
+                    prompt_text, reviewer_stage.output, source="reviewer"
                 )
                 loop_result = self._run_developer(dev_prompt, stem=stem)
                 if loop_result.status not in ("completed",):
@@ -348,11 +345,11 @@ class PipelineRunner:
 
     def _run_plan_evaluator(
         self, goal_text: str, *, stem: str, date_str: str
-    ) -> tuple[str, str]:
+    ) -> StageResult:
         """Run the mandatory evaluator checkpoint after planning for goals.
 
-        Returns ``(verdict, report_text)`` where verdict is ``"proceed"`` or
-        ``"rework"``. Missing or ambiguous decisions fail closed as rework.
+        Returns a :class:`StageResult` with verdict ``"proceed"`` or ``"rework"``.
+        Missing or ambiguous decisions fail closed as ``"rework"``.
         """
         evaluator_cfg = self._agents.for_role("evaluator")
         cli = evaluator_cfg.resolve_cli(self._app_config.active_agent_cli)
@@ -382,9 +379,8 @@ class PipelineRunner:
             doc_path=report_path,
         )
 
-        if _CHECKPOINT_PROCEED_RE.search(output):
-            return "proceed", output
-        return "rework", output
+        verdict = "proceed" if _CHECKPOINT_PROCEED_RE.search(output) else "rework"
+        return StageResult(role="evaluator", verdict=verdict, output=output, report_path=report_path)
 
     # ------------------------------------------------------------------
     # Developer stage (LoopRunner)
@@ -429,11 +425,12 @@ class PipelineRunner:
 
     def _run_tester(
         self, goal_text: str, *, stem: str, date_str: str
-    ) -> tuple[str, str] | None:
+    ) -> StageResult | None:
         """Run the tester agent once.
 
-        Returns ``(verdict, report_text)`` where verdict is ``"pass"`` or
-        ``"fail"``, or ``None`` if the tester role has no resolvable CLI.
+        Returns a :class:`StageResult` with verdict ``"pass"`` or ``"fail"``,
+        or ``None`` if the tester role has no resolvable CLI.
+        Defaults to ``"pass"`` when the agent does not explicitly report failure.
         """
         tester_cfg = self._agents.for_role("tester")
         active_cli = self._app_config.active_agent_cli
@@ -452,10 +449,8 @@ class PipelineRunner:
             date_str=date_str,
         )
 
-        if _TESTER_FAIL_RE.search(output):
-            return "fail", output
-        # Default to pass if the agent did not explicitly report failure.
-        return "pass", output
+        verdict = "fail" if _TESTER_FAIL_RE.search(output) else "pass"
+        return StageResult(role="tester", verdict=verdict, output=output)
 
     # ------------------------------------------------------------------
     # Reviewer stage (one-shot)
@@ -463,11 +458,11 @@ class PipelineRunner:
 
     def _run_reviewer(
         self, goal_text: str, *, stem: str, date_str: str
-    ) -> tuple[str, str] | None:
+    ) -> StageResult | None:
         """Run the reviewer agent once.
 
-        Returns ``(verdict, report_text)`` where verdict is ``"approved"``
-        or ``"needs_work"``, or ``None`` if no resolvable CLI.
+        Returns a :class:`StageResult` with verdict ``"approved"`` or
+        ``"needs_work"``, or ``None`` if no resolvable CLI.
         """
         reviewer_cfg = self._agents.for_role("reviewer")
         active_cli = self._app_config.active_agent_cli
@@ -476,7 +471,7 @@ class PipelineRunner:
             return None
 
         self._log("pipeline: reviewer stage starting")
-        design_text = self._read_architect_doc(stem, date_str)
+        design_text = self._read_designer_doc(stem, date_str)
         prompt = self._reviewer_prompt(goal_text, design_text, stem=stem, date_str=date_str)
         output = self._call_once(
             role="reviewer",
@@ -487,9 +482,8 @@ class PipelineRunner:
             date_str=date_str,
         )
 
-        if _REVIEWER_REJECT_RE.search(output):
-            return "needs_work", output
-        return "approved", output
+        verdict = "needs_work" if _REVIEWER_REJECT_RE.search(output) else "approved"
+        return StageResult(role="reviewer", verdict=verdict, output=output)
 
     # ------------------------------------------------------------------
     # Committer stage (one-shot)
@@ -598,76 +592,52 @@ class PipelineRunner:
     ) -> str:
         """Run an agent CLI once and return its stdout.
 
+        Routes through :class:`CliAdapter` so that pipeline one-shot stages
+        share the same command building, prompt injection, timeout, and
+        shutdown logic as the supervised loop stages.
+
         When ``save_doc=False`` the agent output is not persisted to a stage
         document file.  Use this for roles (refiner, planner) whose important
         outputs are the files they write directly (REQUIREMENTS.md, PLAN.md,
         etc.) rather than a stage report file.
         """
-        from dormammu.agent.presets import preset_for_executable_name
+        adapter = CliAdapter(
+            self._app_config,
+            live_output_stream=self._progress_stream,
+            stop_event=self._stop_event,
+        )
+        request = AgentRunRequest(
+            cli_path=cli,
+            prompt_text=prompt,
+            repo_root=self._app_config.repo_root,
+            extra_args=tuple(_model_args(cli.name, model)),
+            run_label=role,
+        )
+        self._emit_cli_command(
+            role=role,
+            args=[str(cli)] + list(_model_args(cli.name, model)),
+            cwd=self._app_config.repo_root,
+        )
+        result = adapter.run_once(request)
+        stdout_text = result.stdout_path.read_text(encoding="utf-8") if result.stdout_path.exists() else ""
+        stderr_text = result.stderr_path.read_text(encoding="utf-8") if result.stderr_path.exists() else ""
+        self._emit_cli_output(role=role, stdout_text=stdout_text, stderr_text=stderr_text)
+        output = select_agent_output(stdout_text, stderr_text)
 
-        executable_name = cli.name
-        preset = preset_for_executable_name(executable_name)
-        prompt = prepend_cli_identity(prompt, cli)
-
-        args: list[str] = [str(cli)]
-        stdin_input: str | None = None
-        tmp_path: Path | None = None
-
-        if preset is not None:
-            args.extend(preset.command_prefix)
-            args.extend(preset.default_extra_args)
-
-        extra = _model_args(executable_name, model)
-        args.extend(extra)
-
-        if preset is not None and preset.prompt_positional:
-            args.append(prompt)
-        elif preset is not None and preset.prompt_file_flag:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".md", delete=False, encoding="utf-8"
-            ) as tmp:
-                tmp.write(prompt)
-                tmp_path = Path(tmp.name)
-            args.extend([preset.prompt_file_flag, str(tmp_path)])
-        elif preset is not None and preset.prompt_arg_flag:
-            args.extend([preset.prompt_arg_flag, prompt])
-        else:
-            stdin_input = prompt
-
-        try:
-            self._emit_cli_command(role=role, args=args, cwd=self._app_config.repo_root)
-            result = subprocess.run(
-                args,
-                input=stdin_input,
-                capture_output=True,
-                text=True,
-                cwd=str(self._app_config.repo_root),
+        if save_doc:
+            target_path = doc_path
+            if target_path is None:
+                doc_dir = self._app_config.base_dev_dir / "logs"
+                doc_dir.mkdir(parents=True, exist_ok=True)
+                target_path = doc_dir / f"{date_str}_{role}_{stem}.md"
+            else:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(
+                f"# {role.capitalize()} — {stem}\n\n{output}",
+                encoding="utf-8",
             )
-            self._emit_cli_output(
-                role=role,
-                stdout_text=result.stdout or "",
-                stderr_text=result.stderr or "",
-            )
-            output = select_agent_output(result.stdout, result.stderr)
-
-            if save_doc:
-                # Persist the agent output as a role document under .dev/logs/.
-                target_path = doc_path
-                if target_path is None:
-                    doc_dir = self._app_config.base_dev_dir / "logs"
-                    doc_dir.mkdir(parents=True, exist_ok=True)
-                    target_path = doc_dir / f"{date_str}_{role}_{stem}.md"
-                else:
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                target_path.write_text(
-                    f"# {role.capitalize()} — {stem}\n\n{output}",
-                    encoding="utf-8",
-                )
-                self._log(f"pipeline: {role} document → {target_path}")
-            return output
-        finally:
-            if tmp_path is not None and tmp_path.exists():
-                tmp_path.unlink(missing_ok=True)
+            self._log(f"pipeline: {role} document → {target_path}")
+        return output
 
     # ------------------------------------------------------------------
     # Internal — prompt builders
@@ -788,9 +758,9 @@ class PipelineRunner:
             return doc.read_text(encoding="utf-8")
         return None
 
-    def _read_architect_doc(self, stem: str, date_str: str) -> str | None:
-        """Return architect document text if it exists, else None."""
-        doc = self._app_config.base_dev_dir / "logs" / f"{date_str}_architect_{stem}.md"
+    def _read_designer_doc(self, stem: str, date_str: str) -> str | None:
+        """Return designer document text if it exists, else None."""
+        doc = self._app_config.base_dev_dir / "logs" / f"{date_str}_designer_{stem}.md"
         if doc.exists():
             return doc.read_text(encoding="utf-8")
         return None
@@ -844,24 +814,6 @@ class PipelineRunner:
         print(stderr_lines, file=self._progress_stream)
         self._progress_stream.flush()
 
-
-def _model_args(executable_name: str, model: str | None) -> list[str]:
-    """Build the model flag arguments for the given CLI and model."""
-    if model is None:
-        return []
-    flag = _MODEL_FLAGS.get(executable_name.lower())
-    if flag is None:
-        return []
-    return [flag, model]
-
-
-_MODEL_FLAGS: dict[str, str] = {
-    "claude": "--model",
-    "claude-code": "--model",
-    "gemini": "--model",
-    "codex": "-m",
-    "aider": "--model",
-}
 
 def _strip_goal_source_tag(text: str) -> str:
     """Remove the dormammu:goal_source metadata comment from prompt text."""

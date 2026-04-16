@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -585,16 +586,28 @@ class LoopRunner:
             return True
         return retries_used < max_retries
 
+    # The promise token must appear on its own line (optionally surrounded by
+    # whitespace) so that occurrences inside quoted prompt text — which the
+    # agent echoes back — are not mistakenly treated as self-completion signals.
+    _PROMISE_COMPLETE_RE = re.compile(
+        r"^\s*<promise>COMPLETE</promise>\s*$", re.MULTILINE
+    )
+
     @staticmethod
     def _stdout_has_promise_complete(stdout_path: Path) -> bool:
-        """Return True if the agent stdout contains the self-completion signal."""
+        """Return True if the agent stdout contains the self-completion signal.
+
+        The signal must appear as a standalone line so that agents that echo
+        their prompt back (which may include the token in guidance text) do not
+        trigger a false positive.
+        """
         if not stdout_path.exists():
             return False
         try:
             content = stdout_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return False
-        return "<promise>COMPLETE</promise>" in content
+        return bool(LoopRunner._PROMISE_COMPLETE_RE.search(content))
 
     def _persist_loop_state(
         self,
