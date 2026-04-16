@@ -133,15 +133,16 @@ When resuming after an interruption:
 
 ## Roadmap Priority
 
-Execute in this order unless the user changes priorities:
+Execute in this order unless the user changes priorities.
+See `.dev/ROADMAP.md` for full phase descriptions.
 
-1. Phase 1. Core Foundation and Repository Bootstrap
-2. Phase 2. `.dev` State Model and Template Generation
-3. Phase 3. Agent CLI Adapter and Single-Run Execution
-4. Phase 4. Supervisor Validation, Continuation Loop, and Resume
-5. Phase 5. CLI Operator Experience and Progress Visibility
-6. Phase 6. Installer, Commands, and Environment Diagnostics
-7. Phase 7. Hardening, Multi-Session, and Productization
+1. Phase 1. Workflow Source Of Truth Recovery
+2. Phase 2. `.dev` State Model And Session Simplification
+3. Phase 3. Agent Runtime Unification And CLI Adapter Hardening
+4. Phase 4. Supervisor, Pipeline, And Continuation Semantics
+5. Phase 5. Operator Experience, Daemon, And Goals Consolidation
+6. Phase 6. Documentation, Packaging, And Release Alignment
+7. Phase 7. Hardening, CI, And Productization
 
 ## Default Agent Posture
 

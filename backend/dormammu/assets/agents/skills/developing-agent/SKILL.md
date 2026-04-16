@@ -1,3 +1,4 @@
+---
 name: developing-agent
 description: Implements the active tasks for this project while keeping workflow state current. Use when the user asks to build features, wire components, add automation, or progress the active implementation phase.
 ---
@@ -20,7 +21,8 @@ Related skills:
 
 ## Workflow
 
-1. Read the active tasks before editing code.
+1. Print `[[Developer]]` to standard output.
+2. Read the active tasks before editing code.
 2. Implement only the current scoped slice; avoid mixing unrelated work.
 3. Keep steps idempotent where possible so interrupted runs can resume safely.
 4. Keep the test authoring agent informed about behavior changes that affect unit, integration, or system-test expectations.

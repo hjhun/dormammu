@@ -37,19 +37,21 @@ Every non-trivial task follows this sequence. The exact stages active for a
 given task are recorded in `.dev/WORKFLOWS.md` after planning completes.
 
 ```
-refine → plan → evaluator(plan) → design → develop + test-author → test-review → final verify → commit → evaluate
-                     ↑                           ↑                       ↑                ↑
-              mandatory post-plan          supervisor gates       optional mid-pipeline   goals-scheduler only
-               checkpoint (always)                                  evaluator checkpoint
+refine → plan → design → develop + test-author → test-review → final verify → commit
+                  ↑                     ↑                ↑
+           supervisor gates       optional mid-pipeline  goals-scheduler only:
+                                   evaluator checkpoint  plan checkpoint + final evaluate
 ```
 
 Stages are not fixed. The planning agent generates an adaptive workflow in
 `.dev/WORKFLOWS.md` that includes only the stages the task actually needs and
 inserts evaluator checkpoints where complexity or risk warrants them.
 
-The mandatory prelude is always `refine -> plan -> evaluator(plan checkpoint)`.
-The post-commit final evaluator is mandatory only for goals-scheduler prompts,
-or when the task-specific workflow explicitly includes it.
+The mandatory prelude is `refine -> plan`. The post-plan evaluator checkpoint
+runs **only for goals-scheduler prompts**, not for interactive `run` or
+`run-once` execution. The post-commit final evaluator is also goals-scheduler
+only. Mid-pipeline evaluator checkpoints are optional and inserted by the
+planning agent when warranted.
 
 ## Workflow Routing
 

@@ -1,3 +1,4 @@
+---
 name: testing-and-reviewing
 description: Validates changes through executed tests, checks, and review-oriented analysis for this project. Use after development is complete when the user asks to test work, review implementation quality, verify a phase, or produce findings before release or commit.
 ---
@@ -19,7 +20,8 @@ Related skills:
 
 ## Workflow
 
-1. Confirm that the active development slice is complete before executing validation.
+1. Print `[[Tester]]` to standard output.
+2. Confirm that the active development slice is complete before executing validation.
 2. Identify the most relevant validations for the active scope.
 3. Run unit tests and integration tests by default, then add linters, builds, or smoke checks as appropriate.
 4. Run system tests only when the user, prompt, or acceptance criteria explicitly require system-test-level validation.

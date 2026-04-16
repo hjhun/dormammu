@@ -1,3 +1,4 @@
+---
 name: designing-agent
 description: Produces implementation-ready designs, interfaces, schemas, and technical decisions for this project. Use when the user asks for architecture, component design, state models, file layout, or design artifacts before coding.
 ---
@@ -14,12 +15,14 @@ Related skills:
 ## Inputs
 
 - The approved plan and active tasks
-- [PROJECT.md](../../../PROJECT.md)
+- [PROJECT.md](../../../.dev/PROJECT.md)
+- `.dev/TASKS.md` when present
 - Existing source files and `.dev/` state
 
 ## Workflow
 
-1. Read the active tasks and identify the design decisions that unblock them.
+1. Print `[[Designer]]` to standard output.
+2. Read the active tasks and identify the design decisions that unblock them.
 2. Define boundaries: modules, interfaces, data contracts, state files, failure handling, and test seams.
 3. Prefer designs that support resumability, idempotent reruns, and supervisor verification.
 4. Capture the chosen design in concise project documentation or artifact files.
@@ -31,7 +34,7 @@ Related skills:
 - Keep abstractions minimal for the current milestone.
 - Document only the decisions that affect implementation, recovery, test authoring, testing, or deployment.
 - Call out assumptions, open questions, and explicit tradeoffs.
-- If a design choice changes an earlier plan, update the dashboard and plan together.
+- If a design choice changes an earlier plan, update the dashboard and tasks together.
 - Keep `DASHBOARD.md` focused on what design work is actively unblocking the scope right now.
 
 ## Expected Outputs

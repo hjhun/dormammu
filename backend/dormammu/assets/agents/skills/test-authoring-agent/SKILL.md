@@ -1,3 +1,4 @@
+---
 name: test-authoring-agent
 description: Writes and maintains dedicated automated tests for the active scope. Use after design to author unit tests and integration tests alongside development, and to add system tests only when the user or prompt explicitly requires system-test-level coverage on real device environments.
 ---
@@ -14,7 +15,8 @@ Use this skill after design when the active scope needs test code, not just test
 
 ## Workflow
 
-1. Read the active tasks, design notes, and validation expectations before writing tests.
+1. Print `[[TestAuthor]]` to standard output.
+2. Read the active tasks, design notes, and validation expectations before writing tests.
 2. Own the test-code slice while the development agent owns product code.
 3. Write unit tests for isolated logic and integration tests for cross-module or CLI flows by default.
 4. Add system tests only when the user, prompt, or acceptance criteria explicitly call for system-test-level coverage.

@@ -1,3 +1,4 @@
+---
 name: committing-agent
 description: Finalizes scoped changes into intentional git commits for this project. Use when the user asks to prepare a commit, stage completed work, write commit messages, or conclude a validated workflow phase in version control.
 ---
@@ -19,7 +20,8 @@ Related skills:
 
 ## Workflow
 
-1. Inspect the working tree and confirm which files belong to the active scope.
+1. Print `[[Committer]]` to standard output.
+2. Inspect the working tree and confirm which files belong to the active scope.
 2. Ensure `.dev/DASHBOARD.md` shows the real completion status and `.dev/PLAN.md` shows the correct prompt-derived phase completion state before committing.
 3. Stage only the intended files.
 4. If intended `.dev` state files are ignored by Git, add them explicitly with
@@ -37,6 +39,7 @@ Related skills:
    - keep a subject line, a separate body, and the final
      `Co-Authored-By:` trailer
    - keep every line at 80 characters or fewer
+   - if a line would exceed 80 characters, wrap it onto the next line
    - use real line breaks, not escaped newline sequences such as `\n`
    - prefer a temporary message file or repeated `-m` flags over embedded
      escape sequences in a single shell string
@@ -56,7 +59,14 @@ Related skills:
    - check the exact final message text line by line before `git commit`
    - if any line is 81+ characters, rewrite and re-check before committing
 7. After committing, verify the stored message with `git show --format=fuller --no-patch HEAD`.
-8. Update `.dev` commit status intentionally:
+8. If this is **not** a goals-scheduler run, print the loop-completion signal as
+   the very last line of output so the dormammu runtime stops the loop cleanly:
+   ```
+   <promise>COMPLETE</promise>
+   ```
+   Omit this signal when a goals-scheduler trigger is active (the evaluating-agent
+   runs next and the runtime must not stop early).
+9. Update `.dev` commit status intentionally:
    - before the commit, `pending` is acceptable
    - after the commit, record the real hash and summary in machine state when
      those files are part of the intended follow-up scope
@@ -76,6 +86,8 @@ Related skills:
   stored by Git and wrap lines manually when needed.
 - Treat the 80-character limit as a hard requirement for the subject and every
   body line with no exceptions.
+- Treat the `Co-Authored-By:` trailer format and company-domain mapping as a
+  hard requirement.
 
 ## Expected Outputs
 
@@ -85,4 +97,7 @@ Related skills:
 
 ## Done Criteria
 
-This skill is complete when the requested commit is created or the exact blocker to committing is documented.
+This skill is complete when:
+1. The requested commit is created (or the exact blocker is documented), and
+2. `<promise>COMPLETE</promise>` has been printed as the final output line
+   (non-goals-scheduler runs only).

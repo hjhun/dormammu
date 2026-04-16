@@ -13,8 +13,9 @@ Use this skill in two contexts:
    `.dev/WORKFLOWS.md` for the planned checkpoints).
 2. **Final evaluation** — assesses whether the completed implementation achieved
    the original goal and optionally generates the next development cycle. Runs
-   after the committer stage, either automatically (goals-scheduler trigger) or
-   when the `WORKFLOWS.md` final step is reached.
+   after the committer stage only when a goals-scheduler trigger is active.
+   Manually-invoked runs do not reach this stage; the supervisor stops the loop
+   after commit instead.
 
 ## Inputs
 
@@ -28,11 +29,15 @@ Use this skill in two contexts:
 | `.dev/supervisor_report.md` | Latest supervisor verdict and checks |
 | `git log -3 --oneline --stat` | Recent commits and changed files |
 
+## Activation
+
+Print `[[Evaluator]]` to standard output before any other action.
+
 ## Modes
 
 ### Mid-Pipeline Check
 
-Used when the supervisor or `WORKFLOWS.MD` triggers an evaluator checkpoint
+Used when the supervisor or `WORKFLOWS.md` triggers an evaluator checkpoint
 before the commit stage. Focus narrowly on the current stage:
 
 1. Read `.dev/REQUIREMENTS.md` acceptance criteria.
@@ -123,11 +128,11 @@ The `VERDICT:` line **must** be the last non-empty line of the report.
 Behaviour depends on the `next_goal_strategy` setting passed in the prompt:
 
 ### strategy: `none`
-Write only the evaluation report. Do not output a next-goal block.
+Write only the evaluation report.  Do not output a next-goal block.
 
 ### strategy: `suggest`
 After the `VERDICT:` line, add a `## Suggestions for Next Cycle` section with
-recommended next steps for human review. Do not output a next-goal block.
+recommended next steps for human review.  Do not output a next-goal block.
 
 ### strategy: `auto`
 After the `VERDICT:` line, output the next goal wrapped in these **exact**
@@ -140,7 +145,7 @@ delimiters (no extra blank lines inside):
 ```
 
 The next goal content must be self-contained Markdown that the goals scheduler
-can process directly as a new goal file. It should:
+can process directly as a new goal file.  It should:
 
 - Build on what was achieved in this cycle.
 - Address any gaps identified in the evaluation.
