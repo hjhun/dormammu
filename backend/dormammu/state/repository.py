@@ -1,27 +1,15 @@
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
-import json
 from pathlib import Path
-import re
-import shutil
 from string import Template
-from typing import Any, Generator, Mapping, Sequence
-
-try:
-    import fcntl as _fcntl
-    _HAS_FCNTL = True
-except ImportError:
-    _fcntl = None  # type: ignore[assignment]
-    _HAS_FCNTL = False
+from typing import Any, Mapping, Sequence
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent.models import AgentRunResult, AgentRunStarted
 from dormammu.config import AppConfig
 from dormammu.guidance import resolve_guidance_files
 from dormammu.state.models import (
-    STATE_SCHEMA_VERSION,
     default_dashboard_context,
     default_plan_context,
     default_session_state,
@@ -30,17 +18,14 @@ from dormammu.state.models import (
     prompt_fingerprint,
     summarize_prompt_goal,
 )
-from dormammu.state.tasks import parse_tasks_document
-
-
-def _deep_merge(defaults: dict[str, Any], current: Mapping[str, Any]) -> dict[str, Any]:
-    merged = dict(defaults)
-    for key, value in current.items():
-        if key in merged and isinstance(merged[key], dict) and isinstance(value, Mapping):
-            merged[key] = _deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
+from dormammu.state.operator_sync import OperatorSync
+from dormammu.state.persistence import (
+    deep_merge as _deep_merge,
+    ensure_json_file as _ensure_json_file,
+    read_json as _read_json,
+    write_json as _write_json,
+)
+from dormammu.state.session_manager import SessionManager
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +77,8 @@ class StateRepository:
         self.base_dev_dir = config.base_dev_dir
         self.templates_dir = config.templates_dir / "dev"
         self.sessions_dir = config.sessions_dir
+        self._session_mgr = SessionManager(config, self.base_dev_dir, self.sessions_dir)
+        self._op_sync = OperatorSync(config, self.base_dev_dir)
         self.session_id = self._normalize_session_id(session_id) if session_id else None
         self.dev_dir = (
             self.sessions_dir / self.session_id
@@ -106,6 +93,10 @@ class StateRepository:
     def state_file(self, name: str) -> Path:
         return self.dev_dir / name
 
+    # ------------------------------------------------------------------
+    # Bootstrap
+    # ------------------------------------------------------------------
+
     def ensure_bootstrap_state(
         self,
         *,
@@ -119,7 +110,6 @@ class StateRepository:
                 prompt_text=prompt_text,
                 active_roadmap_phase_ids=active_roadmap_phase_ids,
             )
-
         return self._ensure_session_bootstrap_state(
             goal=goal,
             prompt_text=prompt_text,
@@ -136,12 +126,14 @@ class StateRepository:
         timestamp = _iso_now()
         self.base_dev_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        legacy_session_payload = self._read_legacy_root_session_payload()
-        active_session_id = self._read_active_session_id()
+        legacy_session_payload = self._session_mgr.read_legacy_root_session_payload()
+        active_session_id = self._session_mgr.read_active_session_id()
         if active_session_id is None:
-            active_session_id = self._migrate_legacy_root_snapshot(timestamp=timestamp)
+            active_session_id = self._session_mgr.migrate_legacy_root_snapshot(
+                timestamp=timestamp
+            )
         if active_session_id is None:
-            active_session_id = self._generated_session_id(timestamp)
+            active_session_id = self._session_mgr.generated_session_id(timestamp)
 
         self._ensure_patterns_file()
         session_repository = self.for_session(active_session_id)
@@ -151,10 +143,10 @@ class StateRepository:
             active_roadmap_phase_ids=active_roadmap_phase_ids,
         )
         if legacy_session_payload is not None:
-            migrated_session = session_repository._read_json(session_repository.state_file("session.json"))
+            migrated_session = _read_json(session_repository.state_file("session.json"))
             merged_session = _deep_merge(migrated_session, legacy_session_payload)
             merged_session["session_id"] = active_session_id
-            session_repository._write_json(session_repository.state_file("session.json"), merged_session)
+            _write_json(session_repository.state_file("session.json"), merged_session)
         self._write_root_index_for_session(
             session_repository=session_repository,
             timestamp=timestamp,
@@ -174,7 +166,10 @@ class StateRepository:
             self.config.repo_root,
             rule_paths=resolve_guidance_files(self.config),
         )
-        session_id = self._current_session_id(self.dev_dir / "session.json") or self.session_id
+        session_id = (
+            self._session_mgr.current_session_id(self.dev_dir / "session.json")
+            or self.session_id
+        )
         resolved_goal = (
             goal
             or self._existing_goal()
@@ -213,7 +208,7 @@ class StateRepository:
                 goal=resolved_goal,
                 prompt_text=prompt_text,
                 roadmap_phase_ids=roadmap_phase_ids,
-                session_id=session_id or self._generated_session_id(timestamp),
+                session_id=session_id or self._session_mgr.generated_session_id(timestamp),
                 timestamp=timestamp,
             )
             self._sync_root_index(timestamp=timestamp)
@@ -262,9 +257,9 @@ class StateRepository:
             repo_guidance=guidance,
         )
 
-        self._ensure_json_file(session_path, session_defaults)
-        self._ensure_json_file(workflow_path, workflow_defaults)
-        self._refresh_active_roadmap_phase_ids(
+        _ensure_json_file(session_path, session_defaults)
+        _ensure_json_file(workflow_path, workflow_defaults)
+        self._op_sync.refresh_active_roadmap_phase_ids(
             session_path=session_path,
             workflow_path=workflow_path,
             roadmap_phase_ids=roadmap_phase_ids,
@@ -304,8 +299,8 @@ class StateRepository:
             if not candidate.exists():
                 continue
             try:
-                payload = self._read_json(candidate)
-            except json.JSONDecodeError:
+                payload = _read_json(candidate)
+            except Exception:
                 continue
             bootstrap = payload.get("bootstrap")
             if not isinstance(bootstrap, Mapping):
@@ -324,6 +319,10 @@ class StateRepository:
                     return prompt_fingerprint(prompt_path.read_text(encoding="utf-8"))
         return None
 
+    # ------------------------------------------------------------------
+    # Session lifecycle
+    # ------------------------------------------------------------------
+
     def start_new_session(
         self,
         *,
@@ -337,13 +336,13 @@ class StateRepository:
 
         timestamp = _iso_now()
         roadmap_phase_ids = list(active_roadmap_phase_ids or ["phase_1"])
-        next_session_id = self._normalize_session_id(
-            session_id or self._generated_session_id(timestamp)
+        next_session_id = self._session_mgr.normalize_session_id(
+            session_id or self._session_mgr.generated_session_id(timestamp)
         )
 
         self.base_dev_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        self._migrate_legacy_root_snapshot(timestamp=timestamp)
+        self._session_mgr.migrate_legacy_root_snapshot(timestamp=timestamp)
 
         session_repository = self.for_session(next_session_id)
         session_repository._reset_bootstrap_state(
@@ -360,7 +359,7 @@ class StateRepository:
         return self._artifacts_for_dir(session_repository.dev_dir)
 
     def restore_session(self, session_id: str) -> BootstrapArtifacts:
-        normalized_session_id = self._normalize_session_id(session_id)
+        normalized_session_id = self._session_mgr.normalize_session_id(session_id)
         target_dir = self.sessions_dir / normalized_session_id
         if not target_dir.exists():
             raise RuntimeError(f"Saved session was not found: {normalized_session_id}")
@@ -379,7 +378,7 @@ class StateRepository:
 
         self.base_dev_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        self._migrate_legacy_root_snapshot()
+        self._session_mgr.migrate_legacy_root_snapshot()
         self._write_root_index_for_session(
             session_repository=self.for_session(normalized_session_id),
             timestamp=_iso_now(),
@@ -389,32 +388,35 @@ class StateRepository:
     def read_session_state(self) -> dict[str, Any]:
         if self.session_id is None:
             return self._active_session_repository().read_session_state()
-        return self._read_json(self.state_file("session.json"))
+        return _read_json(self.state_file("session.json"))
 
     def write_session_state(self, payload: Mapping[str, Any]) -> None:
         if self.session_id is None:
             self._active_session_repository().write_session_state(payload)
             return
-        self._write_json(self.state_file("session.json"), dict(payload))
+        _write_json(self.state_file("session.json"), dict(payload))
         self._sync_root_index()
 
     def read_workflow_state(self) -> dict[str, Any]:
         if self.session_id is None:
             return self._active_session_repository().read_workflow_state()
-        return self._read_json(self.state_file("workflow_state.json"))
+        return _read_json(self.state_file("workflow_state.json"))
 
     def write_workflow_state(self, payload: Mapping[str, Any]) -> None:
         if self.session_id is None:
             self._active_session_repository().write_workflow_state(payload)
             return
-        self._write_json(self.state_file("workflow_state.json"), dict(payload))
+        _write_json(self.state_file("workflow_state.json"), dict(payload))
         self._sync_root_index()
 
     def sync_operator_state(self, *, timestamp: str | None = None) -> None:
         if self.session_id is None:
             self._active_session_repository().sync_operator_state(timestamp=timestamp)
             return
-        self._sync_active_root_operator_mirrors_into_session()
+        self._op_sync.sync_active_root_operator_mirrors_into_session(
+            session_dev_dir=self.dev_dir,
+            active_session_id=self.session_id,
+        )
         sync_time = timestamp or _iso_now()
         self._sync_operator_state(
             session_path=self.state_file("session.json"),
@@ -431,17 +433,17 @@ class StateRepository:
         workflow_path = self.state_file("workflow_state.json")
         latest_run = result.to_dict()
 
-        session_state = self._read_json(session_path)
+        session_state = _read_json(session_path)
         session_state["updated_at"] = result.completed_at
         session_state["current_run"] = None
         session_state["latest_run"] = latest_run
-        self._write_json(session_path, session_state)
+        _write_json(session_path, session_state)
 
-        workflow_state = self._read_json(workflow_path)
+        workflow_state = _read_json(workflow_path)
         workflow_state["updated_at"] = result.completed_at
         workflow_state["current_run"] = None
         workflow_state["latest_run"] = latest_run
-        self._write_json(workflow_path, workflow_state)
+        _write_json(workflow_path, workflow_state)
         self._sync_root_index(timestamp=result.completed_at)
 
     def record_current_run(self, started: AgentRunStarted) -> None:
@@ -452,15 +454,15 @@ class StateRepository:
         workflow_path = self.state_file("workflow_state.json")
         current_run = started.to_dict()
 
-        session_state = self._read_json(session_path)
+        session_state = _read_json(session_path)
         session_state["updated_at"] = started.started_at
         session_state["current_run"] = current_run
-        self._write_json(session_path, session_state)
+        _write_json(session_path, session_state)
 
-        workflow_state = self._read_json(workflow_path)
+        workflow_state = _read_json(workflow_path)
         workflow_state["updated_at"] = started.started_at
         workflow_state["current_run"] = current_run
-        self._write_json(workflow_path, workflow_state)
+        _write_json(workflow_path, workflow_state)
         self._sync_root_index(timestamp=started.started_at)
 
     def write_supervisor_report(self, markdown: str) -> Path:
@@ -487,70 +489,118 @@ class StateRepository:
         content = patterns_path.read_text(encoding="utf-8").strip()
         return content if content else ""
 
-    def _ensure_patterns_file(self) -> None:
-        """Create .dev/PATTERNS.md from template if it does not exist yet."""
-        patterns_path = self.base_dev_dir / "PATTERNS.md"
-        if patterns_path.exists():
-            return
-        tmpl_path = self.templates_dir / "patterns.md.tmpl"
-        if not tmpl_path.exists():
-            return
-        patterns_path.write_text(tmpl_path.read_text(encoding="utf-8"), encoding="utf-8")
-
     def list_sessions(self) -> list[dict[str, Any]]:
-        active_session_id = self._read_active_session_id()
-        if not self.sessions_dir.exists():
-            return []
+        return self._session_mgr.list_sessions()
 
-        sessions: list[dict[str, Any]] = []
-        for session_dir in sorted(self.sessions_dir.iterdir()):
-            if not session_dir.is_dir():
-                continue
-            session_path = session_dir / "session.json"
-            if not session_path.exists():
-                continue
-
-            session_state = self._read_json(session_path)
-            workflow_path = session_dir / "workflow_state.json"
-            workflow_state = self._read_json(workflow_path) if workflow_path.exists() else {}
-            bootstrap = session_state.get("bootstrap") or {}
-            raw_goal = bootstrap.get("goal") or session_state.get("goal") or ""
-            goal_summary = (raw_goal[:120] + "...") if len(raw_goal) > 120 else raw_goal
-            loop_state = session_state.get("loop") or workflow_state.get("loop") or {}
-            supervisor_verdict = loop_state.get("latest_supervisor_verdict")
-            attempts_completed = loop_state.get("attempts_completed")
-            sessions.append(
-                {
-                    "session_id": session_state.get("session_id"),
-                    "snapshot_dir": str(session_dir),
-                    "created_at": session_state.get("created_at"),
-                    "updated_at": session_state.get("updated_at"),
-                    "status": session_state.get("status"),
-                    "run_type": session_state.get("run_type"),
-                    "active_phase": session_state.get("active_phase"),
-                    "active_roadmap_phase_ids": session_state.get(
-                        "active_roadmap_phase_ids",
-                        [],
-                    ),
-                    "goal": goal_summary or None,
-                    "supervisor_verdict": supervisor_verdict,
-                    "attempts_completed": attempts_completed,
-                    "next_action": session_state.get("next_action"),
-                    "is_active": session_state.get("session_id") == active_session_id,
-                    "workflow_last_completed_phase": workflow_state.get("workflow", {}).get(
-                        "last_completed_phase"
-                    ),
-                }
+    def persist_input_prompt(
+        self,
+        *,
+        prompt_text: str,
+        source_path: Path | None = None,
+    ) -> Path:
+        if self.session_id is None:
+            return self._active_session_repository().persist_input_prompt(
+                prompt_text=prompt_text,
+                source_path=source_path,
             )
-        sessions.sort(
-            key=lambda item: (
-                not bool(item.get("is_active")),
-                str(item.get("updated_at") or ""),
-                str(item.get("created_at") or ""),
-            ),
-            reverse=False,
+
+        import shutil
+
+        prompt_path = self.state_file("PROMPT.md")
+        if source_path is not None and source_path.exists():
+            shutil.copyfile(source_path, prompt_path)
+        else:
+            prompt_path.write_text(prompt_text, encoding="utf-8")
+
+        mirror_path = self._global_prompt_mirror_path()
+        mirror_path.parent.mkdir(parents=True, exist_ok=True)
+        if source_path is not None and source_path.exists():
+            shutil.copyfile(source_path, mirror_path)
+        else:
+            mirror_path.write_text(prompt_text, encoding="utf-8")
+
+        timestamp = _iso_now()
+        session_state = _read_json(self.state_file("session.json"))
+        session_state["updated_at"] = timestamp
+        session_state.setdefault("bootstrap", {})
+        session_state["bootstrap"]["prompt_path"] = self._display_state_path(prompt_path)
+        session_state["bootstrap"]["global_prompt_path"] = str(mirror_path)
+        _write_json(self.state_file("session.json"), session_state)
+
+        workflow_state = _read_json(self.state_file("workflow_state.json"))
+        workflow_state["updated_at"] = timestamp
+        workflow_state.setdefault("bootstrap", {})
+        workflow_state["bootstrap"]["prompt_path"] = self._display_state_path(prompt_path)
+        workflow_state["bootstrap"]["global_prompt_path"] = str(mirror_path)
+        workflow_state.setdefault("artifacts", {})
+        workflow_state["artifacts"]["prompt"] = self._display_state_path(prompt_path)
+        _write_json(self.state_file("workflow_state.json"), workflow_state)
+        self._sync_root_index(timestamp=timestamp)
+        return prompt_path
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _root_index_lock(self):  # type: ignore[return]
+        """Acquire an exclusive file lock on the root .dev/ index files."""
+        return self._op_sync.root_index_lock()
+
+    def _normalize_session_id(self, value: str) -> str:
+        return self._session_mgr.normalize_session_id(value)
+
+    def _active_session_repository(self) -> StateRepository:
+        session_id = self._session_mgr.read_active_session_id()
+        if session_id is None:
+            raise RuntimeError("No active session is available.")
+        return self.for_session(session_id)
+
+    def _sync_root_index(self, *, timestamp: str | None = None) -> None:
+        if self.session_id is None:
+            return
+        active_session_id = self._session_mgr.read_active_session_id()
+        if active_session_id != self.session_id:
+            return
+        self._op_sync.sync_active_root_operator_mirrors_into_session(
+            session_dev_dir=self.dev_dir,
+            active_session_id=self.session_id,
         )
-        return sessions
+        self._write_root_index_for_session(
+            session_repository=self,
+            timestamp=timestamp or _iso_now(),
+        )
+
+    def _write_root_index_for_session(
+        self,
+        *,
+        session_repository: StateRepository,
+        timestamp: str,
+    ) -> None:
+        self._op_sync.write_root_index_for_session(
+            session_dev_dir=session_repository.dev_dir,
+            session_id=session_repository.session_id or "",
+            state_root=session_repository._state_root_display(),
+            timestamp=timestamp,
+            list_sessions_fn=self._session_mgr.list_sessions,
+        )
+
+    def _sync_operator_state(
+        self,
+        *,
+        session_path: Path,
+        workflow_path: Path,
+        operator_task_path: Path,
+        timestamp: str,
+    ) -> None:
+        self._op_sync.sync_operator_state(
+            session_path=session_path,
+            workflow_path=workflow_path,
+            operator_task_path=operator_task_path,
+            timestamp=timestamp,
+            dev_dir=self.dev_dir,
+            display_state_path_fn=self._display_state_path,
+        )
+        self._sync_root_index(timestamp=timestamp)
 
     def _existing_goal(self) -> str | None:
         for candidate in (
@@ -560,8 +610,8 @@ class StateRepository:
             if not candidate.exists():
                 continue
             try:
-                payload = self._read_json(candidate)
-            except json.JSONDecodeError:
+                payload = _read_json(candidate)
+            except Exception:
                 continue
             bootstrap = payload.get("bootstrap")
             if isinstance(bootstrap, Mapping):
@@ -632,8 +682,8 @@ class StateRepository:
             prompt_text=prompt_text,
             repo_guidance=guidance,
         )
-        self._write_json(session_path, session_defaults)
-        self._write_json(workflow_path, workflow_defaults)
+        _write_json(session_path, session_defaults)
+        _write_json(workflow_path, workflow_defaults)
 
         for extra_name in self.OPTIONAL_STATE_FILENAMES:
             extra_path = self.state_file(extra_name)
@@ -667,6 +717,15 @@ class StateRepository:
             prompt=(directory / "PROMPT.md") if (directory / "PROMPT.md").exists() else None,
         )
 
+    def _ensure_patterns_file(self) -> None:
+        patterns_path = self.base_dev_dir / "PATTERNS.md"
+        if patterns_path.exists():
+            return
+        tmpl_path = self.templates_dir / "patterns.md.tmpl"
+        if not tmpl_path.exists():
+            return
+        patterns_path.write_text(tmpl_path.read_text(encoding="utf-8"), encoding="utf-8")
+
     def _ensure_template_file(
         self,
         path: Path,
@@ -686,470 +745,6 @@ class StateRepository:
     ) -> None:
         template = Template(self._template_path(template_name).read_text(encoding="utf-8"))
         path.write_text(template.safe_substitute(values), encoding="utf-8")
-
-    def _ensure_json_file(self, path: Path, defaults: dict[str, Any]) -> None:
-        current: dict[str, Any]
-        if path.exists():
-            current = self._read_json(path)
-            merged = _deep_merge(defaults, current)
-        else:
-            merged = defaults
-        self._write_json(path, merged)
-
-    def _refresh_active_roadmap_phase_ids(
-        self,
-        *,
-        session_path: Path,
-        workflow_path: Path,
-        roadmap_phase_ids: Sequence[str],
-        timestamp: str,
-    ) -> None:
-        session_state = self._read_json(session_path)
-        session_state["updated_at"] = timestamp
-        session_state["active_roadmap_phase_ids"] = list(roadmap_phase_ids)
-        self._write_json(session_path, session_state)
-
-        workflow_state = self._read_json(workflow_path)
-        workflow_state["updated_at"] = timestamp
-        workflow_state.setdefault("roadmap", {})
-        workflow_state["roadmap"]["active_phase_ids"] = list(roadmap_phase_ids)
-        self._write_json(workflow_path, workflow_state)
-
-    def _sync_operator_state(
-        self,
-        *,
-        session_path: Path,
-        workflow_path: Path,
-        operator_task_path: Path,
-        timestamp: str,
-    ) -> None:
-        operator_task_path = self._resolve_operator_sync_source(operator_task_path)
-        operator_text = (
-            operator_task_path.read_text(encoding="utf-8")
-            if operator_task_path.exists()
-            else ""
-        )
-        operator_mtime = (
-            operator_task_path.stat().st_mtime
-            if operator_task_path.exists()
-            else None
-        )
-
-        # Detect if the operator task document was externally modified since the
-        # last sync. Re-read the file instead of attempting to reconcile edits.
-        if operator_mtime is not None and session_path.exists():
-            try:
-                stored = self._read_json(session_path)
-                stored_mtime = stored.get("operator_state_mtime")
-                if stored_mtime is not None and abs(operator_mtime - float(stored_mtime)) > 1.0:
-                    import sys
-                    print(
-                        f"[dormammu] Warning: {operator_task_path.name} was modified externally "
-                        f"(stored mtime={stored_mtime:.3f}, current={operator_mtime:.3f}). "
-                        "Manual edits will be preserved by re-reading the file.",
-                        file=sys.stderr,
-                    )
-            except Exception:
-                pass
-
-        parsed_tasks = parse_tasks_document(
-            operator_text,
-            source=self._display_state_path(operator_task_path),
-        )
-        task_sync = parsed_tasks.current_workflow.to_dict(synced_at=timestamp)
-
-        session_state = self._read_json(session_path)
-        session_state["updated_at"] = timestamp
-        session_state["task_sync"] = task_sync
-        if operator_mtime is not None:
-            session_state["operator_state_mtime"] = operator_mtime
-        self._write_json(session_path, session_state)
-
-        workflow_state = self._read_json(workflow_path)
-        workflow_state["updated_at"] = timestamp
-        workflow_state.setdefault("operator_sync", {})
-        workflow_state["operator_sync"]["tasks"] = task_sync
-        self._write_json(workflow_path, workflow_state)
-        self._sync_root_index(timestamp=timestamp)
-
-    def _resolve_operator_sync_source(self, preferred_path: Path) -> Path:
-        """Choose the best operator checklist source for task-sync state.
-
-        Historically dormammu parsed only ``TASKS.md`` here, but continuation
-        prompts instruct agents to mark completion in ``PLAN.md``.  This
-        asymmetry is the primary cause of infinite retry loops: the agent marks
-        PLAN.md complete, but the supervisor still reads TASKS.md as incomplete,
-        so the verdict is always ``rework_required``.
-
-        RALPH INSIGHT: use a single source of truth.  Ralph uses ``prd.json``
-        exclusively.  Dormammu maintains two parallel files (PLAN.md and
-        TASKS.md) for historical reasons.  The safe resolution strategy is:
-
-        1. Pick the file with the **fewest pending** ``- [ ]`` items (i.e. the
-           most-complete checklist) — this is the one the agent has been
-           actively updating.
-        2. Break ties with the most-recently modified file (TASKS.md wins on
-           equal mtime to preserve pre-existing behaviour when both files are
-           identical).
-
-        Selecting by mtime alone is fragile: a tool that reads TASKS.md but
-        does not write it will bump its mtime and cause the supervisor to pick
-        an incomplete file over a fully-complete PLAN.md, permanently blocking
-        the loop.
-        """
-        candidates: list[Path] = []
-        seen: set[Path] = set()
-        for path in (preferred_path, self.state_file("PLAN.md"), self.state_file("TASKS.md")):
-            resolved = path.resolve()
-            if resolved in seen or not path.exists():
-                continue
-            seen.add(resolved)
-            candidates.append(path)
-
-        if not candidates:
-            return preferred_path
-        if len(candidates) == 1:
-            return candidates[0]
-
-        def _pending_count(path: Path) -> int:
-            """Count unchecked ``- [ ]`` items — lower means more progress."""
-            try:
-                return path.read_text(encoding="utf-8").count("- [ ] ")
-            except OSError:
-                return 999
-
-        # Primary key: fewest pending items (most complete).
-        # Secondary key: most-recently modified (TASKS.md tiebreaker preserved).
-        best = min(
-            candidates,
-            key=lambda p: (_pending_count(p), -p.stat().st_mtime_ns, p.name != "TASKS.md"),
-        )
-        return best if best.exists() else preferred_path
-
-    def _generated_session_id(self, timestamp: str) -> str:
-        compact = timestamp.replace("-", "").replace(":", "").replace("+", "-").replace("T", "-")
-        base = f"{self.config.app_name}-{compact}"
-        candidate = base
-        sequence = 1
-        while (self.sessions_dir / candidate).exists():
-            candidate = f"{base}-{sequence:02d}"
-            sequence += 1
-        return candidate
-
-    def _normalize_session_id(self, value: str) -> str:
-        normalized = re.sub(r"[^a-zA-Z0-9._-]+", "-", value.strip()).strip("-._")
-        if not normalized:
-            raise ValueError("session_id must contain at least one safe filename character.")
-        return normalized
-
-    def _current_session_id(self, session_path: Path) -> str | None:
-        if not session_path.exists():
-            return None
-        try:
-            payload = self._read_json(session_path)
-        except json.JSONDecodeError:
-            return None
-        session_id = payload.get("session_id") or payload.get("active_session_id")
-        return str(session_id) if session_id else None
-
-    def _read_active_session_id(self) -> str | None:
-        return self._current_session_id(self.base_dev_dir / "session.json")
-
-    def _active_session_repository(self) -> StateRepository:
-        session_id = self._read_active_session_id()
-        if session_id is None:
-            raise RuntimeError("No active session is available.")
-        return self.for_session(session_id)
-
-    def _sync_root_index(self, *, timestamp: str | None = None) -> None:
-        if self.session_id is None:
-            return
-        active_session_id = self._read_active_session_id()
-        if active_session_id != self.session_id:
-            return
-        self._sync_active_root_operator_mirrors_into_session()
-        self._write_root_index_for_session(
-            session_repository=self,
-            timestamp=timestamp or _iso_now(),
-        )
-
-    @contextlib.contextmanager
-    def _root_index_lock(self) -> Generator[None, None, None]:
-        """Acquire an exclusive file lock on the root .dev/ index files.
-
-        Prevents concurrent writes from multiple dormammu sessions racing on
-        `.dev/session.json` and `.dev/workflow_state.json`.  Falls back to a
-        no-op context on platforms that lack ``fcntl`` (e.g. Windows).
-        """
-        self.base_dev_dir.mkdir(parents=True, exist_ok=True)
-        lock_path = self.base_dev_dir / ".dev_lock"
-        with lock_path.open("a", encoding="utf-8") as lock_file:
-            if _HAS_FCNTL:
-                _fcntl.flock(lock_file, _fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                if _HAS_FCNTL:
-                    _fcntl.flock(lock_file, _fcntl.LOCK_UN)
-
-    def _write_root_index_for_session(
-        self,
-        *,
-        session_repository: StateRepository,
-        timestamp: str,
-    ) -> None:
-        with self._root_index_lock():
-            self._write_root_index_for_session_locked(
-                session_repository=session_repository,
-                timestamp=timestamp,
-            )
-
-    def _write_root_index_for_session_locked(
-        self,
-        *,
-        session_repository: StateRepository,
-        timestamp: str,
-    ) -> None:
-        session_state = session_repository._read_json(session_repository.state_file("session.json"))
-        workflow_state = session_repository._read_json(
-            session_repository.state_file("workflow_state.json")
-        )
-        session_id = str(session_state["session_id"])
-        state_root = session_repository._state_root_display()
-        session_defaults = {
-            "active_session_id": session_id,
-            "default_session_id": session_id,
-            "selected_at": timestamp,
-            "updated_at": timestamp,
-            "state_schema_version": session_state.get("state_schema_version"),
-            "current_session": {
-                "session_id": session_id,
-                "state_root": state_root,
-                "session_path": f"{state_root}/session.json",
-                "workflow_path": f"{state_root}/workflow_state.json",
-                "dashboard_path": f"{state_root}/DASHBOARD.md",
-                "plan_path": f"{state_root}/PLAN.md",
-                "tasks_path": f"{state_root}/TASKS.md",
-                "logs_dir": f"{state_root}/logs",
-                "goal": session_state.get("bootstrap", {}).get("goal"),
-                "updated_at": session_state.get("updated_at"),
-                "active_phase": session_state.get("active_phase"),
-                "active_roadmap_phase_ids": session_state.get("active_roadmap_phase_ids", []),
-            },
-        }
-        workflow_defaults = {
-            "version": workflow_state.get("version", 1),
-            "state_schema_version": workflow_state.get("state_schema_version"),
-            "updated_at": timestamp,
-            "mode": workflow_state.get("mode", "supervised"),
-            "active_session_id": session_id,
-            "default_session_id": session_id,
-            "source_of_truth": {
-                "goal": workflow_state.get("source_of_truth", {}).get("goal", []),
-                "machine_state": ".dev/workflow_state.json",
-                "operator_state": [],
-                "session_machine_state": f"{state_root}/workflow_state.json",
-                "session_operator_state": [
-                    f"{state_root}/DASHBOARD.md",
-                    f"{state_root}/PLAN.md",
-                    f"{state_root}/TASKS.md",
-                ],
-            },
-            "session_index": {
-                "active_session_id": session_id,
-                "sessions_dir": ".dev/sessions",
-            },
-            "current_session": {
-                "session_id": session_id,
-                "state_root": state_root,
-                "workflow_path": f"{state_root}/workflow_state.json",
-                "session_path": f"{state_root}/session.json",
-                "tasks_path": f"{state_root}/TASKS.md",
-                "goal": workflow_state.get("bootstrap", {}).get("goal"),
-                "updated_at": workflow_state.get("updated_at"),
-            },
-            "sessions": self.list_sessions(),
-        }
-        self._ensure_json_file(self.base_dev_dir / "session.json", session_defaults)
-        root_session = self._read_json(self.base_dev_dir / "session.json")
-        root_session["active_session_id"] = session_id
-        root_session["default_session_id"] = session_id
-        root_session["selected_at"] = timestamp
-        root_session["updated_at"] = timestamp
-        root_session["current_session"] = session_defaults["current_session"]
-        self._write_json(self.base_dev_dir / "session.json", root_session)
-
-        self._ensure_json_file(self.base_dev_dir / "workflow_state.json", workflow_defaults)
-        root_workflow = self._read_json(self.base_dev_dir / "workflow_state.json")
-        root_workflow["updated_at"] = timestamp
-        root_workflow["active_session_id"] = session_id
-        root_workflow["default_session_id"] = session_id
-        root_workflow["source_of_truth"] = workflow_defaults["source_of_truth"]
-        root_workflow["session_index"] = workflow_defaults["session_index"]
-        root_workflow["current_session"] = workflow_defaults["current_session"]
-        root_workflow["sessions"] = self.list_sessions()
-        self._write_json(self.base_dev_dir / "workflow_state.json", root_workflow)
-        session_repository._sync_root_operator_mirrors()
-
-    def _sync_root_operator_mirrors(self) -> None:
-        if self.session_id is None:
-            return
-        if self._read_active_session_id() != self.session_id:
-            return
-        self.base_dev_dir.mkdir(parents=True, exist_ok=True)
-        for filename in self.ROOT_OPERATOR_MIRROR_FILENAMES:
-            source = self.state_file(filename)
-            target = self.base_dev_dir / filename
-            if source.exists():
-                shutil.copy2(source, target)
-            elif target.exists():
-                target.unlink()
-
-    def _sync_active_root_operator_mirrors_into_session(self) -> None:
-        if self.session_id is None:
-            return
-        if self._read_active_session_id() != self.session_id:
-            return
-        for filename in self.ROOT_OPERATOR_MIRROR_FILENAMES:
-            root_path = self.base_dev_dir / filename
-            session_path = self.state_file(filename)
-            if not root_path.exists():
-                continue
-            if not session_path.exists():
-                shutil.copy2(root_path, session_path)
-                continue
-            root_stat = root_path.stat()
-            session_stat = session_path.stat()
-            if root_stat.st_mtime_ns <= session_stat.st_mtime_ns:
-                continue
-            root_text = root_path.read_text(encoding="utf-8")
-            session_text = session_path.read_text(encoding="utf-8")
-            if root_text != session_text:
-                shutil.copy2(root_path, session_path)
-
-    def _copy_state_snapshot(self, source_dir: Path, target_dir: Path) -> None:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        for filename in (*self.CORE_STATE_FILENAMES, *self.OPTIONAL_STATE_FILENAMES):
-            source = source_dir / filename
-            target = target_dir / filename
-            if source.exists():
-                target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            elif target.exists():
-                target.unlink()
-        source_tasks_path = source_dir / "TASKS.md"
-        target_tasks_path = target_dir / "TASKS.md"
-        if source_tasks_path.exists():
-            target_tasks_path.write_text(
-                source_tasks_path.read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
-        elif target_tasks_path.exists():
-            target_tasks_path.unlink()
-        legacy_tasks_path = source_dir / "TASKS.md"
-        target_plan_path = target_dir / "PLAN.md"
-        if legacy_tasks_path.exists() and not target_plan_path.exists():
-            target_plan_path.write_text(legacy_tasks_path.read_text(encoding="utf-8"), encoding="utf-8")
-
-    def _state_root_display(self) -> str:
-        try:
-            return self.dev_dir.relative_to(self.config.repo_root).as_posix()
-        except ValueError:
-            return str(self.dev_dir)
-
-    def _has_legacy_root_snapshot(self) -> bool:
-        return any(
-            (self.base_dev_dir / filename).exists()
-            for filename in (*self.CORE_STATE_FILENAMES, "TASKS.md")
-        )
-
-    def _migrate_legacy_root_snapshot(self, *, timestamp: str | None = None) -> str | None:
-        legacy_session_id = self._read_active_session_id()
-        if legacy_session_id is not None and (self.sessions_dir / legacy_session_id).exists():
-            return legacy_session_id
-        if not self._has_legacy_root_snapshot():
-            return None
-
-        session_id = legacy_session_id or self._generated_session_id(timestamp or _iso_now())
-        target_dir = self.sessions_dir / session_id
-        self._copy_state_snapshot(self.base_dev_dir, target_dir)
-        legacy_logs_dir = self.base_dev_dir / "logs"
-        target_logs_dir = target_dir / "logs"
-        if legacy_logs_dir.exists() and not target_logs_dir.exists():
-            shutil.copytree(legacy_logs_dir, target_logs_dir)
-
-        session_path = target_dir / "session.json"
-        if session_path.exists():
-            session_state = self._read_json(session_path)
-            session_state["session_id"] = session_id
-            session_state.setdefault("state_schema_version", STATE_SCHEMA_VERSION)
-            self._write_json(session_path, session_state)
-        return session_id
-
-    def _read_legacy_root_session_payload(self) -> dict[str, Any] | None:
-        session_path = self.base_dev_dir / "session.json"
-        if not session_path.exists():
-            return None
-        payload = self._read_json(session_path)
-        if "active_session_id" in payload:
-            return None
-        if "session_id" not in payload:
-            return None
-        return payload
-
-    @staticmethod
-    def _read_json(path: Path) -> dict[str, Any]:
-        return json.loads(path.read_text(encoding="utf-8"))
-
-    @staticmethod
-    def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
-        path.write_text(
-            json.dumps(dict(payload), indent=2, ensure_ascii=True) + "\n",
-            encoding="utf-8",
-        )
-
-    def persist_input_prompt(
-        self,
-        *,
-        prompt_text: str,
-        source_path: Path | None = None,
-    ) -> Path:
-        if self.session_id is None:
-            return self._active_session_repository().persist_input_prompt(
-                prompt_text=prompt_text,
-                source_path=source_path,
-            )
-
-        prompt_path = self.state_file("PROMPT.md")
-        if source_path is not None and source_path.exists():
-            shutil.copyfile(source_path, prompt_path)
-        else:
-            prompt_path.write_text(prompt_text, encoding="utf-8")
-
-        mirror_path = self._global_prompt_mirror_path()
-        mirror_path.parent.mkdir(parents=True, exist_ok=True)
-        if source_path is not None and source_path.exists():
-            shutil.copyfile(source_path, mirror_path)
-        else:
-            mirror_path.write_text(prompt_text, encoding="utf-8")
-
-        timestamp = _iso_now()
-        session_state = self._read_json(self.state_file("session.json"))
-        session_state["updated_at"] = timestamp
-        session_state.setdefault("bootstrap", {})
-        session_state["bootstrap"]["prompt_path"] = self._display_state_path(prompt_path)
-        session_state["bootstrap"]["global_prompt_path"] = str(mirror_path)
-        self._write_json(self.state_file("session.json"), session_state)
-
-        workflow_state = self._read_json(self.state_file("workflow_state.json"))
-        workflow_state["updated_at"] = timestamp
-        workflow_state.setdefault("bootstrap", {})
-        workflow_state["bootstrap"]["prompt_path"] = self._display_state_path(prompt_path)
-        workflow_state["bootstrap"]["global_prompt_path"] = str(mirror_path)
-        workflow_state.setdefault("artifacts", {})
-        workflow_state["artifacts"]["prompt"] = self._display_state_path(prompt_path)
-        self._write_json(self.state_file("workflow_state.json"), workflow_state)
-        self._sync_root_index(timestamp=timestamp)
-        return prompt_path
 
     def _ensure_plan_file(self, plan_path: Path) -> None:
         if plan_path.exists():
@@ -1187,6 +782,12 @@ class StateRepository:
             return task_path
         return self._operator_plan_path()
 
+    def _state_root_display(self) -> str:
+        try:
+            return self.dev_dir.relative_to(self.config.repo_root).as_posix()
+        except ValueError:
+            return str(self.dev_dir)
+
     def _display_state_path(self, path: Path) -> str:
         try:
             return path.relative_to(self.config.repo_root).as_posix()
@@ -1204,6 +805,6 @@ class StateRepository:
         raise FileNotFoundError(f"Template file was not found: {candidate}")
 
     def _global_prompt_mirror_path(self) -> Path:
-        session_state = self._read_json(self.state_file("session.json"))
+        session_state = _read_json(self.state_file("session.json"))
         session_id = str(session_state.get("session_id") or self.session_id)
         return self.config.sessions_dir / session_id / ".dev" / "PROMPT.md"
