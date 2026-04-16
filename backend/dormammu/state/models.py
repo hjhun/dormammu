@@ -432,6 +432,24 @@ def default_intake_state(prompt_text: str | None) -> dict[str, Any]:
     }
 
 
+def default_workflow_policy_state(request_class: str) -> dict[str, Any]:
+    """Return the ``workflow_policy`` block for workflow state.
+
+    Resolves which pipeline phases are required vs. eligible to skip based on
+    the intake request class.  The result is stored in workflow_state.json so
+    that downstream stages (planner, supervisor) can branch without re-deriving
+    the policy.
+    """
+    from dormammu.workflow_policy import (  # local import avoids circulars
+        default_workflow_policy_state as _policy_state,
+    )
+
+    valid = ("direct_response", "light_edit", "full_workflow")
+    if request_class not in valid:
+        request_class = "direct_response"
+    return _policy_state(request_class)  # type: ignore[arg-type]
+
+
 def default_workflow_state(
     *,
     timestamp: str,
@@ -442,6 +460,7 @@ def default_workflow_state(
     repo_guidance: RepoGuidance | None = None,
 ) -> dict[str, Any]:
     prompt_summary = summarize_prompt_goal(prompt_text, fallback=goal)
+    intake_state = default_intake_state(prompt_text)
     source_goal_files = list(
         dict.fromkeys(
             [
@@ -556,5 +575,8 @@ def default_workflow_state(
             "status": "not_run",
         },
         "latest_continuation_prompt": None,
-        "intake": default_intake_state(prompt_text),
+        "intake": intake_state,
+        "workflow_policy": default_workflow_policy_state(
+            intake_state.get("request_class", "direct_response")
+        ),
     }

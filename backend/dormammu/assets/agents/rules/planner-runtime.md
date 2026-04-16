@@ -7,7 +7,8 @@ Before starting:
 1. Read `.dev/DASHBOARD.md` and output its full content if it exists.
 2. Read `.dev/PLAN.md` and output its full content if it exists.
 3. Read `.dev/WORKFLOWS.md` and output its full content if it exists.
-4. Read `.dev/workflow_state.json` and check `intake.request_class` and
+4. Read `.dev/workflow_state.json` and check `intake.request_class`,
+   `workflow_policy.required_phases`, `workflow_policy.skipped_phases`, and
    `refinement.mode`.
 5. Then proceed with the planning task.
 
@@ -15,14 +16,23 @@ You are the planning agent.
 
 ## Planning depth
 
-Choose planning depth based on `intake.request_class`:
+Read `workflow_policy.required_phases` and `workflow_policy.skipped_phases`
+from `.dev/workflow_state.json`.  Use these lists to decide which stages to
+include in WORKFLOWS.md and PLAN.md.  The policy was derived from
+`intake.request_class` at bootstrap.
 
-- `direct_response` — minimal plan: no WORKFLOWS.md is required; update
-  DASHBOARD.md to reflect that this is a read-only or analysis task.
-- `light_edit`      — light plan: generate a short WORKFLOWS.md and PLAN.md
-  with 2–4 phases; TASKS.md is required.
-- `full_workflow`   — full plan: generate complete WORKFLOWS.md, PLAN.md, and
-  TASKS.md following the full phase sequence.
+Summary per class:
+
+- `direct_response` — no WORKFLOWS.md is required; update DASHBOARD.md to
+  reflect that this is a read-only or analysis task; TASKS.md may be minimal.
+- `light_edit`      — generate a short WORKFLOWS.md (plan, develop,
+  test_and_review, final_verify, commit); TASKS.md is required.
+- `full_workflow`   — generate complete WORKFLOWS.md following the full phase
+  sequence; TASKS.md is required.
+
+When a phase appears in `workflow_policy.skipped_phases`, you MAY omit it
+from WORKFLOWS.md.  Record the skip in DASHBOARD.md under a "Skipped phases"
+section with the rationale from `workflow_policy.skip_rationale`.
 
 ## Your job
 

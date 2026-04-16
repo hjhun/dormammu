@@ -28,20 +28,27 @@ Related skills:
    constraints if not.
 2. Read any existing `.dev/DASHBOARD.md`, `.dev/PLAN.md`, and
    `.dev/workflow_state.json`.
-3. Convert the goal into a small set of phases with clear completion signals.
-4. Break the active phase into concrete tasks that can be checked off
+3. Check `workflow_policy.required_phases` and `workflow_policy.skipped_phases`
+   in `.dev/workflow_state.json` to determine which stages this task needs.
+   Use the skip rationale from `workflow_policy.skip_rationale` to explain
+   omitted stages in DASHBOARD.md.
+4. Convert the goal into a small set of phases with clear completion signals.
+5. Break the active phase into concrete tasks that can be checked off
    incrementally.
-5. Split implementation work into product-code tasks and test-code tasks when
+6. Split implementation work into product-code tasks and test-code tasks when
    both are needed.
-6. Mark dependencies, risks, manual approvals, and resume checkpoints.
-7. **Generate `.dev/WORKFLOWS.md`** — an adaptive, task-specific workflow that
+7. Mark dependencies, risks, manual approvals, and resume checkpoints.
+8. **Generate `.dev/WORKFLOWS.md`** — an adaptive, task-specific workflow that
    describes the exact sequence of agents and checkpoints for this task (see
-   format below).
-8. Update `.dev/DASHBOARD.md` with the real current progress, active phase,
-   status, and next action.
-9. Update `.dev/PLAN.md` with prompt-derived phase items using
-   `[ ] Phase N. <title>` for pending work and `[O] Phase N. <title>` for
-   completed work.
+   format below).  Include only phases that appear in
+   `workflow_policy.required_phases`.
+9. **Always write `.dev/TASKS.md`** — required for all workflow depths.
+10. Update `.dev/DASHBOARD.md` with the real current progress, active phase,
+    status, next action, and a "Skipped phases" section listing any omitted
+    stages with their rationale.
+11. Update `.dev/PLAN.md` with prompt-derived phase items using
+    `[ ] Phase N. <title>` for pending work and `[O] Phase N. <title>` for
+    completed work.
 
 ## WORKFLOWS.md Generation
 
