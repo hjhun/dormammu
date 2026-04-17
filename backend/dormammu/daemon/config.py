@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from dormammu.config import AppConfig
+from dormammu.daemon.autonomous_config import AutonomousConfig, parse_autonomous_config
 from dormammu.daemon.goals_config import GoalsConfig, parse_goals_config
 from dormammu.daemon.models import DaemonConfig, QueueConfig, WatchConfig
 
@@ -93,4 +94,5 @@ def load_daemon_config(path: Path, *, app_config: AppConfig) -> DaemonConfig:
         watch=_parse_watch_config(payload.get("watch"), config_path=config_path),
         queue=_parse_queue_config(payload.get("queue"), config_path=config_path),
         goals=parse_goals_config(payload.get("goals"), config_path=config_path),
+        autonomous=parse_autonomous_config(payload.get("autonomous"), config_path=config_path),
     )

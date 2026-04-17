@@ -488,6 +488,38 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to the daemon JSON config file. Defaults to ~/.dormammu/daemonize.json.",
     )
+    daemonize.add_argument(
+        "--autonomous",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable autonomous self-improvement mode. The daemon periodically analyzes the "
+            "repository, identifies the highest-priority improvement task, and queues it for "
+            "execution without any human-supplied goal files. "
+            "Equivalent to setting autonomous.enabled=true in the daemonize config."
+        ),
+    )
+    daemonize.add_argument(
+        "--autonomous-interval",
+        type=int,
+        default=None,
+        metavar="MINUTES",
+        help=(
+            "How often (in minutes) the autonomous scheduler analyzes the repository and "
+            "generates a new development prompt. Minimum 5. Default: 120. "
+            "Only used when --autonomous is set."
+        ),
+    )
+    daemonize.add_argument(
+        "--autonomous-focus",
+        default=None,
+        choices=("all", "bugs", "improvements", "tests", "docs"),
+        help=(
+            "Which improvement area to prioritize in autonomous mode: "
+            "all (default), bugs, improvements, tests, docs. "
+            "Only used when --autonomous is set."
+        ),
+    )
     _add_guidance_files(daemonize, help="Repeatable Markdown guidance file to embed into daemon phase prompts when it has content.")
     _add_debug(daemonize, help="Mirror daemon stderr into <result_path>/../progress/<prompt>_progress.log and reset it for each new prompt session.")
     daemonize.set_defaults(handler=_handle_daemonize)

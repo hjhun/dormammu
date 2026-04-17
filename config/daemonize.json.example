@@ -21,5 +21,12 @@
       "model": null,
       "next_goal_strategy": "none"
     }
+  },
+  "autonomous": {
+    "enabled": false,
+    "interval_minutes": 120,
+    "focus": "all",
+    "agent_timeout_seconds": 600,
+    "max_queued_tasks": 3
   }
 }

@@ -29,6 +29,7 @@ from dormammu.config import (
 )
 from dormammu.continuation import build_supervisor_handoff_prompt_from_agents
 from dormammu.daemon import DaemonAlreadyRunningError, DaemonRunner, SessionProgressLogStream, load_daemon_config
+from dormammu.daemon.autonomous_config import AutonomousConfig
 from dormammu.daemon.pipeline_runner import PipelineRunner
 from dormammu.telegram.stream import TelegramProgressStream
 from dormammu.doctor import run_doctor
@@ -568,12 +569,58 @@ def _handle_doctor(args: argparse.Namespace) -> int:
     return 0 if report.status == "ok" else 1
 
 
+def _apply_autonomous_cli_overrides(daemon_config, args: argparse.Namespace):
+    """Merge --autonomous / --autonomous-interval / --autonomous-focus into daemon_config.
+
+    If --autonomous is set on the CLI and the config file does not already
+    have an autonomous section, a default AutonomousConfig is created.
+    CLI values override JSON values for any key that was explicitly provided.
+    """
+    from dataclasses import replace as _replace
+
+    if not getattr(args, "autonomous", False):
+        return daemon_config
+
+    existing = daemon_config.autonomous
+    interval = getattr(args, "autonomous_interval", None)
+    focus = getattr(args, "autonomous_focus", None)
+
+    if existing is None:
+        # Create with defaults, then apply CLI overrides.
+        base = AutonomousConfig(
+            enabled=True,
+            interval_minutes=120,
+            focus="all",
+            agent_timeout_seconds=600,
+            max_queued_tasks=3,
+        )
+    else:
+        base = _replace(existing, enabled=True)
+
+    overrides: dict = {}
+    if interval is not None:
+        if interval < 5:
+            raise ValueError("--autonomous-interval must be >= 5 minutes")
+        overrides["interval_minutes"] = interval
+    if focus is not None:
+        overrides["focus"] = focus
+
+    new_autonomous = _replace(base, **overrides) if overrides else base
+    return _replace(daemon_config, autonomous=new_autonomous)
+
+
 def _handle_daemonize(args: argparse.Namespace) -> int:
     config = _with_guidance_overrides(_load_config(args.repo_root, discover=args.repo_root is not None), args.guidance_files)
     daemon_config_path = args.config or _default_daemon_config_path(config)
     try:
         daemon_config = load_daemon_config(daemon_config_path, app_config=config)
     except (RuntimeError, ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    try:
+        daemon_config = _apply_autonomous_cli_overrides(daemon_config, args)
+    except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
 

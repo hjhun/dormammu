@@ -34,6 +34,7 @@ from dormammu.daemon._patterns import (
     GOAL_SOURCE_RE as _GOAL_SOURCE_RE,
     RESULT_STATUS_RE as _RESULT_STATUS_RE,
 )
+from dormammu.daemon.autonomous_scheduler import AutonomousScheduler
 from dormammu.daemon.goals_scheduler import GoalsScheduler
 from dormammu.daemon.models import DaemonConfig, DaemonPromptResult
 from dormammu.daemon.pipeline_runner import PipelineRunner
@@ -128,6 +129,18 @@ class DaemonRunner:
             if self.daemon_config.goals is not None
             else None
         )
+        # Autonomous scheduler — started in run_forever() when autonomous config is set.
+        _autonomous_cfg = self.daemon_config.autonomous
+        self._autonomous_scheduler: AutonomousScheduler | None = (
+            AutonomousScheduler(
+                _autonomous_cfg,
+                self.daemon_config.prompt_path,
+                self.app_config,
+                progress_stream=self.progress_stream,
+            )
+            if _autonomous_cfg is not None and _autonomous_cfg.enabled
+            else None
+        )
 
     def in_progress_snapshot(self) -> frozenset[Path]:
         """Return a thread-safe snapshot of the currently-active prompt paths."""
@@ -170,6 +183,10 @@ class DaemonRunner:
                 self._goals_scheduler.start()
                 self._log("goals scheduler: started")
                 self._goals_scheduler.trigger_now()
+            if self._autonomous_scheduler is not None:
+                self._autonomous_scheduler.start()
+                self._log("autonomous scheduler: started")
+                self._autonomous_scheduler.trigger_now()
             try:
                 while not self._shutdown_requested.is_set():
                     processed = self.run_pending_once(watcher_backend=watcher.backend_name)
@@ -184,6 +201,9 @@ class DaemonRunner:
                 if self._goals_scheduler is not None:
                     self._goals_scheduler.stop()
                     self._log("goals scheduler: stopped")
+                if self._autonomous_scheduler is not None:
+                    self._autonomous_scheduler.stop()
+                    self._log("autonomous scheduler: stopped")
                 watcher.close()
                 self._remove_heartbeat()
                 if hasattr(self.progress_stream, "close_log"):
@@ -293,6 +313,16 @@ class DaemonRunner:
             )
         else:
             lines.append("goals: disabled")
+        if self.daemon_config.autonomous is not None and self.daemon_config.autonomous.enabled:
+            auto = self.daemon_config.autonomous
+            lines.append(
+                f"autonomous: enabled "
+                f"(interval={auto.interval_minutes}m, "
+                f"focus={auto.focus}, "
+                f"max_queued={auto.max_queued_tasks})"
+            )
+        else:
+            lines.append("autonomous: disabled")
         return lines
 
     def _watcher_poll_interval_seconds(self, watcher_backend: str) -> int:

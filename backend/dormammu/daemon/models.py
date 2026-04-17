@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from dormammu.daemon.autonomous_config import AutonomousConfig
     from dormammu.daemon.goals_config import GoalsConfig
 
 
@@ -30,6 +31,7 @@ class DaemonConfig:
     watch: WatchConfig
     queue: QueueConfig
     goals: GoalsConfig | None = None
+    autonomous: AutonomousConfig | None = None
 
 
 @dataclass(frozen=True, slots=True)
