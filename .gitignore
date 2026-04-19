@@ -9,3 +9,5 @@ dist/
 frontend/dist/
 .dev/
 .session
+/.codex
+/graphify-out/
