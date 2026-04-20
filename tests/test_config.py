@@ -177,6 +177,35 @@ class ConfigTests(unittest.TestCase):
                 ("-y", "--verbose", "--timeout", "1200"),
             )
 
+    def test_load_falls_back_to_temp_global_home_when_default_home_is_not_writable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            temp_root = Path(tmpdir) / "temp-root"
+            temp_root.mkdir(parents=True, exist_ok=True)
+            user_fragment = str(os.getuid()) if hasattr(os, "getuid") else "default"
+            expected_global_home_dir = (temp_root / f"dormammu-{user_fragment}").resolve()
+
+            with (
+                mock.patch("dormammu.config.os.access", return_value=False),
+                mock.patch("dormammu.config.tempfile.gettempdir", return_value=str(temp_root)),
+            ):
+                config = AppConfig.load(
+                    repo_root=root,
+                    env={
+                        "HOME": str(home_dir),
+                        **{key: value for key, value in os.environ.items() if key != "HOME"},
+                    },
+                )
+
+            self.assertEqual(config.global_home_dir, expected_global_home_dir)
+            self.assertEqual(
+                config.user_agent_manifests_dir,
+                (expected_global_home_dir / "agent-manifests").resolve(),
+            )
+
     def test_resolve_agent_profile_uses_builtin_defaults_when_agents_config_absent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "repo"

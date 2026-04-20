@@ -20,6 +20,7 @@ Korean-language guide is at [docs/ko/GUIDE.md](ko/GUIDE.md).
 - [Quick Start](#quick-start)
 - [Commands Reference](#commands-reference)
 - [Configuration Reference](#configuration-reference)
+- [Manifest-Backed Agent Profiles](#manifest-backed-agent-profiles)
 - [Agent Roles](#agent-roles)
 - [Workflow Pipeline](#workflow-pipeline)
 - [Daemonize Mode](#daemonize-mode)
@@ -588,6 +589,116 @@ queues prompts.
 
 Relative paths are resolved relative to the daemon config file location, not
 the current shell working directory.
+
+---
+
+## Manifest-Backed Agent Profiles
+
+DORMAMMU supports manifest-backed agent profiles stored on disk. These
+manifests are runtime profile definitions, not workflow documents.
+
+Use them when you want a role in `dormammu.json` to point at a named custom
+profile:
+
+```json
+{
+  "agents": {
+    "planner": {
+      "profile": "planner-custom"
+    }
+  }
+}
+```
+
+The runtime looks for matching `*.agent.json` files in two places:
+
+| Scope | Location |
+|-------|----------|
+| project | `<repo-root>/.dormammu/agent-manifests/` |
+| user | `<effective-global-home>/agent-manifests/` |
+
+The effective global home defaults to `~/.dormammu/`, so the usual user
+manifest location is `~/.dormammu/agent-manifests/`. When `~/.dormammu/` is
+not writable, DORMAMMU falls back to `tempfile.gettempdir()/dormammu-<uid>`
+instead, so user manifests move under that fallback home. On platforms where a
+numeric uid is unavailable, the fallback suffix is `default`.
+
+Each manifest is JSON and currently uses schema version `1`. The implemented
+fields are:
+
+- `schema_version`
+- `name`
+- `description`
+- `prompt`
+- `source`
+- optional `cli`
+- optional `model`
+- optional `permissions`
+- optional `skills`
+- optional `metadata`
+
+### Discovery and precedence
+
+Discovery is deterministic:
+
+- Project manifests are searched before user manifests.
+- Within each scope, matching files are enumerated in sorted path order.
+- Duplicate manifest names within the same scope are rejected as an error.
+- When a project manifest and a user manifest declare the same `name`, the
+  project manifest wins and the user manifest is shadowed.
+
+If no manifest files exist, built-in role profiles still work exactly as
+before. Manifest support is additive; it does not require you to create
+manifest directories just to use DORMAMMU normally.
+
+### Relationship to the bundled `agents/` tree
+
+Manifest-backed profiles and the repository `agents/` directory solve different
+problems:
+
+- Manifests define runtime agent profiles: prompt body, CLI override, model,
+  permission policy, preloaded skills, and metadata for a named profile.
+- `agents/` is the distributable workflow guidance bundle: stage instructions,
+  portable skill documents, and runtime rule documents used by the built-in
+  development workflow.
+
+Do not put manifest JSON files under `agents/`, and do not treat
+`agents/AGENTS.md` or `agents/skills/*` as manifest definitions.
+
+### Validation and failure behavior
+
+Manifest validation is strict and path-bearing:
+
+- Malformed JSON reports the manifest path plus line and column information.
+- Unsupported keys, missing required fields, invalid field types, and invalid
+  permission-policy structure fail with field-specific error messages.
+- The manifest `source` field must match where the file was discovered:
+  project manifests must declare `"source": "project"` and user manifests must
+  declare `"source": "user"`.
+
+Runtime profile resolution is intentionally selective:
+
+- If a role requests a specific manifest-backed profile, unrelated malformed
+  manifests are ignored unless they declare that requested profile name.
+- If the requested manifest itself is malformed, resolution fails immediately.
+- If a higher-precedence project manifest is malformed, DORMAMMU does not fall
+  through to a lower-precedence user manifest with the same name.
+
+### Common failure modes
+
+- A manifest file is invalid JSON or contains unsupported fields.
+- Two manifests in the same scope declare the same `name`.
+- A manifest declares the wrong `source` for its location.
+- `agents.<role>.profile` points to a manifest profile name that does not
+  exist in the effective built-in-plus-manifest catalog.
+
+### Current limitations
+
+- Manifests are JSON-only in the current implementation.
+- Manifest files define runtime profiles only; they do not replace the bundled
+  `agents/` workflow guidance assets.
+- There is no separate manifest-management CLI yet; creation and editing are
+  file-based.
 
 ---
 

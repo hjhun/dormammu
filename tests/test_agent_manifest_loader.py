@@ -47,6 +47,23 @@ def _base_manifest_payload(
 
 
 class TestAgentManifestLoader:
+    def test_loader_returns_empty_result_when_no_manifests_exist(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        config = _make_config(repo_root, home_dir)
+
+        loaded = load_agent_manifest_definitions(config)
+
+        assert loaded.discovery.candidates == ()
+        assert loaded.discovery.selected == ()
+        assert loaded.discovery.shadowed == ()
+        assert loaded.definitions == ()
+
     def test_loads_multiple_manifests_into_runtime_ready_definitions(
         self,
         tmp_path: Path,

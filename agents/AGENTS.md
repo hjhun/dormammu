@@ -185,6 +185,10 @@ supervisor must:
   `dormammu`.
 - When repository-specific rules exist outside this directory, use them
   alongside this bundle rather than replacing them.
+- Manifest-backed runtime agent profiles are a separate extension surface.
+  Files under `.dormammu/agent-manifests/` or `~/.dormammu/agent-manifests/`
+  define runtime profile data, not workflow guidance, skills, or packaged
+  stage rules under `agents/`.
 - `.dev/WORKFLOWS.md` is generated per task by the planning agent. It is the
   authoritative process map for what stages will run and where evaluator
   checkpoints are placed.
