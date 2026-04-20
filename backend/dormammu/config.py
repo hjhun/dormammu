@@ -12,6 +12,7 @@ from dormammu.telegram.config import TelegramConfig, parse_telegram_config
 from dormammu.workspace import WorkspacePaths, resolve_workspace_paths
 
 if TYPE_CHECKING:
+    from dormammu.agent.manifest_loader import AgentManifestLoadResult
     from dormammu.agent.profiles import AgentProfile
     from dormammu.agent.role_config import AgentsConfig
 
@@ -701,6 +702,11 @@ class AppConfig:
             agents_config=self.agents,
             normalized_profiles=self.agent_profiles,
         )
+
+    def load_agent_manifest_definitions(self) -> "AgentManifestLoadResult":
+        from dormammu.agent.manifest_loader import load_agent_manifest_definitions  # noqa: PLC0415
+
+        return load_agent_manifest_definitions(self)
 
     def to_dict(self) -> dict[str, object]:
         return {
