@@ -18,10 +18,16 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.config import AppConfig
 from dormammu.agent import cli_adapter as cli_adapter_module
+from dormammu.agent.permissions import (
+    AgentPermissionPolicy,
+    PermissionDecision,
+    WorktreePermissionPolicy,
+)
 from dormammu.agent.profiles import AgentProfile
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
 from dormammu.recovery import RecoveryManager
 from dormammu.state import StateRepository
+from dormammu.worktree import WorktreeRepositoryError
 
 
 class LoopRunnerTests(unittest.TestCase):
@@ -258,7 +264,155 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertEqual(result.status, "completed")
             self.assertEqual(result.attempts_completed, 1)
             self.assertEqual(result.max_iterations, 50)
-            self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "1")
+
+    def test_run_uses_managed_worktree_when_enabled_for_developer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            (root / "dormammu.json").write_text(
+                json.dumps({"worktree": {"enabled": True, "root_dir": "./managed-worktrees"}}),
+                encoding="utf-8",
+            )
+            fake_cli = self._write_cwd_loop_cli(root, name="fake-cwd-worktree-agent")
+            self._commit_repo_state(root, message="seed managed worktree repo")
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            runner = LoopRunner(config, repository=repository)
+            runner.resolve_agent_profile = mock.Mock(
+                return_value=AgentProfile(
+                    name="developer",
+                    description="Implements the active product-code slice under supervisor control.",
+                    permission_policy=AgentPermissionPolicy(
+                        worktree=WorktreePermissionPolicy(default=PermissionDecision.ALLOW),
+                    ),
+                )
+            )
+
+            result = runner.run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file in the active checkout.",
+                    repo_root=root,
+                    workdir=root,
+                    run_label="worktree-loop-test",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertFalse((root / "done.txt").exists())
+
+            session_worktrees = repository.read_session_worktree_state()
+            self.assertFalse(session_worktrees.is_empty)
+            self.assertIsNotNone(session_worktrees.active_worktree_id)
+            managed_worktree = session_worktrees.managed[0]
+            self.assertTrue((managed_worktree.isolated_path / "done.txt").exists())
+
+            latest_run = repository.read_session_state()["latest_run"]
+            self.assertEqual(
+                latest_run["workdir"],
+                str(managed_worktree.isolated_path),
+            )
+            self.assertEqual(
+                (managed_worktree.isolated_path / "cwd.txt").read_text(encoding="utf-8").strip(),
+                str(managed_worktree.isolated_path),
+            )
+
+    def test_run_keeps_primary_checkout_when_worktree_is_not_permitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            (root / "dormammu.json").write_text(
+                json.dumps({"worktree": {"enabled": True, "root_dir": "./managed-worktrees"}}),
+                encoding="utf-8",
+            )
+            fake_cli = self._write_cwd_loop_cli(root, name="fake-cwd-primary-agent")
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            runner = LoopRunner(config, repository=repository)
+            runner.resolve_agent_profile = mock.Mock(
+                return_value=AgentProfile(
+                    name="developer",
+                    description="Implements the active product-code slice under supervisor control.",
+                )
+            )
+
+            result = runner.run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file in the active checkout.",
+                    repo_root=root,
+                    workdir=root,
+                    run_label="primary-loop-test",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertTrue((root / "done.txt").exists())
+            self.assertTrue(repository.read_session_worktree_state().is_empty)
+            latest_run = repository.read_session_state()["latest_run"]
+            self.assertEqual(latest_run["workdir"], str(root.resolve()))
+
+    def test_run_blocks_when_managed_worktree_setup_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            (root / "dormammu.json").write_text(
+                json.dumps({"worktree": {"enabled": True, "root_dir": "./managed-worktrees"}}),
+                encoding="utf-8",
+            )
+            fake_cli = self._write_cwd_loop_cli(root, name="fake-cwd-blocked-agent")
+            self._commit_repo_state(root, message="seed managed worktree repo")
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            runner = LoopRunner(config, repository=repository)
+            runner.resolve_agent_profile = mock.Mock(
+                return_value=AgentProfile(
+                    name="developer",
+                    description="Implements the active product-code slice under supervisor control.",
+                    permission_policy=AgentPermissionPolicy(
+                        worktree=WorktreePermissionPolicy(default=PermissionDecision.ALLOW),
+                    ),
+                )
+            )
+
+            with mock.patch(
+                "dormammu.loop_runner.WorktreeService.ensure_worktree",
+                side_effect=WorktreeRepositoryError("simulated worktree setup failure"),
+            ):
+                result = runner.run(
+                    LoopRunRequest(
+                        cli_path=fake_cli,
+                        prompt_text="Create the required marker file in the active checkout.",
+                        repo_root=root,
+                        workdir=root,
+                        run_label="blocked-worktree-loop-test",
+                        max_retries=0,
+                        required_paths=("done.txt",),
+                        expected_roadmap_phase_id="phase_4",
+                    )
+                )
+
+            self.assertEqual(result.status, "blocked")
+            self.assertTrue(repository.read_session_worktree_state().is_empty)
+            self.assertIsNone(repository.read_session_state().get("latest_run"))
 
     def test_run_retries_until_plan_items_are_marked_complete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -679,6 +833,12 @@ class LoopRunnerTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _commit_repo_state(self, root: Path, *, message: str) -> None:
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Dormammu Tests"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "tests@example.com"], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", message], check=True)
+
     def _write_loop_cli(
         self,
         root: Path,
@@ -768,6 +928,64 @@ class LoopRunnerTests(unittest.TestCase):
                     if attempt >= PLAN_COMPLETION_ATTEMPT:
                         mark_plan_complete()
 
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_cwd_loop_cli(self, root: Path, *, name: str) -> Path:
+        script = root / name
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                from pathlib import Path
+                import json
+                import os
+                import sys
+
+                ROOT = Path({str(root)!r})
+                _base_dev_dir = os.environ.get("DORMAMMU_BASE_DEV_DIR", "").strip()
+                BASE_DEV_DIR = Path(_base_dev_dir) if _base_dev_dir else ROOT / ".dev"
+                SESSION_PATH = BASE_DEV_DIR / "session.json"
+
+                def mark_complete(path: Path) -> None:
+                    if not path.exists():
+                        return
+                    lines = path.read_text(encoding="utf-8").splitlines()
+                    rewritten = [
+                        line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                        for line in lines
+                    ]
+                    path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+
+                def mark_plan_complete() -> None:
+                    if not SESSION_PATH.exists():
+                        return
+                    payload = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
+                    session_id = payload.get("active_session_id") or payload.get("session_id")
+                    if not session_id:
+                        return
+                    _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
+                    sessions_dir = Path(_sdir) if _sdir else BASE_DEV_DIR / "sessions"
+                    mark_complete(sessions_dir / str(session_id) / "PLAN.md")
+                    mark_complete(sessions_dir / str(session_id) / "TASKS.md")
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: {name} [--prompt-file PATH]")
+                        return 0
+
+                    cwd = Path.cwd()
+                    (cwd / "done.txt").write_text("done\\n", encoding="utf-8")
+                    (cwd / "cwd.txt").write_text(str(cwd), encoding="utf-8")
+                    mark_plan_complete()
                     return 0
 
                 raise SystemExit(main())

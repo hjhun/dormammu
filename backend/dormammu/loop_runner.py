@@ -9,12 +9,14 @@ from typing import Any, Sequence
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import AgentRunRequest, CliAdapter
+from dormammu.agent.permissions import PermissionDecision
 from dormammu.agent.profiles import AgentProfile
 from dormammu.config import AppConfig
 from dormammu.continuation import build_continuation_prompt
 from dormammu.runtime_hooks import RuntimeHookBlocked, RuntimeHookController
 from dormammu.state import StateRepository
 from dormammu.supervisor import Supervisor, SupervisorReport, SupervisorRequest
+from dormammu.worktree import ManagedWorktree, WorktreeOwner, WorktreeService, WorktreeServiceError
 
 # ── Termination constants ────────────────────────────────────────────────────
 #
@@ -187,6 +189,71 @@ class LoopRunner:
     def resolve_agent_profile(self, request: LoopRunRequest) -> AgentProfile:
         return self.config.resolve_agent_profile(request.agent_role)
 
+    def _managed_worktree_requested(
+        self,
+        *,
+        request: LoopRunRequest,
+        profile: AgentProfile,
+    ) -> bool:
+        if request.agent_role != "developer":
+            return False
+        if not self.config.worktree.enabled:
+            return False
+        create_allowed = profile.worktree_policy.evaluate("create") is PermissionDecision.ALLOW
+        reuse_allowed = profile.worktree_policy.evaluate("reuse") is PermissionDecision.ALLOW
+        return create_allowed or reuse_allowed
+
+    def _isolated_workdir(
+        self,
+        *,
+        request: LoopRunRequest,
+        worktree: ManagedWorktree,
+    ) -> Path:
+        if request.workdir is None:
+            return worktree.isolated_path
+        try:
+            relative_workdir = request.workdir.resolve().relative_to(request.repo_root.resolve())
+        except ValueError:
+            return worktree.isolated_path
+        return (worktree.isolated_path / relative_workdir).resolve()
+
+    def _prepare_managed_worktree(
+        self,
+        *,
+        request: LoopRunRequest,
+        profile: AgentProfile,
+        repository: StateRepository,
+        session_id: str | None,
+    ) -> ManagedWorktree | None:
+        service = WorktreeService.from_app_config(self.config)
+        owner = WorktreeOwner(
+            session_id=session_id,
+            agent_role=request.agent_role,
+        )
+        label = request.run_label or request.agent_role
+        worktree: ManagedWorktree | None = None
+
+        if profile.worktree_policy.evaluate("reuse") is PermissionDecision.ALLOW:
+            worktree = service.find_worktree(
+                source_repo_root=request.repo_root,
+                owner=owner,
+                label=label,
+            )
+        if (
+            worktree is None
+            and profile.worktree_policy.evaluate("create") is PermissionDecision.ALLOW
+        ):
+            worktree = service.ensure_worktree(
+                source_repo_root=request.repo_root,
+                owner=owner,
+                label=label,
+            )
+        if worktree is None:
+            return None
+
+        repository.upsert_managed_worktree(worktree, active=True)
+        return worktree
+
     def run(
         self,
         request: LoopRunRequest,
@@ -219,7 +286,7 @@ class LoopRunner:
                     logs_dir=runtime_repository.logs_dir,
                 )
                 runtime_adapter = CliAdapter(runtime_config, live_output_stream=self.progress_stream)
-                runtime_supervisor = Supervisor(self.config, repository=runtime_repository)
+                runtime_supervisor = Supervisor(runtime_config, repository=runtime_repository)
 
         session_state = runtime_repository.read_session_state()
         session_id = session_state.get("session_id")
@@ -236,6 +303,7 @@ class LoopRunner:
         retries_used = max(start_attempt - 1, 0)
         continuation_prompt_path: Path | None = None
         report_path: Path | None = None
+        active_worktree: ManagedWorktree | None = None
         # Reset per run() call so resumed loops don't inherit stale state.
         # Read _STAGNATION_WINDOW at call time so tests can patch it dynamically.
         stagnation = _StagnationDetector(window_size=_STAGNATION_WINDOW)
@@ -339,6 +407,57 @@ class LoopRunner:
                     )
             return final_result
 
+        if self._managed_worktree_requested(request=request, profile=profile):
+            try:
+                active_worktree = self._prepare_managed_worktree(
+                    request=request,
+                    profile=profile,
+                    repository=runtime_repository,
+                    session_id=session_id,
+                )
+            except WorktreeServiceError as exc:
+                next_action = f"Managed worktree setup failed: {exc}"
+                self._persist_loop_state(
+                    status="blocked",
+                    request=request,
+                    attempts_completed=attempt_number - 1,
+                    retries_used=retries_used,
+                    latest_run_id=None,
+                    report=None,
+                    report_path=None,
+                    continuation_prompt_path=None,
+                    next_action=next_action,
+                )
+                return _finish(
+                    _blocked_result(
+                        attempts_completed_value=attempt_number - 1,
+                        retries_used_value=retries_used,
+                        latest_run_id_value=None,
+                        report_value=None,
+                        continuation_prompt_value=None,
+                    ),
+                    attempts_completed_value=attempt_number - 1,
+                    retries_used_value=retries_used,
+                    latest_run_id_value=None,
+                    report_value=None,
+                    continuation_prompt_value=None,
+                    emit_stage_completion=False,
+                )
+            if active_worktree is not None:
+                runtime_config = self.config.with_overrides(
+                    repo_root=active_worktree.isolated_path,
+                    dev_dir=runtime_repository.dev_dir,
+                    logs_dir=runtime_repository.logs_dir,
+                )
+                runtime_adapter = CliAdapter(
+                    runtime_config,
+                    live_output_stream=self.progress_stream,
+                )
+                runtime_supervisor = Supervisor(
+                    runtime_config,
+                    repository=runtime_repository,
+                )
+
         if emit_prompt_intake:
             try:
                 hook_controller.emit_prompt_intake(
@@ -430,6 +549,23 @@ class LoopRunner:
                 continuation_prompt_path=continuation_prompt_path,
                 next_action=f"Run supervised loop attempt {attempt_number} for the active request.",
             )
+            agent_request = (
+                AgentRunRequest(
+                    cli_path=request.cli_path,
+                    prompt_text=current_prompt,
+                    repo_root=active_worktree.isolated_path,
+                    workdir=self._isolated_workdir(
+                        request=request,
+                        worktree=active_worktree,
+                    ),
+                    input_mode=request.input_mode,
+                    prompt_flag=request.prompt_flag,
+                    extra_args=request.extra_args,
+                    run_label=request.run_label,
+                )
+                if active_worktree is not None
+                else request.as_agent_run_request(current_prompt)
+            )
             self._emit_loop_snapshot(
                 repository=runtime_repository,
                 request=request,
@@ -457,7 +593,7 @@ class LoopRunner:
                 )
 
             result = runtime_adapter.run_once(
-                request.as_agent_run_request(current_prompt),
+                agent_request,
                 on_started=_handle_started,
             )
             runtime_repository.record_latest_run(result)

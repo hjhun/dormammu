@@ -908,4 +908,13 @@ class Supervisor:
     def _resolve_state_dir(self, state_root: Path) -> Path:
         if state_root.is_absolute():
             return state_root
-        return (self.config.repo_root / state_root).resolve()
+        candidates = (
+            self.config.base_dev_dir / state_root,
+            self.config.sessions_dir.parent / state_root,
+            self.config.repo_root / state_root,
+        )
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved.exists():
+                return resolved
+        return candidates[0].resolve()

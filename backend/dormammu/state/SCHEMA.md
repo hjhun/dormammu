@@ -81,6 +81,19 @@ the active session subdirectory. It is never the canonical run state itself.
 | `operator_state_mtime` | float or null | mtime of the operator task file at last sync |
 | `worktrees` | object, optional | Session-scoped managed worktree registry (see below) |
 
+`current_run` and `latest_run` include the serialized agent run metadata from
+`AgentRunStarted.to_dict()` / `AgentRunResult.to_dict()`. For worktree-aware
+execution the most relevant fields are:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `run_id` | string | Stable runtime identifier for the agent call |
+| `workdir` | string | Effective working directory used for the external CLI |
+| `artifacts` | object | Paths to prompt/stdout/stderr/metadata artifacts |
+
+When managed worktree isolation is active, `workdir` points at the isolated
+checkout path rather than the primary repository root.
+
 `bootstrap` sub-object:
 
 | Field | Type | Description |
@@ -184,6 +197,10 @@ Like `session.json`, the root file acts as an **index** when a session is active
 | `workflow_policy` | object | Phase enablement policy from `workflow_policy` |
 | `worktrees` | object, optional | Workflow-scoped managed worktree registry (same shape as `session.json`) |
 
+As in `session.json`, the serialized `current_run` and `latest_run` payloads
+record the effective `workdir`. This is the quickest machine-readable signal
+for whether a run used the primary checkout or a managed worktree.
+
 `workflow` sub-object:
 
 | Field | Type | Description |
@@ -205,6 +222,9 @@ Like `session.json`, the root file acts as an **index** when a session is active
   record during normalization and later updates.
 - Root index files expose worktree summary fields only in `current_session`
   metadata; they do not become the canonical worktree registry.
+- When managed worktree isolation is active for a run, `current_run.workdir`
+  and `latest_run.workdir` point at the isolated checkout while `worktrees`
+  remains the canonical registry for resume and cleanup decisions.
 
 `roadmap` sub-object:
 

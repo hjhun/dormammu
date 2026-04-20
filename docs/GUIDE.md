@@ -32,6 +32,7 @@ Korean-language guide is at [docs/ko/GUIDE.md](ko/GUIDE.md).
 - [Session Management](#session-management)
 - [Fallback Agent CLIs](#fallback-agent-clis)
 - [Working Directory and CLI Overrides](#working-directory-and-cli-overrides)
+- [Managed Worktree Isolation](#managed-worktree-isolation)
 - [Typical Operator Flow](#typical-operator-flow)
 - [Repository Layout](#repository-layout)
 
@@ -542,6 +543,7 @@ Full example:
 | `token_exhaustion_patterns` | Patterns in agent output that trigger CLI fallback |
 | `hooks` | Optional lifecycle hook definitions for policy, auditing, and annotations |
 | `agents` | Role-based pipeline CLI and model assignments |
+| `worktree` | Optional managed worktree settings for isolated stage execution |
 
 When `agents` is configured, all run modes use the role-based pipeline.
 `analyzer`, `planner` (goals prelude), and `designer` are used by goals
@@ -549,6 +551,30 @@ automation to strengthen the queued prompt before runtime starts. `refiner`
 and `planner` are mandatory runtime stages and fall back to `active_agent_cli`
 when their role-specific CLI is not set. `evaluator` is mandatory for
 goals-scheduler prompts and is skipped for interactive `run` and `run-once`.
+
+#### Managed worktree config
+
+Managed worktree isolation is off by default. Enable it with a top-level
+`worktree` block:
+
+```json
+{
+  "worktree": {
+    "enabled": true,
+    "root_dir": "./managed-worktrees"
+  }
+}
+```
+
+Fields:
+
+| Field | Meaning |
+|-------|---------|
+| `worktree.enabled` | Turns managed worktree execution on for stages that explicitly opt in |
+| `worktree.root_dir` | Absolute or repo-relative directory where managed worktrees are created |
+
+`root_dir` is resolved from the config file location when given as a relative
+path. The runtime refuses to create managed worktrees outside this root.
 
 ### Daemon queue config (`daemonize.json`)
 
@@ -1412,6 +1438,107 @@ Per-CLI defaults can be set in `cli_overrides`:
   }
 }
 ```
+
+---
+
+## Managed Worktree Isolation
+
+Managed worktree isolation is the Phase 4 runtime feature for executing a
+selected stage in a separate git checkout instead of the primary repository
+working tree.
+
+### When isolation is used
+
+Today, DORMAMMU isolates only the `developer` stage. Isolation is activated
+only when both of these are true:
+
+1. `dormammu.json` enables the global `worktree` block.
+2. The effective developer agent profile allows worktree use.
+
+The runtime checks the developer profile's worktree permission policy:
+
+- `create: allow` lets the runtime create a new managed worktree when needed.
+- `reuse: allow` lets the runtime reuse an already-registered managed worktree
+  for the same session and role.
+
+If neither action is allowed, the developer stage runs in the primary checkout
+exactly as before.
+
+### How to request it
+
+The narrowest supported setup is:
+
+```json
+{
+  "worktree": {
+    "enabled": true,
+    "root_dir": "./managed-worktrees"
+  },
+  "agents": {
+    "developer": {
+      "permissions": {
+        "worktree": {
+          "default": "allow"
+        }
+      }
+    }
+  }
+}
+```
+
+That configuration enables managed worktrees globally and gives the developer
+role permission to create or reuse them. You can make the policy stricter with
+explicit rules, for example allowing `reuse` but denying `create`.
+
+### What changes at runtime
+
+When isolation is active, DORMAMMU:
+
+- creates or reuses a deterministic worktree path under `worktree.root_dir`
+- runs the external agent CLI with that isolated checkout as its `workdir`
+- runs supervisor validation against the isolated checkout instead of the
+  primary repository
+- records the managed worktree in machine-readable `.dev` state
+
+The primary repository is left untouched unless you explicitly merge, copy, or
+commit work back yourself later.
+
+### Where it appears in state and logs
+
+Managed worktree state is visible in two places:
+
+- `session.json` and `workflow_state.json` include a `worktrees` block with
+  `active_worktree_id` plus the tracked managed records.
+- `current_run.workdir` and `latest_run.workdir` point at the actual checkout
+  used for the agent run. When isolation is active, this is the managed
+  worktree path rather than the primary repository root.
+
+The per-run metadata file under `.dev/logs/<run-id>.meta.json` also records the
+effective `workdir`, so operators can confirm which checkout the agent used for
+that run.
+
+### Resume and cleanup behavior
+
+Managed worktrees are tracked as resumable runtime state. If the same session
+re-enters the developer stage, DORMAMMU tries to reuse the previously
+registered worktree before creating a new one.
+
+Automatic cleanup is intentionally conservative:
+
+- DORMAMMU records and reuses managed worktrees.
+- It does not automatically remove them at the end of a successful run.
+- The worktree service supports reset and remove operations internally, but
+  there is not yet a dedicated operator-facing CLI for worktree cleanup.
+
+### Known limitations
+
+- Only the developer stage uses managed worktree isolation today.
+- There is no separate `inspect-worktree` or `cleanup-worktree` CLI yet.
+- Isolation is permission-gated, but there is not yet an interactive
+  ask/confirm flow for worktree actions. In practice, only explicit `allow`
+  rules activate the feature.
+- Successful work inside a managed worktree stays in that isolated checkout
+  until you promote or clean it up yourself.
 
 ---
 
