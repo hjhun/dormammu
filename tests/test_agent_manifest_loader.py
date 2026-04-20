@@ -188,6 +188,166 @@ class TestAgentManifestLoader:
         ):
             load_agent_manifest_definitions(config)
 
+    def test_selected_loader_ignores_unrelated_malformed_manifest(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        config = _make_config(repo_root, home_dir)
+
+        _write_manifest(
+            config.project_agent_manifests_dir / "planner.agent.json",
+            _base_manifest_payload(
+                name="planner-custom",
+                source="project",
+                description="Project planner",
+            ),
+        )
+        broken_manifest = config.user_agent_manifests_dir / "broken.agent.json"
+        broken_manifest.parent.mkdir(parents=True, exist_ok=True)
+        broken_manifest.write_text("{", encoding="utf-8")
+
+        loaded = load_agent_manifest_definitions(
+            config,
+            names=("planner-custom",),
+        )
+
+        assert tuple(loaded.definitions_by_name()) == ("planner-custom",)
+        assert loaded.discovery.selected[0].name == "planner-custom"
+        assert loaded.discovery.selected[0].scope == "project"
+
+    def test_selected_loader_reports_malformed_requested_manifest(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        config = _make_config(repo_root, home_dir)
+
+        manifest_path = config.project_agent_manifests_dir / "planner.agent.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            (
+                "{"
+                '"schema_version": 1, '
+                '"name": "planner-custom", '
+                '"description": "Broken planner", '
+                '"prompt": "Plan from the broken project manifest.", '
+                '"source": "project", '
+                '"model": "gpt-5.4",'
+                "}"
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(
+            AgentManifestLoadError,
+            match=(
+                rf"Failed to parse agent manifest JSON in {manifest_path.resolve()}: .*"
+                r"line 1 column"
+            ),
+        ):
+            load_agent_manifest_definitions(
+                config,
+                names=("planner-custom",),
+            )
+
+    def test_selected_loader_does_not_fall_through_on_malformed_higher_precedence_manifest(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        config = _make_config(repo_root, home_dir)
+
+        project_manifest_path = config.project_agent_manifests_dir / "planner.agent.json"
+        project_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        project_manifest_path.write_text(
+            (
+                "{"
+                '"schema_version": 1, '
+                '"name": "planner-custom", '
+                '"description": "Broken planner", '
+                '"prompt": "Plan from the broken project manifest.", '
+                '"source": "project", '
+                '"model": "gpt-5.4",'
+                "}"
+            ),
+            encoding="utf-8",
+        )
+        _write_manifest(
+            config.user_agent_manifests_dir / "planner.agent.json",
+            _base_manifest_payload(
+                name="planner-custom",
+                source="user",
+                description="User planner",
+            ),
+        )
+
+        with pytest.raises(
+            AgentManifestLoadError,
+            match=(
+                rf"Failed to parse agent manifest JSON in {project_manifest_path.resolve()}: .*"
+                r"line 1 column"
+            ),
+        ):
+            load_agent_manifest_definitions(
+                config,
+                names=("planner-custom",),
+            )
+
+    def test_selected_loader_reports_requested_manifest_when_syntax_breaks_before_name(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        config = _make_config(repo_root, home_dir)
+
+        project_manifest_path = config.project_agent_manifests_dir / "planner.agent.json"
+        project_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        project_manifest_path.write_text(
+            (
+                "{"
+                '"schema_version": 1, '
+                'name: "planner-custom", '
+                '"description": "Broken planner", '
+                '"prompt": "Plan from the broken project manifest.", '
+                '"source": "project"'
+                "}"
+            ),
+            encoding="utf-8",
+        )
+        _write_manifest(
+            config.user_agent_manifests_dir / "planner.agent.json",
+            _base_manifest_payload(
+                name="planner-custom",
+                source="user",
+                description="User planner",
+            ),
+        )
+
+        with pytest.raises(
+            AgentManifestLoadError,
+            match=(
+                rf"Failed to parse agent manifest JSON in {project_manifest_path.resolve()}: .*"
+                r"line 1 column"
+            ),
+        ):
+            load_agent_manifest_definitions(
+                config,
+                names=("planner-custom",),
+            )
+
     def test_loader_reports_field_specific_validation_errors_clearly(
         self,
         tmp_path: Path,

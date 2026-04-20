@@ -11,8 +11,10 @@ from dormammu.agent.permissions import (
     PermissionDecision,
     parse_permission_policy_override,
 )
+from dormammu.agent.manifest_loader import LoadedAgentDefinition
 from dormammu.agent.profiles import (
     AgentProfile,
+    PROFILE_RUNTIME_METADATA_KEY,
     built_in_profile_for_role,
     built_in_profiles,
     normalize_agent_profiles,
@@ -22,6 +24,23 @@ from dormammu.agent.profiles import (
 from dormammu.agent.role_config import AgentsConfig, ROLE_NAMES, RoleAgentConfig
 from dormammu.daemon.pipeline_runner import PipelineRunner
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
+
+
+def _manifest_definition(
+    *,
+    name: str,
+    source: str = "project",
+) -> LoadedAgentDefinition:
+    return LoadedAgentDefinition(
+        name=name,
+        description=f"{name} description",
+        prompt_body=f"{name} prompt",
+        source=source,
+        manifest_scope=source,
+        manifest_path=Path(f"/tmp/{name}.agent.json"),
+        cli_override=Path(f"/opt/{name}"),
+        model_override=f"{name}-model",
+    )
 
 
 def _make_app_config(*, active_agent_cli: Path | None, agents: AgentsConfig | None = None) -> Any:
@@ -159,20 +178,63 @@ class TestProfileNormalization:
         assert tuple(profiles.keys()) == ROLE_NAMES
 
     def test_invalid_runtime_role_mapping_fails_clearly(self) -> None:
-        profiles = normalize_agent_profiles(agents_config=AgentsConfig())
+        agents = AgentsConfig(planner=RoleAgentConfig(profile="missing-profile"))
         with pytest.raises(
             ValueError,
             match="maps to profile 'missing-profile', but no effective profile",
         ):
-            with patch.dict(
-                "dormammu.agent.profiles.ROLE_TO_PROFILE_NAME",
-                {"planner": "missing-profile"},
-                clear=False,
-            ):
-                resolve_runtime_role_profile(
-                    "planner",
-                    normalized_profiles=profiles,
-                )
+            resolve_runtime_role_profile("planner", agents_config=agents)
+
+    def test_runtime_role_can_select_manifest_backed_profile(self) -> None:
+        definition = _manifest_definition(name="planner-custom")
+        agents = AgentsConfig(planner=RoleAgentConfig(profile="planner-custom"))
+
+        profile = resolve_agent_profile(
+            "planner",
+            agents_config=agents,
+            manifest_definitions=(definition,),
+        )
+
+        assert profile.name == "planner-custom"
+        assert profile.source == "project"
+        assert profile.cli_override == Path("/opt/planner-custom")
+        assert profile.model_override == "planner-custom-model"
+        assert profile.metadata[PROFILE_RUNTIME_METADATA_KEY] == {
+            "runtime_role": "planner",
+            "selected_profile_name": "planner-custom",
+            "selected_profile_source": "project",
+            "selected_via_role_config": True,
+            "role_overrides": {
+                "cli": False,
+                "model": False,
+                "permission_policy": False,
+            },
+            "manifest_scope": "project",
+            "manifest_path": "/tmp/planner-custom.agent.json",
+        }
+
+    def test_role_overrides_apply_on_top_of_selected_manifest_profile(self) -> None:
+        definition = _manifest_definition(name="reviewer-custom", source="user")
+        agents = AgentsConfig(
+            reviewer=RoleAgentConfig(
+                profile="reviewer-custom",
+                cli=Path("codex"),
+                model="gpt-5.4",
+            )
+        )
+
+        profile = resolve_agent_profile(
+            "reviewer",
+            agents_config=agents,
+            manifest_definitions=(definition,),
+        )
+
+        assert profile.name == "reviewer-custom"
+        assert profile.source == "configured"
+        assert profile.cli_override == Path("codex")
+        assert profile.model_override == "gpt-5.4"
+        assert profile.metadata[PROFILE_RUNTIME_METADATA_KEY]["selected_profile_source"] == "user"
+        assert profile.metadata[PROFILE_RUNTIME_METADATA_KEY]["manifest_scope"] == "user"
 
 
 class TestRuntimeProfileResolution:
@@ -207,3 +269,40 @@ class TestRuntimeProfileResolution:
         assert loop_profile == pipeline_profile
         assert loop_profile.resolve_cli(config.active_agent_cli) == Path("codex")
         assert loop_profile.model_override == "gpt-5.4"
+
+    def test_loop_and_pipeline_share_manifest_backed_role_resolution(self) -> None:
+        definition = _manifest_definition(name="developer-custom")
+        agents = AgentsConfig(developer=RoleAgentConfig(profile="developer-custom"))
+        config = _make_app_config(active_agent_cli=Path("claude"), agents=agents)
+        config.resolve_agent_profile.side_effect = lambda role: resolve_agent_profile(
+            role,
+            agents_config=agents,
+            manifest_definitions=(definition,),
+        )
+
+        loop_runner = LoopRunner(
+            config,
+            repository=MagicMock(),
+            adapter=MagicMock(),
+            supervisor=MagicMock(),
+        )
+        loop_profile = loop_runner.resolve_agent_profile(
+            LoopRunRequest(
+                cli_path=Path("codex"),
+                prompt_text="Implement the active slice.",
+                repo_root=Path("/tmp/repo"),
+            )
+        )
+
+        pipeline_runner = PipelineRunner(
+            config,
+            agents,
+            repository=MagicMock(),
+            progress_stream=io.StringIO(),
+        )
+        pipeline_profile = pipeline_runner._profile_for_role("developer")
+
+        assert loop_profile == pipeline_profile
+        assert loop_profile.name == "developer-custom"
+        assert loop_profile.source == "project"
+        assert loop_profile.resolve_cli(config.active_agent_cli) == Path("/opt/developer-custom")

@@ -9,6 +9,7 @@ from dormammu.agent.manifests import (
     AgentManifestError,
     DiscoveredAgentManifest,
     discover_agent_manifests,
+    discover_selected_agent_manifests,
 )
 from dormammu.agent.permissions import AgentPermissionPolicy
 from dormammu.agent.profiles import AgentProfile
@@ -103,11 +104,19 @@ class AgentManifestLoadResult:
         }
 
 
-def load_agent_manifest_definitions(config: "AppConfig") -> AgentManifestLoadResult:
-    """Load selected manifest-backed custom agent definitions for the runtime."""
+def load_agent_manifest_definitions(
+    config: "AppConfig",
+    *,
+    names: tuple[str, ...] | None = None,
+) -> AgentManifestLoadResult:
+    """Load manifest-backed custom agent definitions for the runtime."""
 
     try:
-        discovery = discover_agent_manifests(config)
+        discovery = (
+            discover_selected_agent_manifests(config, names=names)
+            if names is not None
+            else discover_agent_manifests(config)
+        )
         definitions = tuple(
             LoadedAgentDefinition.from_discovered_manifest(discovered)
             for discovered in discovery.selected

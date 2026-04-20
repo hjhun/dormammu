@@ -337,6 +337,52 @@ def discover_agent_manifests(config: "AppConfig") -> AgentManifestDiscovery:
     )
 
 
+def discover_selected_agent_manifests(
+    config: "AppConfig",
+    *,
+    names: Sequence[str],
+) -> AgentManifestDiscovery:
+    """Discover only the manifest-backed profiles requested by name.
+
+    This runtime path is intentionally tolerant of unrelated malformed manifest
+    files so one broken catalog entry does not block resolution of a different
+    selected profile. Once a candidate declares one of the requested names, the
+    full manifest parser and scope validation still apply.
+    """
+
+    requested_names = {
+        name.strip()
+        for name in names
+        if isinstance(name, str) and name.strip()
+    }
+    search_roots = agent_manifest_search_roots(config)
+    candidates = enumerate_agent_manifest_candidates(config)
+    if not requested_names:
+        return AgentManifestDiscovery(
+            search_roots=search_roots,
+            candidates=candidates,
+            selected=(),
+            shadowed=(),
+        )
+
+    loaded: list[DiscoveredAgentManifest] = []
+    for candidate in candidates:
+        discovered = _load_requested_agent_manifest(
+            candidate,
+            requested_names=requested_names,
+        )
+        if discovered is not None:
+            loaded.append(discovered)
+
+    selected, shadowed = _resolve_manifest_precedence(tuple(loaded))
+    return AgentManifestDiscovery(
+        search_roots=search_roots,
+        candidates=candidates,
+        selected=selected,
+        shadowed=shadowed,
+    )
+
+
 def _load_discovered_agent_manifest(
     candidate: AgentManifestCandidate,
 ) -> DiscoveredAgentManifest:
@@ -346,6 +392,149 @@ def _load_discovered_agent_manifest(
     )
     _validate_manifest_scope(discovered)
     return discovered
+
+
+def _load_requested_agent_manifest(
+    candidate: AgentManifestCandidate,
+    *,
+    requested_names: set[str],
+) -> DiscoveredAgentManifest | None:
+    try:
+        raw_text = candidate.path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AgentManifestError(f"Failed to read agent manifest {candidate.path}") from exc
+
+    manifest_name = _peek_manifest_name(raw_text)
+    if manifest_name is None or manifest_name not in requested_names:
+        return None
+
+    discovered = DiscoveredAgentManifest(
+        manifest=parse_agent_manifest_text(
+            raw_text,
+            source_name=str(candidate.path),
+            config_root=candidate.path.parent,
+        ),
+        candidate=candidate,
+    )
+    _validate_manifest_scope(discovered)
+    return discovered
+
+
+def _peek_manifest_name(raw_text: str) -> str | None:
+    """Best-effort top-level manifest name extraction for requested loads.
+
+    The selected-manifest runtime path must ignore unrelated malformed files,
+    but it must not suppress parse errors once a candidate clearly declares a
+    requested manifest name. This scanner walks only the top-level JSON object
+    and tolerates earlier syntax damage well enough to identify a later
+    top-level ``name`` field before full parsing runs.
+    """
+    def skip_whitespace(index: int) -> int:
+        while index < len(raw_text) and raw_text[index] in " \t\r\n":
+            index += 1
+        return index
+
+    def parse_quoted_string(index: int) -> tuple[str | None, int]:
+        assert raw_text[index] == '"'
+        index += 1
+        chars: list[str] = []
+        escaping = False
+        while index < len(raw_text):
+            char = raw_text[index]
+            if escaping:
+                chars.append(char)
+                escaping = False
+                index += 1
+                continue
+            if char == "\\":
+                escaping = True
+                index += 1
+                continue
+            if char == '"':
+                return "".join(chars), index + 1
+            chars.append(char)
+            index += 1
+        return None, index
+
+    def parse_identifier(index: int) -> tuple[str | None, int]:
+        if not (raw_text[index].isalpha() or raw_text[index] == "_"):
+            return None, index
+        start = index
+        index += 1
+        while index < len(raw_text) and (
+            raw_text[index].isalnum() or raw_text[index] in {"_", "-"}
+        ):
+            index += 1
+        return raw_text[start:index], index
+
+    index = skip_whitespace(0)
+    if index >= len(raw_text) or raw_text[index] != "{":
+        return None
+
+    depth = 0
+    while index < len(raw_text):
+        char = raw_text[index]
+        if char == "{":
+            depth += 1
+            index += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if depth <= 0:
+                return None
+            index += 1
+            continue
+        if char == "[":
+            depth += 1
+            index += 1
+            continue
+        if char == "]":
+            depth = max(depth - 1, 0)
+            index += 1
+            continue
+        if depth != 1:
+            if char == '"':
+                _, index = parse_quoted_string(index)
+                continue
+            index += 1
+            continue
+
+        if char in " \t\r\n,:":
+            index += 1
+            continue
+
+        key: str | None = None
+        if char == '"':
+            key, next_index = parse_quoted_string(index)
+        elif char.isalpha() or char == "_":
+            key, next_index = parse_identifier(index)
+        else:
+            index += 1
+            continue
+
+        if key is None:
+            return None
+
+        colon_index = skip_whitespace(next_index)
+        if colon_index >= len(raw_text) or raw_text[colon_index] != ":":
+            index = next_index
+            continue
+
+        if key != "name":
+            index = colon_index + 1
+            continue
+
+        value_index = skip_whitespace(colon_index + 1)
+        if value_index >= len(raw_text):
+            return None
+        if raw_text[value_index] == '"':
+            value, _ = parse_quoted_string(value_index)
+            return value.strip() if isinstance(value, str) and value.strip() else None
+
+        value, _ = parse_identifier(value_index)
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    return None
 
 
 def _validate_manifest_scope(discovered: DiscoveredAgentManifest) -> None:

@@ -27,10 +27,14 @@ ROLE_NAMES: tuple[str, ...] = (
 class RoleAgentConfig:
     """Agent CLI and model configuration for a single pipeline role.
 
+    ``profile=None`` means use the built-in base profile mapped to the runtime
+    role. When set, the runtime selects that named profile first and then
+    applies any role-level CLI/model/permission overrides on top.
     ``cli=None`` means inherit from ``active_agent_cli`` at call time.
     ``model=None`` means use the CLI's default model (no ``--model`` flag).
     """
 
+    profile: str | None = None
     cli: Path | None = None
     model: str | None = None
     permission_policy: AgentPermissionPolicyOverride | None = None
@@ -46,6 +50,7 @@ class RoleAgentConfig:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "profile": self.profile,
             "cli": str(self.cli) if self.cli is not None else None,
             "model": self.model,
             "permission_policy": (
@@ -85,6 +90,7 @@ def merge_role_agent_config(
     override: RoleAgentConfig,
 ) -> RoleAgentConfig:
     return RoleAgentConfig(
+        profile=override.profile if override.profile is not None else base.profile,
         cli=override.cli if override.cli is not None else base.cli,
         model=override.model if override.model is not None else base.model,
         permission_policy=merge_permission_policy_override(
@@ -121,6 +127,15 @@ def _parse_role_agent_config(
     source = str(config_path) if config_path is not None else "dormammu.json"
     if not isinstance(value, Mapping):
         raise RuntimeError(f"agents.{role} must be a JSON object in {source}")
+
+    profile_raw = value.get("profile")
+    profile: str | None = None
+    if profile_raw is not None:
+        if not isinstance(profile_raw, str) or not profile_raw.strip():
+            raise RuntimeError(
+                f"agents.{role}.profile must be a non-empty string in {source}"
+            )
+        profile = profile_raw.strip()
 
     cli_raw = value.get("cli")
     cli: Path | None = None
@@ -159,6 +174,7 @@ def _parse_role_agent_config(
         )
 
     return RoleAgentConfig(
+        profile=profile,
         cli=cli,
         model=model,
         permission_policy=permission_policy,

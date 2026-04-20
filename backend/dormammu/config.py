@@ -629,7 +629,7 @@ class AppConfig:
             if "fallback_agent_clis" in config_payload
             else _default_fallback_agent_clis()
         )
-        return cls(
+        base = cls(
             app_name=str(values.get("DORMAMMU_APP_NAME", _config_value(config_payload, "app_name", "dormammu"))),
             repo_root=root,
             repo_dev_dir=workspace_paths.repo_dev_dir,
@@ -676,7 +676,7 @@ class AppConfig:
                 config_path=config_file,
             ),
             agents=agents_config,
-            agent_profiles=_normalize_agent_profiles(agents_config=agents_config),
+            agent_profiles=None,
             process_timeout_seconds=(
                 int(config_payload["process_timeout_seconds"])
                 if "process_timeout_seconds" in config_payload
@@ -684,14 +684,35 @@ class AppConfig:
             ),
             fallback_on_nonzero_exit=bool(config_payload.get("fallback_on_nonzero_exit", False)),
         )
+        return replace(
+            base,
+            agent_profiles=_normalize_loaded_agent_profiles(
+                config=base,
+                agents_config=agents_config,
+            ),
+        )
 
     def with_overrides(self, **kwargs: object) -> "AppConfig":
-        updated = replace(self, **kwargs)
-        if "agent_profiles" in kwargs or "agents" not in kwargs:
+        updated = replace(self, **_derived_config_overrides(self, kwargs))
+        if "agent_profiles" in kwargs:
+            return updated
+        if not any(
+            key in kwargs
+            for key in (
+                "agents",
+                "repo_root",
+                "global_home_dir",
+                "project_agent_manifests_dir",
+                "user_agent_manifests_dir",
+            )
+        ):
             return updated
         return replace(
             updated,
-            agent_profiles=_normalize_agent_profiles(agents_config=updated.agents),
+            agent_profiles=_normalize_loaded_agent_profiles(
+                config=updated,
+                agents_config=updated.agents,
+            ),
         )
 
     def resolve_agent_profile(self, role: str) -> "AgentProfile":
@@ -703,10 +724,14 @@ class AppConfig:
             normalized_profiles=self.agent_profiles,
         )
 
-    def load_agent_manifest_definitions(self) -> "AgentManifestLoadResult":
+    def load_agent_manifest_definitions(
+        self,
+        *,
+        names: tuple[str, ...] | None = None,
+    ) -> "AgentManifestLoadResult":
         from dormammu.agent.manifest_loader import load_agent_manifest_definitions  # noqa: PLC0415
 
-        return load_agent_manifest_definitions(self)
+        return load_agent_manifest_definitions(self, names=names)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -811,7 +836,73 @@ def _load_effective_agents_config(
 def _normalize_agent_profiles(
     *,
     agents_config: "AgentsConfig | None",
+    manifest_definitions: "tuple[Any, ...]" = (),
 ) -> "dict[str, AgentProfile]":
     from dormammu.agent.profiles import normalize_agent_profiles  # noqa: PLC0415
 
-    return normalize_agent_profiles(agents_config=agents_config)
+    return normalize_agent_profiles(
+        agents_config=agents_config,
+        manifest_definitions=manifest_definitions,
+    )
+
+
+def _normalize_loaded_agent_profiles(
+    *,
+    config: AppConfig,
+    agents_config: "AgentsConfig | None",
+) -> "dict[str, AgentProfile]":
+    manifest_definitions = ()
+    requested_names = _requested_manifest_profile_names(agents_config)
+    if requested_names:
+        manifest_definitions = config.load_agent_manifest_definitions(
+            names=requested_names,
+        ).definitions
+    return _normalize_agent_profiles(
+        agents_config=agents_config,
+        manifest_definitions=manifest_definitions,
+    )
+
+
+def _requested_manifest_profile_names(
+    agents_config: "AgentsConfig | None",
+) -> tuple[str, ...]:
+    if agents_config is None:
+        return ()
+
+    from dormammu.agent.profiles import (  # noqa: PLC0415
+        profile_name_for_role,
+        role_requires_manifest_resolution,
+    )
+    from dormammu.agent.role_config import ROLE_NAMES  # noqa: PLC0415
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for role in ROLE_NAMES:
+        if not role_requires_manifest_resolution(role, agents_config=agents_config):
+            continue
+        role_config = agents_config.for_role(role)
+        profile_name = profile_name_for_role(role, role_config)
+        if profile_name in seen:
+            continue
+        seen.add(profile_name)
+        names.append(profile_name)
+    return tuple(names)
+
+
+def _derived_config_overrides(
+    config: AppConfig,
+    overrides: Mapping[str, object],
+) -> dict[str, object]:
+    derived = dict(overrides)
+
+    if "repo_root" in overrides and "project_agent_manifests_dir" not in overrides:
+        repo_root = overrides["repo_root"]
+        assert isinstance(repo_root, Path)
+        derived["project_agent_manifests_dir"] = _project_agent_manifests_dir(repo_root)
+
+    if "global_home_dir" in overrides and "user_agent_manifests_dir" not in overrides:
+        global_home_dir = overrides["global_home_dir"]
+        assert isinstance(global_home_dir, Path)
+        derived["user_agent_manifests_dir"] = _user_agent_manifests_dir(global_home_dir)
+
+    return derived

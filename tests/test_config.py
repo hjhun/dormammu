@@ -15,6 +15,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from dormammu.config import AppConfig, discover_repo_root, set_config_value
+from dormammu.agent.manifest_loader import AgentManifestLoadError
 from dormammu.agent.permissions import PermissionDecision
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 
@@ -493,6 +494,502 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(planner_profile.cli_override, Path("codex"))
             self.assertEqual(planner_profile.model_override, "gpt-5.4")
 
+    def test_load_does_not_read_unselected_malformed_manifests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            manifest_dir = home_dir / ".dormammu" / "agent-manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            (manifest_dir / "broken.agent.json").write_text("{", encoding="utf-8")
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            self.assertIsNotNone(config.agent_profiles)
+            profile = config.resolve_agent_profile("planner")
+
+            self.assertEqual(profile.name, "planner")
+            self.assertEqual(profile.source, "built_in")
+
+    def test_load_resolves_project_manifest_backed_profile_for_runtime_role(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "profile": "planner-custom",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_dir = root / ".dormammu" / "agent-manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            (manifest_dir / "planner.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "planner-custom",
+                        "description": "Project planner",
+                        "prompt": "Plan from the project manifest.",
+                        "source": "project",
+                        "cli": "./bin/project-planner",
+                        "model": "gpt-5.4",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            self.assertIsNotNone(config.agent_profiles)
+            profile = config.agent_profiles["planner"]
+
+            self.assertEqual(profile.name, "planner-custom")
+            self.assertEqual(profile.source, "project")
+            self.assertEqual(
+                profile.cli_override,
+                (manifest_dir / "bin" / "project-planner").resolve(),
+            )
+            self.assertEqual(profile.model_override, "gpt-5.4")
+            self.assertEqual(
+                profile.metadata["dormammu_runtime"]["manifest_scope"],
+                "project",
+            )
+
+    def test_load_resolves_user_manifest_backed_profile_for_runtime_role(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "reviewer": {
+                                "profile": "reviewer-custom",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_dir = home_dir / ".dormammu" / "agent-manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            (manifest_dir / "reviewer.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "reviewer-custom",
+                        "description": "User reviewer",
+                        "prompt": "Review from the user manifest.",
+                        "source": "user",
+                        "model": "claude-sonnet-4-5",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            self.assertIsNotNone(config.agent_profiles)
+            profile = config.agent_profiles["reviewer"]
+
+            self.assertEqual(profile.name, "reviewer-custom")
+            self.assertEqual(profile.source, "user")
+            self.assertEqual(profile.model_override, "claude-sonnet-4-5")
+            self.assertEqual(
+                profile.metadata["dormammu_runtime"]["manifest_scope"],
+                "user",
+            )
+
+    def test_load_prefers_project_manifest_when_project_and_user_names_collide(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "profile": "planner-custom",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            project_manifest_dir = root / ".dormammu" / "agent-manifests"
+            project_manifest_dir.mkdir(parents=True, exist_ok=True)
+            (project_manifest_dir / "planner.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "planner-custom",
+                        "description": "Project planner",
+                        "prompt": "Plan from the project manifest.",
+                        "source": "project",
+                        "model": "gpt-5.4",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            user_manifest_dir = home_dir / ".dormammu" / "agent-manifests"
+            user_manifest_dir.mkdir(parents=True, exist_ok=True)
+            (user_manifest_dir / "planner.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "planner-custom",
+                        "description": "User planner",
+                        "prompt": "Plan from the user manifest.",
+                        "source": "user",
+                        "model": "claude-opus-4-5",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            self.assertIsNotNone(config.agent_profiles)
+            profile = config.agent_profiles["planner"]
+
+            self.assertEqual(profile.name, "planner-custom")
+            self.assertEqual(profile.source, "project")
+            self.assertEqual(profile.model_override, "gpt-5.4")
+            self.assertEqual(
+                profile.metadata["dormammu_runtime"]["manifest_scope"],
+                "project",
+            )
+
+    def test_runtime_resolution_ignores_unrelated_malformed_manifest_for_selected_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "profile": "planner-custom",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            project_manifest_dir = root / ".dormammu" / "agent-manifests"
+            project_manifest_dir.mkdir(parents=True, exist_ok=True)
+            (project_manifest_dir / "planner.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "planner-custom",
+                        "description": "Project planner",
+                        "prompt": "Plan from the project manifest.",
+                        "source": "project",
+                        "model": "gpt-5.4",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            user_manifest_dir = home_dir / ".dormammu" / "agent-manifests"
+            user_manifest_dir.mkdir(parents=True, exist_ok=True)
+            (user_manifest_dir / "broken.agent.json").write_text("{", encoding="utf-8")
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            self.assertIsNotNone(config.agent_profiles)
+            profile = config.agent_profiles["planner"]
+
+            self.assertEqual(profile.name, "planner-custom")
+            self.assertEqual(profile.source, "project")
+            self.assertEqual(profile.model_override, "gpt-5.4")
+            self.assertEqual(
+                profile.metadata["dormammu_runtime"]["manifest_scope"],
+                "project",
+            )
+
+    def test_runtime_resolution_reports_malformed_requested_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "profile": "planner-custom",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            project_manifest_dir = root / ".dormammu" / "agent-manifests"
+            project_manifest_dir.mkdir(parents=True, exist_ok=True)
+            project_manifest_path = project_manifest_dir / "planner.agent.json"
+            project_manifest_path.write_text(
+                (
+                    "{"
+                    '"schema_version": 1, '
+                    '"name": "planner-custom", '
+                    '"description": "Broken planner", '
+                    '"prompt": "Plan from the broken project manifest.", '
+                    '"source": "project", '
+                    '"model": "gpt-5.4",'
+                    "}"
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                AgentManifestLoadError,
+                rf"Failed to parse agent manifest JSON in {project_manifest_path.resolve()}: .*line 1 column",
+            ):
+                AppConfig.load(
+                    repo_root=root,
+                    env={
+                        "HOME": str(home_dir),
+                        **{key: value for key, value in os.environ.items() if key != "HOME"},
+                    },
+                )
+
+    def test_runtime_resolution_does_not_fall_through_from_malformed_project_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "profile": "planner-custom",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            project_manifest_dir = root / ".dormammu" / "agent-manifests"
+            project_manifest_dir.mkdir(parents=True, exist_ok=True)
+            project_manifest_path = project_manifest_dir / "planner.agent.json"
+            project_manifest_path.write_text(
+                (
+                    "{"
+                    '"schema_version": 1, '
+                    '"name": "planner-custom", '
+                    '"description": "Broken planner", '
+                    '"prompt": "Plan from the broken project manifest.", '
+                    '"source": "project", '
+                    '"model": "gpt-5.4",'
+                    "}"
+                ),
+                encoding="utf-8",
+            )
+            user_manifest_dir = home_dir / ".dormammu" / "agent-manifests"
+            user_manifest_dir.mkdir(parents=True, exist_ok=True)
+            (user_manifest_dir / "planner.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "planner-custom",
+                        "description": "User planner",
+                        "prompt": "Plan from the user manifest.",
+                        "source": "user",
+                        "model": "claude-opus-4-5",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                AgentManifestLoadError,
+                rf"Failed to parse agent manifest JSON in {project_manifest_path.resolve()}: .*line 1 column",
+            ):
+                AppConfig.load(
+                    repo_root=root,
+                    env={
+                        "HOME": str(home_dir),
+                        **{key: value for key, value in os.environ.items() if key != "HOME"},
+                    },
+                )
+
+    def test_runtime_resolution_does_not_fall_through_when_syntax_breaks_before_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "profile": "planner-custom",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            project_manifest_dir = root / ".dormammu" / "agent-manifests"
+            project_manifest_dir.mkdir(parents=True, exist_ok=True)
+            project_manifest_path = project_manifest_dir / "planner.agent.json"
+            project_manifest_path.write_text(
+                (
+                    "{"
+                    '"schema_version": 1, '
+                    'name: "planner-custom", '
+                    '"description": "Broken planner", '
+                    '"prompt": "Plan from the broken project manifest.", '
+                    '"source": "project"'
+                    "}"
+                ),
+                encoding="utf-8",
+            )
+            user_manifest_dir = home_dir / ".dormammu" / "agent-manifests"
+            user_manifest_dir.mkdir(parents=True, exist_ok=True)
+            (user_manifest_dir / "planner.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "planner-custom",
+                        "description": "User planner",
+                        "prompt": "Plan from the user manifest.",
+                        "source": "user",
+                        "model": "claude-opus-4-5",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                AgentManifestLoadError,
+                rf"Failed to parse agent manifest JSON in {project_manifest_path.resolve()}: .*line 1 column",
+            ):
+                AppConfig.load(
+                    repo_root=root,
+                    env={
+                        "HOME": str(home_dir),
+                        **{key: value for key, value in os.environ.items() if key != "HOME"},
+                    },
+                )
+
+    def test_load_snapshots_manifest_backed_profiles_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "profile": "planner-custom",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_dir = root / ".dormammu" / "agent-manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = manifest_dir / "planner.agent.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "planner-custom",
+                        "description": "Project planner",
+                        "prompt": "Plan from the project manifest.",
+                        "source": "project",
+                        "model": "gpt-5.4",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            first = config.resolve_agent_profile("planner")
+
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "planner-custom",
+                        "description": "Mutated planner",
+                        "prompt": "Plan from the mutated manifest.",
+                        "source": "project",
+                        "model": "claude-opus-4-5",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            second = config.resolve_agent_profile("planner")
+
+            self.assertIsNotNone(config.agent_profiles)
+            self.assertEqual(first.name, "planner-custom")
+            self.assertEqual(first.model_override, "gpt-5.4")
+            self.assertEqual(second, first)
+            self.assertEqual(config.agent_profiles["planner"], first)
+
     def test_with_overrides_recomputes_agent_profiles_when_agents_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -508,6 +1005,92 @@ class ConfigTests(unittest.TestCase):
             reviewer_profile = updated.agent_profiles["reviewer"]
             self.assertEqual(reviewer_profile.cli_override, Path("claude"))
             self.assertEqual(reviewer_profile.model_override, "claude-sonnet-4-5")
+
+    def test_with_overrides_recomputes_project_manifest_directory_before_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            initial_root = Path(tmpdir) / "initial-repo"
+            initial_root.mkdir(parents=True, exist_ok=True)
+            next_root = Path(tmpdir) / "next-repo"
+            next_root.mkdir(parents=True, exist_ok=True)
+
+            manifest_dir = next_root / ".dormammu" / "agent-manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            (manifest_dir / "planner.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "planner-custom",
+                        "description": "Project planner",
+                        "prompt": "Plan from the overridden project manifest.",
+                        "source": "project",
+                        "model": "gpt-5.4",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=initial_root)
+            updated = config.with_overrides(
+                repo_root=next_root,
+                agents=AgentsConfig(planner=RoleAgentConfig(profile="planner-custom")),
+            )
+
+            self.assertEqual(updated.project_agent_manifests_dir, manifest_dir.resolve())
+            self.assertIsNotNone(updated.agent_profiles)
+            profile = updated.agent_profiles["planner"]
+
+            self.assertEqual(profile.name, "planner-custom")
+            self.assertEqual(profile.source, "project")
+            self.assertEqual(
+                profile.metadata["dormammu_runtime"]["manifest_scope"],
+                "project",
+            )
+
+    def test_with_overrides_recomputes_user_manifest_directory_before_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            next_global_home_dir = Path(tmpdir) / "alt-home" / ".dormammu"
+            manifest_dir = next_global_home_dir / "agent-manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            (manifest_dir / "reviewer.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "reviewer-custom",
+                        "description": "User reviewer",
+                        "prompt": "Review from the overridden user manifest.",
+                        "source": "user",
+                        "model": "claude-sonnet-4-5",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+            updated = config.with_overrides(
+                global_home_dir=next_global_home_dir,
+                agents=AgentsConfig(reviewer=RoleAgentConfig(profile="reviewer-custom")),
+            )
+
+            self.assertEqual(updated.user_agent_manifests_dir, manifest_dir.resolve())
+            self.assertIsNotNone(updated.agent_profiles)
+            profile = updated.agent_profiles["reviewer"]
+
+            self.assertEqual(profile.name, "reviewer-custom")
+            self.assertEqual(profile.source, "user")
+            self.assertEqual(
+                profile.metadata["dormammu_runtime"]["manifest_scope"],
+                "user",
+            )
 
     def test_load_preserves_absolute_symlink_for_active_agent_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
