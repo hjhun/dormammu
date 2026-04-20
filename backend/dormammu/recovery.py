@@ -110,6 +110,7 @@ class RecoveryManager:
                 cli_path=request.cli_path,
                 prompt_text=request.prompt_text,
                 repo_root=request.repo_root,
+                agent_role=request.agent_role,
                 workdir=request.workdir,
                 input_mode=request.input_mode,
                 prompt_flag=request.prompt_flag,

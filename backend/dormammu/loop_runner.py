@@ -9,6 +9,7 @@ from typing import Any, Sequence
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import AgentRunRequest, CliAdapter
+from dormammu.agent.profiles import AgentProfile, resolve_agent_profile
 from dormammu.config import AppConfig
 from dormammu.continuation import build_continuation_prompt
 from dormammu.state import StateRepository
@@ -72,6 +73,7 @@ class LoopRunRequest:
     cli_path: Path
     prompt_text: str
     repo_root: Path
+    agent_role: str = "developer"
     workdir: Path | None = None
     input_mode: str = "auto"
     prompt_flag: str | None = None
@@ -105,6 +107,7 @@ class LoopRunRequest:
             "cli_path": str(self.cli_path),
             "prompt_text": self.prompt_text,
             "repo_root": str(self.repo_root),
+            "agent_role": self.agent_role,
             "workdir": str(self.workdir) if self.workdir else None,
             "input_mode": self.input_mode,
             "prompt_flag": self.prompt_flag,
@@ -124,6 +127,7 @@ class LoopRunRequest:
             cli_path=Path(payload["cli_path"]),
             prompt_text=payload["prompt_text"],
             repo_root=Path(payload["repo_root"]),
+            agent_role=payload.get("agent_role", "developer"),
             workdir=Path(workdir) if workdir else None,
             input_mode=payload.get("input_mode", "auto"),
             prompt_flag=payload.get("prompt_flag"),
@@ -179,6 +183,12 @@ class LoopRunner:
         self.adapter = adapter or CliAdapter(config, live_output_stream=self.progress_stream)
         self.supervisor = supervisor or Supervisor(config, repository=self.repository)
 
+    def resolve_agent_profile(self, request: LoopRunRequest) -> AgentProfile:
+        return resolve_agent_profile(
+            request.agent_role,
+            agents_config=self.config.agents,
+        )
+
     def run(
         self,
         request: LoopRunRequest,
@@ -188,6 +198,7 @@ class LoopRunner:
     ) -> LoopRunResult:
         if request.max_retries < -1:
             raise ValueError("max_retries must be -1 or greater.")
+        profile = self.resolve_agent_profile(request)
 
         roadmap_phase_ids = [request.expected_roadmap_phase_id] if request.expected_roadmap_phase_id else None
         self.repository.ensure_bootstrap_state(
@@ -233,6 +244,7 @@ class LoopRunner:
             self._emit_loop_snapshot(
                 repository=runtime_repository,
                 request=request,
+                profile=profile,
                 attempt_number=attempt_number,
                 retries_used=retries_used,
             )
@@ -517,6 +529,7 @@ class LoopRunner:
         *,
         repository: StateRepository,
         request: LoopRunRequest,
+        profile: AgentProfile,
         attempt_number: int,
         retries_used: int,
     ) -> None:
@@ -527,6 +540,8 @@ class LoopRunner:
             f"max iterations: {request.max_iterations if request.max_iterations != -1 else 'infinite'}",
             f"target project: {request.repo_root.resolve()}",
             f"session: {repository.session_id or 'active-root'}",
+            f"agent role: {request.agent_role}",
+            f"agent profile: {profile.name} ({profile.source})",
             f"cli: {request.cli_path}",
             f"workdir: {(request.workdir or request.repo_root).resolve()}",
         ]

@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, TextIO
 
 from dormammu.agent import CliAdapter
 from dormammu.agent.models import AgentRunRequest
+from dormammu.agent.profiles import AgentProfile, resolve_agent_profile
 from dormammu.daemon._patterns import (
     CHECKPOINT_PROCEED_RE as _CHECKPOINT_PROCEED_RE,
     CHECKPOINT_REWORK_RE as _CHECKPOINT_REWORK_RE,
@@ -100,6 +101,9 @@ class PipelineRunner:
         self._repository = repository or StateRepository(app_config)
         self._progress_stream = progress_stream or sys.stderr
         self._stop_event = stop_event
+
+    def _profile_for_role(self, role: str) -> AgentProfile:
+        return resolve_agent_profile(role, agents_config=self._agents)
 
     # ------------------------------------------------------------------
     # Public API
@@ -274,8 +278,8 @@ class PipelineRunner:
 
         Returns the agent output string.
         """
-        refiner_cfg = self._agents.for_role("refiner")
-        cli = refiner_cfg.resolve_cli(self._app_config.active_agent_cli)
+        profile = self._profile_for_role("refiner")
+        cli = profile.resolve_cli(self._app_config.active_agent_cli)
         if cli is None:
             raise RuntimeError("No CLI available for refiner role.")
 
@@ -284,7 +288,7 @@ class PipelineRunner:
         output = self._call_once(
             role="refiner",
             cli=cli,
-            model=refiner_cfg.model,
+            model=profile.model_override,
             prompt=prompt,
             stem=stem,
             date_str=date_str,
@@ -313,8 +317,8 @@ class PipelineRunner:
 
         Returns the agent output string.
         """
-        planner_cfg = self._agents.for_role("planner")
-        cli = planner_cfg.resolve_cli(self._app_config.active_agent_cli)
+        profile = self._profile_for_role("planner")
+        cli = profile.resolve_cli(self._app_config.active_agent_cli)
         if cli is None:
             raise RuntimeError("No CLI available for planner role.")
 
@@ -330,7 +334,7 @@ class PipelineRunner:
         output = self._call_once(
             role="planner",
             cli=cli,
-            model=planner_cfg.model,
+            model=profile.model_override,
             prompt=prompt,
             stem=stem,
             date_str=date_str,
@@ -351,8 +355,8 @@ class PipelineRunner:
         Returns a :class:`StageResult` with verdict ``"proceed"`` or ``"rework"``.
         Missing or ambiguous decisions fail closed as ``"rework"``.
         """
-        evaluator_cfg = self._agents.for_role("evaluator")
-        cli = evaluator_cfg.resolve_cli(self._app_config.active_agent_cli)
+        profile = self._profile_for_role("evaluator")
+        cli = profile.resolve_cli(self._app_config.active_agent_cli)
         if cli is None:
             raise RuntimeError("No CLI available for mandatory evaluator role.")
 
@@ -372,7 +376,7 @@ class PipelineRunner:
         output = self._call_once(
             role="evaluator",
             cli=cli,
-            model=evaluator_cfg.model,
+            model=profile.model_override,
             prompt=prompt,
             stem=stem,
             date_str=date_str,
@@ -388,17 +392,17 @@ class PipelineRunner:
 
     def _run_developer(self, prompt_text: str, *, stem: str) -> LoopRunResult:
         self._log("pipeline: developer stage starting")
-        dev_cfg = self._agents.for_role("developer")
-        active_cli = self._app_config.active_agent_cli
-        cli = dev_cfg.resolve_cli(active_cli)
+        profile = self._profile_for_role("developer")
+        cli = profile.resolve_cli(self._app_config.active_agent_cli)
         if cli is None:
             raise RuntimeError("No CLI available for developer role.")
 
-        extra_args = _model_args(cli.name, dev_cfg.model)
+        extra_args = _model_args(cli.name, profile.model_override)
         request = LoopRunRequest(
             cli_path=cli,
             prompt_text=prompt_text,
             repo_root=self._app_config.repo_root,
+            agent_role="developer",
             workdir=self._app_config.repo_root,
             input_mode="auto",
             extra_args=tuple(extra_args),
@@ -432,9 +436,8 @@ class PipelineRunner:
         or ``None`` if the tester role has no resolvable CLI.
         Defaults to ``"pass"`` when the agent does not explicitly report failure.
         """
-        tester_cfg = self._agents.for_role("tester")
-        active_cli = self._app_config.active_agent_cli
-        cli = tester_cfg.resolve_cli(active_cli)
+        profile = self._profile_for_role("tester")
+        cli = profile.resolve_cli(self._app_config.active_agent_cli)
         if cli is None:
             return None
 
@@ -443,7 +446,7 @@ class PipelineRunner:
         output = self._call_once(
             role="tester",
             cli=cli,
-            model=tester_cfg.model,
+            model=profile.model_override,
             prompt=prompt,
             stem=stem,
             date_str=date_str,
@@ -464,9 +467,8 @@ class PipelineRunner:
         Returns a :class:`StageResult` with verdict ``"approved"`` or
         ``"needs_work"``, or ``None`` if no resolvable CLI.
         """
-        reviewer_cfg = self._agents.for_role("reviewer")
-        active_cli = self._app_config.active_agent_cli
-        cli = reviewer_cfg.resolve_cli(active_cli)
+        profile = self._profile_for_role("reviewer")
+        cli = profile.resolve_cli(self._app_config.active_agent_cli)
         if cli is None:
             return None
 
@@ -476,7 +478,7 @@ class PipelineRunner:
         output = self._call_once(
             role="reviewer",
             cli=cli,
-            model=reviewer_cfg.model,
+            model=profile.model_override,
             prompt=prompt,
             stem=stem,
             date_str=date_str,
@@ -490,9 +492,8 @@ class PipelineRunner:
     # ------------------------------------------------------------------
 
     def _run_committer(self, *, stem: str, date_str: str) -> None:
-        committer_cfg = self._agents.for_role("committer")
-        active_cli = self._app_config.active_agent_cli
-        cli = committer_cfg.resolve_cli(active_cli)
+        profile = self._profile_for_role("committer")
+        cli = profile.resolve_cli(self._app_config.active_agent_cli)
         if cli is None:
             self._log("pipeline: committer has no CLI — skipping commit")
             return
@@ -502,7 +503,7 @@ class PipelineRunner:
         self._call_once(
             role="committer",
             cli=cli,
-            model=committer_cfg.model,
+            model=profile.model_override,
             prompt=prompt,
             stem=stem,
             date_str=date_str,
@@ -534,19 +535,18 @@ class PipelineRunner:
                 "evaluation — ignoring disabled evaluator flag"
             )
 
-        evaluator_cfg = self._agents.for_role("evaluator")
-        active_cli = self._app_config.active_agent_cli
+        profile = self._profile_for_role("evaluator")
         cli = resolve_evaluator_cli(
             effective_config,
-            evaluator_cfg.resolve_cli(None),  # agents.evaluator.cli only
-            active_cli,
+            profile.cli_override,  # agents.evaluator.cli only
+            self._app_config.active_agent_cli,
         )
         if cli is None:
             raise RuntimeError(
                 "No CLI available for mandatory post-commit evaluator stage."
             )
 
-        model = resolve_evaluator_model(effective_config, evaluator_cfg.model)
+        model = resolve_evaluator_model(effective_config, profile.model_override)
 
         # Extract the original goal text (strip the metadata comment if present).
         goal_text = _strip_goal_source_tag(prompt_text)

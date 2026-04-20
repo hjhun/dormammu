@@ -47,6 +47,7 @@ def _make_app_config(tmp_path: Path, *, agents: AgentsConfig | None = None) -> A
     mock.active_agent_cli = Path("claude")
     mock.agents_dir = Path(__file__).resolve().parents[1] / "agents"
     mock.agents = agents
+    mock.runtime_path_prompt.return_value = ""
     return mock
 
 

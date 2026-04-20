@@ -260,6 +260,40 @@ class RecoveryManagerTests(unittest.TestCase):
             self.assertEqual(resumed.status, "completed")
             self.assertTrue((root / "done.txt").exists())
 
+    def test_resume_retry_override_preserves_saved_agent_role(self) -> None:
+        """Retry-budget overrides must not reset a saved non-default role to developer."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=2)
+            config, repository, runner = self._make_runner(root)
+
+            first = runner.run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    agent_role="reviewer",
+                    run_label="retry-override-role",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+            self.assertEqual(first.status, "failed")
+
+            resumed = RecoveryManager(
+                config, repository=repository, loop_runner=runner
+            ).resume(max_retries_override=1)
+
+            self.assertEqual(resumed.status, "completed")
+            session_id = json.loads(
+                (config.base_dev_dir / "session.json").read_text(encoding="utf-8")
+            )["active_session_id"]
+            workflow_path = config.sessions_dir / session_id / "workflow_state.json"
+            workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+            self.assertEqual(workflow_state["loop"]["request"]["agent_role"], "reviewer")
+
     def test_resume_restores_archived_session_before_continuing(self) -> None:
         """resume(session_id=...) should restore an archived session and continue from it."""
         with tempfile.TemporaryDirectory() as tmpdir:
