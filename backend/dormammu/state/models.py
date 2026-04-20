@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 from pathlib import Path
 import re
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
+
+from dormammu.worktree import ManagedWorktree, WorktreeLifecycleStatus
 
 
-STATE_SCHEMA_VERSION = 7
+STATE_SCHEMA_VERSION = 8
 
 PHASE_LABELS = {
     "phase_1": "Phase 1. Core Foundation and Repository Bootstrap",
@@ -271,6 +273,138 @@ class OperatorTaskSyncState:
             "items": [item.to_dict() for item in self.items],
             "synced_at": synced_at,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedWorktreeState:
+    active_worktree_id: str | None = None
+    managed: Sequence[ManagedWorktree] = ()
+
+    @property
+    def is_empty(self) -> bool:
+        return self.active_worktree_id is None and not self.managed
+
+    @property
+    def managed_count(self) -> int:
+        return len(self.managed)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "active_worktree_id": self.active_worktree_id,
+            "managed": [record.to_dict() for record in self.managed],
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any] | None) -> ManagedWorktreeState:
+        if not isinstance(payload, Mapping):
+            return cls()
+
+        active_worktree_id = payload.get("active_worktree_id")
+        if active_worktree_id is not None:
+            active_worktree_id = str(active_worktree_id).strip() or None
+
+        managed_records: list[ManagedWorktree] = []
+        managed_payload = payload.get("managed")
+        if isinstance(managed_payload, list):
+            for item in managed_payload:
+                if isinstance(item, Mapping):
+                    managed_records.append(ManagedWorktree.from_dict(item))
+
+        active_worktree_id, normalized_records = cls._normalize_registry(
+            managed_records,
+            active_worktree_id=active_worktree_id,
+        )
+
+        return cls(
+            active_worktree_id=active_worktree_id,
+            managed=normalized_records,
+        )
+
+    def upsert(
+        self,
+        worktree: ManagedWorktree,
+        *,
+        active: bool | None = None,
+    ) -> ManagedWorktreeState:
+        managed_records: list[ManagedWorktree] = []
+        replaced = False
+        for record in self.managed:
+            if record.worktree_id == worktree.worktree_id:
+                managed_records.append(worktree)
+                replaced = True
+                continue
+            managed_records.append(record)
+        if not replaced:
+            managed_records.append(worktree)
+
+        active_worktree_id = self.active_worktree_id
+        if active is True:
+            active_worktree_id = worktree.worktree_id
+        elif active is False and active_worktree_id == worktree.worktree_id:
+            active_worktree_id = None
+        elif active is None and active_worktree_id == worktree.worktree_id:
+            if worktree.status.value != "active":
+                active_worktree_id = None
+
+        active_worktree_id, normalized_records = self._normalize_registry(
+            managed_records,
+            active_worktree_id=active_worktree_id,
+        )
+
+        return ManagedWorktreeState(
+            active_worktree_id=active_worktree_id,
+            managed=normalized_records,
+        )
+
+    def forget(self, worktree_id: str) -> ManagedWorktreeState:
+        normalized_id = str(worktree_id).strip()
+        if not normalized_id:
+            return self
+        managed_records = tuple(
+            record for record in self.managed if record.worktree_id != normalized_id
+        )
+        active_worktree_id = self.active_worktree_id
+        if active_worktree_id == normalized_id:
+            active_worktree_id = None
+        active_worktree_id, normalized_records = self._normalize_registry(
+            managed_records,
+            active_worktree_id=active_worktree_id,
+        )
+        return ManagedWorktreeState(
+            active_worktree_id=active_worktree_id,
+            managed=normalized_records,
+        )
+
+    @staticmethod
+    def _normalize_registry(
+        managed_records: Sequence[ManagedWorktree],
+        *,
+        active_worktree_id: str | None,
+    ) -> tuple[str | None, tuple[ManagedWorktree, ...]]:
+        deduped_records: list[ManagedWorktree] = []
+        deduped_indexes: dict[str, int] = {}
+        for record in managed_records:
+            existing_index = deduped_indexes.get(record.worktree_id)
+            if existing_index is None:
+                deduped_indexes[record.worktree_id] = len(deduped_records)
+                deduped_records.append(record)
+                continue
+            deduped_records[existing_index] = record
+
+        managed_ids = {record.worktree_id for record in deduped_records}
+        if active_worktree_id not in managed_ids:
+            active_worktree_id = None
+
+        normalized_records: list[ManagedWorktree] = []
+        for record in deduped_records:
+            normalized = record
+            if record.worktree_id == active_worktree_id:
+                if record.status.value != "active":
+                    normalized = replace(record, status=WorktreeLifecycleStatus.ACTIVE)
+            elif record.status.value == "active":
+                normalized = replace(record, status=WorktreeLifecycleStatus.PLANNED)
+            normalized_records.append(normalized)
+        return active_worktree_id, tuple(normalized_records)
 
 
 def default_dashboard_context(

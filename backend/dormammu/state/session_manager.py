@@ -16,6 +16,7 @@ from typing import Any
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.config import AppConfig
+from dormammu.state.models import ManagedWorktreeState
 from dormammu.state.persistence import read_json, write_json
 
 
@@ -126,6 +127,7 @@ class SessionManager:
             supervisor_verdict = loop_state.get("latest_supervisor_verdict")
             attempts_completed = loop_state.get("attempts_completed")
             session_id = session_state.get("session_id")
+            worktrees = ManagedWorktreeState.from_dict(session_state.get("worktrees"))
             sessions.append(
                 {
                     "session_id": session_id,
@@ -136,6 +138,8 @@ class SessionManager:
                     "is_active": session_id == active_session_id,
                     "supervisor_verdict": supervisor_verdict,
                     "attempts_completed": attempts_completed,
+                    "active_worktree_id": worktrees.active_worktree_id,
+                    "managed_worktree_count": worktrees.managed_count,
                 }
             )
 

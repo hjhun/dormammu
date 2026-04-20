@@ -10,6 +10,7 @@ from dormammu.agent.models import AgentRunResult, AgentRunStarted
 from dormammu.config import AppConfig
 from dormammu.guidance import resolve_guidance_files
 from dormammu.state.models import (
+    ManagedWorktreeState,
     default_dashboard_context,
     default_plan_context,
     default_session_state,
@@ -26,6 +27,7 @@ from dormammu.state.persistence import (
     write_json as _write_json,
 )
 from dormammu.state.session_manager import SessionManager
+from dormammu.worktree import ManagedWorktree
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,6 +421,63 @@ class StateRepository:
             return self._active_session_repository().read_workflow_state()
         return _read_json(self.state_file("workflow_state.json"))
 
+    def read_session_worktree_state(self) -> ManagedWorktreeState:
+        if self.session_id is None:
+            return self._active_session_repository().read_session_worktree_state()
+        session_state = _read_json(self.state_file("session.json"))
+        return ManagedWorktreeState.from_dict(session_state.get("worktrees"))
+
+    def read_workflow_worktree_state(self) -> ManagedWorktreeState:
+        if self.session_id is None:
+            return self._active_session_repository().read_workflow_worktree_state()
+        workflow_state = _read_json(self.state_file("workflow_state.json"))
+        return ManagedWorktreeState.from_dict(workflow_state.get("worktrees"))
+
+    def upsert_managed_worktree(
+        self,
+        worktree: ManagedWorktree,
+        *,
+        active: bool | None = None,
+        timestamp: str | None = None,
+    ) -> None:
+        if self.session_id is None:
+            self._active_session_repository().upsert_managed_worktree(
+                worktree,
+                active=active,
+                timestamp=timestamp,
+            )
+            return
+
+        update_timestamp = timestamp or _iso_now()
+
+        def _updater(state: ManagedWorktreeState) -> ManagedWorktreeState:
+            return state.upsert(worktree, active=active)
+
+        self._update_managed_worktree_state(_updater, timestamp=update_timestamp)
+
+    def forget_managed_worktree(
+        self,
+        worktree_id: str,
+        *,
+        timestamp: str | None = None,
+    ) -> None:
+        if self.session_id is None:
+            self._active_session_repository().forget_managed_worktree(
+                worktree_id,
+                timestamp=timestamp,
+            )
+            return
+
+        normalized_id = str(worktree_id).strip()
+        if not normalized_id:
+            return
+        update_timestamp = timestamp or _iso_now()
+
+        def _updater(state: ManagedWorktreeState) -> ManagedWorktreeState:
+            return state.forget(normalized_id)
+
+        self._update_managed_worktree_state(_updater, timestamp=update_timestamp)
+
     def write_workflow_state(self, payload: Mapping[str, Any]) -> None:
         if self.session_id is None:
             self._active_session_repository().write_workflow_state(payload)
@@ -693,6 +752,39 @@ class StateRepository:
                 if isinstance(goal, str) and goal.strip():
                     return goal
         return None
+
+    def _update_managed_worktree_state(
+        self,
+        updater: Any,
+        *,
+        timestamp: str,
+    ) -> None:
+        session_state = _read_json(self.state_file("session.json"))
+        workflow_state = _read_json(self.state_file("workflow_state.json"))
+
+        next_session_worktrees = updater(
+            ManagedWorktreeState.from_dict(session_state.get("worktrees"))
+        )
+        next_workflow_worktrees = updater(
+            ManagedWorktreeState.from_dict(workflow_state.get("worktrees"))
+        )
+
+        session_state["updated_at"] = timestamp
+        workflow_state["updated_at"] = timestamp
+
+        if next_session_worktrees.is_empty:
+            session_state.pop("worktrees", None)
+        else:
+            session_state["worktrees"] = next_session_worktrees.to_dict()
+
+        if next_workflow_worktrees.is_empty:
+            workflow_state.pop("worktrees", None)
+        else:
+            workflow_state["worktrees"] = next_workflow_worktrees.to_dict()
+
+        _write_json(self.state_file("session.json"), session_state)
+        _write_json(self.state_file("workflow_state.json"), workflow_state)
+        self._sync_root_index(timestamp=timestamp)
 
     def _reset_bootstrap_state(
         self,

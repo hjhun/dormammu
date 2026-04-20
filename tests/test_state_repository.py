@@ -14,6 +14,7 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.config import AppConfig
 from dormammu.state import StateRepository
+from dormammu.worktree import ManagedWorktree, WorktreeLifecycleStatus, WorktreeOwner
 
 
 class StateRepositoryTests(unittest.TestCase):
@@ -52,7 +53,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertIn("Bootstrap test goal", dashboard)
 
             workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
-            self.assertEqual(workflow_state["state_schema_version"], 7)
+            self.assertEqual(workflow_state["state_schema_version"], 8)
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["pending_tasks"],
                 3,
@@ -67,6 +68,413 @@ class StateRepositoryTests(unittest.TestCase):
             )
             self.assertEqual(workflow_state["bootstrap"]["goal"], "Bootstrap test goal")
             self.assertIn("AGENTS.md", workflow_state["bootstrap"]["repo_guidance"]["rule_files"])
+
+    def test_worktree_state_reads_as_empty_without_persisting_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="No worktree state")
+
+            self.assertTrue(repository.read_session_worktree_state().is_empty)
+            self.assertTrue(repository.read_workflow_worktree_state().is_empty)
+
+            session_state = json.loads(artifacts.session.read_text(encoding="utf-8"))
+            workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
+            self.assertNotIn("worktrees", session_state)
+            self.assertNotIn("worktrees", workflow_state)
+
+    def test_upsert_managed_worktree_persists_metadata_in_session_and_workflow_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="Persist worktree state")
+
+            session_id = repository.read_session_state()["session_id"]
+            worktree = ManagedWorktree(
+                worktree_id="phase-4-review",
+                source_repo_root=root.resolve(),
+                isolated_path=(root / "managed-worktrees" / "phase-4-review").resolve(),
+                owner=WorktreeOwner(
+                    session_id=session_id,
+                    run_id="run-001",
+                    agent_role="developer",
+                ),
+                status=WorktreeLifecycleStatus.ACTIVE,
+            )
+
+            repository.upsert_managed_worktree(worktree, active=True)
+
+            session_state = json.loads(artifacts.session.read_text(encoding="utf-8"))
+            workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
+            self.assertEqual(session_state["worktrees"]["active_worktree_id"], worktree.worktree_id)
+            self.assertEqual(workflow_state["worktrees"]["active_worktree_id"], worktree.worktree_id)
+            self.assertEqual(session_state["worktrees"]["managed"], [worktree.to_dict()])
+            self.assertEqual(workflow_state["worktrees"]["managed"], [worktree.to_dict()])
+
+    def test_upsert_managed_worktree_normalizes_active_registry_invariants(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="Normalize worktree state")
+
+            session_id = repository.read_session_state()["session_id"]
+            first = ManagedWorktree(
+                worktree_id="first-active",
+                source_repo_root=root.resolve(),
+                isolated_path=(root / "managed-worktrees" / "first-active").resolve(),
+                owner=WorktreeOwner(session_id=session_id, run_id="run-101"),
+                status=WorktreeLifecycleStatus.ACTIVE,
+            )
+            second = ManagedWorktree(
+                worktree_id="second-selected",
+                source_repo_root=root.resolve(),
+                isolated_path=(root / "managed-worktrees" / "second-selected").resolve(),
+                owner=WorktreeOwner(session_id=session_id, run_id="run-102"),
+                status=WorktreeLifecycleStatus.PLANNED,
+            )
+
+            repository.upsert_managed_worktree(first, active=True)
+            repository.upsert_managed_worktree(second, active=True)
+
+            session_state = json.loads(artifacts.session.read_text(encoding="utf-8"))
+            workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
+            for payload in (session_state, workflow_state):
+                self.assertEqual(payload["worktrees"]["active_worktree_id"], "second-selected")
+                managed_by_id = {
+                    record["worktree_id"]: record for record in payload["worktrees"]["managed"]
+                }
+                self.assertEqual(managed_by_id["first-active"]["status"], "planned")
+                self.assertEqual(managed_by_id["second-selected"]["status"], "active")
+
+    def test_restore_session_preserves_managed_worktree_state_for_resume_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Resume worktree state")
+            original_session = repository.read_session_state()["session_id"]
+
+            worktree = ManagedWorktree(
+                worktree_id="resume-check",
+                source_repo_root=root.resolve(),
+                isolated_path=(root / "managed-worktrees" / "resume-check").resolve(),
+                owner=WorktreeOwner(session_id=original_session, run_id="run-777"),
+                status=WorktreeLifecycleStatus.ACTIVE,
+            )
+            repository.upsert_managed_worktree(worktree, active=True)
+
+            repository.start_new_session(goal="Temporary session", session_id="temp-session")
+            repository.restore_session(original_session)
+
+            session_worktrees = repository.read_session_worktree_state()
+            workflow_worktrees = repository.read_workflow_worktree_state()
+            self.assertEqual(session_worktrees.active_worktree_id, "resume-check")
+            self.assertEqual(workflow_worktrees.active_worktree_id, "resume-check")
+            self.assertEqual(session_worktrees.managed[0].to_dict(), worktree.to_dict())
+            self.assertEqual(workflow_worktrees.managed[0].to_dict(), worktree.to_dict())
+
+    def test_forget_managed_worktree_clears_root_session_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Forget worktree state")
+
+            session_id = repository.read_session_state()["session_id"]
+            worktree = ManagedWorktree(
+                worktree_id="cleanup-me",
+                source_repo_root=root.resolve(),
+                isolated_path=(root / "managed-worktrees" / "cleanup-me").resolve(),
+                owner=WorktreeOwner(session_id=session_id, run_id="run-222"),
+                status=WorktreeLifecycleStatus.ACTIVE,
+            )
+            repository.upsert_managed_worktree(worktree, active=True)
+
+            root_session = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))
+            self.assertEqual(root_session["current_session"]["active_worktree_id"], "cleanup-me")
+            self.assertEqual(root_session["current_session"]["managed_worktree_count"], 1)
+
+            repository.forget_managed_worktree("cleanup-me")
+
+            root_session = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))
+            self.assertIsNone(root_session["current_session"]["active_worktree_id"])
+            self.assertEqual(root_session["current_session"]["managed_worktree_count"], 0)
+            self.assertTrue(repository.read_session_worktree_state().is_empty)
+            self.assertTrue(repository.read_workflow_worktree_state().is_empty)
+
+    def test_read_worktree_state_is_backward_compatible_with_legacy_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="Legacy worktree payload")
+
+            session_state = json.loads(artifacts.session.read_text(encoding="utf-8"))
+            workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
+            session_state["state_schema_version"] = 7
+            workflow_state["state_schema_version"] = 7
+            session_state.pop("worktrees", None)
+            workflow_state.pop("worktrees", None)
+            artifacts.session.write_text(json.dumps(session_state, indent=2) + "\n", encoding="utf-8")
+            artifacts.workflow_state.write_text(
+                json.dumps(workflow_state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            session_worktrees = repository.read_session_worktree_state()
+            workflow_worktrees = repository.read_workflow_worktree_state()
+            self.assertTrue(session_worktrees.is_empty)
+            self.assertTrue(workflow_worktrees.is_empty)
+
+    def test_read_worktree_state_normalizes_conflicting_active_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="Normalize conflicting worktree payload")
+
+            session_id = repository.read_session_state()["session_id"]
+            conflicting_payload = {
+                "active_worktree_id": "selected",
+                "managed": [
+                    ManagedWorktree(
+                        worktree_id="selected",
+                        source_repo_root=root.resolve(),
+                        isolated_path=(root / "managed-worktrees" / "selected").resolve(),
+                        owner=WorktreeOwner(session_id=session_id, run_id="run-201"),
+                        status=WorktreeLifecycleStatus.PLANNED,
+                    ).to_dict(),
+                    ManagedWorktree(
+                        worktree_id="stale-active",
+                        source_repo_root=root.resolve(),
+                        isolated_path=(root / "managed-worktrees" / "stale-active").resolve(),
+                        owner=WorktreeOwner(session_id=session_id, run_id="run-202"),
+                        status=WorktreeLifecycleStatus.ACTIVE,
+                    ).to_dict(),
+                ],
+            }
+            session_state = json.loads(artifacts.session.read_text(encoding="utf-8"))
+            workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
+            session_state["worktrees"] = conflicting_payload
+            workflow_state["worktrees"] = conflicting_payload
+            artifacts.session.write_text(json.dumps(session_state, indent=2) + "\n", encoding="utf-8")
+            artifacts.workflow_state.write_text(
+                json.dumps(workflow_state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            for worktrees in (
+                repository.read_session_worktree_state(),
+                repository.read_workflow_worktree_state(),
+            ):
+                self.assertEqual(worktrees.active_worktree_id, "selected")
+                managed_by_id = {record.worktree_id: record for record in worktrees.managed}
+                self.assertEqual(
+                    managed_by_id["selected"].status,
+                    WorktreeLifecycleStatus.ACTIVE,
+                )
+                self.assertEqual(
+                    managed_by_id["stale-active"].status,
+                    WorktreeLifecycleStatus.PLANNED,
+                )
+
+    def test_read_worktree_state_deduplicates_duplicate_worktree_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="Deduplicate worktree payload")
+
+            session_id = repository.read_session_state()["session_id"]
+            duplicate_payload = {
+                "active_worktree_id": "duplicate",
+                "managed": [
+                    ManagedWorktree(
+                        worktree_id="duplicate",
+                        source_repo_root=root.resolve(),
+                        isolated_path=(root / "managed-worktrees" / "duplicate-old").resolve(),
+                        owner=WorktreeOwner(session_id=session_id, run_id="run-301"),
+                        status=WorktreeLifecycleStatus.PLANNED,
+                    ).to_dict(),
+                    ManagedWorktree(
+                        worktree_id="duplicate",
+                        source_repo_root=root.resolve(),
+                        isolated_path=(root / "managed-worktrees" / "duplicate-new").resolve(),
+                        owner=WorktreeOwner(session_id=session_id, run_id="run-302"),
+                        status=WorktreeLifecycleStatus.ACTIVE,
+                    ).to_dict(),
+                ],
+            }
+            session_state = json.loads(artifacts.session.read_text(encoding="utf-8"))
+            workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
+            session_state["worktrees"] = duplicate_payload
+            workflow_state["worktrees"] = duplicate_payload
+            artifacts.session.write_text(json.dumps(session_state, indent=2) + "\n", encoding="utf-8")
+            artifacts.workflow_state.write_text(
+                json.dumps(workflow_state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            for worktrees in (
+                repository.read_session_worktree_state(),
+                repository.read_workflow_worktree_state(),
+            ):
+                self.assertEqual(worktrees.active_worktree_id, "duplicate")
+                self.assertEqual(len(worktrees.managed), 1)
+                self.assertEqual(worktrees.managed[0].owner.run_id, "run-302")
+                self.assertEqual(
+                    worktrees.managed[0].status,
+                    WorktreeLifecycleStatus.ACTIVE,
+                )
+
+    def test_upsert_managed_worktree_collapses_duplicate_registry_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="Collapse duplicate registry entries")
+
+            session_id = repository.read_session_state()["session_id"]
+            duplicate_payload = {
+                "active_worktree_id": "duplicate",
+                "managed": [
+                    ManagedWorktree(
+                        worktree_id="duplicate",
+                        source_repo_root=root.resolve(),
+                        isolated_path=(root / "managed-worktrees" / "duplicate-a").resolve(),
+                        owner=WorktreeOwner(session_id=session_id, run_id="run-401"),
+                        status=WorktreeLifecycleStatus.ACTIVE,
+                    ).to_dict(),
+                    ManagedWorktree(
+                        worktree_id="duplicate",
+                        source_repo_root=root.resolve(),
+                        isolated_path=(root / "managed-worktrees" / "duplicate-b").resolve(),
+                        owner=WorktreeOwner(session_id=session_id, run_id="run-402"),
+                        status=WorktreeLifecycleStatus.PLANNED,
+                    ).to_dict(),
+                ],
+            }
+            session_state = json.loads(artifacts.session.read_text(encoding="utf-8"))
+            workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
+            session_state["worktrees"] = duplicate_payload
+            workflow_state["worktrees"] = duplicate_payload
+            artifacts.session.write_text(json.dumps(session_state, indent=2) + "\n", encoding="utf-8")
+            artifacts.workflow_state.write_text(
+                json.dumps(workflow_state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            replacement = ManagedWorktree(
+                worktree_id="duplicate",
+                source_repo_root=root.resolve(),
+                isolated_path=(root / "managed-worktrees" / "duplicate-replacement").resolve(),
+                owner=WorktreeOwner(session_id=session_id, run_id="run-403"),
+                status=WorktreeLifecycleStatus.PLANNED,
+            )
+
+            repository.upsert_managed_worktree(replacement, active=True)
+
+            session_state = json.loads(artifacts.session.read_text(encoding="utf-8"))
+            workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
+            for payload in (session_state, workflow_state):
+                self.assertEqual(payload["worktrees"]["active_worktree_id"], "duplicate")
+                self.assertEqual(payload["worktrees"]["managed"], [
+                    {
+                        **replacement.to_dict(),
+                        "status": "active",
+                    }
+                ])
+
+    def test_upsert_managed_worktree_refreshes_root_index_schema_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Refresh root schema version")
+
+            for filename in ("session.json", "workflow_state.json"):
+                root_index_path = config.base_dev_dir / filename
+                root_index = json.loads(root_index_path.read_text(encoding="utf-8"))
+                root_index["state_schema_version"] = 7
+                root_index_path.write_text(
+                    json.dumps(root_index, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+
+            session_id = repository.read_session_state()["session_id"]
+            worktree = ManagedWorktree(
+                worktree_id="refresh-root-index",
+                source_repo_root=root.resolve(),
+                isolated_path=(root / "managed-worktrees" / "refresh-root-index").resolve(),
+                owner=WorktreeOwner(session_id=session_id, run_id="run-501"),
+                status=WorktreeLifecycleStatus.ACTIVE,
+            )
+
+            repository.upsert_managed_worktree(worktree, active=True)
+
+            root_session = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))
+            root_workflow = json.loads(
+                (config.base_dev_dir / "workflow_state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(root_session["state_schema_version"], 8)
+            self.assertEqual(root_workflow["state_schema_version"], 8)
+            self.assertEqual(root_session["current_session"]["active_worktree_id"], worktree.worktree_id)
+            self.assertEqual(root_workflow["current_session"]["active_worktree_id"], worktree.worktree_id)
+            self.assertEqual(root_session["current_session"]["managed_worktree_count"], 1)
+            self.assertEqual(root_workflow["current_session"]["managed_worktree_count"], 1)
 
     def test_ensure_bootstrap_state_merges_existing_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -23,6 +23,7 @@ except ImportError:
     _HAS_FCNTL = False
 
 from dormammu._utils import iso_now as _iso_now
+from dormammu.state.models import ManagedWorktreeState
 from dormammu.state.persistence import ensure_json_file, read_json, write_json
 from dormammu.state.tasks import parse_tasks_document
 
@@ -110,6 +111,8 @@ class OperatorSync:
     ) -> None:
         session_state = read_json(session_dev_dir / "session.json")
         workflow_state = read_json(session_dev_dir / "workflow_state.json")
+        session_worktrees = ManagedWorktreeState.from_dict(session_state.get("worktrees"))
+        workflow_worktrees = ManagedWorktreeState.from_dict(workflow_state.get("worktrees"))
 
         session_defaults: dict[str, Any] = {
             "active_session_id": session_id,
@@ -130,6 +133,8 @@ class OperatorSync:
                 "updated_at": session_state.get("updated_at"),
                 "active_phase": session_state.get("active_phase"),
                 "active_roadmap_phase_ids": session_state.get("active_roadmap_phase_ids", []),
+                "active_worktree_id": session_worktrees.active_worktree_id,
+                "managed_worktree_count": session_worktrees.managed_count,
             },
         }
         workflow_defaults: dict[str, Any] = {
@@ -162,12 +167,15 @@ class OperatorSync:
                 "tasks_path": f"{state_root}/TASKS.md",
                 "goal": workflow_state.get("bootstrap", {}).get("goal"),
                 "updated_at": workflow_state.get("updated_at"),
+                "active_worktree_id": workflow_worktrees.active_worktree_id,
+                "managed_worktree_count": workflow_worktrees.managed_count,
             },
             "sessions": list_sessions_fn(),
         }
 
         ensure_json_file(self.base_dev_dir / "session.json", session_defaults)
         root_session = read_json(self.base_dev_dir / "session.json")
+        root_session["state_schema_version"] = session_defaults["state_schema_version"]
         root_session["active_session_id"] = session_id
         root_session["default_session_id"] = session_id
         root_session["selected_at"] = timestamp
@@ -177,6 +185,7 @@ class OperatorSync:
 
         ensure_json_file(self.base_dev_dir / "workflow_state.json", workflow_defaults)
         root_workflow = read_json(self.base_dev_dir / "workflow_state.json")
+        root_workflow["state_schema_version"] = workflow_defaults["state_schema_version"]
         root_workflow["updated_at"] = timestamp
         root_workflow["active_session_id"] = session_id
         root_workflow["default_session_id"] = session_id

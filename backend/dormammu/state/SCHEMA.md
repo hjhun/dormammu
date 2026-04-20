@@ -52,6 +52,8 @@ the active session subdirectory. It is never the canonical run state itself.
 | `updated_at` | ISO-8601 string | Last update in this session |
 | `active_phase` | string or null | Current workflow phase |
 | `active_roadmap_phase_ids` | list[string] | Active roadmap phase IDs |
+| `active_worktree_id` | string or null | Active managed worktree for the session summary |
+| `managed_worktree_count` | int | Number of tracked managed worktrees in the session |
 
 ### Per-session file (`.dev/sessions/<id>/session.json`)
 
@@ -77,6 +79,7 @@ the active session subdirectory. It is never the canonical run state itself.
 | `current_run` | object or null | Metadata for the in-flight run (cleared on completion) |
 | `latest_run` | object or null | Metadata for the most recently completed run |
 | `operator_state_mtime` | float or null | mtime of the operator task file at last sync |
+| `worktrees` | object, optional | Session-scoped managed worktree registry (see below) |
 
 `bootstrap` sub-object:
 
@@ -99,6 +102,33 @@ the active session subdirectory. It is never the canonical run state itself.
 | `synced_at` | ISO-8601 string | Timestamp of last sync |
 | `resume_checkpoint` | string or null | Task item used as resume target |
 | `items` | list[object] | Parsed task items (`text`, `completed`, `is_checkpoint`) |
+
+`worktrees` sub-object:
+
+This block is omitted until the runtime tracks at least one managed worktree.
+Readers must treat an absent block as "no tracked worktrees".
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `active_worktree_id` | string or null | Currently active managed worktree for the session |
+| `managed` | list[object] | Tracked managed worktree records |
+
+Consistency rule:
+When `active_worktree_id` is present, it identifies the sole managed record
+whose lifecycle `status` is treated as `active`. Conflicting payloads are
+normalized on read so stale `active` records do not make resume or cleanup
+behavior ambiguous. Duplicate `worktree_id` entries are collapsed into one
+canonical record during normalization.
+
+`managed[]` item shape:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `worktree_id` | string | Stable managed worktree identifier |
+| `source_repo_root` | string | Absolute source repository root |
+| `isolated_path` | string | Absolute managed worktree path |
+| `owner` | object | Ownership metadata (`session_id`, `run_id`, `agent_role`) |
+| `status` | string | Lifecycle status such as `planned`, `active`, or `removed` |
 
 ---
 
@@ -152,6 +182,7 @@ Like `session.json`, the root file acts as an **index** when a session is active
 | `latest_run` | object or null | Most recently completed run metadata |
 | `intake` | object | Request classification result from `intake.classify_request` |
 | `workflow_policy` | object | Phase enablement policy from `workflow_policy` |
+| `worktrees` | object, optional | Workflow-scoped managed worktree registry (same shape as `session.json`) |
 
 `workflow` sub-object:
 
@@ -161,6 +192,19 @@ Like `session.json`, the root file acts as an **index** when a session is active
 | `last_completed_phase` | string | Most recently finished phase |
 | `allowed_sequence` | list[string] | Ordered list of valid phases |
 | `resume_from_phase` | string | Phase to resume from after interruption |
+
+### Worktree Compatibility
+
+- `worktrees` is optional in both per-session state files.
+- Older payloads that omit `worktrees` remain valid and are interpreted as
+  "no tracked managed worktrees".
+- Conflicting `worktrees` payloads are normalized on read so only the selected
+  `active_worktree_id` remains `status: active`; any stale extra `active`
+  records are demoted to non-active lifecycle state.
+- Duplicate `worktree_id` entries are collapsed to a single canonical managed
+  record during normalization and later updates.
+- Root index files expose worktree summary fields only in `current_session`
+  metadata; they do not become the canonical worktree registry.
 
 `roadmap` sub-object:
 
