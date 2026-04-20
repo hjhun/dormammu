@@ -46,7 +46,7 @@ import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, Any, Mapping, TextIO
 
 from dormammu.agent import CliAdapter
 from dormammu.agent.models import AgentRunRequest
@@ -68,6 +68,7 @@ from dormammu.daemon.evaluator import (
 )
 from dormammu.daemon.rules import build_rule_prompt, load_rule_text
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
+from dormammu.runtime_hooks import RuntimeHookBlocked, RuntimeHookController
 from dormammu.state import StateRepository
 
 if TYPE_CHECKING:
@@ -101,6 +102,11 @@ class PipelineRunner:
         self._repository = repository or StateRepository(app_config)
         self._progress_stream = progress_stream or sys.stderr
         self._stop_event = stop_event
+        self._hook_controller = RuntimeHookController(
+            app_config,
+            repository=self._repository,
+            progress_stream=self._progress_stream,
+        )
 
     def _profile_for_role(self, role: str) -> AgentProfile:
         return self._app_config.resolve_agent_profile(role)
@@ -182,88 +188,111 @@ class PipelineRunner:
 
         dev_prompt = prompt_text
         loop_result: LoopRunResult | None = None
+        final_result: LoopRunResult | None = None
+        session_id = self._session_id()
 
-        # ---- refiner + planner (mandatory) ----------------------------------
-        self.run_refine_and_plan(
-            prompt_text,
-            stem=stem,
-            date_str=date_str,
-            enable_plan_evaluator=goal_file_path is not None,
-        )
-
-        # ---- developer → tester loop ----------------------------------------
-        for tester_iter in range(MAX_STAGE_ITERATIONS):
-            loop_result = self._run_developer(dev_prompt, stem=stem)
-            if loop_result.status not in ("completed",):
-                self._log(
-                    f"pipeline: developer stage ended with status "
-                    f"'{loop_result.status}' — aborting pipeline"
-                )
-                return loop_result
-
-            tester_stage = self._run_tester(prompt_text, stem=stem, date_str=date_str)
-            if tester_stage is None:
-                # Tester not configured — skip tester stage
-                break
-            if tester_stage.verdict == "pass":
-                self._log(f"pipeline: tester PASS (iteration {tester_iter + 1})")
-                break
-            if tester_iter < MAX_STAGE_ITERATIONS - 1:
-                self._log(
-                    f"pipeline: tester FAIL (iteration {tester_iter + 1}) "
-                    "— re-entering developer"
-                )
-                dev_prompt = self._append_feedback(
-                    prompt_text, tester_stage.output, source="tester"
-                )
-            else:
-                self._log(
-                    f"pipeline: tester FAIL — max iterations ({MAX_STAGE_ITERATIONS}) "
-                    "reached; continuing to reviewer"
-                )
-
-        # ---- developer → reviewer loop --------------------------------------
-        for reviewer_iter in range(MAX_STAGE_ITERATIONS):
-            reviewer_stage = self._run_reviewer(
-                prompt_text, stem=stem, date_str=date_str
+        try:
+            self._hook_controller.emit_prompt_intake(
+                prompt_text=prompt_text,
+                source="pipeline_runner",
+                entrypoint="PipelineRunner.run",
+                session_id=session_id,
+                agent_role="pipeline",
             )
-            if reviewer_stage is None:
-                # Reviewer not configured — skip
-                break
-            if reviewer_stage.verdict == "approved":
-                self._log(f"pipeline: reviewer APPROVED (iteration {reviewer_iter + 1})")
-                break
-            if reviewer_iter < MAX_STAGE_ITERATIONS - 1:
-                self._log(
-                    f"pipeline: reviewer NEEDS_WORK (iteration {reviewer_iter + 1}) "
-                    "— re-entering developer"
-                )
-                dev_prompt = self._append_feedback(
-                    prompt_text, reviewer_stage.output, source="reviewer"
-                )
+
+            # ---- refiner + planner (mandatory) ----------------------------------
+            self.run_refine_and_plan(
+                prompt_text,
+                stem=stem,
+                date_str=date_str,
+                enable_plan_evaluator=goal_file_path is not None,
+            )
+
+            # ---- developer → tester loop ----------------------------------------
+            for tester_iter in range(MAX_STAGE_ITERATIONS):
                 loop_result = self._run_developer(dev_prompt, stem=stem)
                 if loop_result.status not in ("completed",):
-                    return loop_result
-            else:
-                self._log(
-                    f"pipeline: reviewer NEEDS_WORK — max iterations "
-                    f"({MAX_STAGE_ITERATIONS}) reached; continuing to committer"
+                    self._log(
+                        f"pipeline: developer stage ended with status "
+                        f"'{loop_result.status}' — aborting pipeline"
+                    )
+                    final_result = loop_result
+                    break
+
+                tester_stage = self._run_tester(prompt_text, stem=stem, date_str=date_str)
+                if tester_stage is None:
+                    # Tester not configured — skip tester stage
+                    break
+                if tester_stage.verdict == "pass":
+                    self._log(f"pipeline: tester PASS (iteration {tester_iter + 1})")
+                    break
+                if tester_iter < MAX_STAGE_ITERATIONS - 1:
+                    self._log(
+                        f"pipeline: tester FAIL (iteration {tester_iter + 1}) "
+                        "— re-entering developer"
+                    )
+                    dev_prompt = self._append_feedback(
+                        prompt_text, tester_stage.output, source="tester"
+                    )
+                else:
+                    self._log(
+                        f"pipeline: tester FAIL — max iterations ({MAX_STAGE_ITERATIONS}) "
+                        "reached; continuing to reviewer"
+                    )
+
+            if final_result is not None:
+                return self._finalize_pipeline_result(final_result)
+
+            # ---- developer → reviewer loop --------------------------------------
+            for reviewer_iter in range(MAX_STAGE_ITERATIONS):
+                reviewer_stage = self._run_reviewer(
+                    prompt_text, stem=stem, date_str=date_str
                 )
+                if reviewer_stage is None:
+                    # Reviewer not configured — skip
+                    break
+                if reviewer_stage.verdict == "approved":
+                    self._log(f"pipeline: reviewer APPROVED (iteration {reviewer_iter + 1})")
+                    break
+                if reviewer_iter < MAX_STAGE_ITERATIONS - 1:
+                    self._log(
+                        f"pipeline: reviewer NEEDS_WORK (iteration {reviewer_iter + 1}) "
+                        "— re-entering developer"
+                    )
+                    dev_prompt = self._append_feedback(
+                        prompt_text, reviewer_stage.output, source="reviewer"
+                    )
+                    loop_result = self._run_developer(dev_prompt, stem=stem)
+                    if loop_result.status not in ("completed",):
+                        final_result = loop_result
+                        break
+                else:
+                    self._log(
+                        f"pipeline: reviewer NEEDS_WORK — max iterations "
+                        f"({MAX_STAGE_ITERATIONS}) reached; continuing to committer"
+                    )
 
-        # ---- committer -------------------------------------------------------
-        self._run_committer(stem=stem, date_str=date_str)
+            if final_result is not None:
+                return self._finalize_pipeline_result(final_result)
 
-        # ---- evaluator (goals-scheduler context only) -----------------------
-        self._run_evaluator(
-            prompt_text=prompt_text,
-            stem=stem,
-            date_str=date_str,
-            goal_file_path=goal_file_path,
-            evaluator_config=evaluator_config,
-        )
+            # ---- committer -------------------------------------------------------
+            self._run_committer(stem=stem, date_str=date_str)
 
-        assert loop_result is not None
-        return loop_result
+            # ---- evaluator (goals-scheduler context only) -----------------------
+            self._run_evaluator(
+                prompt_text=prompt_text,
+                stem=stem,
+                date_str=date_str,
+                goal_file_path=goal_file_path,
+                evaluator_config=evaluator_config,
+            )
+        except RuntimeHookBlocked as exc:
+            self._log(f"pipeline: runtime hook blocked execution: {exc}")
+            final_result = self._blocked_loop_result(loop_result)
+
+        assert loop_result is not None or final_result is not None
+        final_result = self._finalize_pipeline_result(final_result or loop_result)
+        return final_result
 
     # ------------------------------------------------------------------
     # Refiner stage (one-shot, mandatory)
@@ -283,6 +312,7 @@ class PipelineRunner:
         if cli is None:
             raise RuntimeError("No CLI available for refiner role.")
 
+        self._emit_stage_start(role="refiner")
         self._log("pipeline: refiner stage starting")
         prompt = self._refiner_prompt(goal_text, stem=stem, date_str=date_str)
         output = self._call_once(
@@ -295,6 +325,7 @@ class PipelineRunner:
             save_doc=False,
         )
         self._log("pipeline: refiner stage completed")
+        self._emit_stage_complete(role="refiner", verdict="done")
         return output
 
     # ------------------------------------------------------------------
@@ -322,6 +353,14 @@ class PipelineRunner:
         if cli is None:
             raise RuntimeError("No CLI available for planner role.")
 
+        self._hook_controller.emit_plan_start(
+            source="pipeline_runner",
+            goal_text=goal_text,
+            stem=stem,
+            date_str=date_str,
+            session_id=self._session_id(),
+        )
+        self._emit_stage_start(role="planner")
         self._log("pipeline: planner stage starting")
         requirements_text = self._read_requirements_doc()
         prompt = self._planner_prompt(
@@ -341,6 +380,7 @@ class PipelineRunner:
             save_doc=False,
         )
         self._log("pipeline: planner stage completed")
+        self._emit_stage_complete(role="planner", verdict="done")
         return output
 
     # ------------------------------------------------------------------
@@ -360,6 +400,7 @@ class PipelineRunner:
         if cli is None:
             raise RuntimeError("No CLI available for mandatory evaluator role.")
 
+        self._emit_stage_start(role="evaluator")
         self._log("pipeline: plan evaluator stage starting")
         requirements_text = self._read_requirements_doc()
         prompt = self._plan_evaluator_prompt(
@@ -384,6 +425,7 @@ class PipelineRunner:
         )
 
         verdict = "proceed" if _CHECKPOINT_PROCEED_RE.search(output) else "rework"
+        self._emit_stage_complete(role="evaluator", verdict=verdict)
         return StageResult(role="evaluator", verdict=verdict, output=output, report_path=report_path)
 
     # ------------------------------------------------------------------
@@ -391,6 +433,7 @@ class PipelineRunner:
     # ------------------------------------------------------------------
 
     def _run_developer(self, prompt_text: str, *, stem: str) -> LoopRunResult:
+        self._emit_stage_start(role="developer")
         self._log("pipeline: developer stage starting")
         profile = self._profile_for_role("developer")
         cli = profile.resolve_cli(self._app_config.active_agent_cli)
@@ -419,8 +462,24 @@ class PipelineRunner:
                 stop_event=self._stop_event,
             ),
             progress_stream=self._progress_stream,
-        ).run(request)
+        ).run(
+            request,
+            emit_prompt_intake=False,
+            emit_stage_hooks=False,
+            manage_session_lifecycle=False,
+        )
         self._log(f"pipeline: developer stage completed with status '{result.status}'")
+        self._emit_stage_complete(
+            role="developer",
+            verdict=result.status,
+            run_id=result.latest_run_id,
+            payload={
+                "status": result.status,
+                "attempts_completed": result.attempts_completed,
+                "retries_used": result.retries_used,
+                "supervisor_verdict": result.supervisor_verdict,
+            },
+        )
         return result
 
     # ------------------------------------------------------------------
@@ -441,6 +500,7 @@ class PipelineRunner:
         if cli is None:
             return None
 
+        self._emit_stage_start(role="tester")
         self._log("pipeline: tester stage starting")
         prompt = self._tester_prompt(goal_text, stem=stem, date_str=date_str)
         output = self._call_once(
@@ -453,6 +513,7 @@ class PipelineRunner:
         )
 
         verdict = "fail" if _TESTER_FAIL_RE.search(output) else "pass"
+        self._emit_stage_complete(role="tester", verdict=verdict)
         return StageResult(role="tester", verdict=verdict, output=output)
 
     # ------------------------------------------------------------------
@@ -472,6 +533,7 @@ class PipelineRunner:
         if cli is None:
             return None
 
+        self._emit_stage_start(role="reviewer")
         self._log("pipeline: reviewer stage starting")
         design_text = self._read_designer_doc(stem, date_str)
         prompt = self._reviewer_prompt(goal_text, design_text, stem=stem, date_str=date_str)
@@ -485,6 +547,7 @@ class PipelineRunner:
         )
 
         verdict = "needs_work" if _REVIEWER_REJECT_RE.search(output) else "approved"
+        self._emit_stage_complete(role="reviewer", verdict=verdict)
         return StageResult(role="reviewer", verdict=verdict, output=output)
 
     # ------------------------------------------------------------------
@@ -498,6 +561,7 @@ class PipelineRunner:
             self._log("pipeline: committer has no CLI — skipping commit")
             return
 
+        self._emit_stage_start(role="committer")
         self._log("pipeline: committer stage starting")
         prompt = self._committer_prompt(stem, date_str=date_str)
         self._call_once(
@@ -508,6 +572,7 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
         )
+        self._emit_stage_complete(role="committer", verdict="committed")
 
     # ------------------------------------------------------------------
     # Evaluator stage (goals-scheduler context only)
@@ -551,6 +616,7 @@ class PipelineRunner:
         # Extract the original goal text (strip the metadata comment if present).
         goal_text = _strip_goal_source_tag(prompt_text)
 
+        self._emit_stage_start(role="evaluator")
         self._log("pipeline: evaluator stage starting")
         request = EvaluatorRequest(
             cli=cli,
@@ -574,6 +640,15 @@ class PipelineRunner:
         self._log(
             f"pipeline: evaluator stage completed "
             f"(status={result.status}, verdict={result.verdict})"
+        )
+        self._emit_stage_complete(
+            role="evaluator",
+            verdict=result.verdict,
+            payload={
+                "status": result.status,
+                "goal_file_updated": result.goal_file_updated,
+                "report_path": str(result.report_path) if result.report_path else None,
+            },
         )
 
     # ------------------------------------------------------------------
@@ -778,6 +853,87 @@ class PipelineRunner:
 
     def _stage_doc_path(self, role: str, *, stem: str, date_str: str) -> Path:
         return self._app_config.base_dev_dir / "logs" / f"{date_str}_{role}_{stem}.md"
+
+    def _session_id(self) -> str | None:
+        try:
+            session_state = self._repository.read_session_state()
+        except Exception:
+            return None
+        session_id = session_state.get("session_id")
+        if isinstance(session_id, str) and session_id.strip():
+            return session_id
+        return None
+
+    def _emit_stage_start(self, *, role: str) -> None:
+        self._hook_controller.emit_stage_start(
+            source="pipeline_runner",
+            stage_name=role,
+            agent_role=role,
+            session_id=self._session_id(),
+        )
+
+    def _emit_stage_complete(
+        self,
+        *,
+        role: str,
+        verdict: str,
+        run_id: str | None = None,
+        payload: Mapping[str, Any] | None = None,
+    ) -> None:
+        completion_payload = {"verdict": verdict}
+        if payload:
+            completion_payload.update(dict(payload))
+        self._hook_controller.emit_stage_complete(
+            source="pipeline_runner",
+            stage_name=role,
+            agent_role=role,
+            session_id=self._session_id(),
+            run_id=run_id,
+            payload=completion_payload,
+        )
+
+    def _blocked_loop_result(self, loop_result: LoopRunResult | None) -> LoopRunResult:
+        return LoopRunResult(
+            status="blocked",
+            attempts_completed=loop_result.attempts_completed if loop_result else 0,
+            retries_used=loop_result.retries_used if loop_result else 0,
+            max_retries=loop_result.max_retries if loop_result else 0,
+            max_iterations=loop_result.max_iterations if loop_result else 1,
+            latest_run_id=loop_result.latest_run_id if loop_result else None,
+            supervisor_verdict="blocked",
+            report_path=loop_result.report_path if loop_result else None,
+            continuation_prompt_path=(
+                loop_result.continuation_prompt_path if loop_result else None
+            ),
+        )
+
+    def _finalize_pipeline_result(
+        self,
+        result: LoopRunResult,
+    ) -> LoopRunResult:
+        session_id = self._session_id()
+        try:
+            self._hook_controller.emit_session_end(
+                source="pipeline_runner",
+                session_id=session_id,
+                run_id=result.latest_run_id,
+                agent_role="pipeline",
+                result=result.to_dict(),
+            )
+        except RuntimeHookBlocked as exc:
+            self._log(f"pipeline: session-end hook blocked exit: {exc}")
+            return LoopRunResult(
+                status="blocked",
+                attempts_completed=result.attempts_completed,
+                retries_used=result.retries_used,
+                max_retries=result.max_retries,
+                max_iterations=result.max_iterations,
+                latest_run_id=result.latest_run_id,
+                supervisor_verdict="blocked",
+                report_path=result.report_path,
+                continuation_prompt_path=result.continuation_prompt_path,
+            )
+        return result
 
     @staticmethod
     def _append_feedback(

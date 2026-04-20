@@ -12,6 +12,7 @@ from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.agent.profiles import AgentProfile
 from dormammu.config import AppConfig
 from dormammu.continuation import build_continuation_prompt
+from dormammu.runtime_hooks import RuntimeHookBlocked, RuntimeHookController
 from dormammu.state import StateRepository
 from dormammu.supervisor import Supervisor, SupervisorReport, SupervisorRequest
 
@@ -192,6 +193,9 @@ class LoopRunner:
         *,
         start_attempt: int = 1,
         prompt_text: str | None = None,
+        emit_prompt_intake: bool = True,
+        emit_stage_hooks: bool = True,
+        manage_session_lifecycle: bool = True,
     ) -> LoopRunResult:
         if request.max_retries < -1:
             raise ValueError("max_retries must be -1 or greater.")
@@ -217,6 +221,16 @@ class LoopRunner:
                 runtime_adapter = CliAdapter(runtime_config, live_output_stream=self.progress_stream)
                 runtime_supervisor = Supervisor(self.config, repository=runtime_repository)
 
+        session_state = runtime_repository.read_session_state()
+        session_id = session_state.get("session_id")
+        if not isinstance(session_id, str) or not session_id.strip():
+            session_id = None
+        hook_controller = RuntimeHookController(
+            self.config,
+            repository=runtime_repository,
+            progress_stream=self.progress_stream,
+        )
+
         current_prompt = prompt_text if prompt_text is not None else request.prompt_text
         attempt_number = start_attempt
         retries_used = max(start_attempt - 1, 0)
@@ -225,6 +239,184 @@ class LoopRunner:
         # Reset per run() call so resumed loops don't inherit stale state.
         # Read _STAGNATION_WINDOW at call time so tests can patch it dynamically.
         stagnation = _StagnationDetector(window_size=_STAGNATION_WINDOW)
+
+        def _blocked_result(
+            *,
+            attempts_completed_value: int,
+            retries_used_value: int,
+            latest_run_id_value: str | None,
+            report_value: SupervisorReport | None,
+            continuation_prompt_value: Path | None,
+        ) -> LoopRunResult:
+            return LoopRunResult(
+                status="blocked",
+                attempts_completed=attempts_completed_value,
+                retries_used=retries_used_value,
+                max_retries=request.max_retries,
+                max_iterations=request.max_iterations,
+                latest_run_id=latest_run_id_value,
+                supervisor_verdict="blocked",
+                report_path=report_value.report_path if report_value is not None else None,
+                continuation_prompt_path=continuation_prompt_value,
+            )
+
+        def _finish(
+            result: LoopRunResult,
+            *,
+            attempts_completed_value: int,
+            retries_used_value: int,
+            latest_run_id_value: str | None,
+            report_value: SupervisorReport | None,
+            continuation_prompt_value: Path | None,
+            emit_stage_completion: bool = True,
+        ) -> LoopRunResult:
+            final_result = result
+
+            if emit_stage_hooks and emit_stage_completion:
+                try:
+                    hook_controller.emit_stage_complete(
+                        source="loop_runner",
+                        stage_name=request.agent_role,
+                        agent_role=request.agent_role,
+                        session_id=session_id,
+                        run_id=latest_run_id_value,
+                        payload={
+                            "status": result.status,
+                            "attempts_completed": result.attempts_completed,
+                            "retries_used": result.retries_used,
+                            "supervisor_verdict": result.supervisor_verdict,
+                        },
+                    )
+                except RuntimeHookBlocked as exc:
+                    next_action = f"Stage completion hook blocked loop exit: {exc}"
+                    self._persist_loop_state(
+                        status="blocked",
+                        request=request,
+                        attempts_completed=attempts_completed_value,
+                        retries_used=retries_used_value,
+                        latest_run_id=latest_run_id_value,
+                        report=report_value,
+                        report_path=result.report_path,
+                        continuation_prompt_path=continuation_prompt_value,
+                        next_action=next_action,
+                    )
+                    final_result = _blocked_result(
+                        attempts_completed_value=attempts_completed_value,
+                        retries_used_value=retries_used_value,
+                        latest_run_id_value=latest_run_id_value,
+                        report_value=report_value,
+                        continuation_prompt_value=continuation_prompt_value,
+                    )
+
+            if manage_session_lifecycle:
+                try:
+                    hook_controller.emit_session_end(
+                        source="loop_runner",
+                        session_id=session_id,
+                        run_id=latest_run_id_value,
+                        agent_role=request.agent_role,
+                        result=final_result.to_dict(),
+                    )
+                except RuntimeHookBlocked as exc:
+                    next_action = f"Session-end hook blocked loop exit: {exc}"
+                    self._persist_loop_state(
+                        status="blocked",
+                        request=request,
+                        attempts_completed=attempts_completed_value,
+                        retries_used=retries_used_value,
+                        latest_run_id=latest_run_id_value,
+                        report=report_value,
+                        report_path=final_result.report_path,
+                        continuation_prompt_path=continuation_prompt_value,
+                        next_action=next_action,
+                    )
+                    return _blocked_result(
+                        attempts_completed_value=attempts_completed_value,
+                        retries_used_value=retries_used_value,
+                        latest_run_id_value=latest_run_id_value,
+                        report_value=report_value,
+                        continuation_prompt_value=continuation_prompt_value,
+                    )
+            return final_result
+
+        if emit_prompt_intake:
+            try:
+                hook_controller.emit_prompt_intake(
+                    prompt_text=current_prompt,
+                    source="loop_runner",
+                    entrypoint="LoopRunner.run",
+                    session_id=session_id,
+                    agent_role=request.agent_role,
+                )
+            except RuntimeHookBlocked as exc:
+                next_action = f"Prompt intake hook blocked execution: {exc}"
+                self._persist_loop_state(
+                    status="blocked",
+                    request=request,
+                    attempts_completed=attempt_number - 1,
+                    retries_used=retries_used,
+                    latest_run_id=None,
+                    report=None,
+                    report_path=None,
+                    continuation_prompt_path=None,
+                    next_action=next_action,
+                )
+                return _finish(
+                    _blocked_result(
+                        attempts_completed_value=attempt_number - 1,
+                        retries_used_value=retries_used,
+                        latest_run_id_value=None,
+                        report_value=None,
+                        continuation_prompt_value=None,
+                    ),
+                    attempts_completed_value=attempt_number - 1,
+                    retries_used_value=retries_used,
+                    latest_run_id_value=None,
+                    report_value=None,
+                    continuation_prompt_value=None,
+                    emit_stage_completion=False,
+                )
+
+        if emit_stage_hooks:
+            try:
+                hook_controller.emit_stage_start(
+                    source="loop_runner",
+                    stage_name=request.agent_role,
+                    agent_role=request.agent_role,
+                    session_id=session_id,
+                    payload={
+                        "run_label": request.run_label,
+                        "start_attempt": start_attempt,
+                    },
+                )
+            except RuntimeHookBlocked as exc:
+                next_action = f"Stage start hook blocked execution: {exc}"
+                self._persist_loop_state(
+                    status="blocked",
+                    request=request,
+                    attempts_completed=attempt_number - 1,
+                    retries_used=retries_used,
+                    latest_run_id=None,
+                    report=None,
+                    report_path=None,
+                    continuation_prompt_path=None,
+                    next_action=next_action,
+                )
+                return _finish(
+                    _blocked_result(
+                        attempts_completed_value=attempt_number - 1,
+                        retries_used_value=retries_used,
+                        latest_run_id_value=None,
+                        report_value=None,
+                        continuation_prompt_value=None,
+                    ),
+                    attempts_completed_value=attempt_number - 1,
+                    retries_used_value=retries_used,
+                    latest_run_id_value=None,
+                    report_value=None,
+                    continuation_prompt_value=None,
+                    emit_stage_completion=False,
+                )
 
         while True:
             self._persist_loop_state(
@@ -288,16 +480,23 @@ class LoopRunner:
                     continuation_prompt_path=continuation_prompt_path,
                     next_action=next_action,
                 )
-                return LoopRunResult(
-                    status="completed",
-                    attempts_completed=attempt_number,
-                    retries_used=retries_used,
-                    max_retries=request.max_retries,
-                    max_iterations=request.max_iterations,
-                    latest_run_id=result.run_id,
-                    supervisor_verdict="promise_complete",
-                    report_path=report_path,
-                    continuation_prompt_path=continuation_prompt_path,
+                return _finish(
+                    LoopRunResult(
+                        status="completed",
+                        attempts_completed=attempt_number,
+                        retries_used=retries_used,
+                        max_retries=request.max_retries,
+                        max_iterations=request.max_iterations,
+                        latest_run_id=result.run_id,
+                        supervisor_verdict="promise_complete",
+                        report_path=report_path,
+                        continuation_prompt_path=continuation_prompt_path,
+                    ),
+                    attempts_completed_value=attempt_number,
+                    retries_used_value=retries_used,
+                    latest_run_id_value=result.run_id,
+                    report_value=None,
+                    continuation_prompt_value=continuation_prompt_path,
                 )
 
             if result.exit_code != 0 and result.fallback_trigger is not None:
@@ -315,16 +514,19 @@ class LoopRunner:
                         "Update dormammu.json or wait for quota recovery before resuming."
                     ),
                 )
-                return LoopRunResult(
-                    status="blocked",
-                    attempts_completed=attempt_number,
-                    retries_used=retries_used,
-                    max_retries=request.max_retries,
-                    max_iterations=request.max_iterations,
-                    latest_run_id=result.run_id,
-                    supervisor_verdict="blocked",
-                    report_path=report_path,
-                    continuation_prompt_path=continuation_prompt_path,
+                return _finish(
+                    _blocked_result(
+                        attempts_completed_value=attempt_number,
+                        retries_used_value=retries_used,
+                        latest_run_id_value=result.run_id,
+                        report_value=None,
+                        continuation_prompt_value=continuation_prompt_path,
+                    ),
+                    attempts_completed_value=attempt_number,
+                    retries_used_value=retries_used,
+                    latest_run_id_value=result.run_id,
+                    report_value=None,
+                    continuation_prompt_value=continuation_prompt_path,
                 )
 
             report = runtime_supervisor.validate(
@@ -337,6 +539,42 @@ class LoopRunner:
             report_path = runtime_repository.write_supervisor_report(report.to_markdown())
             report = report.with_report_path(report_path)
             self._emit_supervisor_result(report, attempt_number=attempt_number)
+            try:
+                hook_controller.emit_final_verification(
+                    source="loop_runner",
+                    session_id=session_id,
+                    run_id=result.run_id,
+                    agent_role=request.agent_role,
+                    attempt_number=attempt_number,
+                    report=report.to_dict(),
+                )
+            except RuntimeHookBlocked as exc:
+                next_action = f"Final verification hook blocked completion: {exc}"
+                self._persist_loop_state(
+                    status="blocked",
+                    request=request,
+                    attempts_completed=attempt_number,
+                    retries_used=retries_used,
+                    latest_run_id=result.run_id,
+                    report=report,
+                    report_path=report_path,
+                    continuation_prompt_path=continuation_prompt_path,
+                    next_action=next_action,
+                )
+                return _finish(
+                    _blocked_result(
+                        attempts_completed_value=attempt_number,
+                        retries_used_value=retries_used,
+                        latest_run_id_value=result.run_id,
+                        report_value=report,
+                        continuation_prompt_value=continuation_prompt_path,
+                    ),
+                    attempts_completed_value=attempt_number,
+                    retries_used_value=retries_used,
+                    latest_run_id_value=result.run_id,
+                    report_value=report,
+                    continuation_prompt_value=continuation_prompt_path,
+                )
 
             if report.verdict == "approved":
                 next_action = (
@@ -353,16 +591,23 @@ class LoopRunner:
                     continuation_prompt_path=continuation_prompt_path,
                     next_action=next_action,
                 )
-                return LoopRunResult(
-                    status="completed",
-                    attempts_completed=attempt_number,
-                    retries_used=retries_used,
-                    max_retries=request.max_retries,
-                    max_iterations=request.max_iterations,
-                    latest_run_id=result.run_id,
-                    supervisor_verdict=report.verdict,
-                    report_path=report_path,
-                    continuation_prompt_path=continuation_prompt_path,
+                return _finish(
+                    LoopRunResult(
+                        status="completed",
+                        attempts_completed=attempt_number,
+                        retries_used=retries_used,
+                        max_retries=request.max_retries,
+                        max_iterations=request.max_iterations,
+                        latest_run_id=result.run_id,
+                        supervisor_verdict=report.verdict,
+                        report_path=report_path,
+                        continuation_prompt_path=continuation_prompt_path,
+                    ),
+                    attempts_completed_value=attempt_number,
+                    retries_used_value=retries_used,
+                    latest_run_id_value=result.run_id,
+                    report_value=report,
+                    continuation_prompt_value=continuation_prompt_path,
                 )
 
             if report.verdict != "rework_required":
@@ -379,7 +624,7 @@ class LoopRunner:
                     next_action="Manual intervention is required before the loop can continue safely.",
                 )
                 self._emit_escalation_banner(status=status, report=report, attempt_number=attempt_number)
-                return LoopRunResult(
+                final_result = LoopRunResult(
                     status=status,
                     attempts_completed=attempt_number,
                     retries_used=retries_used,
@@ -389,6 +634,14 @@ class LoopRunner:
                     supervisor_verdict=report.verdict,
                     report_path=report_path,
                     continuation_prompt_path=continuation_prompt_path,
+                )
+                return _finish(
+                    final_result,
+                    attempts_completed_value=attempt_number,
+                    retries_used_value=retries_used,
+                    latest_run_id_value=result.run_id,
+                    report_value=report,
+                    continuation_prompt_value=continuation_prompt_path,
                 )
 
             task_sync_now = runtime_repository.read_session_state().get("task_sync", {})
@@ -421,16 +674,19 @@ class LoopRunner:
                     continuation_prompt_path=continuation_prompt_path,
                     next_action=stagnation_msg,
                 )
-                return LoopRunResult(
-                    status="blocked",
-                    attempts_completed=attempt_number,
-                    retries_used=retries_used,
-                    max_retries=request.max_retries,
-                    max_iterations=request.max_iterations,
-                    latest_run_id=result.run_id,
-                    supervisor_verdict=report.verdict,
-                    report_path=report_path,
-                    continuation_prompt_path=continuation_prompt_path,
+                return _finish(
+                    _blocked_result(
+                        attempts_completed_value=attempt_number,
+                        retries_used_value=retries_used,
+                        latest_run_id_value=result.run_id,
+                        report_value=report,
+                        continuation_prompt_value=continuation_prompt_path,
+                    ),
+                    attempts_completed_value=attempt_number,
+                    retries_used_value=retries_used,
+                    latest_run_id_value=result.run_id,
+                    report_value=report,
+                    continuation_prompt_value=continuation_prompt_path,
                 )
 
             continuation = build_continuation_prompt(
@@ -458,7 +714,7 @@ class LoopRunner:
                     continuation_prompt_path=continuation_prompt_path,
                     next_action=next_action,
                 )
-                return LoopRunResult(
+                final_result = LoopRunResult(
                     status="failed",
                     attempts_completed=attempt_number,
                     retries_used=retries_used,
@@ -468,6 +724,14 @@ class LoopRunner:
                     supervisor_verdict=report.verdict,
                     report_path=report_path,
                     continuation_prompt_path=continuation_prompt_path,
+                )
+                return _finish(
+                    final_result,
+                    attempts_completed_value=attempt_number,
+                    retries_used_value=retries_used,
+                    latest_run_id_value=result.run_id,
+                    report_value=report,
+                    continuation_prompt_value=continuation_prompt_path,
                 )
 
             next_action = (

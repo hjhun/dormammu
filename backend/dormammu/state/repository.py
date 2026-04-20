@@ -507,6 +507,54 @@ class StateRepository:
         self._sync_root_index()
         return prompt_path
 
+    def record_hook_event(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        history_limit: int = 25,
+    ) -> None:
+        if self.session_id is None:
+            active_session_id = self._session_mgr.read_active_session_id()
+            if active_session_id is None:
+                # Runtime hooks can fire before bootstrap establishes a
+                # session-scoped state directory. In that pre-session window
+                # there is nowhere durable to write hook diagnostics yet, so
+                # skip persistence rather than crashing the runtime.
+                return
+            self.for_session(active_session_id).record_hook_event(
+                payload,
+                history_limit=history_limit,
+            )
+            return
+
+        timestamp = str(payload.get("recorded_at") or _iso_now())
+        entry = dict(payload)
+        session_state = _read_json(self.state_file("session.json"))
+        workflow_state = _read_json(self.state_file("workflow_state.json"))
+
+        for state in (session_state, workflow_state):
+            state["updated_at"] = timestamp
+            hooks_block = state.get("hooks")
+            if not isinstance(hooks_block, Mapping):
+                hooks_block = {}
+            history = hooks_block.get("history")
+            normalized_history = []
+            if isinstance(history, list):
+                normalized_history = [
+                    dict(item) for item in history if isinstance(item, Mapping)
+                ]
+            normalized_history.append(entry)
+            hooks_payload = {
+                "updated_at": timestamp,
+                "latest_event": entry,
+                "history": normalized_history[-history_limit:],
+            }
+            state["hooks"] = hooks_payload
+
+        _write_json(self.state_file("session.json"), session_state)
+        _write_json(self.state_file("workflow_state.json"), workflow_state)
+        self._sync_root_index(timestamp=timestamp)
+
     def read_patterns_text(self) -> str:
         """Return the content of .dev/PATTERNS.md, or empty string if not present."""
         patterns_path = self.base_dev_dir / "PATTERNS.md"
