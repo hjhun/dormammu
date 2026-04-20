@@ -47,6 +47,14 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.dev_dir, config.base_dev_dir)
             self.assertEqual(config.workspace_tmp_dir, config.workspace_project_root / ".tmp")
             self.assertEqual(config.results_dir, config.global_home_dir / "results")
+            self.assertEqual(
+                config.project_agent_manifests_dir,
+                (root / ".dormammu" / "agent-manifests").resolve(),
+            )
+            self.assertEqual(
+                config.user_agent_manifests_dir,
+                (config.global_home_dir / "agent-manifests").resolve(),
+            )
 
     def test_load_preserves_sessions_dir_override_with_workspace_shadow_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -567,6 +575,11 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(config.agents_dir, agents_dir.resolve())
             self.assertEqual(config.default_guidance_files, (agents_dir.resolve() / "AGENTS.md",))
+            self.assertEqual(
+                config.user_agent_manifests_dir,
+                (home_dir / ".dormammu" / "agent-manifests").resolve(),
+            )
+            self.assertNotEqual(config.user_agent_manifests_dir.parent, config.agents_dir)
 
 
 class SetConfigValueTests(unittest.TestCase):

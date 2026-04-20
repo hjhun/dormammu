@@ -20,6 +20,8 @@ REPO_MARKERS = ("pyproject.toml", "AGENTS.md", ".dev")
 DEFAULT_CONFIG_FILENAME = "dormammu.json"
 DEFAULT_GLOBAL_HOME_DIRNAME = ".dormammu"
 DEFAULT_GLOBAL_CONFIG_FILENAME = "config"
+PROJECT_AGENT_MANIFESTS_SUBDIR = Path(".dormammu") / "agent-manifests"
+USER_AGENT_MANIFESTS_DIRNAME = "agent-manifests"
 VALID_INPUT_MODES = {"auto", "file", "arg", "stdin", "positional"}
 DEFAULT_FALLBACK_AGENT_CLIS = ("codex", "claude", "gemini")
 DEFAULT_ACTIVE_AGENT_CLI_PRIORITY = ("codex", "claude", "gemini", "cline")
@@ -68,6 +70,14 @@ def _global_home_dir(env: Mapping[str, str]) -> Path:
 
 def _default_global_config_path(global_home_dir: Path) -> Path:
     return global_home_dir / DEFAULT_GLOBAL_CONFIG_FILENAME
+
+
+def _project_agent_manifests_dir(root: Path) -> Path:
+    return (root / PROJECT_AGENT_MANIFESTS_SUBDIR).resolve()
+
+
+def _user_agent_manifests_dir(global_home_dir: Path) -> Path:
+    return (global_home_dir / USER_AGENT_MANIFESTS_DIRNAME).resolve()
 
 
 def _resolve_path_override(
@@ -563,6 +573,8 @@ class AppConfig:
     logs_dir: Path
     templates_dir: Path
     agents_dir: Path
+    project_agent_manifests_dir: Path
+    user_agent_manifests_dir: Path
     config_file: Path | None
     active_agent_cli: Path | None = None
     fallback_agent_clis: tuple[FallbackCliConfig, ...] = ()
@@ -639,6 +651,8 @@ class AppConfig:
             logs_dir=workspace_paths.logs_dir,
             templates_dir=asset_root / "templates",
             agents_dir=agents_dir,
+            project_agent_manifests_dir=_project_agent_manifests_dir(root),
+            user_agent_manifests_dir=_user_agent_manifests_dir(global_home_dir),
             config_file=config_file,
             active_agent_cli=_parse_active_agent_cli(
                 config_payload.get("active_agent_cli"),
@@ -705,6 +719,8 @@ class AppConfig:
             "logs_dir": str(self.logs_dir),
             "templates_dir": str(self.templates_dir),
             "agents_dir": str(self.agents_dir),
+            "project_agent_manifests_dir": str(self.project_agent_manifests_dir),
+            "user_agent_manifests_dir": str(self.user_agent_manifests_dir),
             "config_file": str(self.config_file) if self.config_file else None,
             "active_agent_cli": str(self.active_agent_cli) if self.active_agent_cli else None,
             "fallback_agent_clis": [item.to_dict() for item in self.fallback_agent_clis],

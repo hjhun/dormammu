@@ -3,18 +3,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from dormammu.agent.permissions import (
     AgentPermissionPolicy,
     merge_permission_policy,
     parse_permission_policy_override,
 )
-from dormammu.agent.profiles import AgentProfile
+from dormammu.agent.profiles import AgentProfile, PROJECT_PROFILE_SOURCE, USER_PROFILE_SOURCE
+
+if TYPE_CHECKING:
+    from dormammu.config import AppConfig
 
 
 AGENT_MANIFEST_SCHEMA_VERSION = 1
 AGENT_MANIFEST_SOURCES: tuple[str, ...] = ("built_in", "project", "user")
+AGENT_MANIFEST_DISCOVERY_SCOPES: tuple[str, ...] = (
+    PROJECT_PROFILE_SOURCE,
+    USER_PROFILE_SOURCE,
+)
+AGENT_MANIFEST_FILENAME_GLOB = "*.agent.json"
+AGENT_MANIFEST_SCOPE_PRECEDENCE: dict[str, int] = {
+    scope: index for index, scope in enumerate(AGENT_MANIFEST_DISCOVERY_SCOPES)
+}
 
 
 class AgentManifestError(RuntimeError):
@@ -61,6 +72,83 @@ class AgentManifest:
             "permissions": self.permission_policy.to_dict(),
             "skills": list(self.preloaded_skills),
             "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AgentManifestSearchRoot:
+    scope: str
+    path: Path
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "scope": self.scope,
+            "path": str(self.path),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AgentManifestCandidate:
+    scope: str
+    root_dir: Path
+    path: Path
+
+    @property
+    def relative_path(self) -> str:
+        return self.path.relative_to(self.root_dir).as_posix()
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "scope": self.scope,
+            "root_dir": str(self.root_dir),
+            "path": str(self.path),
+            "relative_path": self.relative_path,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveredAgentManifest:
+    manifest: AgentManifest
+    candidate: AgentManifestCandidate
+
+    @property
+    def name(self) -> str:
+        return self.manifest.name
+
+    @property
+    def scope(self) -> str:
+        return self.candidate.scope
+
+    @property
+    def path(self) -> Path:
+        return self.candidate.path
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "scope": self.scope,
+            "path": str(self.path),
+            "relative_path": self.candidate.relative_path,
+            "manifest_source": self.manifest.source,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AgentManifestDiscovery:
+    search_roots: tuple[AgentManifestSearchRoot, ...]
+    candidates: tuple[AgentManifestCandidate, ...]
+    selected: tuple[DiscoveredAgentManifest, ...]
+    shadowed: tuple[DiscoveredAgentManifest, ...]
+
+    def selected_by_name(self) -> dict[str, DiscoveredAgentManifest]:
+        return {manifest.name: manifest for manifest in self.selected}
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "search_roots": [root.to_dict() for root in self.search_roots],
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "selected": [manifest.to_dict() for manifest in self.selected],
+            "shadowed": [manifest.to_dict() for manifest in self.shadowed],
         }
 
 
@@ -196,6 +284,134 @@ def parse_agent_manifest_payload(
         preloaded_skills=preloaded_skills,
         metadata=metadata,
     )
+
+
+def agent_manifest_search_roots(config: "AppConfig") -> tuple[AgentManifestSearchRoot, ...]:
+    return (
+        AgentManifestSearchRoot(
+            scope=PROJECT_PROFILE_SOURCE,
+            path=config.project_agent_manifests_dir,
+        ),
+        AgentManifestSearchRoot(
+            scope=USER_PROFILE_SOURCE,
+            path=config.user_agent_manifests_dir,
+        ),
+    )
+
+
+def enumerate_agent_manifest_candidates(
+    config: "AppConfig",
+) -> tuple[AgentManifestCandidate, ...]:
+    candidates: list[AgentManifestCandidate] = []
+    for root in agent_manifest_search_roots(config):
+        if not root.path.is_dir():
+            continue
+        for path in sorted(
+            candidate.resolve()
+            for candidate in root.path.rglob(AGENT_MANIFEST_FILENAME_GLOB)
+            if candidate.is_file()
+        ):
+            candidates.append(
+                AgentManifestCandidate(
+                    scope=root.scope,
+                    root_dir=root.path,
+                    path=path,
+                )
+            )
+    return tuple(candidates)
+
+
+def discover_agent_manifests(config: "AppConfig") -> AgentManifestDiscovery:
+    search_roots = agent_manifest_search_roots(config)
+    candidates = enumerate_agent_manifest_candidates(config)
+    loaded = tuple(
+        _load_discovered_agent_manifest(candidate)
+        for candidate in candidates
+    )
+    selected, shadowed = _resolve_manifest_precedence(loaded)
+    return AgentManifestDiscovery(
+        search_roots=search_roots,
+        candidates=candidates,
+        selected=selected,
+        shadowed=shadowed,
+    )
+
+
+def _load_discovered_agent_manifest(
+    candidate: AgentManifestCandidate,
+) -> DiscoveredAgentManifest:
+    discovered = DiscoveredAgentManifest(
+        manifest=load_agent_manifest(candidate.path),
+        candidate=candidate,
+    )
+    _validate_manifest_scope(discovered)
+    return discovered
+
+
+def _validate_manifest_scope(discovered: DiscoveredAgentManifest) -> None:
+    if discovered.manifest.source == discovered.scope:
+        return
+    raise AgentManifestError(
+        "Agent manifest source/scope mismatch for "
+        f"{discovered.path}: declared source {discovered.manifest.source!r} "
+        f"does not match discovered scope {discovered.scope!r}."
+    )
+
+
+def _resolve_manifest_precedence(
+    manifests: Sequence[DiscoveredAgentManifest],
+) -> tuple[tuple[DiscoveredAgentManifest, ...], tuple[DiscoveredAgentManifest, ...]]:
+    selected: dict[str, DiscoveredAgentManifest] = {}
+    shadowed: list[DiscoveredAgentManifest] = []
+
+    for discovered in sorted(manifests, key=_discovered_manifest_sort_key):
+        current = selected.get(discovered.name)
+        if current is None:
+            selected[discovered.name] = discovered
+            continue
+        if current.scope == discovered.scope:
+            raise AgentManifestError(
+                "Duplicate agent manifest name "
+                f"{discovered.name!r} in {discovered.scope} scope: "
+                f"{current.path} and {discovered.path}. "
+                "Use unique manifest names within the same scope."
+            )
+        winner, loser = _pick_manifest_winner(current, discovered)
+        selected[discovered.name] = winner
+        shadowed.append(loser)
+
+    return (
+        tuple(selected[name] for name in sorted(selected)),
+        tuple(sorted(shadowed, key=_discovered_manifest_sort_key)),
+    )
+
+
+def _pick_manifest_winner(
+    left: DiscoveredAgentManifest,
+    right: DiscoveredAgentManifest,
+) -> tuple[DiscoveredAgentManifest, DiscoveredAgentManifest]:
+    if _scope_precedence_rank(left.scope) <= _scope_precedence_rank(right.scope):
+        return left, right
+    return right, left
+
+
+def _discovered_manifest_sort_key(item: DiscoveredAgentManifest) -> tuple[int, str, str]:
+    return (
+        _scope_precedence_rank(item.scope),
+        item.name,
+        str(item.path),
+    )
+
+
+def _scope_precedence_rank(scope: str) -> int:
+    try:
+        return AGENT_MANIFEST_SCOPE_PRECEDENCE[scope]
+    except KeyError as exc:
+        allowed = ", ".join(AGENT_MANIFEST_DISCOVERY_SCOPES)
+        raise ValueError(
+            "Unsupported agent manifest discovery scope "
+            f"{scope!r}; expected one of {allowed}"
+        ) from exc
 
 
 def _coerce_mapping(
