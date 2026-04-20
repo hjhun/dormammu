@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, TextIO
 
 from dormammu.agent import CliAdapter
 from dormammu.agent.models import AgentRunRequest
-from dormammu.agent.profiles import AgentProfile, resolve_agent_profile
+from dormammu.agent.profiles import AgentProfile
 from dormammu.daemon._patterns import (
     CHECKPOINT_PROCEED_RE as _CHECKPOINT_PROCEED_RE,
     CHECKPOINT_REWORK_RE as _CHECKPOINT_REWORK_RE,
@@ -103,7 +103,7 @@ class PipelineRunner:
         self._stop_event = stop_event
 
     def _profile_for_role(self, role: str) -> AgentProfile:
-        return resolve_agent_profile(role, agents_config=self._agents)
+        return self._app_config.resolve_agent_profile(role)
 
     # ------------------------------------------------------------------
     # Public API

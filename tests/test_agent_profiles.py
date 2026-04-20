@@ -27,6 +27,10 @@ def _make_app_config(*, active_agent_cli: Path | None, agents: AgentsConfig | No
     mock.repo_root = Path("/tmp/repo")
     mock.base_dev_dir = Path("/tmp/repo/.dev")
     mock.agents_dir = Path("/tmp/repo/agents")
+    mock.resolve_agent_profile.side_effect = lambda role: resolve_agent_profile(
+        role,
+        agents_config=agents,
+    )
     return mock
 
 

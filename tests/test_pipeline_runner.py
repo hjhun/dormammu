@@ -11,6 +11,7 @@ import pytest
 
 from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.daemon.cli_output import select_agent_output
+from dormammu.agent.profiles import resolve_agent_profile
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 from dormammu.daemon.models import StageResult
 from dormammu.daemon.pipeline_runner import (
@@ -48,6 +49,10 @@ def _make_app_config(tmp_path: Path, *, agents: AgentsConfig | None = None) -> A
     mock.agents_dir = Path(__file__).resolve().parents[1] / "agents"
     mock.agents = agents
     mock.runtime_path_prompt.return_value = ""
+    mock.resolve_agent_profile.side_effect = lambda role: resolve_agent_profile(
+        role,
+        agents_config=agents,
+    )
     return mock
 
 

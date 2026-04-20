@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from dormammu.agent.permissions import (
     AgentPermissionPolicyOverride,
+    merge_permission_policy_override,
     parse_permission_policy_override,
 )
 
@@ -77,6 +78,36 @@ class AgentsConfig:
 
     def to_dict(self) -> dict[str, object]:
         return {role: getattr(self, role).to_dict() for role in ROLE_NAMES}
+
+
+def merge_role_agent_config(
+    base: RoleAgentConfig,
+    override: RoleAgentConfig,
+) -> RoleAgentConfig:
+    return RoleAgentConfig(
+        cli=override.cli if override.cli is not None else base.cli,
+        model=override.model if override.model is not None else base.model,
+        permission_policy=merge_permission_policy_override(
+            base.permission_policy,
+            override.permission_policy,
+        ),
+    )
+
+
+def merge_agents_config(
+    base: AgentsConfig | None,
+    override: AgentsConfig | None,
+) -> AgentsConfig | None:
+    if base is None:
+        return override
+    if override is None:
+        return base
+    return AgentsConfig(
+        **{
+            role: merge_role_agent_config(base.for_role(role), override.for_role(role))
+            for role in ROLE_NAMES
+        }
+    )
 
 
 def _parse_role_agent_config(

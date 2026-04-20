@@ -12,6 +12,7 @@ from dormammu.telegram.config import TelegramConfig, parse_telegram_config
 from dormammu.workspace import WorkspacePaths, resolve_workspace_paths
 
 if TYPE_CHECKING:
+    from dormammu.agent.profiles import AgentProfile
     from dormammu.agent.role_config import AgentsConfig
 
 
@@ -162,6 +163,20 @@ def _resolve_config_file(
     global_candidate = _default_global_config_path(global_home_dir)
     if global_candidate.exists():
         return global_candidate.resolve()
+    return None
+
+
+def _project_config_file(root: Path) -> Path | None:
+    candidate = root / DEFAULT_CONFIG_FILENAME
+    if candidate.exists():
+        return candidate.resolve()
+    return None
+
+
+def _global_config_file(global_home_dir: Path) -> Path | None:
+    candidate = _default_global_config_path(global_home_dir)
+    if candidate.exists():
+        return candidate.resolve()
     return None
 
 
@@ -587,6 +602,11 @@ class AppConfig:
         )
         config_file = _resolve_config_file(root, values, global_home_dir=global_home_dir)
         config_payload = _load_config_payload(config_file)
+        agents_config = _load_effective_agents_config(
+            root=root,
+            global_home_dir=global_home_dir,
+            explicit_config_file=config_file if values.get("DORMAMMU_CONFIG_PATH") else None,
+        )
         fallback_agent_clis = (
             _parse_fallback_agent_clis(
                 config_payload.get("fallback_agent_clis"),
@@ -639,10 +659,7 @@ class AppConfig:
                 config_payload.get("telegram"),
                 config_path=config_file,
             ),
-            agents=_parse_agents_config(
-                config_payload.get("agents"),
-                config_path=config_file,
-            ),
+            agents=agents_config,
             process_timeout_seconds=(
                 int(config_payload["process_timeout_seconds"])
                 if "process_timeout_seconds" in config_payload
@@ -653,6 +670,11 @@ class AppConfig:
 
     def with_overrides(self, **kwargs: object) -> "AppConfig":
         return replace(self, **kwargs)
+
+    def resolve_agent_profile(self, role: str) -> "AgentProfile":
+        from dormammu.agent.profiles import resolve_agent_profile  # noqa: PLC0415
+
+        return resolve_agent_profile(role, agents_config=self.agents)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -714,3 +736,31 @@ def _parse_agents_config(
     from dormammu.agent.role_config import parse_agents_config  # noqa: PLC0415
 
     return parse_agents_config(value, config_path=config_path)
+
+
+def _load_effective_agents_config(
+    *,
+    root: Path,
+    global_home_dir: Path,
+    explicit_config_file: Path | None,
+) -> "AgentsConfig | None":
+    from dormammu.agent.role_config import merge_agents_config  # noqa: PLC0415
+
+    if explicit_config_file is not None:
+        explicit_payload = _load_config_payload(explicit_config_file)
+        return _parse_agents_config(
+            explicit_payload.get("agents"),
+            config_path=explicit_config_file,
+        )
+
+    global_config_file = _global_config_file(global_home_dir)
+    project_config_file = _project_config_file(root)
+    global_agents = _parse_agents_config(
+        _load_config_payload(global_config_file).get("agents"),
+        config_path=global_config_file,
+    )
+    project_agents = _parse_agents_config(
+        _load_config_payload(project_config_file).get("agents"),
+        config_path=project_config_file,
+    )
+    return merge_agents_config(global_agents, project_agents)

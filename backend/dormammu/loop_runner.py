@@ -9,7 +9,7 @@ from typing import Any, Sequence
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import AgentRunRequest, CliAdapter
-from dormammu.agent.profiles import AgentProfile, resolve_agent_profile
+from dormammu.agent.profiles import AgentProfile
 from dormammu.config import AppConfig
 from dormammu.continuation import build_continuation_prompt
 from dormammu.state import StateRepository
@@ -184,10 +184,7 @@ class LoopRunner:
         self.supervisor = supervisor or Supervisor(config, repository=self.repository)
 
     def resolve_agent_profile(self, request: LoopRunRequest) -> AgentProfile:
-        return resolve_agent_profile(
-            request.agent_role,
-            agents_config=self.config.agents,
-        )
+        return self.config.resolve_agent_profile(request.agent_role)
 
     def run(
         self,

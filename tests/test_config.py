@@ -166,6 +166,166 @@ class ConfigTests(unittest.TestCase):
                 ("-y", "--verbose", "--timeout", "1200"),
             )
 
+    def test_resolve_agent_profile_uses_builtin_defaults_when_agents_config_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            profile = config.resolve_agent_profile("planner")
+
+            self.assertEqual(profile.name, "planner")
+            self.assertEqual(profile.source, "built_in")
+            self.assertIsNone(profile.cli_override)
+            self.assertIsNone(profile.model_override)
+
+    def test_load_merges_global_agent_profile_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            config_path = home_dir / ".dormammu" / "config"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "cli": "claude",
+                                "model": "claude-opus-4-5",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            profile = config.resolve_agent_profile("planner")
+
+            self.assertEqual(profile.source, "configured")
+            self.assertEqual(profile.cli_override, Path("claude"))
+            self.assertEqual(profile.model_override, "claude-opus-4-5")
+
+    def test_load_merges_project_agent_profile_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "cli": "codex",
+                                "model": "gpt-5.4",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            profile = config.resolve_agent_profile("planner")
+
+            self.assertEqual(profile.source, "configured")
+            self.assertEqual(profile.cli_override, Path("codex"))
+            self.assertEqual(profile.model_override, "gpt-5.4")
+
+    def test_load_prefers_project_agent_profile_values_over_global_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            global_config_path = home_dir / ".dormammu" / "config"
+            global_config_path.parent.mkdir(parents=True, exist_ok=True)
+            global_config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "cli": "claude",
+                                "model": "claude-opus-4-5",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "cli": "codex",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            profile = config.resolve_agent_profile("planner")
+
+            self.assertEqual(profile.source, "configured")
+            self.assertEqual(profile.cli_override, Path("codex"))
+            self.assertEqual(profile.model_override, "claude-opus-4-5")
+
+    def test_load_preserves_active_agent_cli_behavior_when_profile_config_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps({"active_agent_cli": "/opt/tools/codex"}),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            profile = config.resolve_agent_profile("developer")
+
+            self.assertEqual(profile.source, "built_in")
+            self.assertEqual(profile.resolve_cli(config.active_agent_cli), Path("/opt/tools/codex"))
+
     def test_load_preserves_absolute_symlink_for_active_agent_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

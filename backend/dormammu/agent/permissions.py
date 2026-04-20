@@ -383,6 +383,22 @@ class AgentPermissionPolicyOverride:
         }
 
 
+def merge_permission_policy_override(
+    base: AgentPermissionPolicyOverride | None,
+    override: AgentPermissionPolicyOverride | None,
+) -> AgentPermissionPolicyOverride | None:
+    if base is None or base.is_empty():
+        return override
+    if override is None or override.is_empty():
+        return base
+    return AgentPermissionPolicyOverride(
+        tools=_merge_tool_policy_override(base.tools, override.tools),
+        filesystem=_merge_filesystem_policy_override(base.filesystem, override.filesystem),
+        network=_merge_network_policy_override(base.network, override.network),
+        worktree=_merge_worktree_policy_override(base.worktree, override.worktree),
+    )
+
+
 def merge_permission_policy(
     base: AgentPermissionPolicy,
     override: AgentPermissionPolicyOverride | None,
@@ -428,6 +444,62 @@ def merge_permission_policy(
                 override.worktree.rules if override.worktree is not None else ()
             ),
         ),
+    )
+
+
+def _merge_tool_policy_override(
+    base: ToolPermissionPolicyOverride | None,
+    override: ToolPermissionPolicyOverride | None,
+) -> ToolPermissionPolicyOverride | None:
+    if base is None:
+        return override
+    if override is None:
+        return base
+    return ToolPermissionPolicyOverride(
+        default=override.default if override.default is not None else base.default,
+        rules=base.rules + override.rules,
+    )
+
+
+def _merge_filesystem_policy_override(
+    base: FilesystemPermissionPolicyOverride | None,
+    override: FilesystemPermissionPolicyOverride | None,
+) -> FilesystemPermissionPolicyOverride | None:
+    if base is None:
+        return override
+    if override is None:
+        return base
+    return FilesystemPermissionPolicyOverride(
+        default=override.default if override.default is not None else base.default,
+        rules=base.rules + override.rules,
+    )
+
+
+def _merge_network_policy_override(
+    base: NetworkPermissionPolicyOverride | None,
+    override: NetworkPermissionPolicyOverride | None,
+) -> NetworkPermissionPolicyOverride | None:
+    if base is None:
+        return override
+    if override is None:
+        return base
+    return NetworkPermissionPolicyOverride(
+        default=override.default if override.default is not None else base.default,
+        rules=base.rules + override.rules,
+    )
+
+
+def _merge_worktree_policy_override(
+    base: WorktreePermissionPolicyOverride | None,
+    override: WorktreePermissionPolicyOverride | None,
+) -> WorktreePermissionPolicyOverride | None:
+    if base is None:
+        return override
+    if override is None:
+        return base
+    return WorktreePermissionPolicyOverride(
+        default=override.default if override.default is not None else base.default,
+        rules=base.rules + override.rules,
     )
 
 
