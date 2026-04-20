@@ -185,6 +185,8 @@ def _parse_workflow_phase_statuses(text: str) -> tuple[list[str], list[str]]:
     done: list[str] = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
+        if line.startswith(("- ", "* ")):
+            line = line[2:].lstrip()
         if line.startswith("[ ] "):
             pending.append(line[4:].strip())
         elif line.startswith("[O] "):

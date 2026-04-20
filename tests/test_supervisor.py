@@ -601,6 +601,38 @@ class SupervisorWorkflowsCompletionSmokeTests(unittest.TestCase):
                 "manual-run approval should describe the pending-commit exception accurately",
             )
 
+    def test_approved_when_workflows_use_bullet_prefixed_checkboxes(self) -> None:
+        """Bullet-prefixed workflow checklist lines should count as completed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, repository = self._setup(
+                root,
+                prompt_text="Implement X.",
+                stdout_text="Implementation and validation are complete.\n",
+            )
+            self._mark_plan_complete(repository)
+
+            repository.state_file("WORKFLOWS.md").write_text(
+                "# Workflows\n\n## Task: smoke\n\n"
+                "- [O] Phase 0. Refine\n"
+                "- [O] Phase 1. Plan\n"
+                "- [O] Phase 2. Design\n"
+                "- [O] Phase 3. Develop\n"
+                "- [O] Phase 4. Test and Review\n"
+                "- [O] Phase 5. Final Verify\n",
+                encoding="utf-8",
+            )
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "approved")
+            self.assertTrue(
+                any(check.name == "workflows-completion" and check.ok for check in report.checks),
+                "workflows-completion should accept bullet-prefixed completed phases",
+            )
+
     def test_rework_required_when_commit_prompt_leaves_commit_pending(self) -> None:
         """A prompt that explicitly asks for a commit must not pass with commit still pending."""
         with tempfile.TemporaryDirectory() as tmpdir:
