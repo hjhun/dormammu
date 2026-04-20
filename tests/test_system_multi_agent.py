@@ -30,6 +30,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dormammu.agent.profiles import resolve_agent_profile
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 from dormammu.daemon.goals_config import GoalsConfig
 from dormammu.daemon.goals_scheduler import GoalsScheduler
@@ -65,6 +66,10 @@ def _make_app_config(tmp_path: Path, *, agents: AgentsConfig | None = None) -> A
     mock.base_dev_dir = tmp_path / ".dev"
     mock.active_agent_cli = None
     mock.agents = agents
+    mock.resolve_agent_profile.side_effect = lambda role: resolve_agent_profile(
+        role,
+        agents_config=agents,
+    )
     return mock
 
 

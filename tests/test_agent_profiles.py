@@ -3,7 +3,9 @@ from __future__ import annotations
 import io
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from dormammu.agent.permissions import (
     PermissionDecision,
@@ -14,6 +16,7 @@ from dormammu.agent.profiles import (
     built_in_profiles,
     normalize_agent_profiles,
     resolve_agent_profile,
+    resolve_runtime_role_profile,
 )
 from dormammu.agent.role_config import AgentsConfig, ROLE_NAMES, RoleAgentConfig
 from dormammu.daemon.pipeline_runner import PipelineRunner
@@ -100,6 +103,22 @@ class TestProfileNormalization:
     def test_normalize_agent_profiles_contains_all_runtime_roles(self) -> None:
         profiles = normalize_agent_profiles(agents_config=AgentsConfig())
         assert tuple(profiles.keys()) == ROLE_NAMES
+
+    def test_invalid_runtime_role_mapping_fails_clearly(self) -> None:
+        profiles = normalize_agent_profiles(agents_config=AgentsConfig())
+        with pytest.raises(
+            ValueError,
+            match="maps to profile 'missing-profile', but no effective profile",
+        ):
+            with patch.dict(
+                "dormammu.agent.profiles.ROLE_TO_PROFILE_NAME",
+                {"planner": "missing-profile"},
+                clear=False,
+            ):
+                resolve_runtime_role_profile(
+                    "planner",
+                    normalized_profiles=profiles,
+                )
 
 
 class TestRuntimeProfileResolution:

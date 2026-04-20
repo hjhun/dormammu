@@ -15,6 +15,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from dormammu.config import AppConfig, discover_repo_root, set_config_value
+from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 
 
 class ConfigTests(unittest.TestCase):
@@ -325,6 +326,54 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(profile.source, "built_in")
             self.assertEqual(profile.resolve_cli(config.active_agent_cli), Path("/opt/tools/codex"))
+
+    def test_load_normalizes_effective_agent_profiles_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "planner": {
+                                "cli": "codex",
+                                "model": "gpt-5.4",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            self.assertIsNotNone(config.agent_profiles)
+            planner_profile = config.agent_profiles["planner"]
+            self.assertEqual(planner_profile.cli_override, Path("codex"))
+            self.assertEqual(planner_profile.model_override, "gpt-5.4")
+
+    def test_with_overrides_recomputes_agent_profiles_when_agents_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = AppConfig.load(repo_root=root)
+
+            updated = config.with_overrides(
+                agents=AgentsConfig(
+                    reviewer=RoleAgentConfig(cli=Path("claude"), model="claude-sonnet-4-5")
+                )
+            )
+
+            self.assertIsNotNone(updated.agent_profiles)
+            reviewer_profile = updated.agent_profiles["reviewer"]
+            self.assertEqual(reviewer_profile.cli_override, Path("claude"))
+            self.assertEqual(reviewer_profile.model_override, "claude-sonnet-4-5")
 
     def test_load_preserves_absolute_symlink_for_active_agent_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

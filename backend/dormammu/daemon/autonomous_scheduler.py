@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, TextIO
 
 from dormammu.agent import CliAdapter
 from dormammu.agent.models import AgentRunRequest
-from dormammu.agent.role_config import AgentsConfig
 from dormammu.daemon.cli_output import model_args, select_agent_output
 
 if TYPE_CHECKING:
@@ -308,11 +307,10 @@ class AutonomousScheduler:
         focus_desc = _FOCUS_DESCRIPTIONS.get(self._config.focus, _FOCUS_DESCRIPTIONS["all"])
         analyzer_prompt = self._build_analyzer_prompt(context, focus_desc)
 
-        agents = getattr(self._app_config, "agents", None) or AgentsConfig()
         active_cli = getattr(self._app_config, "active_agent_cli", None)
 
-        analyzer_cfg = agents.for_role("analyzer")
-        analyzer_cli = analyzer_cfg.resolve_cli(active_cli)
+        analyzer_profile = self._app_config.resolve_agent_profile("analyzer")
+        analyzer_cli = analyzer_profile.resolve_cli(active_cli)
         if analyzer_cli is None:
             self._log("autonomous scheduler: no analyzer CLI configured; skipping")
             return None
@@ -327,7 +325,7 @@ class AutonomousScheduler:
             cli_path=analyzer_cli,
             prompt_text=analyzer_prompt,
             repo_root=self._app_config.repo_root,
-            extra_args=tuple(model_args(analyzer_cli.name, analyzer_cfg.model)),
+            extra_args=tuple(model_args(analyzer_cli.name, analyzer_profile.model_override)),
             run_label=f"autonomous-analyzer-{date_str}",
         )
         try:

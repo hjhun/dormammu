@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Mapping
 
 from dormammu.agent.permissions import (
     AgentPermissionPolicy,
@@ -97,7 +98,14 @@ def built_in_profiles() -> tuple[AgentProfile, ...]:
 
 
 def built_in_profile_for_role(role: str) -> AgentProfile:
-    return _BUILTIN_PROFILES_BY_NAME[profile_name_for_role(role)]
+    profile_name = profile_name_for_role(role)
+    profile = _BUILTIN_PROFILES_BY_NAME.get(profile_name)
+    if profile is None:
+        raise ValueError(
+            f"Role {role!r} maps to profile {profile_name!r}, "
+            "but no built-in profile with that name is available."
+        )
+    return profile
 
 
 def profile_from_role_config(
@@ -124,16 +132,50 @@ def resolve_agent_profile(
     role: str,
     *,
     agents_config: AgentsConfig | None = None,
+    normalized_profiles: Mapping[str, AgentProfile] | None = None,
 ) -> AgentProfile:
-    role_config = agents_config.for_role(role) if agents_config is not None else None
-    return profile_from_role_config(role, role_config)
+    return resolve_runtime_role_profile(
+        role,
+        agents_config=agents_config,
+        normalized_profiles=normalized_profiles,
+    )
 
 
 def normalize_agent_profiles(
     *,
     agents_config: AgentsConfig | None = None,
 ) -> dict[str, AgentProfile]:
-    return {
-        role: resolve_agent_profile(role, agents_config=agents_config)
-        for role in ROLE_NAMES
-    }
+    profiles: dict[str, AgentProfile] = {}
+    for role in ROLE_NAMES:
+        role_config = agents_config.for_role(role) if agents_config is not None else None
+        profile = profile_from_role_config(role, role_config)
+        if profile.name in profiles:
+            raise ValueError(
+                f"Duplicate effective profile name {profile.name!r} while normalizing roles."
+            )
+        profiles[profile.name] = profile
+    return profiles
+
+
+def resolve_runtime_role_profile(
+    role: str,
+    *,
+    agents_config: AgentsConfig | None = None,
+    normalized_profiles: Mapping[str, AgentProfile] | None = None,
+) -> AgentProfile:
+    if role not in ROLE_TO_PROFILE_NAME:
+        raise ValueError(f"Unknown role: {role!r}. Valid roles: {ROLE_NAMES}")
+
+    profile_name = ROLE_TO_PROFILE_NAME[role]
+    profiles = (
+        dict(normalized_profiles)
+        if normalized_profiles is not None
+        else normalize_agent_profiles(agents_config=agents_config)
+    )
+    profile = profiles.get(profile_name)
+    if profile is None:
+        raise ValueError(
+            f"Role {role!r} maps to profile {profile_name!r}, "
+            "but no effective profile with that name is available."
+        )
+    return profile

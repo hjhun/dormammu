@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, TextIO
 
 from dormammu.agent import CliAdapter
 from dormammu.agent.models import AgentRunRequest
-from dormammu.agent.role_config import AgentsConfig
 from dormammu.daemon.cli_output import model_args, select_agent_output
 
 if TYPE_CHECKING:
@@ -217,25 +216,24 @@ class GoalsScheduler:
 
     def _generate_prompt(self, goal_text: str, stem: str, date_str: str) -> str:
         """Generate an analysis+plan+design prompt from goal content."""
-        agents = getattr(self._app_config, "agents", None) or AgentsConfig()
         active_cli = getattr(self._app_config, "active_agent_cli", None)
 
         analysis_text: str | None = None
         plan_text: str | None = None
         design_text: str | None = None
 
-        analyzer_cfg = agents.for_role("analyzer")
-        planner_cfg = agents.for_role("planner")
-        designer_cfg = agents.for_role("designer")
-        analyzer_cli = analyzer_cfg.resolve_cli(active_cli)
-        planner_cli = planner_cfg.resolve_cli(active_cli)
-        designer_cli = designer_cfg.resolve_cli(active_cli)
+        analyzer_profile = self._app_config.resolve_agent_profile("analyzer")
+        planner_profile = self._app_config.resolve_agent_profile("planner")
+        designer_profile = self._app_config.resolve_agent_profile("designer")
+        analyzer_cli = analyzer_profile.resolve_cli(active_cli)
+        planner_cli = planner_profile.resolve_cli(active_cli)
+        designer_cli = designer_profile.resolve_cli(active_cli)
 
         if analyzer_cli is not None:
             analysis_text = self._call_role_agent(
                 role="analyzer",
                 cli=analyzer_cli,
-                model=analyzer_cfg.model,
+                model=analyzer_profile.model_override,
                 prompt=self._analyzer_prompt(goal_text),
                 stem=stem,
                 date_str=date_str,
@@ -245,7 +243,7 @@ class GoalsScheduler:
             plan_text = self._call_role_agent(
                 role="planner",
                 cli=planner_cli,
-                model=planner_cfg.model,
+                model=planner_profile.model_override,
                 prompt=self._planner_prompt(goal_text, analysis_text),
                 stem=stem,
                 date_str=date_str,
@@ -255,7 +253,7 @@ class GoalsScheduler:
             design_text = self._call_role_agent(
                 role="designer",
                 cli=designer_cli,
-                model=designer_cfg.model,
+                model=designer_profile.model_override,
                 prompt=self._designer_prompt(goal_text, analysis_text, plan_text),
                 stem=stem,
                 date_str=date_str,
@@ -446,5 +444,4 @@ class GoalsScheduler:
     def _log(self, message: str) -> None:
         print(message, file=self._progress_stream)
         self._progress_stream.flush()
-
 

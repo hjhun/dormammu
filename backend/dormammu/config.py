@@ -572,6 +572,7 @@ class AppConfig:
     default_guidance_files: tuple[Path, ...] = ()
     telegram_config: TelegramConfig | None = None
     agents: AgentsConfig | None = None
+    agent_profiles: dict[str, AgentProfile] | None = None
     process_timeout_seconds: int | None = None
     fallback_on_nonzero_exit: bool = False
 
@@ -660,6 +661,7 @@ class AppConfig:
                 config_path=config_file,
             ),
             agents=agents_config,
+            agent_profiles=_normalize_agent_profiles(agents_config=agents_config),
             process_timeout_seconds=(
                 int(config_payload["process_timeout_seconds"])
                 if "process_timeout_seconds" in config_payload
@@ -669,12 +671,22 @@ class AppConfig:
         )
 
     def with_overrides(self, **kwargs: object) -> "AppConfig":
-        return replace(self, **kwargs)
+        updated = replace(self, **kwargs)
+        if "agent_profiles" in kwargs or "agents" not in kwargs:
+            return updated
+        return replace(
+            updated,
+            agent_profiles=_normalize_agent_profiles(agents_config=updated.agents),
+        )
 
     def resolve_agent_profile(self, role: str) -> "AgentProfile":
         from dormammu.agent.profiles import resolve_agent_profile  # noqa: PLC0415
 
-        return resolve_agent_profile(role, agents_config=self.agents)
+        return resolve_agent_profile(
+            role,
+            agents_config=self.agents,
+            normalized_profiles=self.agent_profiles,
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -705,6 +717,14 @@ class AppConfig:
             "default_guidance_files": [str(path) for path in self.default_guidance_files],
             "telegram_config": self.telegram_config.to_dict() if self.telegram_config else None,
             "agents": self.agents.to_dict() if self.agents else None,
+            "agent_profiles": (
+                {
+                    name: profile.to_dict()
+                    for name, profile in (self.agent_profiles or {}).items()
+                }
+                if self.agent_profiles is not None
+                else None
+            ),
             "process_timeout_seconds": self.process_timeout_seconds,
             "fallback_on_nonzero_exit": self.fallback_on_nonzero_exit,
         }
@@ -764,3 +784,12 @@ def _load_effective_agents_config(
         config_path=project_config_file,
     )
     return merge_agents_config(global_agents, project_agents)
+
+
+def _normalize_agent_profiles(
+    *,
+    agents_config: "AgentsConfig | None",
+) -> "dict[str, AgentProfile]":
+    from dormammu.agent.profiles import normalize_agent_profiles  # noqa: PLC0415
+
+    return normalize_agent_profiles(agents_config=agents_config)
