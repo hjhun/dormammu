@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import tempfile
@@ -176,6 +177,28 @@ class ConfigTests(unittest.TestCase):
                 config.cli_overrides["cline"].extra_args,
                 ("-y", "--verbose", "--timeout", "1200"),
             )
+
+    def test_load_rejects_non_boolean_worktree_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "worktree": {
+                            "enabled": "false",
+                            "root_dir": "./runtime-worktrees",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                rf"worktree\.enabled must be a boolean in {re.escape(str(config_path.resolve()))}",
+            ):
+                AppConfig.load(repo_root=root, env={"HOME": str(root)})
 
     def test_load_falls_back_to_temp_global_home_when_default_home_is_not_writable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from dormammu.hooks import HookCatalog, load_hook_config_layer, resolve_hook_catalog
 from dormammu.telegram.config import TelegramConfig, parse_telegram_config
+from dormammu.worktree import WorktreeServiceConfig
 from dormammu.workspace import WorkspacePaths, resolve_workspace_paths
 
 if TYPE_CHECKING:
@@ -123,6 +124,40 @@ def _resolve_sessions_dir_override(
     if ambient_root.resolve() != root.resolve():
         return None
     return _resolve_path_override(raw_value, root=root)
+
+
+def _default_worktree_root_dir(workspace_project_root: Path) -> Path:
+    return (workspace_project_root / "worktrees").resolve()
+
+
+def _parse_worktree_config(
+    value: Any,
+    *,
+    root: Path,
+    workspace_project_root: Path,
+    config_path: Path | None,
+) -> WorktreeServiceConfig:
+    default_root_dir = _default_worktree_root_dir(workspace_project_root)
+    if value is None:
+        return WorktreeServiceConfig(
+            enabled=False,
+            root_dir=default_root_dir,
+        )
+    if not isinstance(value, Mapping):
+        source = str(config_path) if config_path is not None else DEFAULT_CONFIG_FILENAME
+        raise RuntimeError(f"worktree must be a JSON object in {source}")
+    raw_root_dir = value.get("root_dir")
+    if raw_root_dir is not None and not isinstance(raw_root_dir, str):
+        source = str(config_path) if config_path is not None else DEFAULT_CONFIG_FILENAME
+        raise RuntimeError(f"worktree.root_dir must be a string in {source}")
+    raw_enabled = value.get("enabled", False)
+    if not isinstance(raw_enabled, bool):
+        source = str(config_path) if config_path is not None else DEFAULT_CONFIG_FILENAME
+        raise RuntimeError(f"worktree.enabled must be a boolean in {source}")
+    return WorktreeServiceConfig(
+        enabled=raw_enabled,
+        root_dir=_resolve_path_override(raw_root_dir, root=root) or default_root_dir,
+    )
 
 
 def _nearest_existing_parent(path: Path) -> Path:
@@ -573,6 +608,7 @@ class AppConfig:
     dev_dir: Path
     sessions_dir: Path
     logs_dir: Path
+    worktree: WorktreeServiceConfig
     templates_dir: Path
     agents_dir: Path
     project_agent_manifests_dir: Path
@@ -657,6 +693,12 @@ class AppConfig:
                 or workspace_paths.sessions_dir
             ),
             logs_dir=workspace_paths.logs_dir,
+            worktree=_parse_worktree_config(
+                config_payload.get("worktree"),
+                root=root,
+                workspace_project_root=workspace_paths.workspace_project_root,
+                config_path=config_file,
+            ),
             templates_dir=asset_root / "templates",
             agents_dir=agents_dir,
             project_agent_manifests_dir=_project_agent_manifests_dir(root),
@@ -756,6 +798,7 @@ class AppConfig:
             "dev_dir": str(self.dev_dir),
             "sessions_dir": str(self.sessions_dir),
             "logs_dir": str(self.logs_dir),
+            "worktree": self.worktree.to_dict(),
             "templates_dir": str(self.templates_dir),
             "agents_dir": str(self.agents_dir),
             "project_agent_manifests_dir": str(self.project_agent_manifests_dir),
