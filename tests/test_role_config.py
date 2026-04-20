@@ -23,6 +23,7 @@ class TestRoleAgentConfig:
         cfg = RoleAgentConfig()
         assert cfg.cli is None
         assert cfg.model is None
+        assert cfg.permission_policy is None
 
     def test_resolve_cli_uses_own_when_set(self) -> None:
         cfg = RoleAgentConfig(cli=Path("my-cli"))
@@ -41,6 +42,7 @@ class TestRoleAgentConfig:
         d = cfg.to_dict()
         assert d["cli"] == "claude"
         assert d["model"] == "claude-opus-4-5"
+        assert d["permission_policy"] is None
 
     def test_to_dict_none_fields(self) -> None:
         cfg = RoleAgentConfig()
@@ -97,7 +99,21 @@ class TestParseAgentsConfig:
             "analyzer": {"cli": "claude", "model": "claude-sonnet-4-5"},
             "planner": {"cli": "claude", "model": "claude-opus-4-5"},
             "designer": {"model": "claude-opus-4-5"},
-            "developer": {"cli": "claude"},
+            "developer": {
+                "cli": "claude",
+                "permission_policy": {
+                    "tools": {"default": "deny"},
+                    "filesystem": {
+                        "rules": [
+                            {
+                                "path": "./sandbox",
+                                "decision": "allow",
+                                "access": ["read", "write"],
+                            }
+                        ]
+                    },
+                },
+            },
             "tester": {},
             "reviewer": {"cli": "claude", "model": "claude-sonnet-4-5"},
             "committer": {"model": "claude-haiku-4-5"},
@@ -112,6 +128,13 @@ class TestParseAgentsConfig:
         assert result.designer.model == "claude-opus-4-5"
         assert result.developer.cli == Path("claude")
         assert result.developer.model is None
+        assert result.developer.permission_policy is not None
+        assert result.developer.permission_policy.tools is not None
+        assert result.developer.permission_policy.tools.default is not None
+        assert result.developer.permission_policy.filesystem is not None
+        assert result.developer.permission_policy.filesystem.rules[0].path == (
+            tmp_path / "sandbox"
+        ).resolve()
         assert result.tester == RoleAgentConfig()
         assert result.reviewer.cli == Path("claude")
         assert result.committer.cli is None
@@ -143,6 +166,17 @@ class TestParseAgentsConfig:
         cfg_path = tmp_path / "dormammu.json"
         with pytest.raises(RuntimeError, match="agents.developer.model must be a non-empty string"):
             parse_agents_config({"developer": {"model": "  "}}, config_path=cfg_path)
+
+    def test_permission_policy_not_a_mapping_raises(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "dormammu.json"
+        with pytest.raises(
+            RuntimeError,
+            match="agents.planner.permission_policy must be a JSON object",
+        ):
+            parse_agents_config(
+                {"planner": {"permission_policy": "deny"}},
+                config_path=cfg_path,
+            )
 
     def test_absolute_cli_path(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "dormammu.json"

@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from dormammu.agent.permissions import (
+    AgentPermissionPolicyOverride,
+    parse_permission_policy_override,
+)
+
 ROLE_NAMES: tuple[str, ...] = (
     "refiner",
     "analyzer",   # goals-scheduler path only (not used in the interactive pipeline)
@@ -27,6 +32,7 @@ class RoleAgentConfig:
 
     cli: Path | None = None
     model: str | None = None
+    permission_policy: AgentPermissionPolicyOverride | None = None
 
     def resolve_cli(self, active_agent_cli: Path | None) -> Path | None:
         """Return the effective CLI path.
@@ -41,6 +47,11 @@ class RoleAgentConfig:
         return {
             "cli": str(self.cli) if self.cli is not None else None,
             "model": self.model,
+            "permission_policy": (
+                self.permission_policy.to_dict()
+                if self.permission_policy is not None
+                else None
+            ),
         }
 
 
@@ -106,7 +117,21 @@ def _parse_role_agent_config(
             )
         model = model_raw.strip()
 
-    return RoleAgentConfig(cli=cli, model=model)
+    permission_policy_raw = value.get("permission_policy")
+    permission_policy: AgentPermissionPolicyOverride | None = None
+    if permission_policy_raw is not None:
+        permission_policy = parse_permission_policy_override(
+            permission_policy_raw,
+            config_root=config_path.parent if config_path is not None else None,
+            field_name=f"agents.{role}.permission_policy",
+            source=source,
+        )
+
+    return RoleAgentConfig(
+        cli=cli,
+        model=model,
+        permission_policy=permission_policy,
+    )
 
 
 def parse_agents_config(

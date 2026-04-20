@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+from dormammu.agent.permissions import (
+    PermissionDecision,
+    parse_permission_policy_override,
+)
 from dormammu.agent.profiles import (
     AgentProfile,
     built_in_profiles,
@@ -38,8 +42,10 @@ class TestBuiltInProfiles:
         assert profile.cli_override is None
         assert profile.model_override is None
         assert profile.resolve_cli(None) is None
-        assert profile.permission_policy.mode is None
-        assert profile.worktree_policy.mode is None
+        assert profile.permission_policy.tools.default is PermissionDecision.ASK
+        assert profile.permission_policy.filesystem.default is PermissionDecision.ASK
+        assert profile.permission_policy.network.default is PermissionDecision.ASK
+        assert profile.worktree_policy.default is PermissionDecision.ASK
 
 
 class TestProfileNormalization:
@@ -64,6 +70,28 @@ class TestProfileNormalization:
         assert profile.cli_override is None
         assert profile.model_override is None
         assert profile.resolve_cli(Path("codex")) == Path("codex")
+
+    def test_role_permission_policy_override_merges_with_builtin_defaults(self) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(
+                permission_policy=parse_permission_policy_override(
+                    {
+                        "tools": {"rules": [{"tool": "shell", "decision": "deny"}]},
+                        "network": "deny",
+                    },
+                    config_root=None,
+                    field_name="agents.developer.permission_policy",
+                    source="dormammu.json",
+                )
+            )
+        )
+
+        profile = resolve_agent_profile("developer", agents_config=agents)
+
+        assert profile.source == "configured"
+        assert profile.permission_policy.evaluate_tool("shell") is PermissionDecision.DENY
+        assert profile.permission_policy.network.default is PermissionDecision.DENY
+        assert profile.permission_policy.filesystem.default is PermissionDecision.ASK
 
     def test_normalize_agent_profiles_contains_all_runtime_roles(self) -> None:
         profiles = normalize_agent_profiles(agents_config=AgentsConfig())

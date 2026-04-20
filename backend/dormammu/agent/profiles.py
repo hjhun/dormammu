@@ -3,30 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from dormammu.agent.permissions import (
+    AgentPermissionPolicy,
+    WorktreePermissionPolicy,
+    merge_permission_policy,
+)
 from dormammu.agent.role_config import ROLE_NAMES, AgentsConfig, RoleAgentConfig
 
 BUILTIN_PROFILE_SOURCE = "built_in"
 CONFIGURED_PROFILE_SOURCE = "configured"
-
-
-@dataclass(frozen=True, slots=True)
-class AgentPermissionPolicy:
-    """Placeholder permission policy for future profile-backed policy work."""
-
-    mode: str | None = None
-
-    def to_dict(self) -> dict[str, str | None]:
-        return {"mode": self.mode}
-
-
-@dataclass(frozen=True, slots=True)
-class AgentWorktreePolicy:
-    """Placeholder worktree policy for future isolated execution support."""
-
-    mode: str | None = None
-
-    def to_dict(self) -> dict[str, str | None]:
-        return {"mode": self.mode}
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +24,13 @@ class AgentProfile:
     cli_override: Path | None = None
     model_override: str | None = None
     permission_policy: AgentPermissionPolicy = field(default_factory=AgentPermissionPolicy)
-    worktree_policy: AgentWorktreePolicy = field(default_factory=AgentWorktreePolicy)
 
     def resolve_cli(self, active_agent_cli: Path | None) -> Path | None:
         return self.cli_override if self.cli_override is not None else active_agent_cli
+
+    @property
+    def worktree_policy(self) -> WorktreePermissionPolicy:
+        return self.permission_policy.worktree
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -52,7 +40,6 @@ class AgentProfile:
             "cli_override": str(self.cli_override) if self.cli_override is not None else None,
             "model_override": self.model_override,
             "permission_policy": self.permission_policy.to_dict(),
-            "worktree_policy": self.worktree_policy.to_dict(),
         }
 
 
@@ -70,10 +57,18 @@ _ROLE_DESCRIPTIONS: dict[str, str] = {
 
 ROLE_TO_PROFILE_NAME: dict[str, str] = {role: role for role in ROLE_NAMES}
 
+
+def built_in_permission_policy_for_role(role: str) -> AgentPermissionPolicy:
+    if role not in ROLE_TO_PROFILE_NAME:
+        raise ValueError(f"Unknown role: {role!r}. Valid roles: {ROLE_NAMES}")
+    return AgentPermissionPolicy()
+
+
 BUILTIN_AGENT_PROFILES: tuple[AgentProfile, ...] = tuple(
     AgentProfile(
         name=ROLE_TO_PROFILE_NAME[role],
         description=_ROLE_DESCRIPTIONS[role],
+        permission_policy=built_in_permission_policy_for_role(role),
     )
     for role in ROLE_NAMES
 )
@@ -85,7 +80,9 @@ _BUILTIN_PROFILES_BY_NAME: dict[str, AgentProfile] = {
 
 def _role_override_present(role_config: RoleAgentConfig | None) -> bool:
     return role_config is not None and (
-        role_config.cli is not None or role_config.model is not None
+        role_config.cli is not None
+        or role_config.model is not None
+        or role_config.permission_policy is not None
     )
 
 
@@ -116,6 +113,10 @@ def profile_from_role_config(
         source=CONFIGURED_PROFILE_SOURCE,
         cli_override=role_config.cli,
         model_override=role_config.model,
+        permission_policy=merge_permission_policy(
+            base_profile.permission_policy,
+            role_config.permission_policy,
+        ),
     )
 
 
