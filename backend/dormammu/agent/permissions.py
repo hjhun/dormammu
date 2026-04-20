@@ -87,6 +87,19 @@ def _coerce_mapping(
     return value
 
 
+def _reject_unknown_keys(
+    payload: Mapping[str, Any],
+    *,
+    allowed_keys: set[str],
+    field_name: str,
+    source: str,
+) -> None:
+    unknown_keys = set(payload.keys()) - allowed_keys
+    if unknown_keys:
+        keys = ", ".join(sorted(unknown_keys))
+        raise RuntimeError(f"{field_name} contains unsupported keys ({keys}) in {source}")
+
+
 def _coerce_rule_list(
     value: Any,
     *,
@@ -511,10 +524,12 @@ def parse_permission_policy_override(
     source: str,
 ) -> AgentPermissionPolicyOverride:
     payload = _coerce_mapping(value, field_name=field_name, source=source)
-    unknown_keys = set(payload.keys()) - {"tools", "filesystem", "network", "worktree"}
-    if unknown_keys:
-        keys = ", ".join(sorted(unknown_keys))
-        raise RuntimeError(f"{field_name} contains unsupported keys ({keys}) in {source}")
+    _reject_unknown_keys(
+        payload,
+        allowed_keys={"tools", "filesystem", "network", "worktree"},
+        field_name=field_name,
+        source=source,
+    )
 
     return AgentPermissionPolicyOverride(
         tools=_parse_tool_policy_override(
@@ -554,12 +569,24 @@ def _parse_tool_policy_override(
             default=_normalize_decision(value, field_name=field_name, source=source)
         )
     payload = _coerce_mapping(value, field_name=field_name, source=source)
+    _reject_unknown_keys(
+        payload,
+        allowed_keys={"default", "rules"},
+        field_name=field_name,
+        source=source,
+    )
     rules: list[ToolPermissionRule] = []
     for index, raw_rule in enumerate(
         _coerce_rule_list(payload.get("rules"), field_name=f"{field_name}.rules", source=source)
     ):
         rule_payload = _coerce_mapping(
             raw_rule,
+            field_name=f"{field_name}.rules[{index}]",
+            source=source,
+        )
+        _reject_unknown_keys(
+            rule_payload,
+            allowed_keys={"tool", "decision"},
             field_name=f"{field_name}.rules[{index}]",
             source=source,
         )
@@ -602,12 +629,24 @@ def _parse_filesystem_policy_override(
             default=_normalize_decision(value, field_name=field_name, source=source)
         )
     payload = _coerce_mapping(value, field_name=field_name, source=source)
+    _reject_unknown_keys(
+        payload,
+        allowed_keys={"default", "rules"},
+        field_name=field_name,
+        source=source,
+    )
     rules: list[FilesystemPermissionRule] = []
     for index, raw_rule in enumerate(
         _coerce_rule_list(payload.get("rules"), field_name=f"{field_name}.rules", source=source)
     ):
         rule_payload = _coerce_mapping(
             raw_rule,
+            field_name=f"{field_name}.rules[{index}]",
+            source=source,
+        )
+        _reject_unknown_keys(
+            rule_payload,
+            allowed_keys={"path", "decision", "access"},
             field_name=f"{field_name}.rules[{index}]",
             source=source,
         )
@@ -655,12 +694,24 @@ def _parse_network_policy_override(
             default=_normalize_decision(value, field_name=field_name, source=source)
         )
     payload = _coerce_mapping(value, field_name=field_name, source=source)
+    _reject_unknown_keys(
+        payload,
+        allowed_keys={"default", "rules"},
+        field_name=field_name,
+        source=source,
+    )
     rules: list[NetworkPermissionRule] = []
     for index, raw_rule in enumerate(
         _coerce_rule_list(payload.get("rules"), field_name=f"{field_name}.rules", source=source)
     ):
         rule_payload = _coerce_mapping(
             raw_rule,
+            field_name=f"{field_name}.rules[{index}]",
+            source=source,
+        )
+        _reject_unknown_keys(
+            rule_payload,
+            allowed_keys={"host", "decision"},
             field_name=f"{field_name}.rules[{index}]",
             source=source,
         )
@@ -702,12 +753,24 @@ def _parse_worktree_policy_override(
             default=_normalize_decision(value, field_name=field_name, source=source)
         )
     payload = _coerce_mapping(value, field_name=field_name, source=source)
+    _reject_unknown_keys(
+        payload,
+        allowed_keys={"default", "rules"},
+        field_name=field_name,
+        source=source,
+    )
     rules: list[WorktreePermissionRule] = []
     for index, raw_rule in enumerate(
         _coerce_rule_list(payload.get("rules"), field_name=f"{field_name}.rules", source=source)
     ):
         rule_payload = _coerce_mapping(
             raw_rule,
+            field_name=f"{field_name}.rules[{index}]",
+            source=source,
+        )
+        _reject_unknown_keys(
+            rule_payload,
+            allowed_keys={"action", "decision"},
             field_name=f"{field_name}.rules[{index}]",
             source=source,
         )

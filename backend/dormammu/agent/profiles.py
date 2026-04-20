@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 from dormammu.agent.permissions import (
     AgentPermissionPolicy,
@@ -13,6 +13,8 @@ from dormammu.agent.role_config import ROLE_NAMES, AgentsConfig, RoleAgentConfig
 
 BUILTIN_PROFILE_SOURCE = "built_in"
 CONFIGURED_PROFILE_SOURCE = "configured"
+PROJECT_PROFILE_SOURCE = "project"
+USER_PROFILE_SOURCE = "user"
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,9 +24,12 @@ class AgentProfile:
     name: str
     description: str
     source: str = BUILTIN_PROFILE_SOURCE
+    prompt_body: str | None = None
     cli_override: Path | None = None
     model_override: str | None = None
     permission_policy: AgentPermissionPolicy = field(default_factory=AgentPermissionPolicy)
+    preloaded_skills: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def resolve_cli(self, active_agent_cli: Path | None) -> Path | None:
         return self.cli_override if self.cli_override is not None else active_agent_cli
@@ -38,9 +43,12 @@ class AgentProfile:
             "name": self.name,
             "description": self.description,
             "source": self.source,
+            "prompt_body": self.prompt_body,
             "cli_override": str(self.cli_override) if self.cli_override is not None else None,
             "model_override": self.model_override,
             "permission_policy": self.permission_policy.to_dict(),
+            "preloaded_skills": list(self.preloaded_skills),
+            "metadata": dict(self.metadata),
         }
 
 

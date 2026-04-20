@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from dormammu.agent.permissions import (
     AgentPermissionPolicy,
     AgentPermissionPolicyOverride,
@@ -191,3 +193,40 @@ class TestAgentPermissionPolicy:
         assert override.network.rules[0].host == "api.example.com"
         assert override.worktree is not None
         assert override.worktree.default is PermissionDecision.DENY
+
+    def test_parse_permission_policy_override_rejects_unknown_nested_policy_keys(self) -> None:
+        with pytest.raises(
+            RuntimeError,
+            match=r"agents\.developer\.permission_policy\.tools contains unsupported keys \(bogus\)",
+        ):
+            parse_permission_policy_override(
+                {"tools": {"bogus": True}},
+                config_root=None,
+                field_name="agents.developer.permission_policy",
+                source="dormammu.json",
+            )
+
+    def test_parse_permission_policy_override_rejects_unknown_rule_keys(self) -> None:
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                r"agents\.developer\.permission_policy\.filesystem\.rules\[0\] "
+                r"contains unsupported keys \(unexpected\)"
+            ),
+        ):
+            parse_permission_policy_override(
+                {
+                    "filesystem": {
+                        "rules": [
+                            {
+                                "path": "/tmp/workspace",
+                                "decision": "allow",
+                                "unexpected": "value",
+                            }
+                        ]
+                    }
+                },
+                config_root=None,
+                field_name="agents.developer.permission_policy",
+                source="dormammu.json",
+            )

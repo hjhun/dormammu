@@ -47,6 +47,7 @@ class TestBuiltInProfiles:
 
     def test_missing_optional_fields_are_safe(self) -> None:
         profile = AgentProfile(name="custom", description="Custom profile for tests.")
+        assert profile.prompt_body is None
         assert profile.cli_override is None
         assert profile.model_override is None
         assert profile.resolve_cli(None) is None
@@ -54,6 +55,8 @@ class TestBuiltInProfiles:
         assert profile.permission_policy.filesystem.default is PermissionDecision.ASK
         assert profile.permission_policy.network.default is PermissionDecision.ASK
         assert profile.worktree_policy.default is PermissionDecision.ASK
+        assert profile.preloaded_skills == ()
+        assert profile.metadata == {}
 
     def test_each_builtin_role_exposes_default_permission_foundation(self) -> None:
         for role in ROLE_NAMES:
