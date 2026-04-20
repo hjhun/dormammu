@@ -112,6 +112,18 @@ def _normalize_text_for_match(value: str) -> str:
     return " ".join(value.split()).strip()
 
 
+def _extract_task_prompt_text(prompt_text: str) -> str:
+    """Prefer the user/task section of a wrapped prompt over injected guidance."""
+    markers = (
+        "Task prompt:",
+        "Original prompt:",
+    )
+    for marker in markers:
+        if marker in prompt_text:
+            return prompt_text.split(marker, 1)[1].strip()
+    return prompt_text
+
+
 def _prompt_requires_progress(prompt_text: str, next_task: str | None) -> bool:
     haystacks = [prompt_text]
     if next_task:
@@ -140,6 +152,44 @@ def _find_question_lines(*texts: str) -> list[str]:
                 matches.append(normalized)
                 seen.add(normalized)
     return matches
+
+
+def _prompt_requests_commit(prompt_text: str) -> bool:
+    normalized = _normalize_text_for_match(prompt_text)
+    if not normalized:
+        return False
+    commit_patterns = (
+        r"\bcommit\b",
+        r"\bstage\b.{0,40}\bcommit\b",
+        r"\bprepare\b.{0,40}\bcommit\b",
+        r"\bmake\b.{0,40}\bcommit\b",
+        r"\bcreate\b.{0,40}\bcommit\b",
+        r"\bpush\b",
+        r"\bopen\b.{0,40}\bpr\b",
+        r"\bpull request\b",
+        r"\bmerge\b",
+        r"\bcheck in\b",
+        r"\bsubmit\b",
+        r"\bcommit preparation\b",
+        r"\bcommit prep\b",
+        r"커밋",
+        r"푸시",
+        r"머지",
+        r"\bPR\b",
+    )
+    return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in commit_patterns)
+
+
+def _parse_workflow_phase_statuses(text: str) -> tuple[list[str], list[str]]:
+    pending: list[str] = []
+    done: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("[ ] "):
+            pending.append(line[4:].strip())
+        elif line.startswith("[O] "):
+            done.append(line[4:].strip())
+    return pending, done
 
 
 def _is_meaningful_path(path: str) -> bool:
@@ -296,14 +346,23 @@ class Supervisor:
         self._worktree_diff_cache_time: float = 0.0
 
     @staticmethod
-    def _check_workflows_completion(workflows_path: Path) -> bool:
-        """Return True when WORKFLOWS.md exists and has no pending [ ] phase items."""
+    def _classify_workflows_completion(
+        workflows_path: Path,
+    ) -> tuple[bool, bool]:
+        """Classify whether WORKFLOWS.md is fully complete or only commit-pending.
+
+        Returns ``(all_complete, pending_commit_only)``.
+        """
         if not workflows_path.exists():
-            return False
+            return False, False
         text = workflows_path.read_text(encoding="utf-8")
-        pending = re.findall(r"^\[ \]", text, re.MULTILINE)
-        done = re.findall(r"^\[O\]", text, re.MULTILINE)
-        return len(pending) == 0 and len(done) > 0
+        pending, done = _parse_workflow_phase_statuses(text)
+        if not pending:
+            return len(done) > 0, False
+        if not done:
+            return False, False
+        normalized_pending = [entry.casefold() for entry in pending]
+        return False, all("commit" in entry for entry in normalized_pending)
 
     def validate(self, request: SupervisorRequest) -> SupervisorReport:
         self.repository.sync_operator_state()
@@ -312,26 +371,53 @@ class Supervisor:
         checks: list[SupervisorCheck] = []
 
         state_root = Path(str(session_state.get("bootstrap", {}).get("state_root", ".dev")))
-        plan_path = self.config.repo_root / state_root / "PLAN.md"
-        tasks_path = self.config.repo_root / state_root / "TASKS.md"
+        state_dir = self._resolve_state_dir(state_root)
+        plan_path = state_dir / "PLAN.md"
+        tasks_path = state_dir / "TASKS.md"
         # WORKFLOWS.md is an operator-facing process map mirrored at the repo's
         # .dev/ root.  Prefer the root mirror so that the check reflects what the
         # operator sees and edits, falling back to the session-scoped copy when
         # the mirror is absent (e.g. fresh session that hasn't synced yet).
         workflows_root_mirror = self.config.base_dev_dir / "WORKFLOWS.md"
-        workflows_session_path = self.config.repo_root / state_root / "WORKFLOWS.md"
+        workflows_session_path = state_dir / "WORKFLOWS.md"
         workflows_path = (
             workflows_root_mirror
             if workflows_root_mirror.exists()
             else workflows_session_path
         )
-        workflows_all_complete = self._check_workflows_completion(workflows_path)
+        bootstrap = workflow_state.get("bootstrap", {})
+        commit_prompt_candidates: list[str] = []
+        if isinstance(bootstrap, Mapping):
+            prompt_summary = bootstrap.get("prompt_summary")
+            if isinstance(prompt_summary, str) and prompt_summary.strip():
+                commit_prompt_candidates.append(prompt_summary)
+            goal_text = bootstrap.get("goal")
+            if isinstance(goal_text, str) and goal_text.strip():
+                commit_prompt_candidates.append(goal_text)
+            prompt_artifact_text = _load_artifact_text(bootstrap.get("prompt_path"))
+            if not prompt_artifact_text:
+                prompt_artifact_text = _load_artifact_text(bootstrap.get("global_prompt_path"))
+            if prompt_artifact_text:
+                commit_prompt_candidates.append(_extract_task_prompt_text(prompt_artifact_text))
+        prompt_requests_commit = any(
+            _prompt_requests_commit(candidate)
+            for candidate in commit_prompt_candidates
+            if candidate.strip()
+        )
+        current_phase = workflow_state.get("workflow", {}).get("active_phase")
+        allow_commit_pending = current_phase == "commit" and not prompt_requests_commit
+        workflows_fully_complete, workflows_pending_commit_only = self._classify_workflows_completion(
+            workflows_path
+        )
+        workflows_all_complete = workflows_fully_complete or (
+            allow_commit_pending and workflows_pending_commit_only
+        )
         dev_paths = [
-            self.config.repo_root / state_root / "DASHBOARD.md",
+            state_dir / "DASHBOARD.md",
             plan_path,
             tasks_path,
-            self.config.repo_root / state_root / "session.json",
-            self.config.repo_root / state_root / "workflow_state.json",
+            state_dir / "session.json",
+            state_dir / "workflow_state.json",
         ]
         missing_dev_paths = [str(path) for path in dev_paths if not path.exists()]
         checks.append(
@@ -583,11 +669,19 @@ class Supervisor:
                 ok=workflows_all_complete,
                 summary=(
                     "WORKFLOWS.md phases are all marked complete."
+                    if workflows_fully_complete
+                    else "WORKFLOWS.md is complete enough for approval with only Commit pending."
                     if workflows_all_complete
                     else "WORKFLOWS.md has pending [ ] phase items or is absent."
                 ),
                 details=(
-                    [str(workflows_path)]
+                    [
+                        str(workflows_path),
+                        (
+                            "Pending commit is allowed only for manual runs that have already "
+                            "advanced to the commit phase without an explicit commit request."
+                        ),
+                    ]
                     if not workflows_all_complete
                     else []
                 ),
@@ -637,6 +731,7 @@ class Supervisor:
             workflows_all_complete=workflows_all_complete,
             tasks_complete_ok=tasks_complete_ok,
             has_unresolved_questions=bool(question_lines),
+            prompt_requests_commit=prompt_requests_commit,
         )
         recommended_next_phase = self._recommend_next_phase(checks=checks, verdict=verdict)
         return SupervisorReport(
@@ -717,6 +812,7 @@ class Supervisor:
         workflows_all_complete: bool = False,
         tasks_complete_ok: bool = False,
         has_unresolved_questions: bool = False,
+        prompt_requests_commit: bool = False,
     ) -> tuple[str, str, str]:
         checks_by_name = {check.name: check for check in checks}
         if (
@@ -752,7 +848,9 @@ class Supervisor:
         # We keep the unresolved-questions guard: if the agent asked a clarifying
         # question instead of completing work, we must NOT approve even when the
         # plan appears complete, because the plan may have been marked prematurely.
-        plan_or_workflows_done = workflows_all_complete or tasks_complete_ok
+        plan_or_workflows_done = workflows_all_complete or (
+            tasks_complete_ok and not prompt_requests_commit
+        )
         artifacts_clean = checks_by_name["latest-run-artifacts"].ok
         paths_ok = checks_by_name["required-paths"].ok
         if plan_or_workflows_done and artifacts_clean and paths_ok and not has_unresolved_questions:
@@ -804,3 +902,8 @@ class Supervisor:
             if not check.ok:
                 return phase_by_check.get(check.name, "plan")
         return "plan"
+
+    def _resolve_state_dir(self, state_root: Path) -> Path:
+        if state_root.is_absolute():
+            return state_root
+        return (self.config.repo_root / state_root).resolve()

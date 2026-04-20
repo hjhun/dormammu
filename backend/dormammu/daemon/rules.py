@@ -33,10 +33,15 @@ def load_agent_guidance_text(agents_dir: Path, relative_path: str) -> str:
 def build_rule_prompt(
     rule_text: str,
     *,
+    runtime_paths_text: str | None = None,
     sections: Iterable[tuple[str, str | None]] = (),
 ) -> str:
     """Append markdown sections onto a stable rule contract."""
     parts: list[str] = [rule_text.strip()]
+    if runtime_paths_text is not None:
+        content = runtime_paths_text.strip()
+        if content:
+            parts.extend(["", "# Runtime Paths", "", content])
     for title, body in sections:
         if body is None:
             continue

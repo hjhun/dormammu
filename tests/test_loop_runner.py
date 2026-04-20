@@ -58,7 +58,7 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertEqual(result.attempts_completed, 2)
             self.assertEqual(result.retries_used, 1)
             self.assertTrue((root / "done.txt").exists())
-            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+            session_id = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))[
                 "active_session_id"
             ]
             self.assertTrue(
@@ -93,7 +93,7 @@ class LoopRunnerTests(unittest.TestCase):
             )
 
             self.assertEqual(result.status, "completed")
-            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+            session_id = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))[
                 "active_session_id"
             ]
             prompt_dir = config.sessions_dir / session_id / "logs"
@@ -125,7 +125,7 @@ class LoopRunnerTests(unittest.TestCase):
             )
 
             self.assertEqual(first_result.status, "failed")
-            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+            session_id = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))[
                 "active_session_id"
             ]
             self.assertTrue(
@@ -338,7 +338,7 @@ class LoopRunnerTests(unittest.TestCase):
             )
 
             self.assertEqual(result.status, "failed")
-            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+            session_id = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))[
                 "active_session_id"
             ]
             workflow_state = (
@@ -681,7 +681,10 @@ class LoopRunnerTests(unittest.TestCase):
                 MARK_TASKS = {mark_tasks!r}
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
-                SESSION_PATH = ROOT / ".dev" / "session.json"
+                import os
+                _base_dev_dir = os.environ.get("DORMAMMU_BASE_DEV_DIR", "").strip()
+                BASE_DEV_DIR = Path(_base_dev_dir) if _base_dev_dir else ROOT / ".dev"
+                SESSION_PATH = BASE_DEV_DIR / "session.json"
 
                 def mark_complete(path: Path) -> None:
                     if not path.exists():
@@ -695,19 +698,19 @@ class LoopRunnerTests(unittest.TestCase):
 
                 def mark_plan_complete() -> None:
                     if MARK_ROOT_PLAN:
-                        mark_complete(ROOT / ".dev" / "PLAN.md")
+                        mark_complete(BASE_DEV_DIR / "PLAN.md")
                         if MARK_TASKS:
-                            mark_complete(ROOT / ".dev" / "TASKS.md")
+                            mark_complete(BASE_DEV_DIR / "TASKS.md")
                         return
                     if not SESSION_PATH.exists():
                         return
-                    import json, os
+                    import json
                     payload = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
                     session_id = payload.get("active_session_id") or payload.get("session_id")
                     if not session_id:
                         return
                     _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
-                    sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
+                    sessions_dir = Path(_sdir) if _sdir else BASE_DEV_DIR / "sessions"
                     mark_complete(sessions_dir / str(session_id) / "PLAN.md")
                     if MARK_TASKS:
                         mark_complete(sessions_dir / str(session_id) / "TASKS.md")
@@ -785,12 +788,14 @@ class LoopRunnerTests(unittest.TestCase):
             textwrap.dedent(
                 f"""\
                 #!{sys.executable}
-                import json, subprocess, sys
+                import json, os, subprocess, sys
                 from pathlib import Path
 
                 ROOT = Path({str(root)!r})
                 TARGET_PATH = ROOT / "done.txt"
-                SESSION_PATH = ROOT / ".dev" / "session.json"
+                _base_dev_dir = os.environ.get("DORMAMMU_BASE_DEV_DIR", "").strip()
+                BASE_DEV_DIR = Path(_base_dev_dir) if _base_dev_dir else ROOT / ".dev"
+                SESSION_PATH = BASE_DEV_DIR / "session.json"
 
                 def mark_complete(path: Path) -> None:
                     if not path.exists():
@@ -805,13 +810,12 @@ class LoopRunnerTests(unittest.TestCase):
                 def mark_plan_complete() -> None:
                     if not SESSION_PATH.exists():
                         return
-                    import os
                     payload = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
                     session_id = payload.get("active_session_id") or payload.get("session_id")
                     if not session_id:
                         return
                     _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
-                    sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
+                    sessions_dir = Path(_sdir) if _sdir else BASE_DEV_DIR / "sessions"
                     mark_complete(sessions_dir / str(session_id) / "PLAN.md")
                     mark_complete(sessions_dir / str(session_id) / "TASKS.md")
 
@@ -964,7 +968,7 @@ class LoopRunnerTests(unittest.TestCase):
                     expected_roadmap_phase_id="phase_4",
                 )
             )
-            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+            session_id = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))[
                 "active_session_id"
             ]
             continuation_text = (

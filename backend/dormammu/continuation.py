@@ -74,6 +74,7 @@ def build_continuation_prompt(
     next_task: str | None,
     original_prompt_text: str | None = None,
     repo_guidance: Mapping[str, Any] | None = None,
+    runtime_paths_text: str | None = None,
     patterns_text: str | None = None,
     templates_dir: Path | None = None,
 ) -> ContinuationPrompt:
@@ -120,6 +121,12 @@ def build_continuation_prompt(
     # When guidance is present, append a blank line so the next paragraph is
     # visually separated in the rendered prompt.
     guidance_section = ("\n".join(guidance_lines) + "\n\n") if guidance_lines else ""
+    runtime_paths_section = (
+        "Runtime paths for this run:\n"
+        f"{runtime_paths_text.strip()}\n\n"
+        if runtime_paths_text and runtime_paths_text.strip()
+        else ""
+    )
 
     # ── optional patterns section ─────────────────────────────────────────────
     _default_placeholder = "(no patterns recorded yet"
@@ -164,7 +171,7 @@ def build_continuation_prompt(
         supervisor_verdict=report.verdict,
         supervisor_summary=report.summary,
         phase_line=phase_line,
-        guidance_section=guidance_section,
+        guidance_section=guidance_section + runtime_paths_section,
         findings="\n".join(findings_lines),
         resume_instruction=resume_instruction,
         task_line=task_line,
@@ -184,6 +191,7 @@ def build_supervisor_handoff_prompt(
     original_prompt_text: str,
     workflow_text: str,
     skill_text: str,
+    runtime_paths_text: str | None = None,
     patterns_text: str | None = None,
 ) -> str:
     workflow = workflow_state.get("workflow", {})
@@ -242,6 +250,14 @@ def build_supervisor_handoff_prompt(
         f"Recommended resume phase: {resume_from}",
         f"Latest supervisor verdict: {supervisor_verdict}",
         "",
+    ]
+    if runtime_paths_text and runtime_paths_text.strip():
+        lines.extend([
+            "Runtime paths for this run:",
+            runtime_paths_text.strip(),
+            "",
+        ])
+    lines.extend([
         *guidance_lines,
         *([""] if guidance_lines else []),
         "Original prompt:",
@@ -249,7 +265,7 @@ def build_supervisor_handoff_prompt(
         *patterns_section,
         "",
         "Continue from the saved `.dev` state and follow the workflow and skill guidance above.",
-    ]
+    ])
     return "\n".join(lines) + "\n"
 
 
@@ -258,6 +274,7 @@ def build_supervisor_handoff_prompt_from_agents(
     agents_dir: Path,
     workflow_state: Mapping[str, Any],
     original_prompt_text: str,
+    runtime_paths_text: str | None = None,
     patterns_text: str | None = None,
 ) -> str:
     from dormammu.daemon.rules import load_agent_guidance_text
@@ -273,5 +290,6 @@ def build_supervisor_handoff_prompt_from_agents(
         original_prompt_text=original_prompt_text,
         workflow_text=workflow_text,
         skill_text=skill_text,
+        runtime_paths_text=runtime_paths_text,
         patterns_text=patterns_text,
     )

@@ -430,6 +430,7 @@ class LoopRunner:
                 next_task=next_task,
                 original_prompt_text=request.prompt_text,
                 repo_guidance=workflow_state.get("bootstrap", {}).get("repo_guidance"),
+                runtime_paths_text=self.config.runtime_path_prompt(),
                 patterns_text=runtime_repository.read_patterns_text(),
                 templates_dir=self.config.templates_dir,
             )

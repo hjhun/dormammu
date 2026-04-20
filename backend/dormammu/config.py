@@ -9,6 +9,7 @@ import tempfile
 from typing import TYPE_CHECKING, Any, Mapping
 
 from dormammu.telegram.config import TelegramConfig, parse_telegram_config
+from dormammu.workspace import WorkspacePaths, resolve_workspace_paths
 
 if TYPE_CHECKING:
     from dormammu.agent.role_config import AgentsConfig
@@ -66,6 +67,49 @@ def _global_home_dir(env: Mapping[str, str]) -> Path:
 
 def _default_global_config_path(global_home_dir: Path) -> Path:
     return global_home_dir / DEFAULT_GLOBAL_CONFIG_FILENAME
+
+
+def _resolve_path_override(
+    raw_value: str | None,
+    *,
+    root: Path,
+) -> Path | None:
+    if raw_value is None:
+        return None
+    stripped = raw_value.strip()
+    if not stripped:
+        return None
+    candidate = Path(stripped).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    return candidate.resolve()
+
+
+def _resolve_sessions_dir_override(
+    *,
+    env: Mapping[str, str],
+    root: Path,
+    explicit_env: bool,
+) -> Path | None:
+    """Resolve DORMAMMU_SESSIONS_DIR without leaking ambient state across repos.
+
+    When a caller explicitly supplies ``env``, treat the override as intentional.
+    For the default ambient process environment, only reuse the override when the
+    requested repo root matches the current repo context. This preserves session
+    isolation for explicit ``repo_root=...`` loads in tests and cross-project
+    helpers even when the current process was launched with a managed sessions
+    directory for some other repository.
+    """
+    raw_value = env.get("DORMAMMU_SESSIONS_DIR")
+    if raw_value is None:
+        return None
+    if explicit_env:
+        return _resolve_path_override(raw_value, root=root)
+
+    ambient_root = discover_repo_root()
+    if ambient_root.resolve() != root.resolve():
+        return None
+    return _resolve_path_override(raw_value, root=root)
 
 
 def _nearest_existing_parent(path: Path) -> Path:
@@ -491,8 +535,13 @@ def _parse_cli_overrides(
 class AppConfig:
     app_name: str
     repo_root: Path
+    repo_dev_dir: Path
     home_dir: Path
     global_home_dir: Path
+    workspace_root: Path
+    workspace_project_root: Path
+    workspace_tmp_dir: Path
+    results_dir: Path
     base_dev_dir: Path
     dev_dir: Path
     sessions_dir: Path
@@ -519,23 +568,22 @@ class AppConfig:
         repo_root: Path | None = None,
         discover: bool = True,
     ) -> "AppConfig":
+        explicit_env = env is not None
         values = env or os.environ
         root = discover_repo_root(repo_root) if discover else (repo_root or Path.cwd()).resolve()
         global_home_dir = _resolve_global_home_dir(root, values)
+        home_dir = _resolve_home_dir(values)
+        workspace_paths = resolve_workspace_paths(
+            repo_root=root,
+            home_dir=home_dir,
+            global_home_dir=global_home_dir,
+        )
         asset_root = _discover_asset_root(root, values)
         agents_dir = _discover_agents_dir(
             root,
             values,
             asset_root,
             global_home_dir=global_home_dir,
-        )
-        base_dev_dir = root / ".dev"
-        dev_dir = base_dev_dir
-        sessions_dir_override = values.get("DORMAMMU_SESSIONS_DIR", "").strip()
-        sessions_dir = (
-            Path(sessions_dir_override).expanduser()
-            if sessions_dir_override
-            else global_home_dir / "sessions"
         )
         config_file = _resolve_config_file(root, values, global_home_dir=global_home_dir)
         config_payload = _load_config_payload(config_file)
@@ -550,12 +598,24 @@ class AppConfig:
         return cls(
             app_name=str(values.get("DORMAMMU_APP_NAME", _config_value(config_payload, "app_name", "dormammu"))),
             repo_root=root,
-            home_dir=_resolve_home_dir(values),
+            repo_dev_dir=workspace_paths.repo_dev_dir,
+            home_dir=home_dir,
             global_home_dir=global_home_dir,
-            base_dev_dir=base_dev_dir,
-            dev_dir=dev_dir,
-            sessions_dir=sessions_dir,
-            logs_dir=dev_dir / "logs",
+            workspace_root=workspace_paths.workspace_root,
+            workspace_project_root=workspace_paths.workspace_project_root,
+            workspace_tmp_dir=workspace_paths.tmp_dir,
+            results_dir=workspace_paths.results_dir,
+            base_dev_dir=workspace_paths.base_dev_dir,
+            dev_dir=workspace_paths.dev_dir,
+            sessions_dir=(
+                _resolve_sessions_dir_override(
+                    env=values,
+                    root=root,
+                    explicit_env=explicit_env,
+                )
+                or workspace_paths.sessions_dir
+            ),
+            logs_dir=workspace_paths.logs_dir,
             templates_dir=asset_root / "templates",
             agents_dir=agents_dir,
             config_file=config_file,
@@ -598,8 +658,13 @@ class AppConfig:
         return {
             "app_name": self.app_name,
             "repo_root": str(self.repo_root),
+            "repo_dev_dir": str(self.repo_dev_dir),
             "home_dir": str(self.home_dir),
             "global_home_dir": str(self.global_home_dir),
+            "workspace_root": str(self.workspace_root),
+            "workspace_project_root": str(self.workspace_project_root),
+            "workspace_tmp_dir": str(self.workspace_tmp_dir),
+            "results_dir": str(self.results_dir),
             "base_dev_dir": str(self.base_dev_dir),
             "dev_dir": str(self.dev_dir),
             "sessions_dir": str(self.sessions_dir),
@@ -621,6 +686,23 @@ class AppConfig:
             "process_timeout_seconds": self.process_timeout_seconds,
             "fallback_on_nonzero_exit": self.fallback_on_nonzero_exit,
         }
+
+    def runtime_path_prompt(self) -> str:
+        paths = WorkspacePaths(
+            repo_root=self.repo_root,
+            repo_dev_dir=self.repo_dev_dir,
+            home_dir=self.home_dir,
+            global_home_dir=self.global_home_dir,
+            workspace_root=self.workspace_root,
+            workspace_project_root=self.workspace_project_root,
+            base_dev_dir=self.base_dev_dir,
+            dev_dir=self.dev_dir,
+            logs_dir=self.logs_dir,
+            sessions_dir=self.sessions_dir,
+            tmp_dir=self.workspace_tmp_dir,
+            results_dir=self.results_dir,
+        )
+        return paths.runtime_path_prompt()
 
 
 def _parse_agents_config(

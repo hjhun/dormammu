@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dormammu._utils import iso_now as _iso_now
 from dormammu.config import AppConfig
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
 from dormammu.state import StateRepository
@@ -24,6 +25,69 @@ class RecoveryManager:
             repository=self.repository,
             supervisor=self.supervisor,
         )
+
+    def _persist_completed_revalidation(
+        self,
+        *,
+        request: LoopRunRequest,
+        loop_state: dict[str, object],
+        report_path: Path,
+        supervisor_verdict: str,
+        supervisor_escalation: str,
+        supervisor_reason: str,
+    ) -> None:
+        """Persist an approved supervisor revalidation without rerunning the loop."""
+        timestamp = _iso_now()
+        latest_run_id = self.repository.read_workflow_state().get("latest_run", {}).get("run_id")
+        continuation_prompt_path = loop_state.get("latest_continuation_prompt_path")
+        updated_loop = {
+            "status": "completed",
+            "request": request.to_state_dict(),
+            "attempts_completed": int(loop_state.get("attempts_completed", 0)),
+            "retries_used": int(loop_state.get("retries_used", 0)),
+            "max_retries": request.max_retries,
+            "max_iterations": request.max_iterations,
+            "required_paths": list(request.required_paths),
+            "require_worktree_changes": request.require_worktree_changes,
+            "expected_roadmap_phase_id": request.expected_roadmap_phase_id,
+            "latest_run_id": latest_run_id,
+            "latest_supervisor_verdict": supervisor_verdict,
+            "latest_supervisor_report_path": str(report_path),
+            "latest_continuation_prompt_path": continuation_prompt_path,
+        }
+        next_action = (
+            "Saved state already passes supervisor validation. Resume from Commit only if explicitly "
+            "requested; otherwise continue with a new prompt."
+        )
+
+        session_state = self.repository.read_session_state()
+        workflow_state = self.repository.read_workflow_state()
+        for payload in (session_state, workflow_state):
+            payload["updated_at"] = timestamp
+            payload["current_run"] = None
+            payload["loop"] = updated_loop
+            payload["supervisor_report"] = {
+                "path": str(report_path),
+                "status": supervisor_verdict,
+            }
+            payload["latest_continuation_prompt"] = continuation_prompt_path
+            payload["next_action"] = next_action
+
+        session_state["last_safe_checkpoint"] = {
+            "phase": session_state.get("active_phase", "develop"),
+            "timestamp": timestamp,
+            "description": "Saved loop state revalidated and persisted with status 'completed'.",
+        }
+        workflow_state.setdefault("supervisor", {})
+        workflow_state["supervisor"]["verdict"] = supervisor_verdict
+        workflow_state["supervisor"]["escalation"] = supervisor_escalation
+        workflow_state["supervisor"]["reason"] = supervisor_reason
+        workflow_state.setdefault("workflow", {})
+        if session_state.get("active_phase"):
+            workflow_state["workflow"]["resume_from_phase"] = session_state["active_phase"]
+
+        self.repository.write_session_state(session_state)
+        self.repository.write_workflow_state(workflow_state)
 
     def resume(
         self,
@@ -69,7 +133,15 @@ class RecoveryManager:
 
         if report.verdict in {"blocked", "manual_review_needed"}:
             raise RuntimeError(report.summary)
-        if loop_state.get("status") == "completed" and report.verdict == "approved":
+        if report.verdict == "approved":
+            self._persist_completed_revalidation(
+                request=request,
+                loop_state=loop_state,
+                report_path=report_path,
+                supervisor_verdict=report.verdict,
+                supervisor_escalation=report.escalation,
+                supervisor_reason=report.summary,
+            )
             return LoopRunResult(
                 status="completed",
                 attempts_completed=int(loop_state.get("attempts_completed", 0)),

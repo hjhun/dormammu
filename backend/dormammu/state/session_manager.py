@@ -49,10 +49,13 @@ class SessionManager:
         config: AppConfig,
         base_dev_dir: Path,
         sessions_dir: Path,
+        *,
+        legacy_base_dev_dir: Path | None = None,
     ) -> None:
         self.config = config
         self.base_dev_dir = base_dev_dir
         self.sessions_dir = sessions_dir
+        self.legacy_base_dev_dir = legacy_base_dev_dir or base_dev_dir
 
     # ------------------------------------------------------------------
     # Session ID helpers
@@ -149,7 +152,7 @@ class SessionManager:
     def has_legacy_root_snapshot(self) -> bool:
         """Return True if the root ``.dev/`` still contains un-migrated state files."""
         return any(
-            (self.base_dev_dir / filename).exists()
+            (self.legacy_base_dev_dir / filename).exists()
             for filename in (*_CORE_STATE_FILENAMES, "TASKS.md")
         )
 
@@ -190,7 +193,10 @@ class SessionManager:
         """
         from dormammu.state.models import STATE_SCHEMA_VERSION
 
-        legacy_session_id = self.read_active_session_id()
+        active_session_id = self.read_active_session_id()
+        if active_session_id is not None and (self.sessions_dir / active_session_id).exists():
+            return active_session_id
+        legacy_session_id = self.current_session_id(self.legacy_base_dev_dir / "session.json")
         if legacy_session_id is not None and (self.sessions_dir / legacy_session_id).exists():
             return legacy_session_id
         if not self.has_legacy_root_snapshot():
@@ -198,8 +204,8 @@ class SessionManager:
 
         session_id = legacy_session_id or self.generated_session_id(timestamp or _iso_now())
         target_dir = self.sessions_dir / session_id
-        self.copy_state_snapshot(self.base_dev_dir, target_dir)
-        legacy_logs_dir = self.base_dev_dir / "logs"
+        self.copy_state_snapshot(self.legacy_base_dev_dir, target_dir)
+        legacy_logs_dir = self.legacy_base_dev_dir / "logs"
         target_logs_dir = target_dir / "logs"
         if legacy_logs_dir.exists() and not target_logs_dir.exists():
             shutil.copytree(legacy_logs_dir, target_logs_dir)
@@ -218,7 +224,7 @@ class SessionManager:
         Returns ``None`` when the root session file is already an index
         (contains ``active_session_id``) or does not exist.
         """
-        session_path = self.base_dev_dir / "session.json"
+        session_path = self.legacy_base_dev_dir / "session.json"
         if not session_path.exists():
             return None
         payload = read_json(session_path)

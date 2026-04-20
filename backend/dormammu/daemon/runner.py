@@ -39,7 +39,7 @@ from dormammu.daemon.goals_scheduler import GoalsScheduler
 from dormammu.daemon.models import DaemonConfig, DaemonPromptResult
 from dormammu.daemon.pipeline_runner import PipelineRunner
 from dormammu.daemon.queue import is_prompt_candidate, prompt_sort_key
-from dormammu.daemon.reports import render_result_markdown
+from dormammu.daemon.reports import ResultReportAuthor
 from dormammu.daemon.watchers import EFFECTIVE_POLL_INTERVAL_SECONDS, PromptWatcher, build_watcher
 from dormammu.guidance import build_guidance_prompt
 from dormammu.loop_runner import LoopRunResult, LoopRunRequest, LoopRunner
@@ -561,6 +561,7 @@ class DaemonRunner:
             prompt_text,
             guidance_files=scoped_config.guidance_files,
             repo_root=scoped_config.repo_root,
+            runtime_paths_text=scoped_config.runtime_path_prompt(),
         )
         goal_file_path = self._extract_goal_file_path(prompt_text)
 
@@ -605,6 +606,7 @@ class DaemonRunner:
                 agents_dir=scoped_config.agents_dir,
                 workflow_state=session_repository.read_workflow_state(),
                 original_prompt_text=enriched_text,
+                runtime_paths_text=scoped_config.runtime_path_prompt(),
                 patterns_text=session_repository.read_patterns_text(),
             ),
             repo_root=scoped_config.repo_root,
@@ -668,7 +670,13 @@ class DaemonRunner:
         return f"Loop finished with terminal status: {loop_result.status}."
 
     def _write_result_report_from_result(self, prompt_result: DaemonPromptResult) -> None:
-        prompt_result.result_path.write_text(render_result_markdown(prompt_result), encoding="utf-8")
+        prompt_result.result_path.parent.mkdir(parents=True, exist_ok=True)
+        authored = ResultReportAuthor(
+            self.app_config,
+            progress_stream=self.progress_stream,
+            stop_event=self._shutdown_requested,
+        ).render(prompt_result)
+        prompt_result.result_path.write_text(authored, encoding="utf-8")
 
     def _sync_plan_state(self, session_repository: StateRepository) -> tuple[bool | None, str | None]:
         session_repository.sync_operator_state()

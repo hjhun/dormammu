@@ -97,6 +97,11 @@ class CliAdapter:
         # lookups behave consistently under dormammu.
         env["HOME"] = str(self.config.home_dir)
         env["DORMAMMU_SESSIONS_DIR"] = str(self.config.sessions_dir)
+        env["DORMAMMU_BASE_DEV_DIR"] = str(self.config.base_dev_dir)
+        env["DORMAMMU_WORKSPACE_ROOT"] = str(self.config.workspace_root)
+        env["DORMAMMU_WORKSPACE_PROJECT_ROOT"] = str(self.config.workspace_project_root)
+        env["DORMAMMU_TMP_DIR"] = str(self.config.workspace_tmp_dir)
+        env["DORMAMMU_RESULTS_DIR"] = str(self.config.results_dir)
         return env
 
     def _run_help_command(

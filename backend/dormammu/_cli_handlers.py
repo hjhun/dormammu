@@ -259,6 +259,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
             prompt_text,
             guidance_files=config.guidance_files,
             repo_root=config.repo_root,
+            runtime_paths_text=config.runtime_path_prompt(),
             patterns_text=repository.read_patterns_text(),
         )
 
@@ -323,6 +324,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
                 agents_dir=config.agents_dir,
                 workflow_state=repository.read_workflow_state(),
                 original_prompt_text=enriched_prompt,
+                runtime_paths_text=config.runtime_path_prompt(),
                 patterns_text=repository.read_patterns_text(),
             ),
             repo_root=config.repo_root,
@@ -409,6 +411,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
             prompt_text,
             guidance_files=config.guidance_files,
             repo_root=config.repo_root,
+            runtime_paths_text=config.runtime_path_prompt(),
             patterns_text=repository.read_patterns_text(),
         )
 
@@ -464,6 +467,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
                     agents_dir=config.agents_dir,
                     workflow_state=repository.read_workflow_state(),
                     original_prompt_text=enriched_prompt,
+                    runtime_paths_text=config.runtime_path_prompt(),
                     patterns_text=repository.read_patterns_text(),
                 ),
                 repo_root=config.repo_root,

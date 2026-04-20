@@ -46,7 +46,10 @@ class DaemonConfigTests(unittest.TestCase):
             config = load_daemon_config(config_path, app_config=self._app_config(root))
 
             self.assertEqual(config.prompt_path, (root / "queue" / "prompts").resolve())
-            self.assertEqual(config.result_path, (root / "queue" / "results").resolve())
+            self.assertEqual(
+                config.result_path,
+                (root / ".test-home" / ".dormammu" / "results").resolve(),
+            )
 
     def test_load_daemon_config_rejects_legacy_phase_cli_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -239,8 +242,8 @@ class DaemonRunnerTests(unittest.TestCase):
             progress_stream = SessionProgressLogStream(io.StringIO())
             self.addCleanup(progress_stream.close_log)
             runner = DaemonRunner(app_config, daemon_config, progress_stream=progress_stream)
-            first_progress_log = root / "queue" / "progress" / "001-first_progress.log"
-            second_progress_log = root / "queue" / "progress" / "002-second_progress.log"
+            first_progress_log = daemon_config.result_path.parent / "progress" / "001-first_progress.log"
+            second_progress_log = daemon_config.result_path.parent / "progress" / "002-second_progress.log"
 
             (daemon_config.prompt_path / "001-first.md").write_text("First prompt\n", encoding="utf-8")
             self.assertEqual(runner.run_pending_once(watcher_backend="polling"), 1)
@@ -291,7 +294,7 @@ class DaemonRunnerTests(unittest.TestCase):
             self._write_active_cli_config(root, loop_cli)
             daemon_config_path = self._write_daemon_config(root, watch_backend="inotify")
             prompt_dir = root / "queue" / "prompts"
-            result_dir = root / "queue" / "results"
+            result_dir = root / ".test-home" / ".dormammu" / "results"
             prompt_dir.mkdir(parents=True, exist_ok=True)
             result_dir.mkdir(parents=True, exist_ok=True)
 
@@ -356,7 +359,7 @@ class DaemonRunnerTests(unittest.TestCase):
             self._write_active_cli_config(root, sleepy_cli)
             daemon_config_path = self._write_daemon_config(root, watch_backend="polling")
             prompt_dir = root / "queue" / "prompts"
-            result_dir = root / "queue" / "results"
+            result_dir = root / ".test-home" / ".dormammu" / "results"
             prompt_dir.mkdir(parents=True, exist_ok=True)
             result_dir.mkdir(parents=True, exist_ok=True)
 
@@ -489,10 +492,12 @@ class DaemonRunnerTests(unittest.TestCase):
                 MARK_ROOT_PLAN = {mark_root_plan!r}
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
-                SESSION_PATH = ROOT / ".dev" / "session.json"
+                _base_dev_dir = os.environ.get("DORMAMMU_BASE_DEV_DIR", "").strip()
+                BASE_DEV_DIR = Path(_base_dev_dir) if _base_dev_dir else ROOT / ".dev"
+                SESSION_PATH = BASE_DEV_DIR / "session.json"
                 MARKER_PATH = ROOT / {marker_path.name!r}
                 _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
-                sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
+                sessions_dir = Path(_sdir) if _sdir else BASE_DEV_DIR / "sessions"
 
                 def is_prelude_prompt(prompt: str) -> bool:
                     return any(
@@ -509,6 +514,9 @@ class DaemonRunnerTests(unittest.TestCase):
                 def is_plan_evaluator_prompt(prompt: str) -> bool:
                     return "mandatory post-plan evaluator checkpoint" in prompt
 
+                def is_result_report_prompt(prompt: str) -> bool:
+                    return "Write a deterministic operator-facing Markdown result report." in prompt
+
                 def mark_complete(path: Path) -> None:
                     if not path.exists():
                         return
@@ -521,8 +529,8 @@ class DaemonRunnerTests(unittest.TestCase):
 
                 def mark_plan_complete() -> None:
                     if MARK_ROOT_PLAN:
-                        mark_complete(ROOT / ".dev" / "PLAN.md")
-                        mark_complete(ROOT / ".dev" / "TASKS.md")
+                        mark_complete(BASE_DEV_DIR / "PLAN.md")
+                        mark_complete(BASE_DEV_DIR / "TASKS.md")
                         return
                     if not SESSION_PATH.exists():
                         return
@@ -549,6 +557,13 @@ class DaemonRunnerTests(unittest.TestCase):
                     if is_plan_evaluator_prompt(prompt):
                         print("CHECKPOINT::ok")
                         print("DECISION: PROCEED")
+                        return 0
+
+                    if is_result_report_prompt(prompt):
+                        print("# CLI Authored Result")
+                        print("")
+                        if "# Structured Facts" in prompt:
+                            print(prompt.split("# Structured Facts", 1)[1].strip())
                         return 0
 
                     if is_prelude_prompt(prompt):

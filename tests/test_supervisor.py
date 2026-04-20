@@ -434,6 +434,21 @@ class SupervisorWorkflowsCompletionSmokeTests(unittest.TestCase):
             )
         repository.state_file("WORKFLOWS.md").write_text(content, encoding="utf-8")
 
+    def _write_workflows_with_pending_commit_only(self, repository: StateRepository) -> None:
+        dev_dir = repository.state_file("WORKFLOWS.md").parent
+        dev_dir.mkdir(parents=True, exist_ok=True)
+        content = (
+            "# Workflows\n\n## Task: smoke\n\n"
+            "[O] Phase 0. Refine\n"
+            "[O] Phase 1. Plan\n"
+            "[O] Phase 2. Design\n"
+            "[O] Phase 3. Develop\n"
+            "[O] Phase 4. Test and Review\n"
+            "[O] Phase 5. Final Verify\n"
+            "[ ] Phase 6. Commit\n"
+        )
+        repository.state_file("WORKFLOWS.md").write_text(content, encoding="utf-8")
+
     def _mark_plan_complete(self, repository: StateRepository) -> None:
         for name in ("PLAN.md", "TASKS.md"):
             path = repository.state_file(name)
@@ -549,6 +564,114 @@ class SupervisorWorkflowsCompletionSmokeTests(unittest.TestCase):
 
             self.assertEqual(report.verdict, "approved")
 
+    def test_approved_when_only_commit_is_pending_for_manual_run(self) -> None:
+        """Manual runs may stop after final verification without forcing a commit."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, repository = self._setup(
+                root,
+                prompt_text="Implement X.",
+                stdout_text="Implementation and validation are complete.\n",
+            )
+            self._mark_plan_complete(repository)
+            self._write_workflows_with_pending_commit_only(repository)
+
+            session_state = repository.read_session_state()
+            workflow_state = repository.read_workflow_state()
+            session_state["active_phase"] = "commit"
+            workflow_state["workflow"]["active_phase"] = "commit"
+            repository.write_session_state(session_state)
+            repository.write_workflow_state(workflow_state)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "approved")
+            self.assertTrue(
+                any(check.name == "workflows-completion" and check.ok for check in report.checks),
+                "workflows-completion should accept a pending commit for manual runs",
+            )
+            self.assertTrue(
+                any(
+                    check.name == "workflows-completion"
+                    and check.summary == "WORKFLOWS.md is complete enough for approval with only Commit pending."
+                    for check in report.checks
+                ),
+                "manual-run approval should describe the pending-commit exception accurately",
+            )
+
+    def test_rework_required_when_commit_prompt_leaves_commit_pending(self) -> None:
+        """A prompt that explicitly asks for a commit must not pass with commit still pending."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, repository = self._setup(
+                root,
+                prompt_text="Prepare a commit for the completed implementation.",
+                stdout_text="Implementation and validation are complete.\n",
+            )
+            self._mark_plan_complete(repository)
+            self._write_workflows_with_pending_commit_only(repository)
+
+            session_state = repository.read_session_state()
+            workflow_state = repository.read_workflow_state()
+            session_state["active_phase"] = "commit"
+            workflow_state["workflow"]["active_phase"] = "commit"
+            repository.write_session_state(session_state)
+            repository.write_workflow_state(workflow_state)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "rework_required")
+            self.assertTrue(
+                any(check.name == "workflows-completion" and not check.ok for check in report.checks),
+                "workflows-completion should still fail when the prompt explicitly requested a commit",
+            )
+
+    def test_approved_when_guidance_wrapper_mentions_commit_but_task_does_not(self) -> None:
+        """Guidance text mentioning commit must not disable the pending-commit manual-run exception."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, repository = self._setup(
+                root,
+                prompt_text="Implement X.",
+                stdout_text="Implementation and validation are complete.\n",
+            )
+            self._mark_plan_complete(repository)
+            self._write_workflows_with_pending_commit_only(repository)
+
+            wrapped_prompt = (
+                "Follow the guidance files below before making changes.\n"
+                "AGENTS.md says use the committing skill only after validation or on explicit commit request.\n"
+                "Original prompt:\n"
+                "Treat repository state as authoritative.\n"
+                "Task prompt:\n"
+                "Implement X.\n"
+            )
+            wrapped_prompt_path = root / ".dev" / "logs" / "wrapped.prompt.txt"
+            wrapped_prompt_path.write_text(wrapped_prompt, encoding="utf-8")
+
+            session_state = repository.read_session_state()
+            workflow_state = repository.read_workflow_state()
+            session_state["active_phase"] = "commit"
+            session_state["bootstrap"]["prompt_path"] = str(wrapped_prompt_path)
+            workflow_state["workflow"]["active_phase"] = "commit"
+            workflow_state["bootstrap"]["prompt_path"] = str(wrapped_prompt_path)
+            repository.write_session_state(session_state)
+            repository.write_workflow_state(workflow_state)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "approved")
+            self.assertTrue(
+                any(check.name == "workflows-completion" and check.ok for check in report.checks),
+                "guidance-level commit mentions should not block the manual-run commit exception",
+            )
+
     # ── smoke test 5 ──────────────────────────────────────────────────────────
     def test_rework_required_when_workflows_complete_but_required_path_missing(self) -> None:
         """WORKFLOWS.md all [O] but a required output path is still missing → rework."""
@@ -645,8 +768,7 @@ class PipelineRunnerNoStageDirSmokeTests(unittest.TestCase):
                     save_doc=False,
                 )
 
-            dev_dir = root / ".dev"
-            logs_dir = dev_dir / "logs"
+            logs_dir = config.logs_dir
             self.assertFalse(
                 logs_dir.exists(),
                 f".dev/logs/ must NOT be created when save_doc=False, but found {logs_dir}",
@@ -691,7 +813,7 @@ class PipelineRunnerNoStageDirSmokeTests(unittest.TestCase):
                     save_doc=True,
                 )
 
-            logs_dir = root / ".dev" / "logs"
+            logs_dir = config.logs_dir
             self.assertTrue(
                 logs_dir.exists(),
                 ".dev/logs/ should be created when save_doc=True",

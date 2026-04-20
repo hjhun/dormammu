@@ -26,7 +26,6 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +34,7 @@ from typing import TYPE_CHECKING, TextIO
 from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.daemon.cli_output import select_agent_output
 from dormammu.daemon.rules import build_rule_prompt, load_rule_text
+from dormammu.workspace import create_temp_text_file, remove_temp_path
 
 if TYPE_CHECKING:
     from dormammu.daemon.goals_config import EvaluatorConfig
@@ -71,7 +71,9 @@ class EvaluatorRequest:
     goal_text: str              # content of the original goal file
     repo_root: Path
     dev_dir: Path               # scoped session .dev/ directory
+    tmp_dir: Path
     agents_dir: Path
+    runtime_paths_text: str
     next_goal_strategy: str     # none | suggest | auto
     stem: str                   # prompt stem (used for output doc naming)
     date_str: str
@@ -149,6 +151,7 @@ class EvaluatorStage:
         output_path = req.dev_dir / "logs" / f"{req.date_str}_evaluator_{req.stem}.md"
         return build_rule_prompt(
             rule_text,
+            runtime_paths_text=req.runtime_paths_text,
             sections=(
                 ("Original Goal", req.goal_text),
                 ("Completed Plan", plan_text),
@@ -189,11 +192,12 @@ class EvaluatorStage:
         if preset is not None and preset.prompt_positional:
             args.append(prompt)
         elif preset is not None and preset.prompt_file_flag:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".md", delete=False, encoding="utf-8"
-            ) as tmp:
-                tmp.write(prompt)
-                tmp_path = Path(tmp.name)
+            tmp_path = create_temp_text_file(
+                req.tmp_dir,
+                prefix="evaluator-",
+                suffix=".md",
+                content=prompt,
+            )
             args.extend([preset.prompt_file_flag, str(tmp_path)])
         elif preset is not None and preset.prompt_arg_flag:
             args.extend([preset.prompt_arg_flag, prompt])
@@ -214,8 +218,7 @@ class EvaluatorStage:
             self._log(f"evaluator: agent call failed: {exc}")
             return None
         finally:
-            if tmp_path is not None and tmp_path.exists():
-                tmp_path.unlink(missing_ok=True)
+            remove_temp_path(tmp_path)
 
     # ------------------------------------------------------------------
     # Output handling

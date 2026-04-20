@@ -7,6 +7,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -39,8 +40,44 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.app_name, "custom-app")
             self.assertEqual(config.repo_root, root)
             self.assertEqual(config.home_dir, Path.home())
-            self.assertEqual(config.base_dev_dir, root / ".dev")
-            self.assertEqual(config.dev_dir, root / ".dev")
+            self.assertEqual(config.repo_dev_dir, root / ".dev")
+            self.assertEqual(config.base_dev_dir, config.workspace_project_root / ".dev")
+            self.assertEqual(config.dev_dir, config.base_dev_dir)
+            self.assertEqual(config.workspace_tmp_dir, config.workspace_project_root / ".tmp")
+            self.assertEqual(config.results_dir, config.global_home_dir / "results")
+
+    def test_load_preserves_sessions_dir_override_with_workspace_shadow_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            sessions_dir = Path(tmpdir) / "custom-sessions"
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    **os.environ,
+                    "DORMAMMU_SESSIONS_DIR": str(sessions_dir),
+                },
+            )
+
+            self.assertEqual(config.base_dev_dir, config.workspace_project_root / ".dev")
+            self.assertEqual(config.sessions_dir, sessions_dir.resolve())
+
+    def test_load_ignores_ambient_sessions_override_for_different_explicit_repo_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            ambient_sessions_dir = Path(tmpdir) / "ambient-sessions"
+
+            with mock.patch.dict(
+                os.environ,
+                {"DORMAMMU_SESSIONS_DIR": str(ambient_sessions_dir)},
+                clear=False,
+            ):
+                config = AppConfig.load(repo_root=root)
+
+            self.assertEqual(config.base_dev_dir, config.workspace_project_root / ".dev")
+            self.assertEqual(config.sessions_dir, config.workspace_project_root / ".dev" / "sessions")
 
     def test_load_reads_fallback_cli_settings_from_config_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

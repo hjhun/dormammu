@@ -27,6 +27,14 @@
 generates continuation context, retries on failure, and stores everything under
 `.dev/` so work can be resumed at any point.
 
+By default, runtime-authored state is projected into a workspace shadow under
+`~/.dormammu/` instead of cluttering the repository working tree. For a project
+at `~/samba/github/dormammu`, the workspace project root becomes
+`~/.dormammu/workspace/samba/github/dormammu`, the operational `.dev/` root is
+`~/.dormammu/workspace/samba/github/dormammu/.dev`, managed temp artifacts live
+in `~/.dormammu/workspace/samba/github/dormammu/.tmp`, and daemon result
+reports are written under `~/.dormammu/results/`.
+
 ## Why DORMAMMU
 
 Coding agents are powerful, but a single agent invocation is fragile:
@@ -466,6 +474,10 @@ Separate from `dormammu.json`. Controls prompt watching and queue behavior.
 }
 ```
 
+`result_path` remains a required daemon config field for compatibility and
+validation, but runtime-authored result reports are written under
+`~/.dormammu/results/`.
+
 Example configs under `config/`:
 
 | File | Use when |
@@ -476,6 +488,17 @@ Example configs under `config/`:
 | `daemonize.phase-specific-clis.example.json` | Shorter polling interval for faster scan cadence |
 
 ## What Gets Written
+
+Runtime paths are separated from source-editing paths:
+
+- Real project root: the repository being edited
+- Workspace project root: `~/.dormammu/workspace/<home-relative-project-path>`
+- Operational state root: `<workspace project root>/.dev`
+- Managed temp root: `<workspace project root>/.tmp`
+- Result reports: `~/.dormammu/results/`
+
+If the repository is outside `HOME`, DORMAMMU uses a deterministic fallback
+mapping under `~/.dormammu/workspace/_external/<safe-name>-<hash>/`.
 
 Every run leaves behind inspectable artifacts:
 

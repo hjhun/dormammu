@@ -1043,6 +1043,24 @@ dormammu run \
 
 `.dev/` is the shared control surface for humans and automation.
 
+By default, that control surface lives in the workspace shadow under
+`~/.dormammu/workspace/`, not in the repository working tree. For a repository
+at `~/samba/github/dormammu`, the runtime writes operator state to
+`~/.dormammu/workspace/samba/github/dormammu/.dev`, temporary artifacts to
+`~/.dormammu/workspace/samba/github/dormammu/.tmp`, and daemon result reports
+to `~/.dormammu/results/`.
+
+Path roles:
+
+- Real project root: the source repository that agents edit
+- Workspace project root: `~/.dormammu/workspace/<home-relative-project-path>`
+- Operational state root: `<workspace project root>/.dev`
+- Managed temp root: `<workspace project root>/.tmp`
+- Result reports root: `~/.dormammu/results/`
+
+When a repository is outside `HOME`, DORMAMMU uses a deterministic fallback
+workspace path under `~/.dormammu/workspace/_external/<safe-name>-<hash>/`.
+
 | File | Role |
 |------|------|
 | `.dev/REQUIREMENTS.md` | Structured requirements from the refining agent |

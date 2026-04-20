@@ -77,7 +77,12 @@ class StateRepository:
         self.base_dev_dir = config.base_dev_dir
         self.templates_dir = config.templates_dir / "dev"
         self.sessions_dir = config.sessions_dir
-        self._session_mgr = SessionManager(config, self.base_dev_dir, self.sessions_dir)
+        self._session_mgr = SessionManager(
+            config,
+            self.base_dev_dir,
+            self.sessions_dir,
+            legacy_base_dev_dir=config.repo_dev_dir,
+        )
         self._op_sync = OperatorSync(config, self.base_dev_dir)
         self.session_id = self._normalize_session_id(session_id) if session_id else None
         self.dev_dir = (
@@ -124,6 +129,7 @@ class StateRepository:
         active_roadmap_phase_ids: Sequence[str] | None = None,
     ) -> BootstrapArtifacts:
         timestamp = _iso_now()
+        self._ensure_workspace_roots()
         self.base_dev_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         legacy_session_payload = self._session_mgr.read_legacy_root_session_payload()
@@ -179,6 +185,7 @@ class StateRepository:
             )
         )
 
+        self._ensure_workspace_roots()
         self.dev_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
@@ -633,6 +640,7 @@ class StateRepository:
             self.config.repo_root,
             rule_paths=resolve_guidance_files(self.config),
         )
+        self._ensure_workspace_roots()
         self.dev_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
@@ -725,6 +733,10 @@ class StateRepository:
         if not tmpl_path.exists():
             return
         patterns_path.write_text(tmpl_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    def _ensure_workspace_roots(self) -> None:
+        self.config.workspace_project_root.mkdir(parents=True, exist_ok=True)
+        self.config.workspace_tmp_dir.mkdir(parents=True, exist_ok=True)
 
     def _ensure_template_file(
         self,

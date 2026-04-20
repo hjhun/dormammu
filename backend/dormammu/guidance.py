@@ -68,9 +68,10 @@ def build_guidance_prompt(
     *,
     guidance_files: Sequence[Path],
     repo_root: Path,
+    runtime_paths_text: str | None = None,
     patterns_text: str | None = None,
 ) -> str:
-    if not guidance_files and not patterns_text:
+    if not guidance_files and not patterns_text and not runtime_paths_text:
         return prompt_text
 
     sections: list[str] = []
@@ -94,6 +95,13 @@ def build_guidance_prompt(
                     f"End guidance from {_display_path(path, repo_root=repo_root)}.",
                 ]
             )
+
+    if runtime_paths_text and runtime_paths_text.strip():
+        sections.extend([
+            "",
+            "Runtime paths for this run:",
+            runtime_paths_text.rstrip(),
+        ])
 
     if patterns_text and patterns_text.strip():
         _default_placeholder = "(no patterns recorded yet"

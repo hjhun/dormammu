@@ -559,7 +559,9 @@ class PipelineRunner:
             goal_text=goal_text,
             repo_root=self._app_config.repo_root,
             dev_dir=self._app_config.base_dev_dir,
+            tmp_dir=self._app_config.workspace_tmp_dir,
             agents_dir=self._app_config.agents_dir,
+            runtime_paths_text=self._app_config.runtime_path_prompt(),
             next_goal_strategy=effective_config.next_goal_strategy,
             stem=stem,
             date_str=date_str,
@@ -647,6 +649,7 @@ class PipelineRunner:
         rule_text = self._load_rule("refiner-runtime.md")
         return build_rule_prompt(
             rule_text,
+            runtime_paths_text=self._app_config.runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
                 (
@@ -668,6 +671,7 @@ class PipelineRunner:
         rule_text = self._load_rule("planner-runtime.md")
         return build_rule_prompt(
             rule_text,
+            runtime_paths_text=self._app_config.runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
                 ("Refined Requirements", requirements_text),
@@ -699,6 +703,7 @@ class PipelineRunner:
         )
         return build_rule_prompt(
             rule_text,
+            runtime_paths_text=self._app_config.runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
                 ("Refined Requirements", requirements_text),
@@ -711,6 +716,7 @@ class PipelineRunner:
         report_path = self._stage_doc_path("tester", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
+            runtime_paths_text=self._app_config.runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
                 ("Expected Output Path", str(report_path)),
@@ -729,6 +735,7 @@ class PipelineRunner:
         report_path = self._stage_doc_path("reviewer", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
+            runtime_paths_text=self._app_config.runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
                 ("Architect Design", design_text),
@@ -741,6 +748,7 @@ class PipelineRunner:
         report_path = self._stage_doc_path("committer", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
+            runtime_paths_text=self._app_config.runtime_path_prompt(),
             sections=(
                 ("Implementation Scope", stem),
                 ("Expected Output Path", str(report_path)),

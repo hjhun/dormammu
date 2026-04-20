@@ -82,15 +82,12 @@ def load_daemon_config(path: Path, *, app_config: AppConfig) -> DaemonConfig:
         _require_non_empty_string(payload.get("prompt_path"), field_name="prompt_path", config_path=config_path),
         base_dir=config_path.parent,
     )
-    result_path = _resolve_path(
-        _require_non_empty_string(payload.get("result_path"), field_name="result_path", config_path=config_path),
-        base_dir=config_path.parent,
-    )
+    _require_non_empty_string(payload.get("result_path"), field_name="result_path", config_path=config_path)
     return DaemonConfig(
         schema_version=schema_version,
         config_path=config_path,
         prompt_path=prompt_path,
-        result_path=result_path,
+        result_path=app_config.results_dir,
         watch=_parse_watch_config(payload.get("watch"), config_path=config_path),
         queue=_parse_queue_config(payload.get("queue"), config_path=config_path),
         goals=parse_goals_config(payload.get("goals"), config_path=config_path),

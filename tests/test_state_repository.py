@@ -17,6 +17,13 @@ from dormammu.state import StateRepository
 
 
 class StateRepositoryTests(unittest.TestCase):
+    @staticmethod
+    def _display_path(path: Path, root: Path) -> str:
+        try:
+            return path.relative_to(root).as_posix()
+        except ValueError:
+            return str(path)
+
     def test_ensure_bootstrap_state_creates_expected_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -32,8 +39,10 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertTrue(artifacts.session.exists())
             self.assertTrue(artifacts.workflow_state.exists())
             self.assertTrue(artifacts.logs_dir.exists())
-            self.assertIn(str(root / "sessions"), str(artifacts.dashboard))
-            root_session_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
+            self.assertIn(str(config.sessions_dir), str(artifacts.dashboard))
+            root_session_index = json.loads(
+                (config.base_dev_dir / "session.json").read_text(encoding="utf-8")
+            )
             self.assertEqual(
                 root_session_index["active_session_id"],
                 repository.read_session_state()["session_id"],
@@ -50,7 +59,7 @@ class StateRepositoryTests(unittest.TestCase):
             )
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["source"],
-                artifacts.tasks.relative_to(root).as_posix(),
+                self._display_path(artifacts.tasks, root),
             )
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["next_pending_task"],
@@ -75,10 +84,12 @@ class StateRepositoryTests(unittest.TestCase):
             repository = StateRepository(config)
             repository.ensure_bootstrap_state()
 
-            active_session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+            active_session_id = json.loads(
+                (config.base_dev_dir / "session.json").read_text(encoding="utf-8")
+            )[
                 "active_session_id"
             ]
-            migrated_session_path = root / "sessions" / active_session_id / "session.json"
+            migrated_session_path = config.sessions_dir / active_session_id / "session.json"
             merged = json.loads(migrated_session_path.read_text(encoding="utf-8"))
             self.assertEqual(merged["session_id"], "existing")
             self.assertEqual(merged["custom"]["answer"], 42)
@@ -155,18 +166,18 @@ class StateRepositoryTests(unittest.TestCase):
             current_session = repository.read_session_state()
             self.assertEqual(current_session["session_id"], "phase7-multi-session")
             self.assertEqual(current_session["run_type"], "session")
-            root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
+            root_index = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))
             self.assertEqual(root_index["active_session_id"], "phase7-multi-session")
-            self.assertTrue((root / ".dev" / "DASHBOARD.md").exists())
-            self.assertTrue((root / ".dev" / "PLAN.md").exists())
+            self.assertTrue((config.base_dev_dir / "DASHBOARD.md").exists())
+            self.assertTrue((config.base_dev_dir / "PLAN.md").exists())
 
-            archived_dir = root / "sessions" / original_session
+            archived_dir = config.sessions_dir / original_session
             self.assertTrue((archived_dir / "session.json").exists())
             self.assertTrue((archived_dir / "workflow_state.json").exists())
-            self.assertTrue((root / "sessions" / "phase7-multi-session" / "DASHBOARD.md").exists())
+            self.assertTrue((config.sessions_dir / "phase7-multi-session" / "DASHBOARD.md").exists())
             self.assertTrue((archived_dir / "supervisor_report.md").exists())
             self.assertTrue((archived_dir / "continuation_prompt.txt").exists())
-            self.assertTrue((root / "sessions" / "phase7-multi-session" / "PLAN.md").exists())
+            self.assertTrue((config.sessions_dir / "phase7-multi-session" / "PLAN.md").exists())
 
     def test_list_sessions_marks_active_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -198,7 +209,7 @@ class StateRepositoryTests(unittest.TestCase):
             repository = StateRepository(config)
             repository.ensure_bootstrap_state(goal="Original goal")
             original_session = repository.read_session_state()["session_id"]
-            (root / "sessions" / original_session / "DASHBOARD.md").write_text(
+            (config.sessions_dir / original_session / "DASHBOARD.md").write_text(
                 "# DASHBOARD\n\nOriginal session\n",
                 encoding="utf-8",
             )
@@ -216,13 +227,13 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(restored_session["session_id"], original_session)
             self.assertIn(
                 "Original session",
-                (root / "sessions" / original_session / "DASHBOARD.md").read_text(
+                (config.sessions_dir / original_session / "DASHBOARD.md").read_text(
                     encoding="utf-8"
                 ),
             )
-            root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
+            root_index = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))
             self.assertEqual(root_index["active_session_id"], original_session)
-            self.assertFalse((root / ".dev" / "supervisor_report.md").exists())
+            self.assertFalse((config.base_dev_dir / "supervisor_report.md").exists())
 
     def test_sync_operator_state_imports_newer_active_root_task_mirror(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -234,8 +245,8 @@ class StateRepositoryTests(unittest.TestCase):
             repository.ensure_bootstrap_state(goal="Mirror root PLAN state")
 
             session_id = repository.read_session_state()["session_id"]
-            session_tasks = root / "sessions" / session_id / "TASKS.md"
-            root_tasks = root / ".dev" / "TASKS.md"
+            session_tasks = config.sessions_dir / session_id / "TASKS.md"
+            root_tasks = config.base_dev_dir / "TASKS.md"
             self.assertTrue(root_tasks.exists())
 
             root_tasks.write_text(
@@ -265,7 +276,7 @@ class StateRepositoryTests(unittest.TestCase):
                 active_roadmap_phase_ids=["phase_7"],
                 session_id="active-session",
             )
-            active_root_index = (root / ".dev" / "session.json").read_text(encoding="utf-8")
+            active_root_index = (config.base_dev_dir / "session.json").read_text(encoding="utf-8")
 
             session_repository = StateRepository(config, session_id="parallel-session")
             session_repository.ensure_bootstrap_state(
@@ -275,13 +286,13 @@ class StateRepositoryTests(unittest.TestCase):
 
             self.assertEqual(
                 active_root_index,
-                (root / ".dev" / "session.json").read_text(encoding="utf-8"),
+                (config.base_dev_dir / "session.json").read_text(encoding="utf-8"),
             )
             parallel_dashboard = (
-                root / "sessions" / "parallel-session" / "DASHBOARD.md"
+                config.sessions_dir / "parallel-session" / "DASHBOARD.md"
             ).read_text(encoding="utf-8")
             self.assertIn("Parallel session goal", parallel_dashboard)
-            self.assertTrue((root / "sessions" / "parallel-session" / "PLAN.md").exists())
+            self.assertTrue((config.sessions_dir / "parallel-session" / "PLAN.md").exists())
             self.assertEqual(
                 session_repository.read_session_state()["session_id"],
                 "parallel-session",
@@ -375,7 +386,7 @@ class StateRepositoryTests(unittest.TestCase):
             repository.sync_operator_state()
 
             task_sync = repository.read_session_state()["task_sync"]
-            self.assertEqual(task_sync["source"], artifacts.plan.relative_to(root).as_posix())
+            self.assertEqual(task_sync["source"], self._display_path(artifacts.plan, root))
             self.assertTrue(task_sync["all_completed"])
             self.assertIsNone(task_sync["next_pending_task"])
 
@@ -414,7 +425,7 @@ class StateRepositoryTests(unittest.TestCase):
 
             task_sync = repository.read_session_state()["task_sync"]
             # Must have selected PLAN.md (fewer pending), not the newer TASKS.md.
-            self.assertEqual(task_sync["source"], artifacts.plan.relative_to(root).as_posix())
+            self.assertEqual(task_sync["source"], self._display_path(artifacts.plan, root))
             self.assertTrue(task_sync["all_completed"])
             self.assertIsNone(task_sync["next_pending_task"])
 

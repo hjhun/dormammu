@@ -49,6 +49,8 @@ def _make_request(
     goal_file.write_text(goal_text, encoding="utf-8")
     dev_dir = tmp_path / ".dev"
     dev_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = tmp_path / ".tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
     return EvaluatorRequest(
         cli=cli or Path("claude"),
         model=model,
@@ -56,7 +58,13 @@ def _make_request(
         goal_text=goal_text,
         repo_root=tmp_path,
         dev_dir=dev_dir,
+        tmp_dir=tmp_dir,
         agents_dir=AGENTS_DIR,
+        runtime_paths_text=(
+            f"- Real project root: `{tmp_path}`\n"
+            f"- Operational state directory (`.dev` in workflow docs): `{dev_dir}`\n"
+            f"- Managed temporary directory (`.tmp`): `{tmp_dir}`\n"
+        ),
         next_goal_strategy=next_goal_strategy,
         stem="feature_x",
         date_str="20260413",

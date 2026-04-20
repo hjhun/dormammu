@@ -64,11 +64,13 @@ class CliAdapterTests(unittest.TestCase):
             self.assertIn("TAG::phase3", result.stdout_path.read_text(encoding="utf-8"))
             self.assertTrue(result.stderr_path.exists())
 
-            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
+            session_id = json.loads(
+                (config.base_dev_dir / "session.json").read_text(encoding="utf-8")
+            )[
                 "active_session_id"
             ]
             workflow_state = json.loads(
-                (root / "sessions" / session_id / "workflow_state.json").read_text(
+                (config.sessions_dir / session_id / "workflow_state.json").read_text(
                     encoding="utf-8"
                 )
             )

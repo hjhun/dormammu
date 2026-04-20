@@ -1,7 +1,14 @@
 # `.dev` State File Schemas
 
 This document describes the machine-readable state files written and maintained
-by `StateRepository` under `.dev/`.
+by `StateRepository` under the operational `.dev/` root.
+
+In the workspace-shadow runtime model, the operational `.dev/` root is not the
+repository-local `./.dev` directory by default. It is the workspace project
+shadow under `~/.dormammu/workspace/<mapped-project>/.dev`, with temporary
+artifacts stored alongside it in `~/.dormammu/workspace/<mapped-project>/.tmp`.
+When this document refers to `.dev/...`, it means the operational state root
+resolved by the runtime config.
 
 ---
 

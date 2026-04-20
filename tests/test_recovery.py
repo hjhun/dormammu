@@ -114,9 +114,10 @@ class RecoveryManagerTests(unittest.TestCase):
                 SUCCESS_ATTEMPT = {success_attempt}
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
-                SESSION_PATH = ROOT / ".dev" / "session.json"
+                BASE_DEV_DIR = Path(os.environ.get("DORMAMMU_BASE_DEV_DIR", str(ROOT / ".dev"))).resolve()
+                SESSION_PATH = BASE_DEV_DIR / "session.json"
                 _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
-                sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
+                sessions_dir = Path(_sdir) if _sdir else BASE_DEV_DIR / "sessions"
 
                 def mark_complete(path: Path) -> None:
                     if not path.exists():
@@ -219,7 +220,7 @@ class RecoveryManagerTests(unittest.TestCase):
             )
 
             # Corrupt the workflow_state so the supervisor sees broken state
-            session_json = root / ".dev" / "session.json"
+            session_json = config.base_dev_dir / "session.json"
             session_id = json.loads(session_json.read_text(encoding="utf-8"))["active_session_id"]
             ws_path = config.sessions_dir / session_id / "workflow_state.json"
             ws = json.loads(ws_path.read_text(encoding="utf-8"))
@@ -330,6 +331,66 @@ class RecoveryManagerTests(unittest.TestCase):
                 (root / ".attempt-count").read_text(encoding="utf-8").strip(), "1"
             )
 
+    def test_resume_repairs_stale_running_state_after_approved_revalidation(self) -> None:
+        """resume() should not rerun the CLI when the saved state already validates cleanly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+            config, repository, runner = self._make_runner(root)
+
+            first = runner.run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="repair-stale-running",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+            self.assertEqual(first.status, "completed")
+
+            session_id = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))[
+                "active_session_id"
+            ]
+            session_path = config.sessions_dir / session_id / "session.json"
+            workflow_path = config.sessions_dir / session_id / "workflow_state.json"
+            session_state = json.loads(session_path.read_text(encoding="utf-8"))
+            workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+
+            session_state["loop"]["status"] = "running"
+            session_state["loop"]["latest_supervisor_verdict"] = "rework_required"
+            session_state["next_action"] = "Supervised loop attempt 2 is running and streaming logs."
+            workflow_state["loop"]["status"] = "running"
+            workflow_state["loop"]["latest_supervisor_verdict"] = "rework_required"
+            workflow_state.setdefault("supervisor", {})
+            workflow_state["supervisor"]["verdict"] = "rework_required"
+            workflow_state["supervisor"]["reason"] = "Stale supervisor state."
+            workflow_state["next_action"] = "Supervised loop attempt 2 is running and streaming logs."
+            session_path.write_text(json.dumps(session_state), encoding="utf-8")
+            workflow_path.write_text(json.dumps(workflow_state), encoding="utf-8")
+
+            resumed = RecoveryManager(
+                config, repository=repository, loop_runner=runner
+            ).resume(max_retries_override=0)
+
+            self.assertEqual(resumed.status, "completed")
+            self.assertEqual(
+                (root / ".attempt-count").read_text(encoding="utf-8").strip(),
+                "1",
+            )
+
+            repaired_session = json.loads(session_path.read_text(encoding="utf-8"))
+            repaired_workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+            self.assertIsNone(repaired_session["current_run"])
+            self.assertIsNone(repaired_workflow["current_run"])
+            self.assertEqual(repaired_session["loop"]["status"], "completed")
+            self.assertEqual(repaired_workflow["loop"]["status"], "completed")
+            self.assertEqual(repaired_session["loop"]["latest_supervisor_verdict"], "approved")
+            self.assertEqual(repaired_workflow["supervisor"]["verdict"], "approved")
+
     def test_resume_raises_when_loop_state_key_is_absent(self) -> None:
         """resume() must raise RuntimeError when the 'loop' key is missing from workflow_state."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -351,7 +412,7 @@ class RecoveryManagerTests(unittest.TestCase):
             )
 
             # Remove the 'loop' key from workflow_state so resume cannot reconstruct the request
-            session_json = root / ".dev" / "session.json"
+            session_json = config.base_dev_dir / "session.json"
             session_id = json.loads(session_json.read_text(encoding="utf-8"))["active_session_id"]
             ws_path = config.sessions_dir / session_id / "workflow_state.json"
             ws = json.loads(ws_path.read_text(encoding="utf-8"))
