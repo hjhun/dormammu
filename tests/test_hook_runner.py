@@ -288,6 +288,49 @@ def test_hook_runner_preserves_warn_and_annotate_results(tmp_path: Path) -> None
     assert result.executed[1].result.annotations == {"owner": "policy"}
 
 
+def test_hook_runner_preserves_background_started_results(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        {
+            "hooks": [
+                _hook_payload("background-hook"),
+            ]
+        },
+    )
+    config = _make_config(repo_root, home_dir)
+
+    runner = HookRunner(
+        config,
+        builtin_handlers={
+            "hooks.background-hook": lambda _payload, _hook: {
+                "action": "background_started",
+                "message": "audit job queued",
+                "background_job": {
+                    "job_id": "audit-1",
+                    "kind": "audit-export",
+                    "metadata": {"owner": "policy"},
+                },
+            },
+        },
+    )
+
+    result = runner.run_sync(_hook_input())
+
+    assert result.blocked is False
+    assert [item.result.action for item in result.executed] == [
+        HookResultAction.BACKGROUND_STARTED,
+    ]
+    background_job = result.executed[0].result.background_job
+    assert background_job is not None
+    assert background_job.job_id == "audit-1"
+    assert background_job.kind == "audit-export"
+    assert background_job.metadata == {"owner": "policy"}
+
+
 def test_hook_runner_fails_clearly_on_malformed_output(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()

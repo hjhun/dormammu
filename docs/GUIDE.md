@@ -20,6 +20,7 @@ Korean-language guide is at [docs/ko/GUIDE.md](ko/GUIDE.md).
 - [Quick Start](#quick-start)
 - [Commands Reference](#commands-reference)
 - [Configuration Reference](#configuration-reference)
+- [Lifecycle Hooks](#lifecycle-hooks)
 - [Manifest-Backed Agent Profiles](#manifest-backed-agent-profiles)
 - [Agent Roles](#agent-roles)
 - [Workflow Pipeline](#workflow-pipeline)
@@ -539,6 +540,7 @@ Full example:
 | `fallback_agent_clis` | Ordered list of fallback CLIs for quota/token exhaustion |
 | `cli_overrides` | Per-CLI extra arguments and settings |
 | `token_exhaustion_patterns` | Patterns in agent output that trigger CLI fallback |
+| `hooks` | Optional lifecycle hook definitions for policy, auditing, and annotations |
 | `agents` | Role-based pipeline CLI and model assignments |
 
 When `agents` is configured, all run modes use the role-based pipeline.
@@ -589,6 +591,121 @@ queues prompts.
 
 Relative paths are resolved relative to the daemon config file location, not
 the current shell working directory.
+
+---
+
+## Lifecycle Hooks
+
+Hooks are an optional, CLI-local extension surface for policy checks, auditing,
+and structured annotations around runtime lifecycle boundaries. When no hooks
+are configured, loop and pipeline behavior stays unchanged.
+
+### Config discovery and precedence
+
+Hook definitions are loaded from the runtime config surface:
+
+1. If `DORMAMMU_CONFIG_PATH` is set, only that file is used.
+2. Otherwise `~/.dormammu/config` is loaded first.
+3. Then `<repo-root>/dormammu.json` is layered on top.
+
+Project hooks shadow global hooks by `name`. Duplicate hook names inside one
+config file fail fast instead of merging ambiguously.
+
+### Configuration shape
+
+Hooks live under the top-level `hooks` array in `dormammu.json` or the global
+config:
+
+```json
+{
+  "hooks": [
+    {
+      "name": "stage-audit",
+      "event": "stage start",
+      "execution_mode": "sync",
+      "timeout_seconds": 10,
+      "enabled": true,
+      "target": {
+        "kind": "command",
+        "ref": "/usr/bin/python3",
+        "settings": {
+          "args": ["./ops/hook_handler.py", "stage-audit"]
+        }
+      },
+      "metadata": {
+        "owner": "ops"
+      }
+    }
+  ]
+}
+```
+
+Hook fields:
+
+| Field | Meaning |
+|-------|---------|
+| `name` | Stable identifier used for precedence and diagnostics |
+| `event` | Lifecycle event name to match |
+| `target.kind` | Executor type: `builtin`, `command`, or `python` |
+| `target.ref` | Builtin ref, executable path/name, or `module:callable` |
+| `target.settings` | Executor-specific settings; command hooks currently use `args` |
+| `execution_mode` | Declared execution mode (`sync`, `async`, `background`) |
+| `timeout_seconds` | Optional command timeout for synchronous execution |
+| `enabled` | Whether the hook is selectable |
+| `metadata` | Arbitrary structured metadata preserved in diagnostics |
+
+`builtin` hooks are primarily for runtime-owned integrations. Operator-defined
+hooks will usually use `command` or `python`.
+
+### Supported events
+
+The hook schema currently recognizes these event names:
+
+| Event | Emitted today | Purpose |
+|-------|---------------|---------|
+| `prompt intake` | yes | Before the runtime starts processing a new prompt or goal |
+| `plan start` | yes | At the planner boundary in pipeline mode |
+| `stage start` | yes | Before an execution stage starts |
+| `stage completion` | yes | After a stage finishes |
+| `tool execution` | not yet | Reserved for a later tool-boundary integration |
+| `config changes` | not yet | Reserved for future config mutation hooks |
+| `final verification` | yes | When supervisor-style final verification is evaluated |
+| `session end` | yes | When the runtime is closing out a run or pipeline session |
+
+The schema also accepts the compatibility aliases `stage_completion` and
+`config_changes`.
+
+### Result semantics
+
+Each hook returns one structured action:
+
+| Action | Meaning |
+|--------|---------|
+| `allow` | Continue normally |
+| `deny` | Block the current runtime action and mark the run as blocked |
+| `warn` | Continue, but record a warning for operators |
+| `annotate` | Continue and attach structured annotations to hook diagnostics |
+| `background_started` | Continue and record that a background job was started |
+
+Warnings, annotations, and background-job summaries are written into hook
+diagnostics under `.dev` state so later resume/review steps can see them.
+
+### Execution model and current limits
+
+- Only `sync` hooks are executed today. Definitions marked `async` or
+  `background` are accepted by the schema but are not scheduled by the runtime
+  yet.
+- `background_started` is a structured signal, not a built-in job runner. The
+  hook itself is responsible for starting any external work.
+- Tool-execution and config-change events are reserved but intentionally not
+  emitted in the current Phase 3 runtime.
+- Hooks run inline with the CLI workflow, so slow hooks slow the run. Use
+  `timeout_seconds` on command hooks when that matters.
+- There is no separate hook-management CLI yet. Inspect the effective config
+  with `dormammu show-config` and review `.dev` hook history when debugging.
+- Keep hooks focused on policy, auditing, and structured automation around
+  stable lifecycle boundaries. They are not a replacement for the main
+  workflow guidance or for long-running daemonized subsystems.
 
 ---
 

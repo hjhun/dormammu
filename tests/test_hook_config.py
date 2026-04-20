@@ -149,6 +149,57 @@ def test_hook_catalog_prefers_project_hooks_over_global_hooks_by_name(tmp_path: 
     assert config.hooks.shadowed[0].scope == "global"
 
 
+def test_hook_catalog_uses_explicit_config_path_as_full_source(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        home_dir / ".dormammu" / "config",
+        {
+            "hooks": [
+                _hook_payload("shared", ref="global.shared"),
+                _hook_payload("global-only", ref="global.only"),
+            ]
+        },
+    )
+    _write_json(
+        repo_root / "dormammu.json",
+        {
+            "hooks": [
+                _hook_payload("shared", ref="project.shared"),
+                _hook_payload("project-only", ref="project.only"),
+            ]
+        },
+    )
+    explicit_config_path = _write_json(
+        repo_root / "ops" / "dormammu.explicit.json",
+        {
+            "hooks": [
+                _hook_payload("shared", ref="explicit.shared"),
+                _hook_payload("explicit-only", ref="explicit.only"),
+            ]
+        },
+    )
+
+    config = AppConfig.load(
+        repo_root=repo_root,
+        env={
+            "HOME": str(home_dir),
+            "DORMAMMU_CONFIG_PATH": str(explicit_config_path),
+            **{key: value for key, value in os.environ.items() if key != "HOME"},
+        },
+    )
+
+    assert config.config_file == explicit_config_path
+    assert config.hooks is not None
+    assert [layer.scope for layer in config.hooks.layers] == ["explicit"]
+    assert [item.name for item in config.hooks.definitions] == ["shared", "explicit-only"]
+    assert all(item.scope == "explicit" for item in config.hooks.definitions)
+    assert config.hooks.definitions_by_name()["shared"].definition.target.ref == "explicit.shared"
+    assert config.hooks.shadowed == ()
+
+
 def test_hook_catalog_reports_malformed_hook_config_with_config_path(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
