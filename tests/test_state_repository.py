@@ -235,6 +235,46 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(root_index["active_session_id"], original_session)
             self.assertFalse((config.base_dev_dir / "supervisor_report.md").exists())
 
+    def test_write_workflow_state_syncs_session_active_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Workflow sync goal")
+
+            workflow_state = repository.read_workflow_state()
+            workflow_state["updated_at"] = "2026-04-20T21:20:00+09:00"
+            workflow_state["workflow"]["active_phase"] = "commit"
+            repository.write_workflow_state(workflow_state)
+
+            session_state = repository.read_session_state()
+            root_index = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))
+            self.assertEqual(session_state["active_phase"], "commit")
+            self.assertEqual(session_state["updated_at"], "2026-04-20T21:20:00+09:00")
+            self.assertEqual(root_index["current_session"]["active_phase"], "commit")
+
+    def test_write_session_state_syncs_workflow_active_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Session sync goal")
+
+            session_state = repository.read_session_state()
+            session_state["updated_at"] = "2026-04-20T21:21:00+09:00"
+            session_state["active_phase"] = "final_verification"
+            repository.write_session_state(session_state)
+
+            workflow_state = repository.read_workflow_state()
+            root_index = json.loads((config.base_dev_dir / "workflow_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(workflow_state["workflow"]["active_phase"], "final_verification")
+            self.assertEqual(workflow_state["updated_at"], "2026-04-20T21:21:00+09:00")
+            self.assertEqual(root_index["current_session"]["session_id"], repository.read_session_state()["session_id"])
+
     def test_sync_operator_state_imports_newer_active_root_task_mirror(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -18,6 +18,7 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.config import AppConfig
 from dormammu.agent import cli_adapter as cli_adapter_module
+from dormammu.agent.profiles import AgentProfile
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
 from dormammu.recovery import RecoveryManager
 from dormammu.state import StateRepository
@@ -33,6 +34,31 @@ class LoopRunnerTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._sleep_patcher.stop()
         super().tearDown()
+
+    def test_resolve_agent_profile_uses_request_role_instead_of_assuming_developer(self) -> None:
+        config = mock.Mock()
+        config.resolve_agent_profile.return_value = AgentProfile(
+            name="reviewer",
+            description="Reviews changed code for regressions, bugs, and missing coverage.",
+        )
+        runner = LoopRunner(
+            config,
+            repository=mock.Mock(),
+            adapter=mock.Mock(),
+            supervisor=mock.Mock(),
+        )
+
+        profile = runner.resolve_agent_profile(
+            LoopRunRequest(
+                cli_path=Path("codex"),
+                prompt_text="Review the active slice.",
+                repo_root=Path("/tmp/repo"),
+                agent_role="reviewer",
+            )
+        )
+
+        config.resolve_agent_profile.assert_called_once_with("reviewer")
+        self.assertEqual(profile.name, "reviewer")
 
     def test_run_completes_after_retry_and_writes_continuation_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

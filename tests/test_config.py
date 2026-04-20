@@ -15,6 +15,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from dormammu.config import AppConfig, discover_repo_root, set_config_value
+from dormammu.agent.permissions import PermissionDecision
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
 
 
@@ -304,6 +305,99 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(profile.cli_override, Path("codex"))
             self.assertEqual(profile.model_override, "claude-opus-4-5")
 
+    def test_load_merges_global_and_project_permission_policy_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            global_config_path = home_dir / ".dormammu" / "config"
+            global_config_path.parent.mkdir(parents=True, exist_ok=True)
+            global_config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "developer": {
+                                "permission_policy": {
+                                    "tools": {
+                                        "default": "deny",
+                                        "rules": [
+                                            {"tool": "shell", "decision": "allow"},
+                                        ],
+                                    },
+                                    "network": {"default": "deny"},
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "developer": {
+                                "permission_policy": {
+                                    "tools": {
+                                        "rules": [
+                                            {"tool": "shell", "decision": "deny"},
+                                            {"tool": "rg", "decision": "allow"},
+                                        ]
+                                    },
+                                    "filesystem": {
+                                        "rules": [
+                                            {
+                                                "path": "./workspace",
+                                                "decision": "allow",
+                                                "access": ["read"],
+                                            }
+                                        ]
+                                    },
+                                    "worktree": {"default": "deny"},
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            profile = config.resolve_agent_profile("developer")
+
+            self.assertEqual(profile.source, "configured")
+            self.assertEqual(profile.permission_policy.tools.default, PermissionDecision.DENY)
+            self.assertEqual(
+                profile.permission_policy.evaluate_tool("shell"),
+                PermissionDecision.DENY,
+            )
+            self.assertEqual(
+                profile.permission_policy.evaluate_tool("rg"),
+                PermissionDecision.ALLOW,
+            )
+            self.assertEqual(
+                profile.permission_policy.network.default,
+                PermissionDecision.DENY,
+            )
+            self.assertEqual(
+                profile.permission_policy.evaluate_filesystem(
+                    root / "workspace" / "notes.md",
+                    access="read",
+                ),
+                PermissionDecision.ALLOW,
+            )
+            self.assertEqual(
+                profile.permission_policy.worktree.default,
+                PermissionDecision.DENY,
+            )
+
     def test_load_preserves_active_agent_cli_behavior_when_profile_config_is_absent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -326,6 +420,38 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(profile.source, "built_in")
             self.assertEqual(profile.resolve_cli(config.active_agent_cli), Path("/opt/tools/codex"))
+
+    def test_load_surfaces_invalid_agent_permission_policy_with_config_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "developer": {
+                                "permission_policy": {
+                                    "filesystem": {
+                                        "rules": [
+                                            {
+                                                "decision": "allow",
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "agents.developer.permission_policy.filesystem.rules\\[0\\]\\.path "
+                f"must be a non-empty string in {config_path.resolve()}",
+            ):
+                AppConfig.load(repo_root=root)
 
     def test_load_normalizes_effective_agent_profiles_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

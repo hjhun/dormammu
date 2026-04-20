@@ -281,6 +281,32 @@ class TestMandatoryPreludeStages:
 
 
 # ---------------------------------------------------------------------------
+# Developer stage
+# ---------------------------------------------------------------------------
+
+
+class TestDeveloperStage:
+    def test_run_developer_uses_profile_cli_and_model_overrides(self, tmp_path: Path) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(cli=Path("codex"), model="gpt-5.4"),
+        )
+        runner = _make_runner(tmp_path, agents=agents, active_agent_cli=Path("claude"))
+
+        with patch("dormammu.daemon.pipeline_runner.LoopRunner") as mock_loop_runner:
+            mock_loop_runner.return_value.run.return_value = _make_loop_result("completed")
+
+            result = runner._run_developer("Implement the active slice.", stem="phase1")
+
+        request = mock_loop_runner.return_value.run.call_args.args[0]
+        assert result.status == "completed"
+        assert request.cli_path == Path("codex")
+        assert request.agent_role == "developer"
+        assert request.extra_args == ("-m", "gpt-5.4")
+        assert request.workdir == tmp_path
+        assert request.run_label == "pipeline-developer-phase1"
+
+
+# ---------------------------------------------------------------------------
 # Tester stage
 # ---------------------------------------------------------------------------
 

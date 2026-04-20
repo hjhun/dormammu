@@ -401,7 +401,17 @@ class StateRepository:
         if self.session_id is None:
             self._active_session_repository().write_session_state(payload)
             return
-        _write_json(self.state_file("session.json"), dict(payload))
+        session_payload = dict(payload)
+        _write_json(self.state_file("session.json"), session_payload)
+
+        active_phase = session_payload.get("active_phase")
+        if isinstance(active_phase, str) and active_phase.strip():
+            workflow_state = _read_json(self.state_file("workflow_state.json"))
+            workflow_state.setdefault("workflow", {})
+            workflow_state["workflow"]["active_phase"] = active_phase
+            if "updated_at" in session_payload:
+                workflow_state["updated_at"] = session_payload["updated_at"]
+            _write_json(self.state_file("workflow_state.json"), workflow_state)
         self._sync_root_index()
 
     def read_workflow_state(self) -> dict[str, Any]:
@@ -413,7 +423,16 @@ class StateRepository:
         if self.session_id is None:
             self._active_session_repository().write_workflow_state(payload)
             return
-        _write_json(self.state_file("workflow_state.json"), dict(payload))
+        workflow_payload = dict(payload)
+        _write_json(self.state_file("workflow_state.json"), workflow_payload)
+
+        active_phase = workflow_payload.get("workflow", {}).get("active_phase")
+        if isinstance(active_phase, str) and active_phase.strip():
+            session_state = _read_json(self.state_file("session.json"))
+            session_state["active_phase"] = active_phase
+            if "updated_at" in workflow_payload:
+                session_state["updated_at"] = workflow_payload["updated_at"]
+            _write_json(self.state_file("session.json"), session_state)
         self._sync_root_index()
 
     def sync_operator_state(self, *, timestamp: str | None = None) -> None:

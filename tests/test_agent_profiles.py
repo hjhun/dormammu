@@ -13,6 +13,7 @@ from dormammu.agent.permissions import (
 )
 from dormammu.agent.profiles import (
     AgentProfile,
+    built_in_profile_for_role,
     built_in_profiles,
     normalize_agent_profiles,
     resolve_agent_profile,
@@ -53,6 +54,21 @@ class TestBuiltInProfiles:
         assert profile.permission_policy.filesystem.default is PermissionDecision.ASK
         assert profile.permission_policy.network.default is PermissionDecision.ASK
         assert profile.worktree_policy.default is PermissionDecision.ASK
+
+    def test_each_builtin_role_exposes_default_permission_foundation(self) -> None:
+        for role in ROLE_NAMES:
+            profile = built_in_profile_for_role(role)
+
+            assert profile.name == role
+            assert profile.source == "built_in"
+            assert profile.permission_policy.tools.default is PermissionDecision.ASK
+            assert profile.permission_policy.filesystem.default is PermissionDecision.ASK
+            assert profile.permission_policy.network.default is PermissionDecision.ASK
+            assert profile.permission_policy.worktree.default is PermissionDecision.ASK
+            assert profile.permission_policy.tools.rules == ()
+            assert profile.permission_policy.filesystem.rules == ()
+            assert profile.permission_policy.network.rules == ()
+            assert profile.permission_policy.worktree.rules == ()
 
 
 class TestProfileNormalization:
@@ -99,6 +115,41 @@ class TestProfileNormalization:
         assert profile.permission_policy.evaluate_tool("shell") is PermissionDecision.DENY
         assert profile.permission_policy.network.default is PermissionDecision.DENY
         assert profile.permission_policy.filesystem.default is PermissionDecision.ASK
+
+    def test_partial_permission_override_keeps_unconfigured_dimensions_on_builtin_defaults(self) -> None:
+        agents = AgentsConfig(
+            reviewer=RoleAgentConfig(
+                permission_policy=parse_permission_policy_override(
+                    {
+                        "filesystem": {
+                            "rules": [
+                                {
+                                    "path": "/tmp/reports",
+                                    "decision": "allow",
+                                    "access": ["read"],
+                                }
+                            ]
+                        },
+                        "worktree": {"default": "deny"},
+                    },
+                    config_root=None,
+                    field_name="agents.reviewer.permission_policy",
+                    source="dormammu.json",
+                )
+            )
+        )
+
+        profile = resolve_agent_profile("reviewer", agents_config=agents)
+
+        assert profile.source == "configured"
+        assert profile.permission_policy.filesystem.rules[0].path == Path("/tmp/reports")
+        assert profile.permission_policy.evaluate_filesystem(
+            "/tmp/reports/checklist.md",
+            access="read",
+        ) is PermissionDecision.ALLOW
+        assert profile.permission_policy.tools.default is PermissionDecision.ASK
+        assert profile.permission_policy.network.default is PermissionDecision.ASK
+        assert profile.permission_policy.worktree.default is PermissionDecision.DENY
 
     def test_normalize_agent_profiles_contains_all_runtime_roles(self) -> None:
         profiles = normalize_agent_profiles(agents_config=AgentsConfig())

@@ -30,13 +30,20 @@ class SupervisorTests(unittest.TestCase):
             repository.ensure_bootstrap_state(active_roadmap_phase_ids=["phase_4"])
             self._seed_latest_run(root, repository)
 
-            session_state = repository.read_session_state()
+            session_repo = repository.for_session(repository.read_session_state()["session_id"])
+            session_state = session_repo.read_session_state()
             session_state["active_phase"] = "develop"
-            repository.write_session_state(session_state)
+            session_repo.state_file("session.json").write_text(
+                json.dumps(session_state, indent=2),
+                encoding="utf-8",
+            )
 
-            workflow_state = repository.read_workflow_state()
+            workflow_state = session_repo.read_workflow_state()
             workflow_state["workflow"]["active_phase"] = "plan"
-            repository.write_workflow_state(workflow_state)
+            session_repo.state_file("workflow_state.json").write_text(
+                json.dumps(workflow_state, indent=2),
+                encoding="utf-8",
+            )
 
             report = Supervisor(config, repository=repository).validate(
                 SupervisorRequest(expected_roadmap_phase_id="phase_4")
