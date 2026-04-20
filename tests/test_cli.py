@@ -20,6 +20,7 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.cli import build_parser, main
 from dormammu.agent import cli_adapter as cli_adapter_module
+from dormammu.config import AppConfig
 from dormammu.interactive_shell import InteractiveShellRunner
 
 
@@ -33,6 +34,15 @@ class CliTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._sleep_patcher.stop()
         super().tearDown()
+
+    @staticmethod
+    def _root_index_path(config: "AppConfig") -> Path:
+        return config.base_dev_dir / "session.json"
+
+    @classmethod
+    def _active_session_id(cls, config: "AppConfig") -> str:
+        payload = json.loads(cls._root_index_path(config).read_text(encoding="utf-8"))
+        return str(payload["active_session_id"])
 
     def test_top_level_help_mentions_runtime_and_daemon_config_entry_points(self) -> None:
         parser = build_parser()
@@ -187,12 +197,13 @@ class CliTests(unittest.TestCase):
                 contextlib.redirect_stdout(stdout),
             ):
                 exit_code = main(["init-state", "--repo-root", str(root)])
+                runtime_config = AppConfig.load(repo_root=root)
 
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertTrue(Path(payload["dashboard"]).exists())
             self.assertTrue(Path(payload["tasks"]).exists())
-            self.assertIn(str(root / "sessions"), payload["dashboard"])
+            self.assertIn(str(runtime_config.sessions_dir), payload["dashboard"])
 
     def test_init_state_records_custom_guidance_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -246,13 +257,14 @@ class CliTests(unittest.TestCase):
                         "phase_1",
                     ]
                 )
+                runtime_config = AppConfig.load(repo_root=root)
 
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertTrue(Path(payload["dashboard"]).exists())
-            self.assertIn(str(root / "sessions"), payload["dashboard"])
-            self.assertIn(str(root / "sessions"), payload["logs_dir"])
-            root_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
+            self.assertIn(str(runtime_config.sessions_dir), payload["dashboard"])
+            self.assertIn(str(runtime_config.sessions_dir), payload["logs_dir"])
+            root_index = json.loads(self._root_index_path(runtime_config).read_text(encoding="utf-8"))
             self.assertIn("active_session_id", root_index)
 
     def test_init_state_creates_gitignore_entry_for_session_marker(self) -> None:
@@ -398,14 +410,8 @@ class CliTests(unittest.TestCase):
                 exit_code = main(["init-state", "--repo-root", str(root)])
 
             self.assertEqual(exit_code, 0)
-            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
-                "active_session_id"
-            ]
-            workflow_state = json.loads(
-                (root / "sessions" / session_id / "workflow_state.json").read_text(
-                    encoding="utf-8"
-                )
-            )
+            payload = json.loads(stdout.getvalue())
+            workflow_state = json.loads(Path(payload["workflow_state"]).read_text(encoding="utf-8"))
             self.assertEqual(workflow_state["bootstrap"]["goal"], "Interactive bootstrap goal")
             self.assertEqual(workflow_state["roadmap"]["active_phase_ids"], ["phase_7"])
 
@@ -552,6 +558,7 @@ class CliTests(unittest.TestCase):
                         "phase_4",
                     ]
                 )
+                runtime_config = AppConfig.load(repo_root=root)
 
             stdout = io.StringIO()
             with (
@@ -578,14 +585,14 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
-            self.assertIn(str(sessions_dir / "session-a"), payload["report_path"])
+            self.assertIn(str(runtime_config.sessions_dir / "session-a"), payload["report_path"])
             workflow_state = json.loads(
-                (sessions_dir / "session-a" / "workflow_state.json").read_text(
+                (runtime_config.sessions_dir / "session-a" / "workflow_state.json").read_text(
                     encoding="utf-8"
                 )
             )
             self.assertIn(
-                str(sessions_dir / "session-a" / "logs"),
+                str(runtime_config.sessions_dir / "session-a" / "logs"),
                 workflow_state["latest_run"]["artifacts"]["stdout"],
             )
 
@@ -640,7 +647,8 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(second_exit, 0)
             second_payload = json.loads(second_stdout.getvalue())
-            self.assertIn(str(sessions_dir / session_id), second_payload["report_path"])
+            runtime_config = AppConfig.load(repo_root=root)
+            self.assertIn(str(runtime_config.sessions_dir / session_id), second_payload["report_path"])
             self.assertEqual(marker_path.read_text(encoding="utf-8").strip(), session_id)
 
     def test_run_starts_a_new_session_when_marker_is_missing(self) -> None:
@@ -691,7 +699,8 @@ class CliTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             session_id = (root / ".session").read_text(encoding="utf-8").strip()
             self.assertNotEqual(session_id, "existing-session")
-            self.assertIn(str(sessions_dir / session_id), payload["report_path"])
+            runtime_config = AppConfig.load(repo_root=root)
+            self.assertIn(str(runtime_config.sessions_dir / session_id), payload["report_path"])
 
     def test_resume_can_target_a_saved_session_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -759,6 +768,7 @@ class CliTests(unittest.TestCase):
                         "phase_7",
                     ]
                 )
+                runtime_config = AppConfig.load(repo_root=root)
 
             resume_stdout = io.StringIO()
             with (
@@ -781,6 +791,7 @@ class CliTests(unittest.TestCase):
             resume_payload = json.loads(resume_stdout.getvalue())
             self.assertEqual(resume_payload["status"], "completed")
             self.assertTrue((root / "done.txt").exists())
+            self.assertTrue((runtime_config.sessions_dir / "session-a" / "workflow_state.json").exists())
 
     def test_resume_uses_repo_session_marker_before_active_root_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -808,6 +819,7 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(first_exit, 1)
             marked_session_id = (root / ".session").read_text(encoding="utf-8").strip()
+            runtime_config = AppConfig.load(repo_root=root)
 
             with contextlib.redirect_stdout(io.StringIO()):
                 main(
@@ -842,6 +854,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(resume_payload["status"], "completed")
             self.assertTrue((root / "done.txt").exists())
             self.assertEqual((root / ".session").read_text(encoding="utf-8").strip(), marked_session_id)
+            self.assertTrue((runtime_config.sessions_dir / marked_session_id / "workflow_state.json").exists())
 
     def test_run_once_executes_external_cli_and_prints_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1051,11 +1064,10 @@ class CliTests(unittest.TestCase):
             self.assertEqual(first_exit, 1)
             first_payload = json.loads(first_stdout.getvalue())
             self.assertEqual(first_payload["status"], "failed")
-            session_id = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))[
-                "active_session_id"
-            ]
+            runtime_config = AppConfig.load(repo_root=root)
+            session_id = self._active_session_id(runtime_config)
             self.assertTrue(
-                (sessions_dir / session_id / "continuation_prompt.txt").exists()
+                (runtime_config.sessions_dir / session_id / "continuation_prompt.txt").exists()
             )
 
             resume_stdout = io.StringIO()
@@ -1512,17 +1524,17 @@ class CliTests(unittest.TestCase):
                         str(prompt_file),
                     ]
                 )
+                runtime_config = AppConfig.load(repo_root=root)
 
             self.assertEqual(exit_code, 0)
-            session_index = json.loads((root / ".dev" / "session.json").read_text(encoding="utf-8"))
-            session_id = session_index["active_session_id"]
-            session_prompt = sessions_dir / session_id / "PROMPT.md"
+            session_id = self._active_session_id(runtime_config)
+            session_prompt = runtime_config.sessions_dir / session_id / "PROMPT.md"
             self.assertTrue(session_prompt.exists())
             self.assertEqual(session_prompt.read_text(encoding="utf-8"), prompt_file.read_text(encoding="utf-8"))
-            global_prompt = sessions_dir / session_id / ".dev" / "PROMPT.md"
+            global_prompt = runtime_config.sessions_dir / session_id / ".dev" / "PROMPT.md"
             self.assertTrue(global_prompt.exists())
             self.assertEqual(global_prompt.read_text(encoding="utf-8"), prompt_file.read_text(encoding="utf-8"))
-            session_plan = sessions_dir / session_id / "PLAN.md"
+            session_plan = runtime_config.sessions_dir / session_id / "PLAN.md"
             self.assertTrue(session_plan.exists())
             self.assertIn("Create DASHBOARD.md and PLAN.md from this request", session_plan.read_text(encoding="utf-8"))
 
@@ -1780,7 +1792,10 @@ class CliTests(unittest.TestCase):
                 SUCCESS_ATTEMPT = {success_attempt}
                 COUNTER_PATH = ROOT / ".attempt-count"
                 TARGET_PATH = ROOT / "done.txt"
-                SESSION_PATH = ROOT / ".dev" / "session.json"
+                import os
+                _base_dev_dir = os.environ.get("DORMAMMU_BASE_DEV_DIR", "").strip()
+                BASE_DEV_DIR = Path(_base_dev_dir) if _base_dev_dir else ROOT / ".dev"
+                SESSION_PATH = BASE_DEV_DIR / "session.json"
 
                 def is_prelude_prompt(prompt: str) -> bool:
                     return any(
@@ -1815,11 +1830,23 @@ class CliTests(unittest.TestCase):
                     session_id = payload.get("active_session_id") or payload.get("session_id")
                     if not session_id:
                         return
-                    import os
                     _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
-                    sessions_dir = Path(_sdir) if _sdir else ROOT / ".dev" / "sessions"
-                    mark_complete(sessions_dir / str(session_id) / "PLAN.md")
-                    mark_complete(sessions_dir / str(session_id) / "TASKS.md")
+                    candidates = []
+                    if _sdir:
+                        candidates.append(Path(_sdir))
+                    candidates.append(BASE_DEV_DIR / "sessions")
+                    candidates.append(ROOT / ".dev" / "sessions")
+
+                    for sessions_dir in candidates:
+                        session_dir = sessions_dir / str(session_id)
+                        if session_dir.exists():
+                            mark_complete(session_dir / "PLAN.md")
+                            mark_complete(session_dir / "TASKS.md")
+                            return
+
+                    for sessions_dir in candidates:
+                        mark_complete(sessions_dir / str(session_id) / "PLAN.md")
+                        mark_complete(sessions_dir / str(session_id) / "TASKS.md")
 
                 def main() -> int:
                     args = sys.argv[1:]

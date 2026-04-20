@@ -229,6 +229,27 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIn("Status: `completed`", result_path.read_text(encoding="utf-8"))
             self.assertFalse(prompt_path.exists())
 
+    def test_run_pending_once_falls_back_when_result_report_cli_validation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            loop_cli = self._write_invalid_result_report_loop_cli(root)
+            self._write_active_cli_config(root, loop_cli)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(self._write_daemon_config(root), app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+
+            processed = DaemonRunner(app_config, daemon_config).run_pending_once(watcher_backend="polling")
+
+            self.assertEqual(processed, 1)
+            result_text = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
+            self.assertIn("Status: `completed`", result_text)
+            self.assertIn("Configured CLI result report authoring failed", result_text)
+            self.assertFalse(prompt_path.exists())
+
     def test_debug_progress_log_is_written_per_prompt_and_contains_runtime_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -416,6 +437,75 @@ class DaemonRunnerTests(unittest.TestCase):
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=5)
+                stdout_log.close()
+                stderr_log.close()
+
+    def test_daemonize_keeps_running_when_result_report_cli_output_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            loop_cli = self._write_invalid_result_report_loop_cli(root)
+            self._write_active_cli_config(root, loop_cli)
+            daemon_config_path = self._write_daemon_config(root, watch_backend="polling")
+            prompt_dir = root / "queue" / "prompts"
+            result_dir = root / ".test-home" / ".dormammu" / "results"
+            prompt_dir.mkdir(parents=True, exist_ok=True)
+            result_dir.mkdir(parents=True, exist_ok=True)
+
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(BACKEND)
+            env["HOME"] = str(root / ".test-home")
+            env["DORMAMMU_SESSIONS_DIR"] = str(root / "sessions")
+            stdout_log = (root / "daemonize.stdout.log").open("w+", encoding="utf-8")
+            stderr_log = (root / "daemonize.stderr.log").open("w+", encoding="utf-8")
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "dormammu",
+                    "daemonize",
+                    "--repo-root",
+                    str(root),
+                    "--config",
+                    str(daemon_config_path),
+                ],
+                cwd=root,
+                env=env,
+                stdout=stdout_log,
+                stderr=stderr_log,
+            )
+
+            try:
+                self._wait_for_log_text(root / "daemonize.stderr.log", "watcher: polling")
+
+                first_prompt = prompt_dir / "001-first.md"
+                first_prompt.write_text("First prompt\n", encoding="utf-8")
+                first_result = result_dir / "001-first_RESULT.md"
+                deadline = time.time() + 10
+                while time.time() < deadline and not first_result.exists():
+                    time.sleep(0.1)
+                self.assertTrue(first_result.exists(), "daemonize did not write the first fallback result report in time")
+                self.assertIsNone(process.poll(), "daemonize exited after the first prompt")
+
+                second_prompt = prompt_dir / "002-second.md"
+                second_prompt.write_text("Second prompt\n", encoding="utf-8")
+                second_result = result_dir / "002-second_RESULT.md"
+                deadline = time.time() + 10
+                while time.time() < deadline and not second_result.exists():
+                    time.sleep(0.1)
+                self.assertTrue(second_result.exists(), "daemonize did not process the second prompt after fallback")
+                self.assertIsNone(process.poll(), "daemonize exited before the second prompt completed")
+
+                first_result_text = first_result.read_text(encoding="utf-8")
+                self.assertIn("Configured CLI result report authoring failed", first_result_text)
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
                 stdout_log.close()
                 stderr_log.close()
 
@@ -651,6 +741,107 @@ class DaemonRunnerTests(unittest.TestCase):
                     print("WORKER::started", flush=True)
                     time.sleep({sleep_seconds})
                     print("WORKER::finished", flush=True)
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_invalid_result_report_loop_cli(self, root: Path, name: str = "broken-result-loop-agent") -> Path:
+        script = root / name
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                from pathlib import Path
+                import json
+                import os
+                import sys
+
+                ROOT = Path({str(root)!r})
+                COUNTER_PATH = ROOT / ".attempt-count"
+                _base_dev_dir = os.environ.get("DORMAMMU_BASE_DEV_DIR", "").strip()
+                BASE_DEV_DIR = Path(_base_dev_dir) if _base_dev_dir else ROOT / ".dev"
+                SESSION_PATH = BASE_DEV_DIR / "session.json"
+                _sdir = os.environ.get("DORMAMMU_SESSIONS_DIR", "").strip()
+                sessions_dir = Path(_sdir) if _sdir else BASE_DEV_DIR / "sessions"
+
+                def is_prelude_prompt(prompt: str) -> bool:
+                    return any(
+                        marker in prompt
+                        for marker in (
+                            "You are a requirement refiner.",
+                            "You are the requirement refiner.",
+                            "You are a planning agent.",
+                            "You are the planning agent.",
+                            "You are an analyzer agent.",
+                        )
+                    )
+
+                def is_plan_evaluator_prompt(prompt: str) -> bool:
+                    return "mandatory post-plan evaluator checkpoint" in prompt
+
+                def is_result_report_prompt(prompt: str) -> bool:
+                    return "Write a deterministic operator-facing Markdown result report." in prompt
+
+                def mark_complete(path: Path) -> None:
+                    if not path.exists():
+                        return
+                    lines = path.read_text(encoding="utf-8").splitlines()
+                    rewritten = [
+                        line.replace("- [ ] ", "- [O] ") if line.startswith("- [ ] ") else line
+                        for line in lines
+                    ]
+                    path.write_text("\\n".join(rewritten) + "\\n", encoding="utf-8")
+
+                def mark_plan_complete() -> None:
+                    if not SESSION_PATH.exists():
+                        return
+                    payload = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
+                    session_id = payload.get("active_session_id") or payload.get("session_id")
+                    if not session_id:
+                        return
+                    mark_complete(sessions_dir / str(session_id) / "PLAN.md")
+                    mark_complete(sessions_dir / str(session_id) / "TASKS.md")
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("usage: {name} [--prompt-file PATH]")
+                        return 0
+
+                    prompt = ""
+                    if "--prompt-file" in args:
+                        index = args.index("--prompt-file")
+                        prompt = Path(args[index + 1]).read_text(encoding="utf-8")
+                    else:
+                        prompt = sys.stdin.read()
+
+                    if is_plan_evaluator_prompt(prompt):
+                        print("CHECKPOINT::ok")
+                        print("DECISION: PROCEED")
+                        return 0
+
+                    if is_result_report_prompt(prompt):
+                        print("# Invalid Result")
+                        print("")
+                        print("## Summary")
+                        print("")
+                        print("- Status: `completed`")
+                        return 0
+
+                    if is_prelude_prompt(prompt):
+                        print("PRELUDE::ok")
+                        return 0
+
+                    attempt = int(COUNTER_PATH.read_text(encoding="utf-8").strip()) + 1 if COUNTER_PATH.exists() else 1
+                    COUNTER_PATH.write_text(str(attempt), encoding="utf-8")
+                    mark_plan_complete()
+                    print(f"ATTEMPT::{{attempt}}")
                     return 0
 
                 raise SystemExit(main())

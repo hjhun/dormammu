@@ -195,7 +195,7 @@ class PatternsBootstrapTests(unittest.TestCase):
             config = AppConfig.load(repo_root=root)
             StateRepository(config).ensure_bootstrap_state(goal="Test goal")
 
-            patterns_path = root / ".dev" / "PATTERNS.md"
+            patterns_path = config.base_dev_dir / "PATTERNS.md"
             self.assertTrue(
                 patterns_path.exists(),
                 ".dev/PATTERNS.md must be created during bootstrap",
@@ -216,7 +216,7 @@ class PatternsBootstrapTests(unittest.TestCase):
                 goal="First goal",
                 prompt_text="Implement alpha feature.",
             )
-            patterns_path = root / ".dev" / "PATTERNS.md"
+            patterns_path = config.base_dev_dir / "PATTERNS.md"
             # Simulate agent appending a real pattern
             patterns_path.write_text(
                 "# Codebase Patterns\n\n## Patterns\n\n- Use dataclasses for models.\n",
@@ -245,7 +245,7 @@ class PatternsBootstrapTests(unittest.TestCase):
             repository = StateRepository(config)
             repository.ensure_bootstrap_state(goal="Init")
 
-            patterns_path = root / ".dev" / "PATTERNS.md"
+            patterns_path = config.base_dev_dir / "PATTERNS.md"
             custom_content = "# Codebase Patterns\n\n## Patterns\n\n- Always write tests first.\n"
             patterns_path.write_text(custom_content, encoding="utf-8")
 
@@ -263,7 +263,7 @@ class PatternsBootstrapTests(unittest.TestCase):
             repository = StateRepository(config)
             repository.ensure_bootstrap_state(goal="Init")
 
-            patterns_path = root / ".dev" / "PATTERNS.md"
+            patterns_path = config.base_dev_dir / "PATTERNS.md"
             patterns_path.write_text(
                 "# Codebase Patterns\n\n## Patterns\n\n- Prefer Path over str.\n",
                 encoding="utf-8",
@@ -371,10 +371,14 @@ class PatternsContinuationInjectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             _seed_repo(root)
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
 
             # Write real patterns before first run
-            (root / ".dev").mkdir(parents=True, exist_ok=True)
-            (root / ".dev" / "PATTERNS.md").write_text(
+            config.base_dev_dir.mkdir(parents=True, exist_ok=True)
+            (config.base_dev_dir / "PATTERNS.md").write_text(
                 "# Codebase Patterns\n\n## Patterns\n\n- Always use Path not str.\n",
                 encoding="utf-8",
             )
@@ -398,7 +402,6 @@ class PatternsContinuationInjectionTests(unittest.TestCase):
             )
             never_done.chmod(never_done.stat().st_mode | stat.S_IEXEC)
 
-            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
             repository = StateRepository(config)
             with mock.patch.object(cli_adapter_module.time, "sleep", return_value=None):
                 LoopRunner(config, repository=repository).run(
@@ -415,7 +418,7 @@ class PatternsContinuationInjectionTests(unittest.TestCase):
             # Inspect the continuation prompt written by the runner
             import json
             session_id = json.loads(
-                (root / ".dev" / "session.json").read_text(encoding="utf-8")
+                (config.base_dev_dir / "session.json").read_text(encoding="utf-8")
             )["active_session_id"]
             cont_path = config.sessions_dir / session_id / "continuation_prompt.txt"
             self.assertTrue(cont_path.exists(), "continuation_prompt.txt must be written on retry")
@@ -686,7 +689,7 @@ class FullIntegrationScenarioTests(unittest.TestCase):
             config = AppConfig.load(repo_root=root)
             # Bootstrap so PATTERNS.md is created, then add real patterns
             StateRepository(config).ensure_bootstrap_state(goal="Integration test")
-            (root / ".dev" / "PATTERNS.md").write_text(
+            (config.base_dev_dir / "PATTERNS.md").write_text(
                 "# Codebase Patterns\n\n## Patterns\n\n- Use typed dicts for config.\n",
                 encoding="utf-8",
             )

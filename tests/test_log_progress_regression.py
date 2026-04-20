@@ -509,9 +509,11 @@ class LoopRunnerProgressEmissionTests(unittest.TestCase):
                 repo_root=root,
                 max_retries=2,
             )
+            profile = runner.resolve_agent_profile(request)
             runner._emit_loop_snapshot(
                 repository=repo,
                 request=request,
+                profile=profile,
                 attempt_number=1,
                 retries_used=0,
             )

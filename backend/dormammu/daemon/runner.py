@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import replace
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -39,7 +40,7 @@ from dormammu.daemon.goals_scheduler import GoalsScheduler
 from dormammu.daemon.models import DaemonConfig, DaemonPromptResult
 from dormammu.daemon.pipeline_runner import PipelineRunner
 from dormammu.daemon.queue import is_prompt_candidate, prompt_sort_key
-from dormammu.daemon.reports import ResultReportAuthor
+from dormammu.daemon.reports import ResultReportAuthor, render_result_markdown
 from dormammu.daemon.watchers import EFFECTIVE_POLL_INTERVAL_SECONDS, PromptWatcher, build_watcher
 from dormammu.guidance import build_guidance_prompt
 from dormammu.loop_runner import LoopRunResult, LoopRunRequest, LoopRunner
@@ -513,9 +514,9 @@ class DaemonRunner:
                 continuation_prompt_path=(loop_result.continuation_prompt_path if loop_result else None),
             )
             if not interrupted and not skipped:
+                prompt_result = self._write_result_report_with_fallback(prompt_result)
                 if prompt_path.exists():
                     prompt_path.unlink()
-                self._write_result_report_from_result(prompt_result)
             with self._in_progress_lock:
                 self._in_progress.discard(prompt_path)
             print(f"daemon prompt {prompt_path.name}: {status} -> {result_path}", file=self.progress_stream)
@@ -677,6 +678,33 @@ class DaemonRunner:
             stop_event=self._shutdown_requested,
         ).render(prompt_result)
         prompt_result.result_path.write_text(authored, encoding="utf-8")
+
+    def _write_result_report_with_fallback(
+        self,
+        prompt_result: DaemonPromptResult,
+    ) -> DaemonPromptResult:
+        try:
+            self._write_result_report_from_result(prompt_result)
+            return prompt_result
+        except Exception as exc:
+            self._log(
+                "daemon result report fallback: configured CLI authoring failed for "
+                f"{prompt_result.prompt_path.name}: {exc}"
+            )
+            fallback_note = (
+                "Configured CLI result report authoring failed; "
+                f"wrote fallback report instead. Cause: {exc}"
+            )
+            combined_error = fallback_note
+            if prompt_result.error:
+                combined_error = f"{prompt_result.error}\n\n{fallback_note}"
+            fallback_result = replace(prompt_result, error=combined_error)
+            fallback_result.result_path.parent.mkdir(parents=True, exist_ok=True)
+            fallback_result.result_path.write_text(
+                render_result_markdown(fallback_result),
+                encoding="utf-8",
+            )
+            return fallback_result
 
     def _sync_plan_state(self, session_repository: StateRepository) -> tuple[bool | None, str | None]:
         session_repository.sync_operator_state()
