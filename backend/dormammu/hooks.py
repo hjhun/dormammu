@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Mapping
 import re
 
@@ -290,6 +291,58 @@ class HookDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class HookConfigLayer:
+    scope: str
+    config_path: Path
+    hooks: tuple[HookDefinition, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "scope": self.scope,
+            "config_path": str(self.config_path),
+            "hooks": [hook.to_dict() for hook in self.hooks],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EffectiveHookDefinition:
+    definition: HookDefinition
+    scope: str
+    config_path: Path
+
+    @property
+    def name(self) -> str:
+        return self.definition.name
+
+    @property
+    def event(self) -> HookEventName:
+        return self.definition.event
+
+    def to_dict(self) -> dict[str, object]:
+        payload = self.definition.to_dict()
+        payload["scope"] = self.scope
+        payload["config_path"] = str(self.config_path)
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class HookCatalog:
+    layers: tuple[HookConfigLayer, ...] = ()
+    definitions: tuple[EffectiveHookDefinition, ...] = ()
+    shadowed: tuple[EffectiveHookDefinition, ...] = ()
+
+    def definitions_by_name(self) -> dict[str, EffectiveHookDefinition]:
+        return {item.name: item for item in self.definitions}
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "layers": [layer.to_dict() for layer in self.layers],
+            "definitions": [item.to_dict() for item in self.definitions],
+            "shadowed": [item.to_dict() for item in self.shadowed],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class HookSubjectRef:
     kind: str
     id: str | None = None
@@ -478,6 +531,63 @@ def parse_hook_definitions(
             source=source,
         )
         for index, item in enumerate(items)
+    )
+
+
+def load_hook_config_layer(
+    payload: Any,
+    *,
+    scope: str,
+    config_path: Path,
+    field_name: str = "hooks",
+) -> HookConfigLayer | None:
+    if payload is None:
+        return None
+
+    hooks = parse_hook_definitions(
+        payload,
+        field_name=field_name,
+        source=str(config_path),
+    )
+    seen: dict[str, int] = {}
+    for index, hook in enumerate(hooks):
+        previous_index = seen.get(hook.name)
+        if previous_index is not None:
+            raise RuntimeError(
+                f"Duplicate hook name {hook.name!r} in {scope} hook config "
+                f"{config_path} at {field_name}[{previous_index}] and {field_name}[{index}]"
+            )
+        seen[hook.name] = index
+
+    return HookConfigLayer(
+        scope=scope,
+        config_path=config_path,
+        hooks=hooks,
+    )
+
+
+def resolve_hook_catalog(
+    layers: tuple[HookConfigLayer, ...],
+) -> HookCatalog:
+    selected: dict[str, EffectiveHookDefinition] = {}
+    shadowed: list[EffectiveHookDefinition] = []
+
+    for layer in layers:
+        for hook in layer.hooks:
+            effective = EffectiveHookDefinition(
+                definition=hook,
+                scope=layer.scope,
+                config_path=layer.config_path,
+            )
+            previous = selected.get(hook.name)
+            if previous is not None:
+                shadowed.append(previous)
+            selected[hook.name] = effective
+
+    return HookCatalog(
+        layers=layers,
+        definitions=tuple(selected.values()),
+        shadowed=tuple(shadowed),
     )
 
 

@@ -8,6 +8,7 @@ import shutil
 import tempfile
 from typing import TYPE_CHECKING, Any, Mapping
 
+from dormammu.hooks import HookCatalog, load_hook_config_layer, resolve_hook_catalog
 from dormammu.telegram.config import TelegramConfig, parse_telegram_config
 from dormammu.workspace import WorkspacePaths, resolve_workspace_paths
 
@@ -577,6 +578,7 @@ class AppConfig:
     project_agent_manifests_dir: Path
     user_agent_manifests_dir: Path
     config_file: Path | None
+    hooks: HookCatalog | None = None
     active_agent_cli: Path | None = None
     fallback_agent_clis: tuple[FallbackCliConfig, ...] = ()
     cli_overrides: dict[str, CliInvocationConfig] | None = None
@@ -621,6 +623,11 @@ class AppConfig:
             global_home_dir=global_home_dir,
             explicit_config_file=config_file if values.get("DORMAMMU_CONFIG_PATH") else None,
         )
+        hooks = _load_effective_hook_catalog(
+            root=root,
+            global_home_dir=global_home_dir,
+            explicit_config_file=config_file if values.get("DORMAMMU_CONFIG_PATH") else None,
+        )
         fallback_agent_clis = (
             _parse_fallback_agent_clis(
                 config_payload.get("fallback_agent_clis"),
@@ -655,6 +662,7 @@ class AppConfig:
             project_agent_manifests_dir=_project_agent_manifests_dir(root),
             user_agent_manifests_dir=_user_agent_manifests_dir(global_home_dir),
             config_file=config_file,
+            hooks=hooks,
             active_agent_cli=_parse_active_agent_cli(
                 config_payload.get("active_agent_cli"),
                 config_path=config_file,
@@ -753,6 +761,7 @@ class AppConfig:
             "project_agent_manifests_dir": str(self.project_agent_manifests_dir),
             "user_agent_manifests_dir": str(self.user_agent_manifests_dir),
             "config_file": str(self.config_file) if self.config_file else None,
+            "hooks": self.hooks.to_dict() if self.hooks is not None else None,
             "active_agent_cli": str(self.active_agent_cli) if self.active_agent_cli else None,
             "fallback_agent_clis": [item.to_dict() for item in self.fallback_agent_clis],
             "cli_overrides": {
@@ -831,6 +840,46 @@ def _load_effective_agents_config(
         config_path=project_config_file,
     )
     return merge_agents_config(global_agents, project_agents)
+
+
+def _load_effective_hook_catalog(
+    *,
+    root: Path,
+    global_home_dir: Path,
+    explicit_config_file: Path | None,
+) -> HookCatalog:
+    if explicit_config_file is not None:
+        explicit_payload = _load_config_payload(explicit_config_file)
+        explicit_layer = load_hook_config_layer(
+            explicit_payload.get("hooks"),
+            scope="explicit",
+            config_path=explicit_config_file,
+        )
+        return resolve_hook_catalog((explicit_layer,) if explicit_layer is not None else ())
+
+    global_config_file = _global_config_file(global_home_dir)
+    project_config_file = _project_config_file(root)
+    layers = tuple(
+        layer
+        for layer in (
+            load_hook_config_layer(
+                _load_config_payload(global_config_file).get("hooks"),
+                scope="global",
+                config_path=global_config_file,
+            )
+            if global_config_file is not None
+            else None,
+            load_hook_config_layer(
+                _load_config_payload(project_config_file).get("hooks"),
+                scope="project",
+                config_path=project_config_file,
+            )
+            if project_config_file is not None
+            else None,
+        )
+        if layer is not None
+    )
+    return resolve_hook_catalog(layers)
 
 
 def _normalize_agent_profiles(
