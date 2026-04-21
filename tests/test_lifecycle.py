@@ -244,6 +244,67 @@ class LifecycleRepositoryTests(unittest.TestCase):
             assert execution["current_run"]["entrypoint"] == "PipelineRunner.run"
             assert execution["latest_checkpoint"]["decision"] == "proceed"
 
+    def test_record_lifecycle_event_projects_latest_artifact_and_failed_stage_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Lifecycle artifact projection test")
+
+            session_id = repository.read_session_state()["session_id"]
+            recorder = LifecycleRecorder.for_execution(
+                repository,
+                scope="pipeline",
+                session_id=session_id,
+                label="artifact-projection-test",
+            )
+            artifact_ref = ArtifactRef.from_path(
+                kind="stage_report",
+                path=root / "logs" / "reviewer-report.md",
+                label="reviewer_report",
+                content_type="text/markdown",
+                run_id=recorder.run_id,
+                role="reviewer",
+                stage_name="reviewer",
+                session_id=session_id,
+            )
+
+            recorder.emit(
+                event_type=LifecycleEventType.ARTIFACT_PERSISTED,
+                role="reviewer",
+                stage="reviewer",
+                status="persisted",
+                payload=ArtifactPersistedPayload(
+                    artifact_kind="stage_report",
+                    summary="Persisted the reviewer report.",
+                ),
+                artifact_refs=(artifact_ref,),
+            )
+            recorder.emit(
+                event_type=LifecycleEventType.STAGE_FAILED,
+                role="reviewer",
+                stage="reviewer",
+                status="completed",
+                payload=StageEventPayload(
+                    attempt=1,
+                    verdict="needs_work",
+                    reason="Reviewer requested follow-up work.",
+                ),
+            )
+
+            execution = repository.read_session_state()["execution"]
+            assert execution["latest_artifact"]["artifact_kind"] == "stage_report"
+            assert execution["latest_artifact"]["artifacts"][0]["kind"] == "stage_report"
+            assert execution["latest_artifact"]["artifacts"][0]["path"] == str(artifact_ref.path)
+            assert execution["latest_stage_result"]["stage_name"] == "reviewer"
+            assert execution["latest_stage_result"]["status"] == "completed"
+            assert execution["latest_stage_result"]["verdict"] == "needs_work"
+
     def test_record_stage_result_and_run_result_persist_explicit_execution_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -94,6 +94,25 @@ This means a pipeline can remain operationally `completed` while still surfacing
 
 At the daemon boundary, `DaemonPromptResult` keeps prompt-queue metadata but carries the canonical `RunResult` as its execution payload. Result reports and hooks can therefore inspect `stage_results`, `summary`, `artifacts`, `retry`, and `timing` without reconstructing them from legacy flat fields.
 
+## Consumer Guidance
+
+The runtime should be consumed in this order:
+
+- use `RunResult`, `StageResult`, and `ArtifactRef` as the canonical in-memory contracts
+- use the `.dev` `execution` block as the latest persisted snapshot
+- use `lifecycle.history` when exact chronology matters
+
+Consumers should not derive status by scraping raw `output`, `DASHBOARD.md`,
+or free-form report text when a structured field already exists. In
+particular:
+
+- `status` answers whether execution completed cleanly
+- `verdict` answers what the stage concluded
+- `artifacts` and event `artifact_refs` answer where durable evidence lives
+
+That distinction is what prevents ad hoc status handling from re-entering loop,
+pipeline, daemon, or dashboard code.
+
 ## Parsing And Normalization
 
 Role-specific verdict parsing is centralized in `backend/dormammu/results.py`:

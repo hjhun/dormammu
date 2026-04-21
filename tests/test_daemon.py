@@ -527,6 +527,47 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIn("active_agent_cli", result_text)
             self.assertFalse(prompt_path.exists())
 
+    def test_run_forever_starts_watcher_before_emitting_startup_banner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(self._write_daemon_config(root), app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            progress_stream = io.StringIO()
+
+            class RecordingWatcher:
+                backend_name = "inotify"
+
+                def __init__(self, owner: DaemonRunner) -> None:
+                    self._owner = owner
+
+                def start(self) -> None:
+                    print("WATCHER_STARTED", file=progress_stream)
+
+                def close(self) -> None:
+                    return None
+
+                def wait_for_changes(self) -> list[Path]:
+                    self._owner.request_shutdown()
+                    return []
+
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=progress_stream)
+            runner._heartbeat_path = None
+            runner.watcher = RecordingWatcher(runner)
+
+            self.assertIsNone(runner.run_forever())
+
+            log_text = progress_stream.getvalue()
+            self.assertIn("WATCHER_STARTED", log_text)
+            self.assertIn("watcher: inotify", log_text)
+            self.assertLess(
+                log_text.index("WATCHER_STARTED"),
+                log_text.index("watcher: inotify"),
+                "Watcher readiness must be established before the daemon advertises watcher startup.",
+            )
+
     @unittest.skipUnless(InotifyWatcher.is_available(), "inotify is only available on Linux")
     def test_daemonize_cli_smoke_processes_prompt_via_inotify(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -568,12 +609,17 @@ class DaemonRunnerTests(unittest.TestCase):
                 prompt_path.write_text("Smoke prompt\n", encoding="utf-8")
                 result_path = result_dir / "001-smoke_RESULT.md"
 
-                deadline = time.time() + 10
+                # This smoke path exercises the full daemon contract, including
+                # refine/plan prelude, the supervised developer loop, supervisor
+                # verification, and CLI-authored result reporting. Give it a
+                # bounded but realistic timeout so normal runtime latency does
+                # not masquerade as an inotify failure.
+                deadline = time.time() + 20
                 while time.time() < deadline and not result_path.exists():
                     time.sleep(0.1)
                 self.assertTrue(result_path.exists(), "daemonize did not produce a result report in time")
 
-                deadline = time.time() + 10
+                deadline = time.time() + 20
                 while time.time() < deadline:
                     result_text = result_path.read_text(encoding="utf-8")
                     if "Status: `completed`" in result_text:

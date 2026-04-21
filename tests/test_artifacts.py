@@ -88,6 +88,41 @@ def test_artifact_writer_persists_markdown_and_json_with_typed_references(
     assert metadata_ref.content_type == "application/json"
 
 
+def test_artifact_writer_bind_propagates_execution_identity_into_written_refs(
+    tmp_path: Path,
+) -> None:
+    dev_dir = tmp_path / ".dev"
+    writer = ArtifactWriter(
+        base_dir=dev_dir,
+        logs_dir=dev_dir / "logs",
+        now_factory=lambda: "2026-04-22T00:31:00+09:00",
+    ).bind(
+        run_id="pipeline:run-1",
+        role="evaluator",
+        stage_name="plan_evaluator",
+        session_id="session-7",
+    )
+
+    checkpoint_ref = writer.write_text_output(
+        kind="checkpoint_report",
+        text="DECISION: PROCEED\n",
+        path=writer.checkpoint_report_path(
+            checkpoint_kind="plan",
+            stem="artifact-bind",
+            date_str="20260422",
+        ),
+        label="plan_checkpoint_report",
+        content_type="text/markdown",
+    )
+
+    assert checkpoint_ref.path.read_text(encoding="utf-8") == "DECISION: PROCEED\n"
+    assert checkpoint_ref.created_at == "2026-04-22T00:31:00+09:00"
+    assert checkpoint_ref.run_id == "pipeline:run-1"
+    assert checkpoint_ref.role == "evaluator"
+    assert checkpoint_ref.stage_name == "plan_evaluator"
+    assert checkpoint_ref.session_id == "session-7"
+
+
 def test_artifact_ref_round_trips_through_dict_payload() -> None:
     artifact = ArtifactRef.from_path(
         kind="continuation_prompt",

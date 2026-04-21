@@ -108,6 +108,35 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertIn("Work inside the current repository and its active workdir by default.", continuation_text)
             self.assertIn("Do not inspect or modify unrelated paths outside the repository", continuation_text)
             self.assertIn("leave planning mode now and make the required repository edits directly", continuation_text)
+            lifecycle = repository.read_session_state()["lifecycle"]
+            event_types = [entry["event_type"] for entry in lifecycle["history"]]
+            self.assertIn("stage.retried", event_types)
+            self.assertIn("supervisor.handoff", event_types)
+            self.assertLess(
+                event_types.index("stage.retried"),
+                event_types.index("supervisor.handoff"),
+            )
+            retry_event = next(
+                entry for entry in lifecycle["history"] if entry["event_type"] == "stage.retried"
+            )
+            self.assertEqual(retry_event["status"], "retried")
+            self.assertEqual(retry_event["payload"]["attempt"], 1)
+            self.assertEqual(retry_event["payload"]["next_attempt"], 2)
+            self.assertIn("Retry attempt 2 is queued", retry_event["payload"]["reason"])
+            handoff_event = next(
+                entry
+                for entry in lifecycle["history"]
+                if entry["event_type"] == "supervisor.handoff"
+            )
+            self.assertEqual(handoff_event["role"], "supervisor")
+            self.assertEqual(handoff_event["payload"]["from_role"], "supervisor")
+            self.assertEqual(handoff_event["payload"]["to_role"], "developer")
+            self.assertEqual(handoff_event["payload"]["attempt"], 2)
+            self.assertEqual(handoff_event["artifact_refs"][0]["kind"], "continuation_prompt")
+            self.assertEqual(
+                handoff_event["artifact_refs"][0]["path"],
+                str(config.sessions_dir / session_id / "continuation_prompt.txt"),
+            )
 
     def test_retry_prompt_keeps_original_prompt_instead_of_nesting_previous_retry_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

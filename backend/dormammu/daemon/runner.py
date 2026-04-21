@@ -193,9 +193,9 @@ class DaemonRunner:
                 stop_event=self._shutdown_requested,
             )
             self._active_watcher = watcher
+            watcher.start()
             self._emit_startup_banner(watcher_backend=watcher.backend_name)
             self._write_heartbeat(status="idle")
-            watcher.start()
             if self._goals_scheduler is not None:
                 self._goals_scheduler.start()
                 self._log("goals scheduler: started")

@@ -669,6 +669,8 @@ class TestPipelineRun:
         )
         app = _make_app_config(tmp_path, agents=agents)
         runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+        recorder = MagicMock()
+        recorder.run_id = "pipeline:test"
 
         tester_responses = [
             StageResult(role="tester", verdict="fail", output="OVERALL: FAIL"),
@@ -676,6 +678,10 @@ class TestPipelineRun:
         ]
 
         with (
+            patch(
+                "dormammu.daemon.pipeline_runner.LifecycleRecorder.for_execution",
+                return_value=recorder,
+            ),
             patch.object(runner, "run_refine_and_plan"),
             patch.object(
                 runner, "_run_developer", return_value=_make_loop_result("completed")
@@ -691,6 +697,34 @@ class TestPipelineRun:
         assert result.status == "completed"
         assert mock_dev.call_count == 2  # developer ran twice
         assert mock_tester.call_count == 2
+        retried_event = next(
+            call.kwargs
+            for call in recorder.emit.call_args_list
+            if call.kwargs["event_type"].value == "stage.retried"
+        )
+        assert retried_event["role"] == "developer"
+        assert retried_event["stage"] == "developer"
+        assert retried_event["status"] == "retried"
+        assert retried_event["payload"].source_stage == "tester"
+        assert retried_event["payload"].target_stage == "developer"
+        assert retried_event["payload"].attempt == 1
+        assert retried_event["payload"].next_attempt == 2
+
+        handoff_event = next(
+            call.kwargs
+            for call in recorder.emit.call_args_list
+            if call.kwargs["event_type"].value == "supervisor.handoff"
+            and call.kwargs["payload"].from_role == "tester"
+        )
+        assert handoff_event["role"] == "tester"
+        assert handoff_event["stage"] == "developer"
+        assert handoff_event["status"] == "handoff"
+        assert handoff_event["payload"].to_role == "developer"
+        assert handoff_event["payload"].attempt == 2
+
+        finished_event = recorder.emit.call_args_list[-1].kwargs
+        assert finished_event["event_type"].value == "run.finished"
+        assert finished_event["payload"].supervisor_verdict == "pass"
 
     def test_reviewer_needs_work_triggers_developer_reentry(
         self, tmp_path: Path
