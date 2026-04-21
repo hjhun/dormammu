@@ -16,6 +16,12 @@ from dormammu.mcp_runtime import (
     McpAccessStatus,
     McpAccessReason,
     McpAccessDeniedError,
+    McpRuntimeAdapter,
+    McpRuntimeFailureReason,
+    McpRuntimeInvocationError,
+    McpRuntimeRequest,
+    McpRuntimeResponse,
+    McpRuntimeStatus,
     McpServerUnavailableError,
 )
 from dormammu.runtime_hooks import RuntimeHookController
@@ -369,3 +375,427 @@ def test_mcp_access_boundary_reports_unavailable_stdio_server(tmp_path: Path) ->
 
     with pytest.raises(McpServerUnavailableError, match="was not found in PATH"):
         boundary.require_access(_request())
+
+
+def test_mcp_runtime_adapter_runs_stdio_interaction(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        _config_payload(
+            mcp_servers=[
+                _server_payload(
+                    "github",
+                    command=sys.executable,
+                )
+            ],
+        ),
+    )
+    config_path = repo_root / "dormammu.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcp": {
+                    "servers": [
+                        {
+                            "id": "github",
+                            "enabled": True,
+                            "transport": {
+                                "kind": "stdio",
+                                "command": sys.executable,
+                                "args": [
+                                    "-c",
+                                    (
+                                        "import sys; "
+                                        "payload = sys.stdin.read(); "
+                                        "sys.stderr.write('stderr-line\\n'); "
+                                        "sys.stdout.write('echo:' + payload)"
+                                    ),
+                                ],
+                                "env": {"MCP_MODE": "runtime-test"},
+                            },
+                            "access": {"profiles": ["developer"]},
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = _make_config(repo_root, home_dir)
+    server = config.mcp.definitions_by_id()["github"]
+    adapter = McpRuntimeAdapter()
+
+    result = adapter.invoke(
+        McpRuntimeRequest(
+            server=server,
+            operation="ping",
+            payload={"jsonrpc": "2.0", "method": "ping"},
+            stdin='{"jsonrpc":"2.0","method":"ping"}',
+        )
+    )
+
+    assert result.status is McpRuntimeStatus.SUCCEEDED
+    assert result.response is not None
+    assert result.response.exit_code == 0
+    assert result.response.stdout == 'echo:{"jsonrpc":"2.0","method":"ping"}'
+    assert result.response.stderr == "stderr-line\n"
+    assert result.interaction.transport_kind == "stdio"
+    assert result.interaction.target["command"] == sys.executable
+    assert result.interaction.target["env_keys"] == ["MCP_MODE"]
+    assert result.to_dict()["request"]["stdin_present"] is True
+
+
+def test_mcp_runtime_adapter_reports_missing_stdio_command(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        _config_payload(
+            mcp_servers=[
+                _server_payload(
+                    "github",
+                    command="definitely-missing-mcp-command-for-runtime-test",
+                )
+            ],
+        ),
+    )
+
+    config = _make_config(repo_root, home_dir)
+    server = config.mcp.definitions_by_id()["github"]
+    adapter = McpRuntimeAdapter()
+
+    result = adapter.invoke(McpRuntimeRequest(server=server))
+
+    assert result.status is McpRuntimeStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.reason is McpRuntimeFailureReason.COMMAND_NOT_FOUND
+    assert result.diagnostics["target"]["command"] == "definitely-missing-mcp-command-for-runtime-test"
+
+    with pytest.raises(McpRuntimeInvocationError, match="could not be started"):
+        result.raise_for_status()
+
+
+def test_mcp_runtime_adapter_reports_permission_error_as_launch_error(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        _config_payload(
+            mcp_servers=[
+                _server_payload(
+                    "github",
+                    command=sys.executable,
+                )
+            ],
+        ),
+    )
+
+    config = _make_config(repo_root, home_dir)
+    server = config.mcp.definitions_by_id()["github"]
+
+    def _raise_permission_error(
+        _request: McpRuntimeRequest,
+        _interaction: object,
+    ) -> object:
+        raise PermissionError("permission denied")
+
+    adapter = McpRuntimeAdapter(executors={"stdio": _raise_permission_error})
+
+    result = adapter.invoke(McpRuntimeRequest(server=server))
+
+    assert result.status is McpRuntimeStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.reason is McpRuntimeFailureReason.LAUNCH_ERROR
+    assert result.failure.diagnostics["exception_type"] == "PermissionError"
+    assert result.diagnostics["target"]["command"] == sys.executable
+    assert "insufficient permissions" in result.message
+
+
+def test_mcp_runtime_adapter_reports_unsupported_transport(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        {
+            "mcp": {
+                "servers": [
+                    {
+                        "id": "github",
+                        "enabled": True,
+                        "transport": {
+                            "kind": "streamable_http",
+                            "url": "https://mcp.example.test",
+                            "headers": {"Authorization": "Bearer test"},
+                        },
+                        "access": {"profiles": ["developer"]},
+                    }
+                ]
+            }
+        },
+    )
+
+    config = _make_config(repo_root, home_dir)
+    server = config.mcp.definitions_by_id()["github"]
+    adapter = McpRuntimeAdapter()
+
+    result = adapter.invoke(McpRuntimeRequest(server=server, operation="list_tools"))
+
+    assert result.status is McpRuntimeStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.reason is McpRuntimeFailureReason.TRANSPORT_UNSUPPORTED
+    assert result.interaction.target == {
+        "url": "https://mcp.example.test",
+        "header_keys": ["Authorization"],
+    }
+
+
+def test_mcp_runtime_adapter_handles_custom_http_executor_launch_failure(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        {
+            "mcp": {
+                "servers": [
+                    {
+                        "id": "github",
+                        "enabled": True,
+                        "transport": {
+                            "kind": "streamable_http",
+                            "url": "https://mcp.example.test",
+                            "headers": {"Authorization": "Bearer test"},
+                        },
+                        "access": {"profiles": ["developer"]},
+                    }
+                ]
+            }
+        },
+    )
+
+    config = _make_config(repo_root, home_dir)
+    server = config.mcp.definitions_by_id()["github"]
+
+    def _raise_missing_target(
+        _request: McpRuntimeRequest,
+        _interaction: object,
+    ) -> object:
+        raise FileNotFoundError("helper not found")
+
+    adapter = McpRuntimeAdapter(
+        executors={"streamable_http": _raise_missing_target}
+    )
+
+    result = adapter.invoke(McpRuntimeRequest(server=server, operation="list_tools"))
+
+    assert result.status is McpRuntimeStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.reason is McpRuntimeFailureReason.COMMAND_NOT_FOUND
+    assert result.failure.diagnostics["exception_type"] == "FileNotFoundError"
+    assert result.diagnostics["target"] == {
+        "url": "https://mcp.example.test",
+        "header_keys": ["Authorization"],
+    }
+    assert "https://mcp.example.test" in result.message
+
+
+def test_mcp_runtime_adapter_reports_invalid_custom_executor_response(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        {
+            "mcp": {
+                "servers": [
+                    {
+                        "id": "github",
+                        "enabled": True,
+                        "transport": {
+                            "kind": "streamable_http",
+                            "url": "https://mcp.example.test",
+                            "headers": {"Authorization": "Bearer test"},
+                        },
+                        "access": {"profiles": ["developer"]},
+                    }
+                ]
+            }
+        },
+    )
+
+    config = _make_config(repo_root, home_dir)
+    server = config.mcp.definitions_by_id()["github"]
+    adapter = McpRuntimeAdapter(
+        executors={"streamable_http": lambda *_args: {"oops": "not-a-response"}}
+    )
+
+    result = adapter.invoke(McpRuntimeRequest(server=server, operation="list_tools"))
+
+    assert result.status is McpRuntimeStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.reason is McpRuntimeFailureReason.EXECUTION_ERROR
+    assert result.failure.diagnostics["response_type"] == "dict"
+    assert result.diagnostics["target"] == {
+        "url": "https://mcp.example.test",
+        "header_keys": ["Authorization"],
+    }
+    assert "invalid response object" in result.message
+
+
+@pytest.mark.parametrize(
+    ("response", "invalid_field", "invalid_type"),
+    [
+        (
+            McpRuntimeResponse(stdout=None),  # type: ignore[arg-type]
+            "stdout",
+            "NoneType",
+        ),
+        (
+            McpRuntimeResponse(stderr=["bad"]),  # type: ignore[arg-type]
+            "stderr",
+            "list",
+        ),
+        (
+            McpRuntimeResponse(exit_code="zero"),  # type: ignore[arg-type]
+            "exit_code",
+            "str",
+        ),
+    ],
+)
+def test_mcp_runtime_adapter_reports_invalid_custom_executor_response_fields(
+    tmp_path: Path,
+    response: McpRuntimeResponse,
+    invalid_field: str,
+    invalid_type: str,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        {
+            "mcp": {
+                "servers": [
+                    {
+                        "id": "github",
+                        "enabled": True,
+                        "transport": {
+                            "kind": "streamable_http",
+                            "url": "https://mcp.example.test",
+                            "headers": {"Authorization": "Bearer test"},
+                        },
+                        "access": {"profiles": ["developer"]},
+                    }
+                ]
+            }
+        },
+    )
+
+    config = _make_config(repo_root, home_dir)
+    server = config.mcp.definitions_by_id()["github"]
+    adapter = McpRuntimeAdapter(executors={"streamable_http": lambda *_args: response})
+
+    result = adapter.invoke(McpRuntimeRequest(server=server, operation="list_tools"))
+
+    assert result.status is McpRuntimeStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.reason is McpRuntimeFailureReason.EXECUTION_ERROR
+    assert result.failure.diagnostics["response_type"] == "McpRuntimeResponse"
+    assert result.failure.diagnostics[f"{invalid_field}_type"] == invalid_type
+    assert result.diagnostics["target"] == {
+        "url": "https://mcp.example.test",
+        "header_keys": ["Authorization"],
+    }
+    assert f"invalid response '{invalid_field}'" in result.message
+
+
+def test_mcp_runtime_request_can_be_built_from_access_boundary_result(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        _config_payload(
+            hooks=[_tool_hook_payload("annotate", "hooks.annotate")],
+            developer_permission_policy={
+                "tools": {
+                    "default": "deny",
+                    "rules": [{"tool": "mcp", "decision": "allow"}],
+                }
+            },
+            mcp_servers=[
+                {
+                    "id": "github",
+                    "enabled": True,
+                    "transport": {
+                        "kind": "stdio",
+                        "command": sys.executable,
+                        "args": [
+                            "-c",
+                            "import sys; sys.stdout.write('governed:' + sys.stdin.read())",
+                        ],
+                    },
+                    "access": {"profiles": ["developer"]},
+                }
+            ],
+        ),
+    )
+
+    config = _make_config(repo_root, home_dir)
+    hook_runner = HookRunner(
+        config,
+        builtin_handlers={
+            "hooks.annotate": lambda payload, _hook: {
+                "action": "annotate",
+                "message": "annotated request",
+                "annotations": {"tool_target": payload.payload["tool_target"]},
+            },
+        },
+    )
+    boundary = McpAccessBoundary(
+        config,
+        hook_controller=RuntimeHookController(config, runner=hook_runner),
+    )
+    access_result = boundary.require_access(_request())
+    adapter = McpRuntimeAdapter()
+
+    runtime_request = McpRuntimeRequest.from_access_result(
+        access_result,
+        stdin="payload",
+        metadata={"origin": "test"},
+    )
+    result = adapter.invoke(runtime_request)
+
+    assert access_result.hook_summary is not None
+    assert access_result.hook_summary.annotations == (
+        {
+            "hook": "annotate",
+            "annotations": {"tool_target": "mcp:github"},
+            "message": "annotated request",
+        },
+    )
+    assert runtime_request.server.id == access_result.server.id
+    assert runtime_request.metadata["origin"] == "test"
+    assert result.status is McpRuntimeStatus.SUCCEEDED
+    assert result.response is not None
+    assert result.response.stdout == "governed:payload"
