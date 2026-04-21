@@ -66,6 +66,10 @@ def test_mcp_catalog_is_empty_when_no_mcp_config_exists(tmp_path: Path) -> None:
     assert config.mcp is not None
     assert config.mcp.layers == ()
     assert config.mcp.servers == ()
+    assert config.mcp.configured_servers() == ()
+    assert config.mcp.enabled_servers() == ()
+    assert config.mcp.disabled_servers() == ()
+    assert config.mcp.visible_servers_for_profile("developer") == ()
     assert config.mcp.shadowed == ()
 
 
@@ -135,12 +139,28 @@ def test_mcp_catalog_loads_project_config_and_normalizes_transport(tmp_path: Pat
     assert docs_server.enabled is False
     assert docs_server.definition.failure_policy is McpFailurePolicy.IGNORE
     assert isinstance(docs_server.definition.transport, McpStreamableHttpTransport)
+    assert config.mcp.configured_servers() == (github, docs_server)
     assert config.mcp.enabled_servers() == (github,)
+    assert config.mcp.disabled_servers() == (docs_server,)
+
+    developer_access = config.mcp.resolve_profile_access("developer")
+    assert developer_access.profile_name == "developer"
+    assert developer_access.visible_servers == (github,)
+    assert developer_access.denied_servers == (docs_server,)
+    assert developer_access.disabled_servers == ()
+
+    planner_access = config.mcp.resolve_profile_access("planner")
+    assert planner_access.profile_name == "planner"
+    assert planner_access.visible_servers == ()
+    assert planner_access.denied_servers == (github,)
+    assert planner_access.disabled_servers == (docs_server,)
 
     payload = config.to_dict()
     assert payload["mcp"] is not None
     assert payload["mcp"]["servers"][0]["id"] == "github"
     assert payload["mcp"]["servers"][1]["definition"]["transport"]["kind"] == "streamable_http"
+    assert [server["id"] for server in payload["mcp"]["enabled_servers"]] == ["github"]
+    assert [server["id"] for server in payload["mcp"]["disabled_servers"]] == ["docs"]
 
 
 def test_mcp_catalog_preserves_repeated_stdio_args(tmp_path: Path) -> None:
@@ -251,6 +271,44 @@ def test_mcp_catalog_uses_explicit_config_path_as_full_source(tmp_path: Path) ->
     assert [layer.scope for layer in config.mcp.layers] == ["explicit"]
     assert [server.id for server in config.mcp.servers] == ["explicit-only"]
     assert config.mcp.shadowed == ()
+
+
+def test_mcp_catalog_resolves_profile_visibility_across_multiple_servers(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        {
+            "mcp": {
+                "servers": [
+                    _server_payload("developer-docs", profiles=["developer"]),
+                    _server_payload("planner-docs", profiles=["planner"]),
+                    _server_payload("shared-disabled", enabled=False, profiles=["developer"]),
+                ]
+            }
+        },
+    )
+
+    config = _make_config(repo_root, home_dir)
+
+    assert config.mcp is not None
+    developer_access = config.mcp.resolve_profile_access("developer")
+    assert [server.id for server in developer_access.visible_servers] == ["developer-docs"]
+    assert [server.id for server in developer_access.denied_servers] == ["planner-docs"]
+    assert [server.id for server in developer_access.disabled_servers] == ["shared-disabled"]
+    assert [server.id for server in config.mcp.visible_servers_for_profile("developer")] == [
+        "developer-docs"
+    ]
+
+    planner_access = config.mcp.resolve_profile_access("planner")
+    assert [server.id for server in planner_access.visible_servers] == ["planner-docs"]
+    assert [server.id for server in planner_access.denied_servers] == [
+        "developer-docs",
+        "shared-disabled",
+    ]
+    assert [server.id for server in planner_access.disabled_servers] == []
 
 
 def test_mcp_catalog_reports_missing_required_transport_field(tmp_path: Path) -> None:

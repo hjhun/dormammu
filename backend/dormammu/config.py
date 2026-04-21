@@ -9,7 +9,13 @@ import tempfile
 from typing import TYPE_CHECKING, Any, Mapping
 
 from dormammu.hooks import HookCatalog, load_hook_config_layer, resolve_hook_catalog
-from dormammu.mcp import McpCatalog, load_mcp_config_layer, resolve_mcp_catalog
+from dormammu.mcp import (
+    EffectiveMcpServer,
+    McpCatalog,
+    McpProfileResolution,
+    load_mcp_config_layer,
+    resolve_mcp_catalog,
+)
 from dormammu.telegram.config import TelegramConfig, parse_telegram_config
 from dormammu.worktree import WorktreeServiceConfig
 from dormammu.workspace import WorkspacePaths, resolve_workspace_paths
@@ -949,6 +955,22 @@ class AppConfig:
             agents_config=self.agents,
             normalized_profiles=self.agent_profiles,
         )
+
+    def resolve_mcp_profile_access(
+        self,
+        profile: "AgentProfile | str",
+    ) -> McpProfileResolution:
+        catalog = self.mcp or McpCatalog()
+        return catalog.resolve_profile_access(profile)
+
+    def resolve_mcp_servers_for_profile(
+        self,
+        profile: "AgentProfile | str",
+    ) -> tuple[EffectiveMcpServer, ...]:
+        return self.resolve_mcp_profile_access(profile).visible_servers
+
+    def resolve_mcp_servers_for_role(self, role: str) -> tuple[EffectiveMcpServer, ...]:
+        return self.resolve_mcp_servers_for_profile(self.resolve_agent_profile(role))
 
     def load_agent_manifest_definitions(
         self,

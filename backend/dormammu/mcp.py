@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 import re
+
+if TYPE_CHECKING:
+    from dormammu.agent.profiles import AgentProfile
 
 
 _NORMALIZE_TOKEN_RE = re.compile(r"[^a-z0-9]+")
@@ -331,6 +334,22 @@ class EffectiveMcpServer:
 
 
 @dataclass(frozen=True, slots=True)
+class McpProfileResolution:
+    profile_name: str
+    visible_servers: tuple[EffectiveMcpServer, ...] = ()
+    denied_servers: tuple[EffectiveMcpServer, ...] = ()
+    disabled_servers: tuple[EffectiveMcpServer, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "profile_name": self.profile_name,
+            "visible_servers": [server.to_dict() for server in self.visible_servers],
+            "denied_servers": [server.to_dict() for server in self.denied_servers],
+            "disabled_servers": [server.to_dict() for server in self.disabled_servers],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class McpCatalog:
     layers: tuple[McpConfigLayer, ...] = ()
     servers: tuple[EffectiveMcpServer, ...] = ()
@@ -339,15 +358,60 @@ class McpCatalog:
     def definitions_by_id(self) -> dict[str, EffectiveMcpServer]:
         return {server.id: server for server in self.servers}
 
+    def configured_servers(self) -> tuple[EffectiveMcpServer, ...]:
+        return self.servers
+
     def enabled_servers(self) -> tuple[EffectiveMcpServer, ...]:
         return tuple(server for server in self.servers if server.enabled)
+
+    def disabled_servers(self) -> tuple[EffectiveMcpServer, ...]:
+        return tuple(server for server in self.servers if not server.enabled)
+
+    def resolve_profile_access(
+        self,
+        profile: "AgentProfile | str",
+    ) -> McpProfileResolution:
+        profile_name = _profile_name(profile)
+        visible_servers: list[EffectiveMcpServer] = []
+        denied_servers: list[EffectiveMcpServer] = []
+        disabled_servers: list[EffectiveMcpServer] = []
+
+        for server in self.servers:
+            if not server.is_visible_to_profile(profile_name):
+                denied_servers.append(server)
+                continue
+            if server.enabled:
+                visible_servers.append(server)
+                continue
+            disabled_servers.append(server)
+
+        return McpProfileResolution(
+            profile_name=profile_name,
+            visible_servers=tuple(visible_servers),
+            denied_servers=tuple(denied_servers),
+            disabled_servers=tuple(disabled_servers),
+        )
+
+    def visible_servers_for_profile(
+        self,
+        profile: "AgentProfile | str",
+    ) -> tuple[EffectiveMcpServer, ...]:
+        return self.resolve_profile_access(profile).visible_servers
 
     def to_dict(self) -> dict[str, object]:
         return {
             "layers": [layer.to_dict() for layer in self.layers],
             "servers": [server.to_dict() for server in self.servers],
+            "enabled_servers": [server.to_dict() for server in self.enabled_servers()],
+            "disabled_servers": [server.to_dict() for server in self.disabled_servers()],
             "shadowed": [server.to_dict() for server in self.shadowed],
         }
+
+
+def _profile_name(profile: "AgentProfile | str") -> str:
+    if isinstance(profile, str):
+        return profile
+    return profile.name
 
 
 def parse_mcp_access_policy(

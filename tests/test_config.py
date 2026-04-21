@@ -1411,6 +1411,109 @@ class ConfigTests(unittest.TestCase):
             )
             self.assertEqual(updated.app_name, "explicit-app")
 
+    def test_resolve_mcp_servers_for_role_uses_effective_profile_visibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+
+            manifest_dir = root / ".dormammu" / "agent-manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            (manifest_dir / "reviewer.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "reviewer-custom",
+                        "description": "Manifest-backed reviewer profile.",
+                        "prompt": "Review from the manifest.",
+                        "source": "project",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "reviewer": {
+                                "profile": "reviewer-custom",
+                            }
+                        },
+                        "mcp": {
+                            "servers": [
+                                {
+                                    "id": "reviewer-visible",
+                                    "transport": {
+                                        "kind": "stdio",
+                                        "command": "uvx",
+                                        "args": ["mcp-reviewer-visible"],
+                                    },
+                                    "access": {"profiles": ["reviewer-custom"]},
+                                },
+                                {
+                                    "id": "reviewer-disabled",
+                                    "enabled": False,
+                                    "transport": {
+                                        "kind": "stdio",
+                                        "command": "uvx",
+                                        "args": ["mcp-reviewer-disabled"],
+                                    },
+                                    "access": {"profiles": ["reviewer-custom"]},
+                                },
+                                {
+                                    "id": "developer-visible",
+                                    "transport": {
+                                        "kind": "stdio",
+                                        "command": "uvx",
+                                        "args": ["mcp-developer-visible"],
+                                    },
+                                    "access": {"profiles": ["developer"]},
+                                },
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            reviewer_profile = config.resolve_agent_profile("reviewer")
+            self.assertEqual(reviewer_profile.name, "reviewer-custom")
+
+            reviewer_access = config.resolve_mcp_profile_access(reviewer_profile)
+            self.assertEqual(reviewer_access.profile_name, "reviewer-custom")
+            self.assertEqual(
+                [server.id for server in reviewer_access.visible_servers],
+                ["reviewer-visible"],
+            )
+            self.assertEqual(
+                [server.id for server in reviewer_access.denied_servers],
+                ["developer-visible"],
+            )
+            self.assertEqual(
+                [server.id for server in reviewer_access.disabled_servers],
+                ["reviewer-disabled"],
+            )
+
+            self.assertEqual(
+                [server.id for server in config.resolve_mcp_servers_for_role("reviewer")],
+                ["reviewer-visible"],
+            )
+            self.assertEqual(
+                [server.id for server in config.resolve_mcp_servers_for_role("developer")],
+                ["developer-visible"],
+            )
+
     def test_with_overrides_preserves_env_derived_app_name_when_config_file_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "repo"
