@@ -59,13 +59,7 @@ class RuntimeHookBlocked(RuntimeError):
 
 
 class RuntimeHookController:
-    """Centralized runtime hook adapter for lifecycle events.
-
-    Tool-execution hooks are intentionally not wired in this slice. Current
-    agent CLI and subprocess/tool boundaries are not yet exposed through one
-    clean runtime seam, so this controller stays focused on the higher-value
-    lifecycle boundaries requested for Phase 03.
-    """
+    """Centralized runtime hook adapter for lifecycle and governed runtime events."""
 
     def __init__(
         self,
@@ -164,6 +158,42 @@ class RuntimeHookController:
             session_id=session_id,
             run_id=run_id,
             payload=payload,
+            metadata=metadata,
+        )
+
+    def emit_tool_execution(
+        self,
+        *,
+        source: str,
+        tool_name: str,
+        session_id: str | None,
+        agent_role: str | None,
+        run_id: str | None = None,
+        tool_target: str | None = None,
+        payload: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        subject: HookSubjectRef | None = None,
+    ) -> RuntimeHookSummary | None:
+        target = tool_target or tool_name
+        tool_payload = {
+            "tool_name": tool_name,
+            "tool_target": target,
+        }
+        if payload:
+            tool_payload.update(dict(payload))
+        return self._emit(
+            event=HookEventName.TOOL_EXECUTION,
+            source=source,
+            session_id=session_id,
+            run_id=run_id,
+            agent_role=agent_role,
+            subject=subject
+            or HookSubjectRef(
+                kind="tool",
+                id=target,
+                name=tool_name,
+            ),
+            payload=tool_payload,
             metadata=metadata,
         )
 
