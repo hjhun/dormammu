@@ -233,6 +233,12 @@ related skills into common entry patterns:
 | `cleanup-commit.md` | Final cleanup and commit after validation passes |
 | `supervised-downstream.md` | Continue downstream execution under supervisor contract after `refine → plan` has already completed |
 
+Runtime skill discovery is a separate subsystem from guidance-file injection.
+`AGENTS.md` remains repository guidance, `agents/workflows/*.md` define stage
+flows, and `agents/skills/*/SKILL.md` are runtime skill documents discovered
+from project, user, and built-in scopes and then filtered per effective agent
+profile.
+
 See [docs/GUIDE.md](docs/GUIDE.md) for a full description of each agent role.
 
 ## Installation

@@ -58,6 +58,40 @@ class ConfigTests(unittest.TestCase):
                 (config.global_home_dir / "agent-manifests").resolve(),
             )
 
+    def test_load_derives_runtime_skill_roots_and_reports_them_in_config_dump(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            self.assertEqual(
+                config.project_skills_dir,
+                (root / "agents" / "skills").resolve(),
+            )
+            self.assertEqual(
+                config.user_skills_dir,
+                (config.global_home_dir / "agents" / "skills").resolve(),
+            )
+            self.assertEqual(
+                config.built_in_skills_dir,
+                (config.built_in_agents_dir / "skills").resolve(),
+            )
+
+            payload = config.to_dict()
+
+            self.assertEqual(payload["project_skills_dir"], str(config.project_skills_dir))
+            self.assertEqual(payload["user_skills_dir"], str(config.user_skills_dir))
+            self.assertEqual(payload["built_in_skills_dir"], str(config.built_in_skills_dir))
+
     def test_load_preserves_sessions_dir_override_with_workspace_shadow_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "repo"

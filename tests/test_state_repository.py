@@ -123,6 +123,57 @@ Use this skill in state repository tests.
                 "designer",
             )
 
+    def test_record_runtime_skill_resolution_keeps_built_in_only_visibility_quiet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="Built-in skills only")
+
+            runtime_skills = repository.record_runtime_skill_resolution(role="planner")
+
+            session_state = json.loads(artifacts.session.read_text(encoding="utf-8"))
+            workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
+            root_session_index = json.loads(
+                (config.base_dev_dir / "session.json").read_text(encoding="utf-8")
+            )
+            root_workflow_index = json.loads(
+                (config.base_dev_dir / "workflow_state.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(runtime_skills["active_role"], "planner")
+            self.assertEqual(runtime_skills["latest"]["summary"]["custom_visible_count"], 0)
+            self.assertFalse(runtime_skills["latest"]["summary"]["interesting_for_operator"])
+            self.assertEqual(runtime_skills["latest"]["prompt_lines"], [])
+            self.assertEqual(session_state["runtime_skills"]["latest"]["prompt_lines"], [])
+            self.assertEqual(workflow_state["runtime_skills"]["latest"]["prompt_lines"], [])
+            expected_root_summary = {
+                "active_role": "planner",
+                "profile_name": runtime_skills["latest"]["profile"]["name"],
+                "profile_source": runtime_skills["latest"]["profile"]["source"],
+                "selected_count": runtime_skills["latest"]["summary"]["selected_count"],
+                "visible_count": runtime_skills["latest"]["summary"]["visible_count"],
+                "hidden_count": runtime_skills["latest"]["summary"]["hidden_count"],
+                "preloaded_count": runtime_skills["latest"]["summary"]["preloaded_count"],
+                "missing_preload_count": runtime_skills["latest"]["summary"]["missing_preload_count"],
+                "shadowed_count": runtime_skills["latest"]["summary"]["shadowed_count"],
+                "custom_visible_count": runtime_skills["latest"]["summary"]["custom_visible_count"],
+                "interesting_for_operator": runtime_skills["latest"]["summary"]["interesting_for_operator"],
+            }
+            self.assertEqual(
+                root_session_index["current_session"]["runtime_skills"],
+                expected_root_summary,
+            )
+            self.assertEqual(
+                root_workflow_index["current_session"]["runtime_skills"],
+                expected_root_summary,
+            )
+
     def test_worktree_state_reads_as_empty_without_persisting_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -189,6 +189,10 @@ supervisor must:
   Files under `.dormammu/agent-manifests/` or `~/.dormammu/agent-manifests/`
   define runtime profile data, not workflow guidance, skills, or packaged
   stage rules under `agents/`.
+- Runtime-discovered skills are separate from repo guidance files and workflow
+  maps. `AGENTS.md` files are guidance, `workflows/*.md` files define stage
+  sequences, and `skills/*/SKILL.md` files are the packaged built-in skill
+  documents that may also participate in runtime skill discovery.
 - `.dev/WORKFLOWS.md` is generated per task by the planning agent. It is the
   authoritative process map for what stages will run and where evaluator
   checkpoints are placed.

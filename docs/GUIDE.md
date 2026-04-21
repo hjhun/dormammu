@@ -21,6 +21,7 @@ Korean-language guide is at [docs/ko/GUIDE.md](ko/GUIDE.md).
 - [Commands Reference](#commands-reference)
 - [Configuration Reference](#configuration-reference)
 - [Lifecycle Hooks](#lifecycle-hooks)
+- [Runtime Skills](#runtime-skills)
 - [Manifest-Backed Agent Profiles](#manifest-backed-agent-profiles)
 - [Agent Roles](#agent-roles)
 - [Workflow Pipeline](#workflow-pipeline)
@@ -732,6 +733,118 @@ diagnostics under `.dev` state so later resume/review steps can see them.
 - Keep hooks focused on policy, auditing, and structured automation around
   stable lifecycle boundaries. They are not a replacement for the main
   workflow guidance or for long-running daemonized subsystems.
+
+---
+
+## Runtime Skills
+
+DORMAMMU treats runtime skills as typed `SKILL.md` documents discovered on disk
+and filtered per effective agent profile. They are runtime inputs, not general
+repository instructions.
+
+### What counts as a runtime skill
+
+A runtime skill is a Markdown document named `SKILL.md` with frontmatter that
+defines:
+
+- `name`
+- `description`
+- optional `metadata`
+- Markdown body content that can be injected into prompts or shown in operator
+  state
+
+The runtime does **not** treat `AGENTS.md` as a skill document. `AGENTS.md`
+remains general guidance, while runtime skills are discovered only from
+`agents/skills/**/SKILL.md` trees.
+
+### Discovery roots
+
+The runtime searches three skill scopes in deterministic order:
+
+| Scope | Location |
+|-------|----------|
+| project | `<repo-root>/agents/skills/` |
+| user | `<effective-global-home>/agents/skills/` |
+| built-in | packaged `assets/agents/skills/` shipped with DORMAMMU |
+
+The effective global home defaults to `~/.dormammu/`. If that path is not
+writable, DORMAMMU falls back to `tempfile.gettempdir()/dormammu-<uid>`, so
+the user skill root moves with that fallback home.
+
+### Precedence and conflicts
+
+Discovery resolves duplicate skill names explicitly:
+
+- Project skills override user skills.
+- User skills override built-in packaged skills.
+- Duplicate names within the same scope are an error.
+- Lower-precedence duplicates are retained as shadowed metadata for operator
+  visibility; they are not merged.
+
+If no project or user skills are present, built-in behavior continues to work
+without any extra setup.
+
+### Visibility and profile filtering
+
+Discovery and visibility are separate steps:
+
+- Discovery determines which skill definitions exist after precedence
+  resolution.
+- Profile filtering applies the effective agent profile's skill permission
+  policy.
+
+In practice:
+
+- The default skill permission is `ask`, which keeps discovered skills visible.
+- A profile can explicitly deny a named skill.
+- A profile can default to `deny` and allow only selected skills.
+- Preloaded skills are requests on the profile, not bypasses. A skill must be
+  discovered and allowed before it becomes a visible preload.
+- Missing preloads are reported as metadata so operators can tell the
+  difference between "requested" and "available".
+
+### Where runtime skill visibility appears
+
+Phase 5 integrates runtime skill resolution into operator-visible state and
+prompt assembly:
+
+- structured `runtime_skills` metadata in `.dev` session and workflow state
+- root session and workflow indexes
+- continuation and supervisor handoff prompts when the result is interesting
+- loop-runner progress logs
+
+To keep the CLI output readable, built-in-only cases stay quiet. Runtime skill
+prompt lines appear only when there is something an operator should care about,
+such as:
+
+- visible project or user skills
+- hidden skills due to profile policy
+- preloaded skills
+- missing requested preloads
+- shadowed lower-precedence skills
+
+### Relationship to manifests and workflow guidance
+
+These concepts are adjacent but distinct:
+
+- Runtime skills are discovered `SKILL.md` documents that can be filtered per
+  profile.
+- Manifest-backed profiles are named runtime profile definitions that can
+  request preloaded skills and permission overrides.
+- `AGENTS.md` files provide general repository or bundle guidance.
+- `agents/workflows/*.md` files define packaged workflow sequences.
+- `agents/skills/*/SKILL.md` files are the packaged built-in skill documents
+  that participate in runtime discovery as the built-in scope.
+
+Manifest-backed profiles can reference skill names, but they do not replace the
+skill documents themselves.
+
+### Current limitations
+
+- There is no dedicated `inspect-skill` CLI yet.
+- Skill documents are currently inline-Markdown `SKILL.md` files only.
+- Runtime skill visibility is exposed through selected status and prompt
+  surfaces, not every possible UI path.
 
 ---
 
