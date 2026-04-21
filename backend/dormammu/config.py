@@ -9,6 +9,7 @@ import tempfile
 from typing import TYPE_CHECKING, Any, Mapping
 
 from dormammu.hooks import HookCatalog, load_hook_config_layer, resolve_hook_catalog
+from dormammu.mcp import McpCatalog, load_mcp_config_layer, resolve_mcp_catalog
 from dormammu.telegram.config import TelegramConfig, parse_telegram_config
 from dormammu.worktree import WorktreeServiceConfig
 from dormammu.workspace import WorkspacePaths, resolve_workspace_paths
@@ -243,6 +244,17 @@ def _global_config_file(global_home_dir: Path) -> Path | None:
     return None
 
 
+def _effective_config_file(
+    *,
+    root: Path,
+    global_home_dir: Path,
+    explicit_config_file: Path | None,
+) -> Path | None:
+    if explicit_config_file is not None:
+        return explicit_config_file.resolve()
+    return _project_config_file(root) or _global_config_file(global_home_dir)
+
+
 def _load_config_payload(path: Path | None) -> dict[str, Any]:
     if path is None:
         return {}
@@ -255,6 +267,61 @@ def _load_config_payload(path: Path | None) -> dict[str, Any]:
     if not isinstance(raw_payload, Mapping):
         raise RuntimeError(f"Dormammu config file must contain a JSON object: {path}")
     return dict(raw_payload)
+
+
+def _config_payload_app_name(config_payload: Mapping[str, Any]) -> str:
+    return str(_config_value(config_payload, "app_name", "dormammu"))
+
+
+def _parse_config_payload_fields(
+    *,
+    config_file: Path | None,
+    config_payload: Mapping[str, Any],
+    root: Path,
+    workspace_project_root: Path,
+) -> dict[str, object]:
+    fallback_agent_clis = (
+        _parse_fallback_agent_clis(
+            config_payload.get("fallback_agent_clis"),
+            config_path=config_file,
+        )
+        if "fallback_agent_clis" in config_payload
+        else _default_fallback_agent_clis()
+    )
+    return {
+        "app_name": _config_payload_app_name(config_payload),
+        "worktree": _parse_worktree_config(
+            config_payload.get("worktree"),
+            root=root,
+            workspace_project_root=workspace_project_root,
+            config_path=config_file,
+        ),
+        "active_agent_cli": _parse_active_agent_cli(
+            config_payload.get("active_agent_cli"),
+            config_path=config_file,
+        ),
+        "fallback_agent_clis": fallback_agent_clis,
+        "cli_overrides": _parse_cli_overrides(
+            config_payload.get("cli_overrides"),
+            config_path=config_file,
+        ),
+        "token_exhaustion_patterns": _coerce_string_list(
+            config_payload.get("token_exhaustion_patterns", list(DEFAULT_TOKEN_EXHAUSTION_PATTERNS)),
+            field_name="token_exhaustion_patterns",
+            config_path=config_file,
+        )
+        or DEFAULT_TOKEN_EXHAUSTION_PATTERNS,
+        "telegram_config": parse_telegram_config(
+            config_payload.get("telegram"),
+            config_path=config_file,
+        ),
+        "process_timeout_seconds": (
+            int(config_payload["process_timeout_seconds"])
+            if "process_timeout_seconds" in config_payload
+            else None
+        ),
+        "fallback_on_nonzero_exit": bool(config_payload.get("fallback_on_nonzero_exit", False)),
+    }
 
 
 SETTABLE_SCALAR_KEYS: frozenset[str] = frozenset({
@@ -636,7 +703,9 @@ class AppConfig:
     project_agent_manifests_dir: Path
     user_agent_manifests_dir: Path
     config_file: Path | None
+    config_file_is_explicit: bool = False
     hooks: HookCatalog | None = None
+    mcp: McpCatalog | None = None
     active_agent_cli: Path | None = None
     fallback_agent_clis: tuple[FallbackCliConfig, ...] = ()
     cli_overrides: dict[str, CliInvocationConfig] | None = None
@@ -675,27 +744,27 @@ class AppConfig:
             global_home_dir=global_home_dir,
         )
         config_file = _resolve_config_file(root, values, global_home_dir=global_home_dir)
+        explicit_config_file = config_file if values.get("DORMAMMU_CONFIG_PATH") else None
         config_payload = _load_config_payload(config_file)
+        parsed_config_fields = _parse_config_payload_fields(
+            config_file=config_file,
+            config_payload=config_payload,
+            root=root,
+            workspace_project_root=workspace_paths.workspace_project_root,
+        )
         agents_config = _load_effective_agents_config(
             root=root,
             global_home_dir=global_home_dir,
-            explicit_config_file=config_file if values.get("DORMAMMU_CONFIG_PATH") else None,
+            explicit_config_file=explicit_config_file,
         )
         hooks = _load_effective_hook_catalog(
             root=root,
             global_home_dir=global_home_dir,
-            explicit_config_file=config_file if values.get("DORMAMMU_CONFIG_PATH") else None,
+            explicit_config_file=explicit_config_file,
         )
-        fallback_agent_clis = (
-            _parse_fallback_agent_clis(
-                config_payload.get("fallback_agent_clis"),
-                config_path=config_file,
-            )
-            if "fallback_agent_clis" in config_payload
-            else _default_fallback_agent_clis()
-        )
+        config_app_name = parsed_config_fields["app_name"]
         base = cls(
-            app_name=str(values.get("DORMAMMU_APP_NAME", _config_value(config_payload, "app_name", "dormammu"))),
+            app_name=str(values.get("DORMAMMU_APP_NAME", config_app_name)),
             repo_root=root,
             repo_dev_dir=workspace_paths.repo_dev_dir,
             home_dir=home_dir,
@@ -715,12 +784,7 @@ class AppConfig:
                 or workspace_paths.sessions_dir
             ),
             logs_dir=workspace_paths.logs_dir,
-            worktree=_parse_worktree_config(
-                config_payload.get("worktree"),
-                root=root,
-                workspace_project_root=workspace_paths.workspace_project_root,
-                config_path=config_file,
-            ),
+            worktree=parsed_config_fields["worktree"],
             templates_dir=asset_root / "templates",
             agents_dir=agents_dir,
             project_agents_dir=_project_agents_dir(root),
@@ -732,52 +796,133 @@ class AppConfig:
             project_agent_manifests_dir=_project_agent_manifests_dir(root),
             user_agent_manifests_dir=_user_agent_manifests_dir(global_home_dir),
             config_file=config_file,
+            config_file_is_explicit=explicit_config_file is not None,
             hooks=hooks,
-            active_agent_cli=_parse_active_agent_cli(
-                config_payload.get("active_agent_cli"),
-                config_path=config_file,
-            ),
-            fallback_agent_clis=fallback_agent_clis,
-            cli_overrides=_parse_cli_overrides(
-                config_payload.get("cli_overrides"),
-                config_path=config_file,
-            ),
-            token_exhaustion_patterns=_coerce_string_list(
-                config_payload.get("token_exhaustion_patterns", list(DEFAULT_TOKEN_EXHAUSTION_PATTERNS)),
-                field_name="token_exhaustion_patterns",
-                config_path=config_file,
-            )
-            or DEFAULT_TOKEN_EXHAUSTION_PATTERNS,
+            mcp=None,
+            active_agent_cli=parsed_config_fields["active_agent_cli"],
+            fallback_agent_clis=parsed_config_fields["fallback_agent_clis"],
+            cli_overrides=parsed_config_fields["cli_overrides"],
+            token_exhaustion_patterns=parsed_config_fields["token_exhaustion_patterns"],
             default_guidance_files=((agents_dir / "AGENTS.md",) if (agents_dir / "AGENTS.md").exists() else ()),
-            telegram_config=parse_telegram_config(
-                config_payload.get("telegram"),
-                config_path=config_file,
-            ),
+            telegram_config=parsed_config_fields["telegram_config"],
             agents=agents_config,
             agent_profiles=None,
-            process_timeout_seconds=(
-                int(config_payload["process_timeout_seconds"])
-                if "process_timeout_seconds" in config_payload
-                else None
-            ),
-            fallback_on_nonzero_exit=bool(config_payload.get("fallback_on_nonzero_exit", False)),
+            process_timeout_seconds=parsed_config_fields["process_timeout_seconds"],
+            fallback_on_nonzero_exit=parsed_config_fields["fallback_on_nonzero_exit"],
+        )
+        normalized_profiles = _normalize_loaded_agent_profiles(
+            config=base,
+            agents_config=agents_config,
         )
         return replace(
             base,
-            agent_profiles=_normalize_loaded_agent_profiles(
-                config=base,
-                agents_config=agents_config,
+            agent_profiles=normalized_profiles,
+            mcp=_load_effective_mcp_catalog(
+                root=root,
+                global_home_dir=global_home_dir,
+                explicit_config_file=explicit_config_file,
+                valid_profile_names=_effective_profile_names(normalized_profiles),
             ),
         )
 
     def with_overrides(self, **kwargs: object) -> "AppConfig":
         updated = replace(self, **_derived_config_overrides(self, kwargs))
-        if "agent_profiles" in kwargs:
-            return updated
-        if not any(
+        effective_config_file = _effective_config_file(
+            root=updated.repo_root,
+            global_home_dir=updated.global_home_dir,
+            explicit_config_file=_explicit_config_file(updated),
+        )
+        if updated.config_file != effective_config_file:
+            updated = replace(updated, config_file=effective_config_file)
+
+        recompute_config_payload = any(
+            key in kwargs
+            for key in (
+                "config_file",
+                "repo_root",
+                "global_home_dir",
+            )
+        ) or updated.config_file != self.config_file
+        if recompute_config_payload:
+            payload_fields = _parse_config_payload_fields(
+                config_file=updated.config_file,
+                config_payload=_load_config_payload(updated.config_file),
+                root=updated.repo_root,
+                workspace_project_root=updated.workspace_project_root,
+            )
+            payload_overrides = {
+                key: value
+                for key, value in payload_fields.items()
+                if key not in kwargs and key != "app_name"
+            }
+            if (
+                "app_name" not in kwargs
+                and self.app_name == _config_payload_app_name(_load_config_payload(self.config_file))
+            ):
+                payload_overrides["app_name"] = payload_fields["app_name"]
+            if payload_overrides:
+                updated = replace(updated, **payload_overrides)
+
+        recompute_hooks = "hooks" not in kwargs and any(
+            key in kwargs
+            for key in (
+                "config_file",
+                "repo_root",
+                "global_home_dir",
+            )
+        )
+        if recompute_hooks:
+            updated = replace(
+                updated,
+                hooks=_load_effective_hook_catalog(
+                    root=updated.repo_root,
+                    global_home_dir=updated.global_home_dir,
+                    explicit_config_file=_explicit_config_file(updated),
+                ),
+            )
+
+        recompute_agents = "agents" not in kwargs and any(
+            key in kwargs
+            for key in (
+                "config_file",
+                "repo_root",
+                "global_home_dir",
+            )
+        )
+        effective_agents = updated.agents
+        if recompute_agents:
+            effective_agents = _load_effective_agents_config(
+                root=updated.repo_root,
+                global_home_dir=updated.global_home_dir,
+                explicit_config_file=_explicit_config_file(updated),
+            )
+            updated = replace(updated, agents=effective_agents)
+
+        recompute_profiles = "agent_profiles" not in kwargs and any(
             key in kwargs
             for key in (
                 "agents",
+                "config_file",
+                "repo_root",
+                "global_home_dir",
+                "project_agent_manifests_dir",
+                "user_agent_manifests_dir",
+            )
+        )
+        effective_profiles = updated.agent_profiles
+        if recompute_profiles:
+            effective_profiles = _normalize_loaded_agent_profiles(
+                config=updated,
+                agents_config=effective_agents,
+            )
+            updated = replace(updated, agent_profiles=effective_profiles)
+
+        if "mcp" in kwargs or not any(
+            key in kwargs
+            for key in (
+                "agent_profiles",
+                "agents",
+                "config_file",
                 "repo_root",
                 "global_home_dir",
                 "project_agent_manifests_dir",
@@ -785,11 +930,14 @@ class AppConfig:
             )
         ):
             return updated
+
         return replace(
             updated,
-            agent_profiles=_normalize_loaded_agent_profiles(
-                config=updated,
-                agents_config=updated.agents,
+            mcp=_load_effective_mcp_catalog(
+                root=updated.repo_root,
+                global_home_dir=updated.global_home_dir,
+                explicit_config_file=_explicit_config_file(updated),
+                valid_profile_names=_effective_profile_names(effective_profiles),
             ),
         )
 
@@ -839,6 +987,7 @@ class AppConfig:
             "user_agent_manifests_dir": str(self.user_agent_manifests_dir),
             "config_file": str(self.config_file) if self.config_file else None,
             "hooks": self.hooks.to_dict() if self.hooks is not None else None,
+            "mcp": self.mcp.to_dict() if self.mcp is not None else None,
             "active_agent_cli": str(self.active_agent_cli) if self.active_agent_cli else None,
             "fallback_agent_clis": [item.to_dict() for item in self.fallback_agent_clis],
             "cli_overrides": {
@@ -959,6 +1108,50 @@ def _load_effective_hook_catalog(
     return resolve_hook_catalog(layers)
 
 
+def _load_effective_mcp_catalog(
+    *,
+    root: Path,
+    global_home_dir: Path,
+    explicit_config_file: Path | None,
+    valid_profile_names: tuple[str, ...],
+) -> McpCatalog:
+    if explicit_config_file is not None:
+        explicit_payload = _load_config_payload(explicit_config_file)
+        explicit_layer = load_mcp_config_layer(
+            explicit_payload.get("mcp"),
+            scope="explicit",
+            config_path=explicit_config_file,
+            valid_profile_names=valid_profile_names,
+        )
+        return resolve_mcp_catalog((explicit_layer,) if explicit_layer is not None else ())
+
+    global_config_file = _global_config_file(global_home_dir)
+    project_config_file = _project_config_file(root)
+    layers = tuple(
+        layer
+        for layer in (
+            load_mcp_config_layer(
+                _load_config_payload(global_config_file).get("mcp"),
+                scope="global",
+                config_path=global_config_file,
+                valid_profile_names=valid_profile_names,
+            )
+            if global_config_file is not None
+            else None,
+            load_mcp_config_layer(
+                _load_config_payload(project_config_file).get("mcp"),
+                scope="project",
+                config_path=project_config_file,
+                valid_profile_names=valid_profile_names,
+            )
+            if project_config_file is not None
+            else None,
+        )
+        if layer is not None
+    )
+    return resolve_mcp_catalog(layers)
+
+
 def _normalize_agent_profiles(
     *,
     agents_config: "AgentsConfig | None",
@@ -1015,11 +1208,39 @@ def _requested_manifest_profile_names(
     return tuple(names)
 
 
+def _effective_profile_names(
+    profiles: Mapping[str, "AgentProfile"] | None,
+) -> tuple[str, ...]:
+    if not profiles:
+        return ()
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for profile in profiles.values():
+        if profile.name in seen:
+            continue
+        seen.add(profile.name)
+        names.append(profile.name)
+    return tuple(names)
+
+
+def _explicit_config_file(config: AppConfig) -> Path | None:
+    if not config.config_file_is_explicit:
+        return None
+    return config.config_file
+
+
 def _derived_config_overrides(
     config: AppConfig,
     overrides: Mapping[str, object],
 ) -> dict[str, object]:
     derived = dict(overrides)
+
+    if "config_file" in overrides and "config_file_is_explicit" not in overrides:
+        config_file = overrides["config_file"]
+        if config_file is not None:
+            assert isinstance(config_file, Path)
+        derived["config_file_is_explicit"] = config_file is not None
 
     if "repo_root" in overrides or "project_agents_dir" in overrides:
         project_agents_dir = overrides.get("project_agents_dir")

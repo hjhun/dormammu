@@ -1178,6 +1178,269 @@ class ConfigTests(unittest.TestCase):
                 "user",
             )
 
+    def test_with_overrides_recomputes_mcp_catalog_when_repo_root_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            initial_root = Path(tmpdir) / "initial-repo"
+            initial_root.mkdir(parents=True, exist_ok=True)
+            next_root = Path(tmpdir) / "next-repo"
+            next_root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+
+            initial_config_path = initial_root / "dormammu.json"
+            initial_config_path.write_text(
+                json.dumps(
+                    {
+                        "mcp": {
+                            "servers": [
+                                {
+                                    "id": "repo-a",
+                                    "transport": {
+                                        "kind": "stdio",
+                                        "command": "uvx",
+                                        "args": ["mcp-repo-a"],
+                                    },
+                                    "access": {"profiles": ["developer"]},
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            next_config_path = next_root / "dormammu.json"
+            next_config_path.write_text(
+                json.dumps(
+                    {
+                        "mcp": {
+                            "servers": [
+                                {
+                                    "id": "repo-b",
+                                    "transport": {
+                                        "kind": "stdio",
+                                        "command": "uvx",
+                                        "args": ["mcp-repo-b"],
+                                    },
+                                    "access": {"profiles": ["developer"]},
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=initial_root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+            updated = config.with_overrides(repo_root=next_root)
+
+            self.assertIsNotNone(config.mcp)
+            self.assertEqual([server.id for server in config.mcp.servers], ["repo-a"])
+            self.assertIsNotNone(updated.mcp)
+            self.assertEqual([server.id for server in updated.mcp.servers], ["repo-b"])
+            self.assertEqual(updated.mcp.servers[0].config_path, next_config_path.resolve())
+
+    def test_with_overrides_recomputes_mcp_catalog_when_config_file_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            base_config_path = root / "dormammu.json"
+            base_config_path.write_text(
+                json.dumps(
+                    {
+                        "app_name": "base-app",
+                        "active_agent_cli": "/usr/bin/base-cli",
+                        "token_exhaustion_patterns": ["base quota"],
+                        "process_timeout_seconds": 123,
+                        "fallback_on_nonzero_exit": False,
+                        "hooks": [
+                            {
+                                "name": "base-hook",
+                                "event": "stage start",
+                                "target": {
+                                    "kind": "builtin",
+                                    "ref": "hooks.base_hook",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_dir = root / ".dormammu" / "agent-manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            (manifest_dir / "reviewer.agent.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "name": "reviewer-custom",
+                        "description": "Project reviewer",
+                        "prompt": "Review from the project manifest.",
+                        "source": "project",
+                        "model": "gpt-5.4",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            explicit_config_path = root / "ops" / "dormammu.explicit.json"
+            explicit_config_path.parent.mkdir(parents=True, exist_ok=True)
+            explicit_config_path.write_text(
+                json.dumps(
+                    {
+                        "app_name": "explicit-app",
+                        "active_agent_cli": "/usr/bin/explicit-cli",
+                        "fallback_agent_clis": [
+                            "claude",
+                            {
+                                "path": "./bin/explicit-fallback",
+                                "extra_args": ["--json"],
+                                "input_mode": "arg",
+                                "prompt_flag": "--prompt",
+                            },
+                        ],
+                        "cli_overrides": {
+                            "codex": {
+                                "extra_args": ["--full-auto"],
+                                "input_mode": "stdin",
+                            }
+                        },
+                        "token_exhaustion_patterns": ["explicit quota", "hard stop"],
+                        "telegram": {
+                            "bot_token": "token-123",
+                            "allowed_chat_ids": ["111", "222"],
+                        },
+                        "worktree": {
+                            "enabled": True,
+                            "root_dir": "./runtime-worktrees",
+                        },
+                        "process_timeout_seconds": 900,
+                        "fallback_on_nonzero_exit": True,
+                        "agents": {
+                            "reviewer": {
+                                "profile": "reviewer-custom",
+                            }
+                        },
+                        "hooks": [
+                            {
+                                "name": "explicit-hook",
+                                "event": "stage start",
+                                "target": {
+                                    "kind": "builtin",
+                                    "ref": "hooks.explicit_hook",
+                                },
+                            }
+                        ],
+                        "mcp": {
+                            "servers": [
+                                {
+                                    "id": "explicit-only",
+                                    "transport": {
+                                        "kind": "stdio",
+                                        "command": "uvx",
+                                        "args": ["mcp-explicit"],
+                                    },
+                                    "access": {"profiles": ["reviewer-custom"]},
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+            updated = config.with_overrides(config_file=explicit_config_path.resolve())
+            direct = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    "DORMAMMU_CONFIG_PATH": str(explicit_config_path.resolve()),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            self.assertIsNotNone(updated.agents)
+            self.assertEqual(updated.agents.reviewer.profile, "reviewer-custom")
+            self.assertIsNotNone(updated.agent_profiles)
+            self.assertEqual(updated.agent_profiles["reviewer"].name, "reviewer-custom")
+            self.assertEqual(updated.config_file, direct.config_file)
+            self.assertEqual(updated.app_name, direct.app_name)
+            self.assertEqual([hook.name for hook in config.hooks.definitions], ["base-hook"])
+            self.assertEqual(
+                [hook.name for hook in updated.hooks.definitions],
+                ["explicit-hook"],
+            )
+            self.assertEqual(updated.hooks.to_dict(), direct.hooks.to_dict())
+            self.assertIsNotNone(updated.mcp)
+            self.assertEqual([server.id for server in updated.mcp.servers], ["explicit-only"])
+            self.assertEqual(updated.mcp.servers[0].scope, "explicit")
+            self.assertEqual(
+                updated.mcp.servers[0].definition.access.profiles,
+                ("reviewer-custom",),
+            )
+            self.assertEqual(updated.agents, direct.agents)
+            self.assertEqual(updated.agent_profiles, direct.agent_profiles)
+            self.assertEqual(updated.mcp.to_dict(), direct.mcp.to_dict())
+            self.assertEqual(updated.active_agent_cli, direct.active_agent_cli)
+            self.assertEqual(updated.fallback_agent_clis, direct.fallback_agent_clis)
+            self.assertEqual(updated.cli_overrides, direct.cli_overrides)
+            self.assertEqual(updated.token_exhaustion_patterns, direct.token_exhaustion_patterns)
+            self.assertEqual(updated.telegram_config, direct.telegram_config)
+            self.assertEqual(updated.worktree, direct.worktree)
+            self.assertEqual(updated.process_timeout_seconds, direct.process_timeout_seconds)
+            self.assertEqual(updated.fallback_on_nonzero_exit, direct.fallback_on_nonzero_exit)
+            self.assertEqual(updated.active_agent_cli, Path("/usr/bin/explicit-cli"))
+            self.assertEqual(updated.process_timeout_seconds, 900)
+            self.assertTrue(updated.fallback_on_nonzero_exit)
+            self.assertEqual(
+                updated.token_exhaustion_patterns,
+                ("explicit quota", "hard stop"),
+            )
+            self.assertEqual(updated.app_name, "explicit-app")
+
+    def test_with_overrides_preserves_env_derived_app_name_when_config_file_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps({"app_name": "base-app"}),
+                encoding="utf-8",
+            )
+            explicit_config_path = root / "ops" / "dormammu.explicit.json"
+            explicit_config_path.parent.mkdir(parents=True, exist_ok=True)
+            explicit_config_path.write_text(
+                json.dumps({"app_name": "explicit-app"}),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    "DORMAMMU_APP_NAME": "env-app",
+                    **{key: value for key, value in os.environ.items() if key not in {"HOME", "DORMAMMU_APP_NAME"}},
+                },
+            )
+            updated = config.with_overrides(config_file=explicit_config_path.resolve())
+
+            self.assertEqual(config.app_name, "env-app")
+            self.assertEqual(updated.app_name, "env-app")
+
     def test_load_preserves_absolute_symlink_for_active_agent_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
