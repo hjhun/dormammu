@@ -77,6 +77,60 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(workflow_state["latest_run"]["run_id"], result.run_id)
             self.assertEqual(workflow_state["latest_run"]["prompt_mode"], "file")
 
+    def test_run_once_materializes_current_run_artifacts_before_persisting_started_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(active_roadmap_phase_ids=["phase_7"])
+
+            captured: dict[str, object] = {}
+
+            def _handle_started(started: object) -> None:
+                repository.record_current_run(started)
+                workflow_state = repository.read_workflow_state()
+                current_run = workflow_state["current_run"]
+                metadata_path = Path(current_run["artifacts"]["metadata"])
+                captured["current_run"] = current_run
+                captured["artifact_paths_exist"] = all(
+                    Path(item["path"]).exists() for item in current_run["artifact_refs"]
+                )
+                captured["metadata_payload"] = json.loads(
+                    metadata_path.read_text(encoding="utf-8")
+                )
+
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Write a tiny test plan.",
+                    repo_root=root,
+                    run_label="current-run-artifacts",
+                ),
+                on_started=_handle_started,
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertTrue(captured["artifact_paths_exist"])
+            current_run = captured["current_run"]
+            self.assertEqual(current_run["run_id"], result.run_id)
+            self.assertEqual(
+                {item["kind"] for item in current_run["artifact_refs"]},
+                {"prompt", "stdout", "stderr", "metadata"},
+            )
+            self.assertEqual(captured["metadata_payload"]["run_id"], result.run_id)
+            self.assertEqual(
+                {item["kind"] for item in captured["metadata_payload"]["artifact_refs"]},
+                {"prompt", "stdout", "stderr", "metadata"},
+            )
+
     def test_run_once_uses_codex_exec_preset_for_positional_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -477,9 +531,10 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(result.exit_code, 0)
             mirrored = stderr.getvalue()
             self.assertIn(
-                f"PROMPT::{prepend_cli_identity('Watch the live terminal output.', fake_cli)}",
+                f"PROMPT::[{fake_cli.name}]",
                 mirrored,
             )
+            self.assertIn("Watch the live terminal output.", mirrored)
             self.assertIn("TRACE::stderr", mirrored)
 
     def test_run_once_waits_before_second_agent_cli_call_and_logs_message(self) -> None:
@@ -517,7 +572,41 @@ class CliAdapterTests(unittest.TestCase):
             mirrored = stderr.getvalue()
             self.assertIn(cli_adapter_module.CLI_RETRY_DELAY_MESSAGE, mirrored)
             self.assertIn(f"PROMPT::{prepend_cli_identity('First call.', first_cli)}", mirrored)
-            self.assertIn(f"PROMPT::{prepend_cli_identity('Second call.', second_cli)}", mirrored)
+            self.assertIn(f"PROMPT::[{second_cli.name}]", mirrored)
+            self.assertIn("Second call.", mirrored)
+
+    def test_run_once_does_not_wait_across_separate_adapter_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            first_cli = self._write_fake_cli(root)
+            second_cli = self._write_fake_cli(root, name="fake-agent-two")
+
+            config = AppConfig.load(repo_root=root)
+            stderr = io.StringIO()
+            self.sleep_mock.reset_mock()
+            with contextlib.redirect_stderr(stderr):
+                first_result = CliAdapter(config).run_once(
+                    AgentRunRequest(
+                        cli_path=first_cli,
+                        prompt_text="First adapter call.",
+                        repo_root=root,
+                        run_label="first-adapter-call",
+                    )
+                )
+                second_result = CliAdapter(config).run_once(
+                    AgentRunRequest(
+                        cli_path=second_cli,
+                        prompt_text="Second adapter call.",
+                        repo_root=root,
+                        run_label="second-adapter-call",
+                    )
+                )
+
+            self.assertEqual(first_result.exit_code, 0)
+            self.assertEqual(second_result.exit_code, 0)
+            self.sleep_mock.assert_not_called()
+            self.assertNotIn(cli_adapter_module.CLI_RETRY_DELAY_MESSAGE, stderr.getvalue())
 
     def test_run_once_applies_cli_override_when_configured_codex_path_is_a_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

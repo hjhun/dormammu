@@ -90,6 +90,7 @@ execution the most relevant fields are:
 | `run_id` | string | Stable runtime identifier for the agent call |
 | `workdir` | string | Effective working directory used for the external CLI |
 | `artifacts` | object | Paths to prompt/stdout/stderr/metadata artifacts |
+| `artifact_refs` | list[object] | Typed artifact references for the same prompt/stdout/stderr/metadata files |
 
 When managed worktree isolation is active, `workdir` points at the isolated
 checkout path rather than the primary repository root.

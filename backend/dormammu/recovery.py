@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from dormammu._utils import iso_now as _iso_now
+from dormammu.artifacts import ArtifactRef
 from dormammu.config import AppConfig
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
 from dormammu.results import (
@@ -10,7 +12,6 @@ from dormammu.results import (
     RetryMetadata,
     StageResult,
     TimingMetadata,
-    artifact_from_path,
 )
 from dormammu.state import StateRepository
 from dormammu.supervisor import Supervisor, SupervisorRequest
@@ -38,13 +39,14 @@ class RecoveryManager:
         *,
         request: LoopRunRequest,
         loop_state: dict[str, object],
-        report_path: Path,
+        report_ref: ArtifactRef,
         supervisor_verdict: str,
         supervisor_escalation: str,
         supervisor_reason: str,
     ) -> None:
         """Persist an approved supervisor revalidation without rerunning the loop."""
         timestamp = _iso_now()
+        report_path = report_ref.path
         latest_run_id = self.repository.read_workflow_state().get("latest_run", {}).get("run_id")
         continuation_prompt_path = loop_state.get("latest_continuation_prompt_path")
         updated_loop = {
@@ -61,6 +63,9 @@ class RecoveryManager:
             "latest_supervisor_verdict": supervisor_verdict,
             "latest_supervisor_report_path": str(report_path),
             "latest_continuation_prompt_path": continuation_prompt_path,
+            "latest_continuation_prompt_artifact": loop_state.get(
+                "latest_continuation_prompt_artifact"
+            ),
         }
         next_action = (
             "Saved state already passes supervisor validation. Resume from Commit only if explicitly "
@@ -93,9 +98,52 @@ class RecoveryManager:
         if session_state.get("active_phase"):
             workflow_state["workflow"]["resume_from_phase"] = session_state["active_phase"]
 
-        self.repository.write_session_state(session_state)
-        self.repository.write_workflow_state(workflow_state)
+        self.repository.write_state_pair(
+            session_payload=session_state,
+            workflow_payload=workflow_state,
+        )
 
+    def _refresh_request_expected_roadmap_phase(
+        self,
+        request: LoopRunRequest,
+        workflow_state: dict[str, object],
+    ) -> LoopRunRequest:
+        roadmap = workflow_state.get("roadmap")
+        if not isinstance(roadmap, dict):
+            return request
+        active_phase_ids = roadmap.get("active_phase_ids")
+        if not isinstance(active_phase_ids, list):
+            return request
+        for phase_id in active_phase_ids:
+            if isinstance(phase_id, str) and phase_id.strip():
+                if phase_id == request.expected_roadmap_phase_id:
+                    return request
+                return replace(request, expected_roadmap_phase_id=phase_id)
+        return request
+
+    def _saved_continuation_prompt_ref(
+        self,
+        *,
+        loop_state: dict[str, object],
+        continuation_prompt_path: Path | None,
+        run_id: str | None = None,
+        role: str | None = None,
+        stage_name: str | None = None,
+    ) -> ArtifactRef | None:
+        stored_ref = ArtifactRef.from_dict(loop_state.get("latest_continuation_prompt_artifact"))
+        if stored_ref is not None:
+            return stored_ref
+        if continuation_prompt_path is None:
+            return None
+        return self.repository._artifact_writer().reference(
+            kind="continuation_prompt",
+            path=continuation_prompt_path,
+            label="continuation_prompt",
+            content_type="text/plain",
+            run_id=run_id,
+            role=role,
+            stage_name=stage_name,
+        )
 
     def resume(
         self,
@@ -113,6 +161,7 @@ class RecoveryManager:
             raise RuntimeError("No saved loop state is available to resume.")
 
         request = LoopRunRequest.from_state_dict(loop_state["request"])
+        request = self._refresh_request_expected_roadmap_phase(request, workflow_state)
         if max_retries_override is not None:
             request = LoopRunRequest(
                 cli_path=request.cli_path,
@@ -137,15 +186,21 @@ class RecoveryManager:
                 expected_roadmap_phase_id=request.expected_roadmap_phase_id,
             )
         )
-        report_path = self.repository.write_supervisor_report(report.to_markdown())
+        latest_run = workflow_state.get("latest_run", {})
+        latest_run_id = latest_run.get("run_id") if isinstance(latest_run, dict) else None
+        report_ref = self.repository.write_supervisor_report_ref(
+            report.to_markdown(),
+            run_id=latest_run_id,
+            role=request.agent_role,
+            stage_name=request.agent_role,
+        )
+        report_path = report_ref.path
         report = report.with_report_path(report_path)
 
         if report.verdict in {"blocked", "manual_review_needed"}:
             raise RuntimeError(report.summary)
         if report.verdict == "approved":
             timestamp = _iso_now()
-            latest_run = workflow_state.get("latest_run", {})
-            latest_run_id = latest_run.get("run_id") if isinstance(latest_run, dict) else None
             latest_started_at = (
                 latest_run.get("started_at") if isinstance(latest_run, dict) else None
             )
@@ -154,6 +209,13 @@ class RecoveryManager:
                 Path(saved_continuation_prompt)
                 if isinstance(saved_continuation_prompt, str) and saved_continuation_prompt
                 else None
+            )
+            continuation_ref = self._saved_continuation_prompt_ref(
+                loop_state=loop_state,
+                continuation_prompt_path=continuation_prompt_path,
+                run_id=latest_run_id,
+                role=request.agent_role,
+                stage_name=request.agent_role,
             )
             summary = report.summary
             stage_timing = TimingMetadata(
@@ -168,6 +230,11 @@ class RecoveryManager:
                     verdict=report.verdict,
                     summary=summary,
                     report_path=report_path,
+                    artifacts=tuple(
+                        artifact
+                        for artifact in (report_ref, continuation_ref)
+                        if artifact is not None
+                    ),
                     retry=RetryMetadata(
                         attempt=int(loop_state.get("attempts_completed", 0)),
                         retries_used=int(loop_state.get("retries_used", 0)),
@@ -184,7 +251,7 @@ class RecoveryManager:
             self._persist_completed_revalidation(
                 request=request,
                 loop_state=loop_state,
-                report_path=report_path,
+                report_ref=report_ref,
                 supervisor_verdict=report.verdict,
                 supervisor_escalation=report.escalation,
                 supervisor_reason=report.summary,
@@ -201,6 +268,11 @@ class RecoveryManager:
                 continuation_prompt_path=continuation_prompt_path,
                 summary=summary,
                 stage_results=stage_results,
+                artifacts=tuple(
+                    artifact
+                    for artifact in (report_ref, continuation_ref)
+                    if artifact is not None
+                ),
                 timing=stage_timing,
                 metadata={"revalidated_from_saved_state": True},
             )
@@ -224,6 +296,13 @@ class RecoveryManager:
                 latest_run.get("started_at") if isinstance(latest_run, dict) else None
             )
             continuation_prompt_path = Path(prompt_path) if prompt_path else None
+            continuation_ref = self._saved_continuation_prompt_ref(
+                loop_state=loop_state,
+                continuation_prompt_path=continuation_prompt_path,
+                run_id=latest_run_id,
+                role=request.agent_role,
+                stage_name=request.agent_role,
+            )
             summary = (
                 f"{report.summary} Resume stopped because max_iterations is exhausted."
                 if report.summary
@@ -250,12 +329,8 @@ class RecoveryManager:
                     artifacts=tuple(
                         artifact
                         for artifact in (
-                            artifact_from_path(
-                                kind="continuation_prompt",
-                                path=continuation_prompt_path,
-                                label="continuation_prompt",
-                                content_type="text/plain",
-                            ),
+                            report_ref,
+                            continuation_ref,
                         )
                         if artifact is not None
                     ),
@@ -279,6 +354,11 @@ class RecoveryManager:
                 continuation_prompt_path=continuation_prompt_path,
                 summary=summary,
                 stage_results=stage_results,
+                artifacts=tuple(
+                    artifact
+                    for artifact in (report_ref, continuation_ref)
+                    if artifact is not None
+                ),
                 retry=retry,
                 timing=timing,
                 metadata={"resume_blocked": "max_iterations_exhausted"},

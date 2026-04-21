@@ -298,15 +298,31 @@ class OperatorSync:
         timestamp: str,
     ) -> None:
         """Persist the active roadmap phase IDs into both state files."""
+        normalized_phase_ids = list(roadmap_phase_ids)
+
         session_state = read_json(session_path)
         session_state["updated_at"] = timestamp
-        session_state["active_roadmap_phase_ids"] = list(roadmap_phase_ids)
+        session_state["active_roadmap_phase_ids"] = normalized_phase_ids
+        session_loop = session_state.get("loop")
+        if isinstance(session_loop, dict):
+            request_payload = session_loop.get("request")
+            if isinstance(request_payload, dict):
+                request_payload["expected_roadmap_phase_id"] = (
+                    normalized_phase_ids[0] if normalized_phase_ids else None
+                )
         write_json(session_path, session_state)
 
         workflow_state = read_json(workflow_path)
         workflow_state["updated_at"] = timestamp
         workflow_state.setdefault("roadmap", {})
-        workflow_state["roadmap"]["active_phase_ids"] = list(roadmap_phase_ids)
+        workflow_state["roadmap"]["active_phase_ids"] = normalized_phase_ids
+        workflow_loop = workflow_state.get("loop")
+        if isinstance(workflow_loop, dict):
+            request_payload = workflow_loop.get("request")
+            if isinstance(request_payload, dict):
+                request_payload["expected_roadmap_phase_id"] = (
+                    normalized_phase_ids[0] if normalized_phase_ids else None
+                )
         write_json(workflow_path, workflow_state)
 
     def sync_operator_state(

@@ -24,6 +24,13 @@ def _get_pid() -> int:
     return os.getpid()
 
 
+def _path_created_at(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+    except OSError:
+        return None
+
+
 class DaemonAlreadyRunningError(RuntimeError):
     """Raised when a second daemon instance tries to start on the same queue."""
 
@@ -43,6 +50,7 @@ from dormammu.daemon.queue import is_prompt_candidate, prompt_sort_key
 from dormammu.daemon.reports import ResultReportAuthor, render_result_markdown
 from dormammu.daemon.watchers import EFFECTIVE_POLL_INTERVAL_SECONDS, PromptWatcher, build_watcher
 from dormammu.guidance import build_guidance_prompt
+from dormammu.artifacts import ArtifactWriter
 from dormammu.lifecycle import (
     ArtifactPersistedPayload,
     ArtifactRef,
@@ -520,11 +528,17 @@ class DaemonRunner:
                     summary="Persisted the daemon prompt into the active session workspace.",
                 ),
                 artifact_refs=(
-                    ArtifactRef.from_path(
+                    self._daemon_artifact_writer(
+                        base_dir=session_repository.dev_dir,
+                        logs_dir=session_repository.logs_dir,
+                        run_id=lifecycle.run_id,
+                        session_id=session_id,
+                    ).reference(
                         kind="input_prompt",
                         path=session_repository.state_file("PROMPT.md"),
                         label="input_prompt",
                         content_type="text/markdown",
+                        created_at=_path_created_at(session_repository.state_file("PROMPT.md")),
                     ),
                 ),
             )
@@ -563,18 +577,18 @@ class DaemonRunner:
                 watcher_backend=watcher_backend,
                 sort_key=sort_key,
                 session_id=session_id,
+                daemon_run_id=lifecycle.run_id if lifecycle is not None else None,
                 run_result=loop_result,
                 error=error,
                 plan_all_completed=plan_all_completed,
                 next_pending_task=next_pending_task,
             )
             if not interrupted and not skipped:
-                prompt_result = self._write_result_report_with_fallback(prompt_result)
-                if prompt_path.exists():
-                    prompt_path.unlink()
+                prompt_result = self._publish_result_report(prompt_result)
             with self._in_progress_lock:
                 self._in_progress.discard(prompt_path)
-            if lifecycle is not None and result_path.exists():
+            result_report_ref = self._result_report_artifact_ref(prompt_result)
+            if lifecycle is not None and result_report_ref is not None:
                 lifecycle.emit(
                     event_type=LifecycleEventType.ARTIFACT_PERSISTED,
                     role="daemon",
@@ -584,14 +598,7 @@ class DaemonRunner:
                         artifact_kind="result_report",
                         summary="Persisted the daemon result report.",
                     ),
-                    artifact_refs=(
-                        ArtifactRef.from_path(
-                            kind="result_report",
-                            path=result_path,
-                            label="result_report",
-                            content_type="text/markdown",
-                        ),
-                    ),
+                    artifact_refs=(result_report_ref,),
                 )
             if lifecycle is not None:
                 lifecycle.emit(
@@ -608,16 +615,7 @@ class DaemonRunner:
                         outcome=status,
                         error=error,
                     ),
-                    artifact_refs=(
-                        ArtifactRef.from_path(
-                            kind="result_report",
-                            path=result_path,
-                            label="result_report",
-                            content_type="text/markdown",
-                        ),
-                    )
-                    if result_path.exists()
-                    else (),
+                    artifact_refs=(result_report_ref,) if result_report_ref is not None else (),
                 )
             print(f"daemon prompt {prompt_path.name}: {status} -> {result_path}", file=self.progress_stream)
             self.progress_stream.flush()
@@ -795,22 +793,22 @@ class DaemonRunner:
             return "Loop stopped because manual review is required."
         return f"Loop finished with terminal status: {loop_result.status}."
 
-    def _write_result_report_from_result(self, prompt_result: DaemonPromptResult) -> None:
-        prompt_result.result_path.parent.mkdir(parents=True, exist_ok=True)
-        authored = ResultReportAuthor(
+    def _render_result_report(
+        self,
+        prompt_result: DaemonPromptResult,
+    ) -> str:
+        return ResultReportAuthor(
             self.app_config,
             progress_stream=self.progress_stream,
             stop_event=self._shutdown_requested,
         ).render(prompt_result)
-        prompt_result.result_path.write_text(authored, encoding="utf-8")
 
-    def _write_result_report_with_fallback(
+    def _render_result_report_with_fallback(
         self,
         prompt_result: DaemonPromptResult,
-    ) -> DaemonPromptResult:
+    ) -> tuple[DaemonPromptResult, str]:
         try:
-            self._write_result_report_from_result(prompt_result)
-            return prompt_result
+            return prompt_result, self._render_result_report(prompt_result)
         except Exception as exc:
             self._log(
                 "daemon result report fallback: configured CLI authoring failed for "
@@ -824,12 +822,80 @@ class DaemonRunner:
             if prompt_result.error:
                 combined_error = f"{prompt_result.error}\n\n{fallback_note}"
             fallback_result = replace(prompt_result, error=combined_error)
-            fallback_result.result_path.parent.mkdir(parents=True, exist_ok=True)
-            fallback_result.result_path.write_text(
-                render_result_markdown(fallback_result),
-                encoding="utf-8",
-            )
-            return fallback_result
+            return fallback_result, render_result_markdown(fallback_result)
+
+    def _publish_result_report(
+        self,
+        prompt_result: DaemonPromptResult,
+    ) -> DaemonPromptResult:
+        prompt_result, markdown = self._render_result_report_with_fallback(prompt_result)
+        writer = self._daemon_result_artifact_writer(prompt_result)
+        temp_result_path = prompt_result.result_path.with_name(
+            f".{prompt_result.result_path.name}.tmp"
+        )
+        temp_ref = writer.write_markdown_report(
+            kind="result_report",
+            markdown=markdown,
+            path=temp_result_path,
+            label="result_report",
+        )
+        try:
+            if prompt_result.prompt_path.exists():
+                prompt_result.prompt_path.unlink()
+            temp_result_path.replace(prompt_result.result_path)
+        except Exception:
+            temp_result_path.unlink(missing_ok=True)
+            raise
+        artifact_ref = writer.reference(
+            kind="result_report",
+            path=prompt_result.result_path,
+            label="result_report",
+            content_type="text/markdown",
+            created_at=temp_ref.created_at,
+        )
+        return replace(prompt_result, daemon_artifacts=(artifact_ref,))
+
+    def _daemon_artifact_writer(
+        self,
+        *,
+        base_dir: Path,
+        logs_dir: Path | None = None,
+        run_id: str | None = None,
+        session_id: str | None = None,
+    ) -> ArtifactWriter:
+        return ArtifactWriter(base_dir=base_dir, logs_dir=logs_dir).bind(
+            run_id=run_id,
+            role="daemon",
+            stage_name="daemon",
+            session_id=session_id,
+        )
+
+    def _daemon_result_artifact_writer(
+        self,
+        prompt_result: DaemonPromptResult,
+    ) -> ArtifactWriter:
+        return self._daemon_artifact_writer(
+            base_dir=prompt_result.result_path.parent,
+            run_id=prompt_result.daemon_run_id or prompt_result.latest_run_id,
+            session_id=prompt_result.session_id,
+        )
+
+    def _result_report_artifact_ref(
+        self,
+        prompt_result: DaemonPromptResult,
+    ) -> ArtifactRef | None:
+        artifact_ref = prompt_result.result_report_artifact
+        if artifact_ref is not None:
+            return artifact_ref
+        if not prompt_result.result_path.exists():
+            return None
+        return self._daemon_result_artifact_writer(prompt_result).reference(
+            kind="result_report",
+            path=prompt_result.result_path,
+            label="result_report",
+            content_type="text/markdown",
+            created_at=_path_created_at(prompt_result.result_path),
+        )
 
     def _sync_plan_state(self, session_repository: StateRepository) -> tuple[bool | None, str | None]:
         session_repository.sync_operator_state()

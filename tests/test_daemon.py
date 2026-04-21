@@ -20,9 +20,11 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.config import AppConfig
 from dormammu.daemon.config import load_daemon_config
+from dormammu.daemon.models import DaemonPromptResult
 from dormammu.daemon.runner import DaemonRunner, SessionProgressLogStream
 from dormammu.daemon.watchers import InotifyWatcher
 from dormammu.agent import cli_adapter as cli_adapter_module
+from dormammu.state import StateRepository
 
 
 class DaemonConfigTests(unittest.TestCase):
@@ -229,6 +231,39 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIn("Status: `completed`", result_path.read_text(encoding="utf-8"))
             self.assertFalse(prompt_path.exists())
 
+    def test_run_pending_once_publishes_completed_result_only_after_prompt_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            loop_cli = self._write_loop_cli(root, success_attempt=1)
+            self._write_active_cli_config(root, loop_cli)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(self._write_daemon_config(root), app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+            result_path = daemon_config.result_path / "001-first_RESULT.md"
+
+            original_replace = Path.replace
+
+            def wrapped_replace(path_self: Path, target: Path | str) -> Path:
+                if Path(target) == result_path:
+                    self.assertFalse(
+                        prompt_path.exists(),
+                        "Prompt file must be removed before publishing the final result report",
+                    )
+                return original_replace(path_self, target)
+
+            with mock.patch.object(Path, "replace", autospec=True, side_effect=wrapped_replace):
+                processed = DaemonRunner(app_config, daemon_config).run_pending_once(
+                    watcher_backend="polling"
+                )
+
+            self.assertEqual(processed, 1)
+            self.assertIn("Status: `completed`", result_path.read_text(encoding="utf-8"))
+            self.assertFalse(prompt_path.exists())
+
     def test_run_pending_once_falls_back_when_result_report_cli_validation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -249,6 +284,192 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIn("Status: `completed`", result_text)
             self.assertIn("Configured CLI result report authoring failed", result_text)
             self.assertFalse(prompt_path.exists())
+
+    def test_process_prompt_emits_input_prompt_artifact_ref_with_execution_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            loop_cli = self._write_loop_cli(root, success_attempt=1)
+            self._write_active_cli_config(root, loop_cli)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(self._write_daemon_config(root), app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+
+            lifecycle = mock.MagicMock()
+            lifecycle.run_id = "daemon:test-run"
+
+            with mock.patch(
+                "dormammu.daemon.runner.LifecycleRecorder.for_execution",
+                return_value=lifecycle,
+            ):
+                prompt_result = DaemonRunner(app_config, daemon_config)._process_prompt(
+                    prompt_path,
+                    watcher_backend="polling",
+                )
+
+            self.assertEqual(prompt_result.daemon_run_id, "daemon:test-run")
+
+            daemon_artifact_calls = [
+                call_args.kwargs
+                for call_args in lifecycle.emit.call_args_list
+                if call_args.kwargs.get("event_type").value == "artifact.persisted"
+                and call_args.kwargs.get("role") == "daemon"
+            ]
+            input_prompt_call = next(
+                kwargs
+                for kwargs in daemon_artifact_calls
+                if kwargs["payload"].artifact_kind == "input_prompt"
+            )
+            prompt_ref = input_prompt_call["artifact_refs"][0]
+
+            self.assertEqual(prompt_ref.kind, "input_prompt")
+            self.assertEqual(prompt_ref.run_id, "daemon:test-run")
+            self.assertEqual(prompt_ref.role, "daemon")
+            self.assertEqual(prompt_ref.stage_name, "daemon")
+            self.assertEqual(prompt_ref.session_id, prompt_result.session_id)
+            self.assertIsNotNone(prompt_ref.created_at)
+            self.assertEqual(
+                prompt_ref.path,
+                app_config.sessions_dir / prompt_result.session_id / "PROMPT.md",
+            )
+
+    def test_process_prompt_attaches_daemon_artifact_metadata_to_result_and_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            loop_cli = self._write_loop_cli(root, success_attempt=1)
+            self._write_active_cli_config(root, loop_cli)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(self._write_daemon_config(root), app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+
+            prompt_result = DaemonRunner(app_config, daemon_config)._process_prompt(
+                prompt_path,
+                watcher_backend="polling",
+            )
+
+            self.assertEqual(prompt_result.status, "completed")
+            self.assertIsNotNone(prompt_result.daemon_run_id)
+
+            result_report_ref = next(
+                artifact
+                for artifact in prompt_result.artifacts
+                if artifact.kind == "result_report"
+            )
+            self.assertEqual(result_report_ref.path, prompt_result.result_path)
+            self.assertEqual(result_report_ref.run_id, prompt_result.daemon_run_id)
+            self.assertEqual(result_report_ref.role, "daemon")
+            self.assertEqual(result_report_ref.stage_name, "daemon")
+            self.assertEqual(result_report_ref.session_id, prompt_result.session_id)
+            self.assertIsNotNone(result_report_ref.created_at)
+
+            session_repository = StateRepository(app_config, session_id=prompt_result.session_id)
+            history = session_repository.read_session_state()["lifecycle"]["history"]
+
+            daemon_artifact_events = [
+                event
+                for event in history
+                if event["event_type"] == "artifact.persisted" and event["role"] == "daemon"
+            ]
+            self.assertEqual(
+                [event["payload"]["artifact_kind"] for event in daemon_artifact_events],
+                ["result_report"],
+            )
+
+            result_event_ref = daemon_artifact_events[0]["artifact_refs"][0]
+            self.assertEqual(result_event_ref["path"], str(prompt_result.result_path))
+            self.assertEqual(result_event_ref["run_id"], prompt_result.daemon_run_id)
+            self.assertEqual(result_event_ref["role"], "daemon")
+            self.assertEqual(result_event_ref["stage_name"], "daemon")
+            self.assertEqual(result_event_ref["session_id"], prompt_result.session_id)
+            self.assertEqual(result_event_ref["created_at"], result_report_ref.created_at)
+
+            daemon_finished_events = [
+                event
+                for event in history
+                if event["event_type"] == "run.finished" and event["role"] == "daemon"
+            ]
+            self.assertEqual(len(daemon_finished_events), 1)
+            finished_ref = daemon_finished_events[0]["artifact_refs"][0]
+            self.assertEqual(finished_ref["path"], str(prompt_result.result_path))
+            self.assertEqual(finished_ref["run_id"], prompt_result.daemon_run_id)
+            self.assertEqual(finished_ref["role"], "daemon")
+            self.assertEqual(finished_ref["stage_name"], "daemon")
+            self.assertEqual(finished_ref["session_id"], prompt_result.session_id)
+
+    def test_daemon_prompt_result_omits_result_report_artifact_when_file_was_not_written(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            missing_result_path = root / "missing_RESULT.md"
+            prompt_result = DaemonPromptResult(
+                prompt_path=root / "001-interrupted.md",
+                result_path=missing_result_path,
+                status="interrupted",
+                started_at="2026-04-22T03:00:00+09:00",
+                completed_at="2026-04-22T03:00:01+09:00",
+                watcher_backend="polling",
+                sort_key=(0, "001-interrupted.md", "001-interrupted.md"),
+                session_id="session-123",
+                daemon_run_id="daemon:test-run",
+            )
+
+            self.assertIsNone(prompt_result.result_report_artifact)
+            self.assertEqual(prompt_result.artifacts, ())
+
+    def test_process_prompt_does_not_emit_missing_result_report_artifact_on_interrupt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            loop_cli = self._write_loop_cli(root, success_attempt=1)
+            self._write_active_cli_config(root, loop_cli)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(self._write_daemon_config(root), app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-interrupt.md"
+            prompt_path.write_text("Interrupt this prompt\n", encoding="utf-8")
+
+            lifecycle = mock.MagicMock()
+            lifecycle.run_id = "daemon:test-run"
+            runner = DaemonRunner(app_config, daemon_config)
+
+            with (
+                mock.patch(
+                    "dormammu.daemon.runner.LifecycleRecorder.for_execution",
+                    return_value=lifecycle,
+                ),
+                mock.patch.object(runner, "_run_prompt_loop", side_effect=KeyboardInterrupt),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    runner._process_prompt(prompt_path, watcher_backend="polling")
+
+            daemon_artifact_calls = [
+                call_args.kwargs
+                for call_args in lifecycle.emit.call_args_list
+                if call_args.kwargs.get("event_type").value == "artifact.persisted"
+                and call_args.kwargs.get("role") == "daemon"
+            ]
+            self.assertEqual(
+                [call["payload"].artifact_kind for call in daemon_artifact_calls],
+                ["input_prompt"],
+            )
+
+            daemon_finished_calls = [
+                call_args.kwargs
+                for call_args in lifecycle.emit.call_args_list
+                if call_args.kwargs.get("event_type").value == "run.finished"
+                and call_args.kwargs.get("role") == "daemon"
+            ]
+            self.assertEqual(len(daemon_finished_calls), 1)
+            self.assertEqual(daemon_finished_calls[0]["status"], "interrupted")
+            self.assertEqual(daemon_finished_calls[0]["artifact_refs"], ())
+            self.assertFalse((daemon_config.result_path / "001-interrupt_RESULT.md").exists())
 
     def test_debug_progress_log_is_written_per_prompt_and_contains_runtime_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

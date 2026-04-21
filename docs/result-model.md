@@ -29,11 +29,31 @@ The shared model keeps stage payloads lightweight and serializable:
 
 - `summary`: short human-readable explanation
 - `output`: optional raw text output when callers need it
-- `artifacts`: durable references to reports, logs, prompts, or transcripts
+- `artifacts`: durable `ArtifactRef` records for reports, logs, prompts, or transcripts
 - `retry`: attempt counters and retry budget metadata
 - `timing`: start/end timestamps and optional duration
 
 `report_path` is still available for compatibility, but `artifacts` is the canonical attachment surface.
+
+## Artifact References
+
+`backend/dormammu/artifacts.py` is the canonical artifact contract.
+
+Each `ArtifactRef` includes:
+
+- `kind`: logical artifact type such as `stage_report`, `supervisor_report`, or `metadata`
+- `path`: filesystem path kept visible for operators and resume logic
+- `created_at`: persistence timestamp when the writer created the artifact
+- `run_id`: execution association when the artifact belongs to a specific run
+- `role` and `stage_name`: stage association when the artifact belongs to a runtime stage
+- `session_id`: session association when the writer has that context
+- `label`, `content_type`, and optional additive `metadata`
+
+`ArtifactWriter` preserves the current operator-visible `.dev` layout instead of
+inventing a new storage tree. Existing paths such as `.dev/logs/<date>_<role>_<stem>.md`,
+`.dev/supervisor_report.md`, and `.dev/continuation_prompt.txt` remain valid;
+the difference is that runtime code now resolves and writes them through one
+shared API.
 
 ## Run Aggregation
 

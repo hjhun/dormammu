@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+from dormammu.artifacts import ArtifactRef
+
 
 @dataclass(frozen=True, slots=True)
 class AutoApproveCandidate:
@@ -112,6 +114,43 @@ class AgentRunStarted:
     metadata_path: Path
     capabilities: CliCapabilities
 
+    @property
+    def artifact_refs(self) -> tuple[ArtifactRef, ...]:
+        return (
+            ArtifactRef.from_path(
+                kind="prompt",
+                path=self.prompt_path,
+                label="prompt",
+                content_type="text/plain",
+                created_at=self.started_at,
+                run_id=self.run_id,
+            ),
+            ArtifactRef.from_path(
+                kind="stdout",
+                path=self.stdout_path,
+                label="stdout",
+                content_type="text/plain",
+                created_at=self.started_at,
+                run_id=self.run_id,
+            ),
+            ArtifactRef.from_path(
+                kind="stderr",
+                path=self.stderr_path,
+                label="stderr",
+                content_type="text/plain",
+                created_at=self.started_at,
+                run_id=self.run_id,
+            ),
+            ArtifactRef.from_path(
+                kind="metadata",
+                path=self.metadata_path,
+                label="metadata",
+                content_type="application/json",
+                created_at=self.started_at,
+                run_id=self.run_id,
+            ),
+        )
+
     def to_dict(self, *, include_help_text: bool = False) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
@@ -126,6 +165,7 @@ class AgentRunStarted:
                 "stderr": str(self.stderr_path),
                 "metadata": str(self.metadata_path),
             },
+            "artifact_refs": [artifact.to_dict() for artifact in self.artifact_refs],
             "capabilities": self.capabilities.to_dict(include_help_text=include_help_text),
         }
 
@@ -164,6 +204,43 @@ class AgentRunResult:
     fallback_trigger: str | None = None
     timed_out: bool = False
 
+    @property
+    def artifact_refs(self) -> tuple[ArtifactRef, ...]:
+        return (
+            ArtifactRef.from_path(
+                kind="prompt",
+                path=self.prompt_path,
+                label="prompt",
+                content_type="text/plain",
+                created_at=self.completed_at,
+                run_id=self.run_id,
+            ),
+            ArtifactRef.from_path(
+                kind="stdout",
+                path=self.stdout_path,
+                label="stdout",
+                content_type="text/plain",
+                created_at=self.completed_at,
+                run_id=self.run_id,
+            ),
+            ArtifactRef.from_path(
+                kind="stderr",
+                path=self.stderr_path,
+                label="stderr",
+                content_type="text/plain",
+                created_at=self.completed_at,
+                run_id=self.run_id,
+            ),
+            ArtifactRef.from_path(
+                kind="metadata",
+                path=self.metadata_path,
+                label="metadata",
+                content_type="application/json",
+                created_at=self.completed_at,
+                run_id=self.run_id,
+            ),
+        )
+
     def to_dict(self, *, include_help_text: bool = False) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
@@ -188,5 +265,6 @@ class AgentRunResult:
                 "stderr": str(self.stderr_path),
                 "metadata": str(self.metadata_path),
             },
+            "artifact_refs": [artifact.to_dict() for artifact in self.artifact_refs],
             "capabilities": self.capabilities.to_dict(include_help_text=include_help_text),
         }

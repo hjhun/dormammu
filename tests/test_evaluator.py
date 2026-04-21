@@ -528,6 +528,11 @@ class TestEvaluatorStageRun:
         assert result.report_path is not None
         content = result.report_path.read_text()
         assert "VERDICT: partial" in content
+        assert result.artifacts
+        assert result.artifacts[0].kind == "evaluator_report"
+        assert result.artifacts[0].path == result.report_path
+        assert result.artifacts[0].stage_name == "final_evaluator"
+        assert result.artifacts[0].created_at is not None
 
     def test_run_failed_when_subprocess_raises(self, tmp_path: Path) -> None:
         req = _make_request(tmp_path)

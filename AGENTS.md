@@ -102,7 +102,9 @@ output line must be `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK`.
 iteration-max budget. After that many rounds in either the tester or reviewer
 loop, the pipeline advances unconditionally.
 
-Each role writes its output to `.dev/<slot>-<role>/<date>_<stem>.md`.
+Each role writes its output to `.dev/logs/<date>_<role>_<stem>.md`.
+Mid-pipeline evaluator checkpoints write to
+`.dev/logs/check_<stage>_<stem>_<date>.md`.
 
 ### CLI resolution per role
 
@@ -237,7 +239,8 @@ in mid-pipeline check mode.
 
 - The evaluator reads `.dev/REQUIREMENTS.md` acceptance criteria and inspects
   stage outputs.
-- It produces a checkpoint report in `.dev/07-evaluator/check_<stage>_<date>.md`
+- It produces a checkpoint report in
+  `.dev/logs/check_<stage>_<stem>_<date>.md`
   with a `DECISION: PROCEED` or `DECISION: REWORK` verdict.
 - `PROCEED` — the supervisor advances to the next stage.
 - `REWORK` — the supervisor routes back to the stage indicated in the report.
@@ -292,7 +295,7 @@ the commit stage completes.
 - Assesses whether the completed implementation achieved the original goal.
 - Reads `.dev/REQUIREMENTS.md`, `.dev/PLAN.md`, `.dev/DASHBOARD.md`, and the
   recent git log.
-- Produces a full evaluation report in `.dev/07-evaluator/<date>_<stem>.md`
+- Produces a full evaluation report in `.dev/logs/<date>_evaluator_<stem>.md`
   with a `VERDICT: goal_achieved | partial | not_achieved` line.
 - Optionally generates the next development goal when `next_goal_strategy` is
   configured.
@@ -336,7 +339,8 @@ supervisor must:
 
 1. Confirm the preceding stage is complete (evidence present in `.dev/`).
 2. Invoke `agents/skills/evaluating-agent/SKILL.md` in mid-pipeline check mode.
-3. Read the checkpoint report from `.dev/07-evaluator/check_<stage>_<date>.md`.
+3. Read the checkpoint report from
+   `.dev/logs/check_<stage>_<stem>_<date>.md`.
 4. If `DECISION: PROCEED` — advance to the next stage.
 5. If `DECISION: REWORK` — route back to the stage indicated in the report.
 

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 from dormammu.agent.prompt_identity import prepend_cli_identity
+from dormammu.artifacts import ArtifactRef, ArtifactWriter
 from dormammu.daemon.cli_output import select_agent_output
 from dormammu.daemon.rules import build_rule_prompt, load_rule_text
 from dormammu.results import ResultStatus, ResultVerdict, StageResult, parse_final_evaluator_verdict
@@ -109,7 +110,7 @@ class EvaluatorStage:
         verdict = self._parse_verdict(output)
         self._log(f"evaluator: verdict = {verdict}")
 
-        report_path = self._write_report(request, output)
+        report_ref = self._write_report(request, output)
 
         has_valid_verdict = verdict != ResultVerdict.UNKNOWN
         goal_file_updated = (
@@ -128,7 +129,8 @@ class EvaluatorStage:
             status=ResultStatus.COMPLETED if has_valid_verdict else ResultStatus.FAILED,
             verdict=verdict,
             output=output,
-            report_path=report_path,
+            report_path=report_ref.path if report_ref is not None else None,
+            artifacts=(report_ref,) if report_ref is not None else (),
             summary=(
                 "Post-commit goal evaluation completed."
                 if has_valid_verdict
@@ -227,17 +229,19 @@ class EvaluatorStage:
     def _parse_verdict(self, output: str) -> str:
         return parse_final_evaluator_verdict(output).value
 
-    def _write_report(self, req: EvaluatorRequest, output: str) -> Path | None:
+    def _write_report(self, req: EvaluatorRequest, output: str) -> ArtifactRef | None:
         try:
-            doc_dir = req.dev_dir / "logs"
-            doc_dir.mkdir(parents=True, exist_ok=True)
-            doc_path = doc_dir / f"{req.date_str}_evaluator_{req.stem}.md"
-            doc_path.write_text(
-                f"# Evaluator — {req.stem}\n\n{output}",
-                encoding="utf-8",
+            writer = ArtifactWriter(base_dir=req.dev_dir, logs_dir=req.dev_dir / "logs")
+            artifact = writer.write_markdown_report(
+                kind="evaluator_report",
+                markdown=f"# Evaluator — {req.stem}\n\n{output}",
+                path=writer.evaluator_report_path(stem=req.stem, date_str=req.date_str),
+                label="evaluator_report",
+                role="evaluator",
+                stage_name="final_evaluator",
             )
-            self._log(f"evaluator: report written to {doc_path}")
-            return doc_path
+            self._log(f"evaluator: report written to {artifact.path}")
+            return artifact
         except Exception as exc:
             self._log(f"evaluator: failed to write report: {exc}")
             return None

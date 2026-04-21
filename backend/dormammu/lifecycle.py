@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from dormammu._utils import iso_now as _iso_now
+from dormammu.artifacts import ArtifactRef
 
 if TYPE_CHECKING:
     from dormammu.state.repository import StateRepository
@@ -78,33 +79,6 @@ def build_lifecycle_run_id(
 
 def build_lifecycle_event_id() -> str:
     return f"evt:{uuid4().hex}"
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactRef:
-    kind: str
-    path: str
-    label: str | None = None
-    content_type: str | None = None
-
-    @classmethod
-    def from_path(
-        cls,
-        *,
-        kind: str,
-        path: Path | str,
-        label: str | None = None,
-        content_type: str | None = None,
-    ) -> ArtifactRef:
-        return cls(
-            kind=kind,
-            path=str(path),
-            label=label,
-            content_type=content_type,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return _serialize_value(self)
 
 
 @dataclass(frozen=True, slots=True)

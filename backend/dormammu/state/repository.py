@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent.models import AgentRunResult, AgentRunStarted
+from dormammu.artifacts import ArtifactRef, ArtifactWriter
 from dormammu.config import AppConfig
 from dormammu.guidance import resolve_guidance_files
 from dormammu.lifecycle import LifecycleEvent
@@ -174,7 +175,7 @@ class StateRepository:
         active_roadmap_phase_ids: Sequence[str] | None = None,
     ) -> BootstrapArtifacts:
         timestamp = _iso_now()
-        roadmap_phase_ids = list(active_roadmap_phase_ids or ["phase_1"])
+        roadmap_phase_ids = self._resolve_active_roadmap_phase_ids(active_roadmap_phase_ids)
         guidance = discover_repo_guidance(
             self.config.repo_root,
             rule_paths=resolve_guidance_files(self.config),
@@ -377,7 +378,8 @@ class StateRepository:
         target_dir = self.sessions_dir / normalized_session_id
         if not target_dir.exists():
             raise RuntimeError(f"Saved session was not found: {normalized_session_id}")
-        self.for_session(normalized_session_id)._ensure_plan_file(target_dir / "PLAN.md")
+        session_repository = self.for_session(normalized_session_id)
+        session_repository._ensure_plan_file(target_dir / "PLAN.md")
         required_files = (
             "DASHBOARD.md",
             "PLAN.md",
@@ -393,16 +395,58 @@ class StateRepository:
         self.base_dev_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self._session_mgr.migrate_legacy_root_snapshot()
+        timestamp = _iso_now()
+        restored_roadmap_phase_ids = session_repository._existing_roadmap_phase_ids()
+        if restored_roadmap_phase_ids:
+            session_repository._op_sync.refresh_active_roadmap_phase_ids(
+                session_path=target_dir / "session.json",
+                workflow_path=target_dir / "workflow_state.json",
+                roadmap_phase_ids=restored_roadmap_phase_ids,
+                timestamp=timestamp,
+            )
         self._write_root_index_for_session(
-            session_repository=self.for_session(normalized_session_id),
-            timestamp=_iso_now(),
+            session_repository=session_repository,
+            timestamp=timestamp,
         )
+        self.session_id = normalized_session_id
+        self.dev_dir = target_dir
+        self.logs_dir = target_dir / "logs"
         return self._artifacts_for_dir(target_dir)
 
     def read_session_state(self) -> dict[str, Any]:
         if self.session_id is None:
             return self._active_session_repository().read_session_state()
         return _read_json(self.state_file("session.json"))
+
+    @staticmethod
+    def _normalized_active_phase(value: Any) -> str | None:
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized:
+                return normalized
+        return None
+
+    @staticmethod
+    def _normalized_roadmap_phase_ids(value: Any) -> list[str] | None:
+        if not isinstance(value, list):
+            return None
+        normalized = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        return normalized
+
+    @staticmethod
+    def _sync_loop_request_expected_roadmap_phase_id(
+        payload: dict[str, Any],
+        roadmap_phase_ids: list[str],
+    ) -> None:
+        loop_payload = payload.get("loop")
+        if not isinstance(loop_payload, dict):
+            return
+        request_payload = loop_payload.get("request")
+        if not isinstance(request_payload, dict):
+            return
+        request_payload["expected_roadmap_phase_id"] = (
+            roadmap_phase_ids[0] if roadmap_phase_ids else None
+        )
 
     def write_session_state(self, payload: Mapping[str, Any]) -> None:
         if self.session_id is None:
@@ -412,10 +456,22 @@ class StateRepository:
         _write_json(self.state_file("session.json"), session_payload)
 
         active_phase = session_payload.get("active_phase")
-        if isinstance(active_phase, str) and active_phase.strip():
+        roadmap_phase_ids = session_payload.get("active_roadmap_phase_ids")
+        if (
+            (isinstance(active_phase, str) and active_phase.strip())
+            or isinstance(roadmap_phase_ids, list)
+        ):
             workflow_state = _read_json(self.state_file("workflow_state.json"))
-            workflow_state.setdefault("workflow", {})
-            workflow_state["workflow"]["active_phase"] = active_phase
+            if isinstance(active_phase, str) and active_phase.strip():
+                workflow_state.setdefault("workflow", {})
+                workflow_state["workflow"]["active_phase"] = active_phase
+            if isinstance(roadmap_phase_ids, list):
+                workflow_state.setdefault("roadmap", {})
+                workflow_state["roadmap"]["active_phase_ids"] = list(roadmap_phase_ids)
+                self._sync_loop_request_expected_roadmap_phase_id(
+                    workflow_state,
+                    list(roadmap_phase_ids),
+                )
             if "updated_at" in session_payload:
                 workflow_state["updated_at"] = session_payload["updated_at"]
             _write_json(self.state_file("workflow_state.json"), workflow_state)
@@ -491,13 +547,85 @@ class StateRepository:
         _write_json(self.state_file("workflow_state.json"), workflow_payload)
 
         active_phase = workflow_payload.get("workflow", {}).get("active_phase")
-        if isinstance(active_phase, str) and active_phase.strip():
+        roadmap_phase_ids = workflow_payload.get("roadmap", {}).get("active_phase_ids")
+        if (
+            (isinstance(active_phase, str) and active_phase.strip())
+            or isinstance(roadmap_phase_ids, list)
+        ):
             session_state = _read_json(self.state_file("session.json"))
-            session_state["active_phase"] = active_phase
+            if isinstance(active_phase, str) and active_phase.strip():
+                session_state["active_phase"] = active_phase
+            if isinstance(roadmap_phase_ids, list):
+                session_state["active_roadmap_phase_ids"] = list(roadmap_phase_ids)
+                self._sync_loop_request_expected_roadmap_phase_id(
+                    session_state,
+                    list(roadmap_phase_ids),
+                )
             if "updated_at" in workflow_payload:
                 session_state["updated_at"] = workflow_payload["updated_at"]
             _write_json(self.state_file("session.json"), session_state)
         self._sync_root_index()
+
+    def write_state_pair(
+        self,
+        *,
+        session_payload: Mapping[str, Any],
+        workflow_payload: Mapping[str, Any],
+    ) -> None:
+        if self.session_id is None:
+            self._active_session_repository().write_state_pair(
+                session_payload=session_payload,
+                workflow_payload=workflow_payload,
+            )
+            return
+
+        session_state = dict(session_payload)
+        workflow_state = dict(workflow_payload)
+        workflow_block = workflow_state.setdefault("workflow", {})
+        roadmap_block = workflow_state.setdefault("roadmap", {})
+
+        active_phase = self._normalized_active_phase(workflow_block.get("active_phase"))
+        if active_phase is None:
+            active_phase = self._normalized_active_phase(session_state.get("active_phase"))
+        if active_phase is not None:
+            session_state["active_phase"] = active_phase
+            workflow_block["active_phase"] = active_phase
+
+        roadmap_phase_ids = self._normalized_roadmap_phase_ids(
+            roadmap_block.get("active_phase_ids")
+        )
+        if roadmap_phase_ids is None:
+            roadmap_phase_ids = self._normalized_roadmap_phase_ids(
+                session_state.get("active_roadmap_phase_ids")
+            )
+        if roadmap_phase_ids is not None:
+            session_state["active_roadmap_phase_ids"] = list(roadmap_phase_ids)
+            roadmap_block["active_phase_ids"] = list(roadmap_phase_ids)
+            self._sync_loop_request_expected_roadmap_phase_id(
+                session_state,
+                roadmap_phase_ids,
+            )
+            self._sync_loop_request_expected_roadmap_phase_id(
+                workflow_state,
+                roadmap_phase_ids,
+            )
+
+        updated_at = workflow_state.get("updated_at", session_state.get("updated_at"))
+        if updated_at is not None:
+            session_state["updated_at"] = updated_at
+            workflow_state["updated_at"] = updated_at
+
+        with self._op_sync.root_index_lock():
+            _write_json(self.state_file("session.json"), session_state)
+            _write_json(self.state_file("workflow_state.json"), workflow_state)
+            if self._session_mgr.read_active_session_id() == self.session_id:
+                self._op_sync._write_root_index_locked(
+                    session_dev_dir=self.dev_dir,
+                    session_id=self.session_id or "",
+                    state_root=self._state_root_display(),
+                    timestamp=str(updated_at or _iso_now()),
+                    list_sessions_fn=self._session_mgr.list_sessions,
+                )
 
     def sync_operator_state(self, *, timestamp: str | None = None) -> None:
         if self.session_id is None:
@@ -558,18 +686,70 @@ class StateRepository:
     def write_supervisor_report(self, markdown: str) -> Path:
         if self.session_id is None:
             return self._active_session_repository().write_supervisor_report(markdown)
-        report_path = self.state_file("supervisor_report.md")
-        report_path.write_text(markdown, encoding="utf-8")
+        report_path = self.write_supervisor_report_ref(markdown).path
         self._sync_root_index()
         return report_path
 
     def write_continuation_prompt(self, text: str) -> Path:
         if self.session_id is None:
             return self._active_session_repository().write_continuation_prompt(text)
-        prompt_path = self.state_file("continuation_prompt.txt")
-        prompt_path.write_text(text, encoding="utf-8")
+        prompt_path = self.write_continuation_prompt_ref(text).path
         self._sync_root_index()
         return prompt_path
+
+    def write_supervisor_report_ref(
+        self,
+        markdown: str,
+        *,
+        run_id: str | None = None,
+        role: str | None = None,
+        stage_name: str | None = None,
+    ) -> ArtifactRef:
+        if self.session_id is None:
+            return self._active_session_repository().write_supervisor_report_ref(
+                markdown,
+                run_id=run_id,
+                role=role,
+                stage_name=stage_name,
+            )
+        artifact = self._artifact_writer().write_markdown_report(
+            kind="supervisor_report",
+            markdown=markdown,
+            path=self._artifact_writer().supervisor_report_path(),
+            label="supervisor_report",
+            run_id=run_id,
+            role=role,
+            stage_name=stage_name,
+        )
+        self._sync_root_index()
+        return artifact
+
+    def write_continuation_prompt_ref(
+        self,
+        text: str,
+        *,
+        run_id: str | None = None,
+        role: str | None = None,
+        stage_name: str | None = None,
+    ) -> ArtifactRef:
+        if self.session_id is None:
+            return self._active_session_repository().write_continuation_prompt_ref(
+                text,
+                run_id=run_id,
+                role=role,
+                stage_name=stage_name,
+            )
+        artifact = self._artifact_writer().write_text_output(
+            kind="continuation_prompt",
+            text=text,
+            path=self._artifact_writer().continuation_prompt_path(),
+            label="continuation_prompt",
+            run_id=run_id,
+            role=role,
+            stage_name=stage_name,
+        )
+        self._sync_root_index()
+        return artifact
 
     def record_hook_event(
         self,
@@ -869,6 +1049,63 @@ class StateRepository:
                 if isinstance(goal, str) and goal.strip():
                     return goal
         return None
+
+    def _resolve_active_roadmap_phase_ids(
+        self,
+        active_roadmap_phase_ids: Sequence[str] | None,
+    ) -> list[str]:
+        if active_roadmap_phase_ids:
+            normalized = [
+                str(phase_id).strip()
+                for phase_id in active_roadmap_phase_ids
+                if str(phase_id).strip()
+            ]
+            if normalized:
+                return normalized
+        existing_phase_ids = self._existing_roadmap_phase_ids()
+        if existing_phase_ids:
+            return existing_phase_ids
+        return ["phase_1"]
+
+    def _existing_roadmap_phase_ids(self) -> list[str]:
+        for candidate in (
+            self.state_file("workflow_state.json"),
+            self.state_file("session.json"),
+        ):
+            if not candidate.exists():
+                continue
+            try:
+                payload = _read_json(candidate)
+            except Exception:
+                continue
+            direct_phase_ids = payload.get("active_roadmap_phase_ids")
+            if isinstance(direct_phase_ids, list):
+                normalized = [
+                    phase_id.strip()
+                    for phase_id in direct_phase_ids
+                    if isinstance(phase_id, str) and phase_id.strip()
+                ]
+                if normalized:
+                    return normalized
+            roadmap = payload.get("roadmap")
+            if isinstance(roadmap, Mapping):
+                roadmap_phase_ids = roadmap.get("active_phase_ids")
+                if isinstance(roadmap_phase_ids, list):
+                    normalized = [
+                        phase_id.strip()
+                        for phase_id in roadmap_phase_ids
+                        if isinstance(phase_id, str) and phase_id.strip()
+                    ]
+                    if normalized:
+                        return normalized
+        return []
+
+    def _artifact_writer(self) -> ArtifactWriter:
+        return ArtifactWriter(
+            base_dir=self.dev_dir,
+            logs_dir=self.logs_dir,
+            default_session_id=self.session_id,
+        )
 
     def _update_managed_worktree_state(
         self,

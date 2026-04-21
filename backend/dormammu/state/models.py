@@ -21,6 +21,8 @@ PHASE_LABELS = {
     "phase_7": "Phase 7. Hardening, Multi-Session, and Productization",
 }
 
+_PHASE_ID_INFERENCE_RE = re.compile(r"\bphase(?:\s+|[_-])0*([1-7])\b", re.IGNORECASE)
+
 
 @dataclass(frozen=True, slots=True)
 class RepoGuidance:
@@ -137,6 +139,59 @@ def summarize_prompt_goal(prompt_text: str | None, *, fallback: str) -> str:
             return normalized[:117].rstrip() + "..."
         return normalized
     return fallback
+
+
+def _roadmap_phase_inference_candidates(
+    *,
+    goal: str | None,
+    prompt_text: str | None,
+) -> list[str]:
+    candidates: list[str] = []
+    if isinstance(goal, str) and goal.strip():
+        candidates.append(goal.strip())
+    if not isinstance(prompt_text, str) or not prompt_text.strip():
+        return candidates
+
+    summary = summarize_prompt_goal(prompt_text, fallback="")
+    if summary:
+        candidates.append(summary)
+
+    # Wrapped continuation prompts prepend generic resume instructions. Prefer
+    # explicit task/original prompt sections when they are present so phase
+    # inference still follows the embedded goal instead of the wrapper text.
+    for marker in ("Task prompt:", "Original prompt:"):
+        if marker not in prompt_text:
+            continue
+        extracted = prompt_text.split(marker, 1)[1].strip()
+        extracted_summary = summarize_prompt_goal(extracted, fallback="")
+        if extracted_summary:
+            candidates.append(extracted_summary)
+
+    return candidates
+
+
+def infer_primary_roadmap_phase_id(
+    *,
+    goal: str | None = None,
+    prompt_text: str | None = None,
+) -> str | None:
+    """Infer the primary roadmap phase from an explicit goal or wrapped prompt.
+
+    Prefer explicit goal text and top-level prompt summaries, but also inspect
+    known continuation wrapper sections so resumed runs can recover the embedded
+    task phase without scanning arbitrary AGENTS/workflow guidance text.
+    """
+
+    candidates = _roadmap_phase_inference_candidates(
+        goal=goal,
+        prompt_text=prompt_text,
+    )
+
+    for candidate in candidates:
+        match = _PHASE_ID_INFERENCE_RE.search(candidate)
+        if match is not None:
+            return f"phase_{match.group(1)}"
+    return None
 
 
 def normalize_prompt_text(prompt_text: str | None) -> str:

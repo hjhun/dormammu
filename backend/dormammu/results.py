@@ -6,6 +6,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from dormammu.artifacts import ArtifactRef
+
 
 class ResultStatus(str, Enum):
     COMPLETED = "completed"
@@ -34,20 +36,7 @@ class ResultVerdict(str, Enum):
     MANUAL_REVIEW_NEEDED = "manual_review_needed"
 
 
-@dataclass(frozen=True, slots=True)
-class ResultArtifact:
-    kind: str
-    path: Path
-    label: str | None = None
-    content_type: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "kind": self.kind,
-            "path": str(self.path),
-            "label": self.label,
-            "content_type": self.content_type,
-        }
+ResultArtifact = ArtifactRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,14 +95,29 @@ def artifact_from_path(
     path: Path | None,
     label: str | None = None,
     content_type: str | None = None,
+    created_at: str | None = None,
+    run_id: str | None = None,
+    role: str | None = None,
+    stage_name: str | None = None,
+    session_id: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    require_exists: bool = False,
 ) -> ResultArtifact | None:
     if path is None:
         return None
-    return ResultArtifact(
+    if require_exists and not path.exists():
+        return None
+    return ResultArtifact.from_path(
         kind=kind,
         path=path,
         label=label,
         content_type=content_type,
+        created_at=created_at,
+        run_id=run_id,
+        role=role,
+        stage_name=stage_name,
+        session_id=session_id,
+        metadata=metadata,
     )
 
 
@@ -151,19 +155,24 @@ class StageResult:
         object.__setattr__(self, "status", normalize_result_status(self.status))
         object.__setattr__(self, "verdict", normalize_result_verdict(self.verdict))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        report_artifact = None
+        if self.report_path is not None and not any(
+            artifact.path == self.report_path for artifact in self.artifacts
+        ):
+            report_artifact = artifact_from_path(
+                kind="report",
+                path=self.report_path,
+                label="report",
+                content_type="text/markdown",
+                role=self.role,
+                stage_name=self.stage_name or self.role,
+            )
         object.__setattr__(
             self,
             "artifacts",
             _merge_artifacts(
                 self.artifacts,
-                (
-                    artifact_from_path(
-                        kind="report",
-                        path=self.report_path,
-                        label="report",
-                        content_type="text/markdown",
-                    ),
-                ),
+                (report_artifact,),
             ),
         )
 
@@ -227,12 +236,14 @@ class RunResult:
                         path=self.report_path,
                         label="supervisor_report",
                         content_type="text/markdown",
+                        run_id=self.latest_run_id,
                     ),
                     artifact_from_path(
                         kind="continuation_prompt",
                         path=self.continuation_prompt_path,
                         label="continuation_prompt",
                         content_type="text/plain",
+                        run_id=self.latest_run_id,
                     ),
                 ),
             ),

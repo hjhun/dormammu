@@ -228,6 +228,32 @@ Use this skill in loop runner tests.
                 lifecycle["latest_event"]["event_type"],
                 "run.finished",
             )
+            artifact_event = next(
+                entry
+                for entry in lifecycle["history"]
+                if entry["event_type"] == "artifact.persisted"
+                and entry["payload"]["artifact_kind"] == "agent_run_artifacts"
+            )
+            self.assertEqual(
+                {item["kind"] for item in artifact_event["artifact_refs"]},
+                {"prompt", "stdout", "stderr", "metadata"},
+            )
+            self.assertTrue(
+                all(Path(item["path"]).exists() for item in artifact_event["artifact_refs"])
+            )
+            self.assertTrue(
+                all(item["run_id"] == artifact_event["metadata"]["agent_run_id"] for item in artifact_event["artifact_refs"])
+            )
+            self.assertTrue(
+                {"prompt", "stdout", "stderr", "metadata"}.issubset(
+                    {artifact.kind for artifact in result.artifacts}
+                )
+            )
+            self.assertTrue(
+                {"prompt", "stdout", "stderr", "metadata"}.issubset(
+                    {artifact.kind for artifact in result.stage_results[0].artifacts}
+                )
+            )
 
     def test_resume_continues_failed_loop_from_saved_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

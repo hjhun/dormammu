@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from dormammu.agent.prompt_identity import prepend_cli_identity
+from dormammu.artifacts import ArtifactRef
 from dormammu.daemon.cli_output import select_agent_output
 from dormammu.agent.profiles import resolve_agent_profile
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
@@ -170,6 +171,72 @@ class TestMandatoryPreludeStages:
 
         assert stage.verdict == "rework"
 
+    def test_plan_evaluator_artifacts_and_lifecycle_use_plan_stage_name(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(evaluator=RoleAgentConfig(cli=Path("echo")))
+        runner = _make_runner(tmp_path, agents=agents)
+        report_path = tmp_path / ".dev" / "logs" / "check_plan_g_20260412.md"
+        report_ref = ArtifactRef.from_path(
+            kind="checkpoint_report",
+            path=report_path,
+            label="plan_checkpoint_report",
+            content_type="text/markdown",
+            role="evaluator",
+            stage_name="plan_evaluator",
+        )
+        runner._lifecycle = MagicMock()
+        runner._lifecycle.run_id = "pipeline:test"
+        runner._hook_controller.emit_stage_start = MagicMock()
+        runner._hook_controller.emit_stage_complete = MagicMock()
+
+        def _fake_call_once(**_: Any) -> str:
+            runner._last_written_artifact_ref = report_ref
+            return "checkpoint ok\nDECISION: PROCEED"
+
+        with patch.object(runner, "_call_once", side_effect=_fake_call_once):
+            stage = runner._run_plan_evaluator("goal", stem="g", date_str="20260412")
+
+        assert stage.stage_name == "plan_evaluator"
+        assert stage.artifacts == (report_ref,)
+        assert stage.report_path == report_path
+        persisted_events = [
+            call_args.kwargs
+            for call_args in runner._lifecycle.emit.call_args_list
+            if call_args.kwargs["event_type"].value == "evaluator.checkpoint_decision"
+        ]
+        assert len(persisted_events) == 1
+        assert persisted_events[0]["stage"] == "plan_evaluator"
+        assert persisted_events[0]["artifact_refs"] == (report_ref,)
+        runner._hook_controller.emit_stage_start.assert_called_once()
+        assert (
+            runner._hook_controller.emit_stage_start.call_args.kwargs["stage_name"]
+            == "plan_evaluator"
+        )
+
+    def test_plan_evaluator_report_path_includes_stem_for_same_day_uniqueness(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(evaluator=RoleAgentConfig(cli=Path("echo")))
+        runner = _make_runner(tmp_path, agents=agents)
+
+        first_prompt = runner._plan_evaluator_prompt(
+            "goal one",
+            None,
+            stem="goal-one",
+            date_str="20260412",
+        )
+        second_prompt = runner._plan_evaluator_prompt(
+            "goal two",
+            None,
+            stem="goal-two",
+            date_str="20260412",
+        )
+
+        assert "check_plan_goal-one_20260412.md" in first_prompt
+        assert "check_plan_goal-two_20260412.md" in second_prompt
+        assert first_prompt != second_prompt
+
     def test_run_refine_and_plan_retries_until_evaluator_proceeds(
         self, tmp_path: Path
     ) -> None:
@@ -310,6 +377,22 @@ class TestDeveloperStage:
         assert request.workdir == tmp_path
         assert request.run_label == "pipeline-developer-phase1"
 
+    def test_run_developer_uses_active_session_roadmap_phase(self, tmp_path: Path) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(cli=Path("codex")),
+        )
+        runner = _make_runner(tmp_path, agents=agents)
+        runner._repository.read_workflow_state = MagicMock(  # type: ignore[method-assign]
+            return_value={"roadmap": {"active_phase_ids": ["phase_6"]}}
+        )
+
+        with patch("dormammu.daemon.pipeline_runner.LoopRunner") as mock_loop_runner:
+            mock_loop_runner.return_value.run.return_value = _make_loop_result("completed")
+
+            runner._run_developer("Implement the active slice.", stem="phase6")
+
+        request = mock_loop_runner.return_value.run.call_args.args[0]
+        assert request.expected_roadmap_phase_id == "phase_6"
 
 
 # ---------------------------------------------------------------------------
@@ -1095,6 +1178,36 @@ class TestDocumentWriting:
         assert output == "stage report from stderr\n"
         doc = tmp_path / ".dev" / "logs" / "20260412_refiner_stderr-case.md"
         assert "stage report from stderr" in doc.read_text(encoding="utf-8")
+
+    def test_call_once_binds_artifact_refs_to_overridden_stage_name(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig()
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+        runner._lifecycle = MagicMock()
+        runner._lifecycle.run_id = "pipeline:test"
+
+        with patch("dormammu.agent.cli_adapter.CliAdapter.run_once") as mock_run:
+            mock_run.return_value = _make_adapter_result(tmp_path / "r-stage", stdout="checkpoint")
+            runner._call_once(
+                role="evaluator",
+                stage_name="plan_evaluator",
+                cli=Path("claude"),
+                model=None,
+                prompt="test prompt",
+                stem="plan-checkpoint",
+                date_str="20260412",
+                artifact_kind="checkpoint_report",
+                artifact_label="plan_checkpoint_report",
+            )
+
+        assert runner._last_written_artifact_ref is not None
+        assert runner._last_written_artifact_ref.stage_name == "plan_evaluator"
+        emit_kwargs = runner._lifecycle.emit.call_args.kwargs
+        assert emit_kwargs["event_type"].value == "artifact.persisted"
+        assert emit_kwargs["stage"] == "plan_evaluator"
+        assert emit_kwargs["artifact_refs"][0].stage_name == "plan_evaluator"
 
     def test_call_once_emits_command_and_captured_output_to_progress_stream(
         self, tmp_path: Path

@@ -856,6 +856,92 @@ class CliTests(unittest.TestCase):
             self.assertEqual((root / ".session").read_text(encoding="utf-8").strip(), marked_session_id)
             self.assertTrue((runtime_config.sessions_dir / marked_session_id / "workflow_state.json").exists())
 
+    def test_resume_repairs_target_session_state_after_approved_revalidation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+            sessions_dir = root / "sessions"
+
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                run_exit = main(
+                    [
+                        "run",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "# Phase 06 Prompt: MCP Registration and Resolution",
+                        "--max-retries",
+                        "0",
+                        "--required-path",
+                        "done.txt",
+                    ]
+                )
+
+            self.assertEqual(run_exit, 0)
+            runtime_config = AppConfig.load(repo_root=root)
+            session_id = self._active_session_id(runtime_config)
+            session_path = runtime_config.sessions_dir / session_id / "session.json"
+            workflow_path = runtime_config.sessions_dir / session_id / "workflow_state.json"
+
+            session_state = json.loads(session_path.read_text(encoding="utf-8"))
+            workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+            session_state["active_roadmap_phase_ids"] = ["phase_6"]
+            session_state["loop"]["status"] = "running"
+            session_state["loop"]["latest_supervisor_verdict"] = "rework_required"
+            session_state["loop"]["request"]["expected_roadmap_phase_id"] = "phase_4"
+            session_state["supervisor_report"]["status"] = "not_run"
+            workflow_state["roadmap"]["active_phase_ids"] = ["phase_6"]
+            workflow_state["loop"]["status"] = "running"
+            workflow_state["loop"]["latest_supervisor_verdict"] = "rework_required"
+            workflow_state["loop"]["request"]["expected_roadmap_phase_id"] = "phase_4"
+            workflow_state["supervisor"]["verdict"] = "rework_required"
+            workflow_state["supervisor"]["escalation"] = "rework_required"
+            workflow_state["supervisor"]["reason"] = "Stale roadmap expectation."
+            session_path.write_text(json.dumps(session_state), encoding="utf-8")
+            workflow_path.write_text(json.dumps(workflow_state), encoding="utf-8")
+
+            resume_stdout = io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(sessions_dir)}),
+                contextlib.redirect_stdout(resume_stdout),
+            ):
+                resume_exit = main(
+                    [
+                        "resume",
+                        "--repo-root",
+                        str(root),
+                        "--session-id",
+                        session_id,
+                        "--max-retries",
+                        "0",
+                    ]
+                )
+
+            self.assertEqual(resume_exit, 0)
+            resume_payload = json.loads(resume_stdout.getvalue())
+            self.assertEqual(resume_payload["status"], "completed")
+            self.assertEqual(
+                (root / ".attempt-count").read_text(encoding="utf-8").strip(),
+                "1",
+            )
+
+            repaired_session = json.loads(session_path.read_text(encoding="utf-8"))
+            repaired_workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+            self.assertEqual(repaired_session["loop"]["status"], "completed")
+            self.assertEqual(
+                repaired_session["loop"]["request"]["expected_roadmap_phase_id"],
+                "phase_6",
+            )
+            self.assertEqual(repaired_session["supervisor_report"]["status"], "approved")
+            self.assertEqual(repaired_workflow["loop"]["status"], "completed")
+            self.assertEqual(repaired_workflow["supervisor"]["verdict"], "approved")
+
     def test_run_once_executes_external_cli_and_prints_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

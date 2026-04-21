@@ -1290,7 +1290,7 @@ Finalizes a validated scope into an intentional git commit.
 Assesses goal achievement after a pipeline run completes. Supports two modes:
 
 - **Mid-pipeline check**: writes `DECISION: PROCEED` or `DECISION: REWORK` to
-  `.dev/logs/check_<stage>_<date>.md` — used when a WORKFLOWS.md
+  `.dev/logs/check_<stage>_<stem>_<date>.md` — used when a WORKFLOWS.md
   checkpoint is reached
 - **Final evaluation**: writes `VERDICT: goal_achieved / partial / not_achieved`
   with a structured report — used at end-of-pipeline

@@ -18,6 +18,7 @@ from dormammu._utils import iso_now as _iso_now
 from dormammu.config import AppConfig
 from dormammu.guidance import resolve_guidance_files
 from dormammu.state import StateRepository
+from dormammu.state.models import infer_primary_roadmap_phase_id
 
 
 # ---------------------------------------------------------------------------
@@ -269,11 +270,20 @@ def _resolve_bootstrap_inputs(
     goal: str | None,
     roadmap_phases: Sequence[str] | None,
     default_phase: str,
+    prompt_text: str | None = None,
     prompt_text_provided: bool = False,
 ) -> tuple[str | None, Sequence[str] | None]:
     session_exists = repository.state_file("workflow_state.json").exists()
     resolved_goal = goal
     resolved_roadmap_phases = list(roadmap_phases) if roadmap_phases else None
+
+    if resolved_roadmap_phases is None:
+        inferred_phase_id = infer_primary_roadmap_phase_id(
+            goal=resolved_goal,
+            prompt_text=prompt_text,
+        )
+        if inferred_phase_id is not None:
+            resolved_roadmap_phases = [inferred_phase_id]
 
     if not session_exists and sys.stdin.isatty() and not prompt_text_provided:
         if resolved_goal is None:

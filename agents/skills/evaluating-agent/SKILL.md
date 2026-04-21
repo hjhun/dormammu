@@ -46,7 +46,7 @@ before the commit stage. Focus narrowly on the current stage:
 4. Produce a short checkpoint report (see format below) and a `PROCEED` or
    `REWORK` decision.
 
-Write checkpoint reports to `.dev/logs/check_<stage>_<date>.md` and final reports to `.dev/logs/<date>_evaluator_<stem>.md`.
+Write checkpoint reports to `.dev/logs/check_<stage>_<stem>_<date>.md` and final reports to `.dev/logs/<date>_evaluator_<stem>.md`.
 
 #### Checkpoint Report Format
 
@@ -157,7 +157,7 @@ can process directly as a new goal file.  It should:
 
 | File | Purpose |
 |------|---------|
-| `.dev/logs/check_<stage>_<date>.md` | Mid-pipeline checkpoint report |
+| `.dev/logs/check_<stage>_<stem>_<date>.md` | Mid-pipeline checkpoint report |
 | `.dev/logs/<date>_evaluator_<stem>.md` | Full final evaluation report |
 | Original goal file (when strategy is `auto`) | Overwritten with the next goal |
 
@@ -177,7 +177,7 @@ can process directly as a new goal file.  It should:
 
 **Mid-pipeline check** — complete when:
 
-1. The checkpoint report is written to `.dev/logs/check_<stage>_<date>.md`.
+1. The checkpoint report is written to `.dev/logs/check_<stage>_<stem>_<date>.md`.
 2. The `DECISION:` line is present as the last non-empty line.
 3. The supervisor has received a clear `PROCEED` or `REWORK` signal.
 

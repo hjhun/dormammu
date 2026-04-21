@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dormammu.artifacts import ArtifactRef
 from dormammu.results import (
     aggregate_run_summary,
     effective_stage_verdict,
@@ -35,8 +36,67 @@ def test_stage_result_separates_status_from_verdict_and_attaches_report_artifact
     assert stage.verdict == ResultVerdict.NEEDS_WORK
     assert stage.report_path == report_path
     assert any(artifact.path == report_path for artifact in stage.artifacts)
+    assert any(
+        artifact.role == "reviewer" and artifact.stage_name == "reviewer"
+        for artifact in stage.artifacts
+    )
     assert "output" not in stage.to_dict()
     assert stage.to_dict(include_output=True)["output"] == "VERDICT: NEEDS_WORK"
+
+
+def test_stage_result_preserves_canonical_report_artifact_without_adding_alias(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "review.md"
+    canonical_ref = ArtifactRef.from_path(
+        kind="stage_report",
+        path=report_path,
+        label="reviewer_report",
+        content_type="text/markdown",
+        role="reviewer",
+        stage_name="reviewer",
+    )
+    stage = StageResult(
+        role="reviewer",
+        stage_name="reviewer",
+        status=ResultStatus.COMPLETED,
+        verdict=ResultVerdict.APPROVED,
+        report_path=report_path,
+        artifacts=(canonical_ref,),
+    )
+
+    assert stage.artifacts == (canonical_ref,)
+    assert [artifact.path for artifact in stage.artifacts].count(report_path) == 1
+
+
+def test_run_result_preserves_canonical_continuation_artifact_without_losing_metadata() -> None:
+    continuation_path = Path("/tmp/continuation.txt")
+    canonical_ref = ArtifactRef.from_path(
+        kind="continuation_prompt",
+        path=continuation_path,
+        label="continuation_prompt",
+        content_type="text/plain",
+        created_at="2026-04-22T03:00:00+09:00",
+        run_id="run-123",
+        role="reviewer",
+        stage_name="reviewer",
+        session_id="session-123",
+    )
+    result = RunResult(
+        status="failed",
+        attempts_completed=1,
+        retries_used=0,
+        max_retries=0,
+        max_iterations=1,
+        latest_run_id="run-123",
+        supervisor_verdict="needs_work",
+        report_path=None,
+        continuation_prompt_path=continuation_path,
+        artifacts=(canonical_ref,),
+    )
+
+    assert result.artifacts == (canonical_ref,)
+    assert [artifact.path for artifact in result.artifacts].count(continuation_path) == 1
 
 
 def test_latest_stage_results_and_aggregate_run_status_use_latest_attempt_per_stage() -> None:

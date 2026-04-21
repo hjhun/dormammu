@@ -301,6 +301,81 @@ Use this skill in state repository tests.
             self.assertEqual(session_worktrees.managed[0].to_dict(), worktree.to_dict())
             self.assertEqual(workflow_worktrees.managed[0].to_dict(), worktree.to_dict())
 
+    def test_restore_session_updates_repository_scope_to_target_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Session A")
+            original_session = repository.read_session_state()["session_id"]
+
+            repository.start_new_session(goal="Session B", session_id="session-b")
+
+            repository.restore_session(original_session)
+
+            self.assertEqual(repository.session_id, original_session)
+            self.assertEqual(repository.dev_dir, config.sessions_dir / original_session)
+            self.assertEqual(repository.logs_dir, config.sessions_dir / original_session / "logs")
+            self.assertEqual(repository.read_session_state()["session_id"], original_session)
+
+    def test_restore_session_repairs_stale_loop_request_expected_roadmap_phase_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(
+                goal="Restore roadmap sync",
+                active_roadmap_phase_ids=["phase_4"],
+            )
+            original_session = repository.read_session_state()["session_id"]
+            session_repository = repository.for_session(original_session)
+
+            session_state = session_repository.read_session_state()
+            session_state["active_roadmap_phase_ids"] = ["phase_6"]
+            session_state["loop"] = {
+                "status": "running",
+                "request": {"expected_roadmap_phase_id": "phase_4"},
+            }
+            session_repository.state_file("session.json").write_text(
+                json.dumps(session_state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            workflow_state = session_repository.read_workflow_state()
+            workflow_state.setdefault("roadmap", {})
+            workflow_state["roadmap"]["active_phase_ids"] = ["phase_6"]
+            workflow_state["loop"] = {
+                "status": "running",
+                "request": {"expected_roadmap_phase_id": "phase_4"},
+            }
+            session_repository.state_file("workflow_state.json").write_text(
+                json.dumps(workflow_state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            repository.start_new_session(goal="Temporary session", session_id="temp-session")
+            repository.restore_session(original_session)
+
+            repaired_session = repository.read_session_state()
+            repaired_workflow = repository.read_workflow_state()
+            root_index = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(repaired_session["active_roadmap_phase_ids"], ["phase_6"])
+            self.assertEqual(repaired_session["loop"]["request"]["expected_roadmap_phase_id"], "phase_6")
+            self.assertEqual(repaired_workflow["roadmap"]["active_phase_ids"], ["phase_6"])
+            self.assertEqual(repaired_workflow["loop"]["request"]["expected_roadmap_phase_id"], "phase_6")
+            self.assertEqual(root_index["current_session"]["active_roadmap_phase_ids"], ["phase_6"])
+
     def test_forget_managed_worktree_clears_root_session_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -768,6 +843,26 @@ Use this skill in state repository tests.
             self.assertEqual(session_state["updated_at"], "2026-04-20T21:20:00+09:00")
             self.assertEqual(root_index["current_session"]["active_phase"], "commit")
 
+    def test_write_workflow_state_syncs_session_active_roadmap_phase_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Workflow roadmap sync goal", active_roadmap_phase_ids=["phase_4"])
+
+            workflow_state = repository.read_workflow_state()
+            workflow_state["updated_at"] = "2026-04-20T21:20:01+09:00"
+            workflow_state.setdefault("roadmap", {})
+            workflow_state["roadmap"]["active_phase_ids"] = ["phase_6"]
+            repository.write_workflow_state(workflow_state)
+
+            session_state = repository.read_session_state()
+            root_index = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))
+            self.assertEqual(session_state["active_roadmap_phase_ids"], ["phase_6"])
+            self.assertEqual(root_index["current_session"]["active_roadmap_phase_ids"], ["phase_6"])
+
     def test_write_session_state_syncs_workflow_active_phase(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -787,6 +882,149 @@ Use this skill in state repository tests.
             self.assertEqual(workflow_state["workflow"]["active_phase"], "final_verification")
             self.assertEqual(workflow_state["updated_at"], "2026-04-20T21:21:00+09:00")
             self.assertEqual(root_index["current_session"]["session_id"], repository.read_session_state()["session_id"])
+
+    def test_write_session_state_syncs_workflow_active_roadmap_phase_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Session roadmap sync goal", active_roadmap_phase_ids=["phase_4"])
+
+            session_state = repository.read_session_state()
+            session_state["updated_at"] = "2026-04-20T21:21:01+09:00"
+            session_state["active_roadmap_phase_ids"] = ["phase_6"]
+            repository.write_session_state(session_state)
+
+            workflow_state = repository.read_workflow_state()
+            root_index = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))
+            self.assertEqual(workflow_state["roadmap"]["active_phase_ids"], ["phase_6"])
+            self.assertEqual(root_index["current_session"]["active_roadmap_phase_ids"], ["phase_6"])
+
+    def test_write_state_pair_keeps_phase_pointer_consistent_when_payloads_disagree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Paired state write")
+
+            session_state = repository.read_session_state()
+            workflow_state = repository.read_workflow_state()
+
+            session_state["active_phase"] = "plan"
+            session_state["updated_at"] = "2026-04-22T01:10:00+09:00"
+            workflow_state["workflow"]["active_phase"] = "final_verification"
+            workflow_state["updated_at"] = "2026-04-22T01:10:00+09:00"
+
+            repository.write_state_pair(
+                session_payload=session_state,
+                workflow_payload=workflow_state,
+            )
+
+            paired_session = repository.read_session_state()
+            paired_workflow = repository.read_workflow_state()
+            root_session = json.loads(
+                (config.base_dev_dir / "session.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(paired_session["active_phase"], "final_verification")
+            self.assertEqual(
+                paired_workflow["workflow"]["active_phase"],
+                "final_verification",
+            )
+            self.assertEqual(
+                root_session["current_session"]["active_phase"],
+                "final_verification",
+            )
+
+    def test_write_session_state_syncs_loop_request_expected_roadmap_phase_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Session loop sync goal", active_roadmap_phase_ids=["phase_4"])
+
+            session_state = repository.read_session_state()
+            session_state["loop"] = {
+                "status": "running",
+                "request": {"expected_roadmap_phase_id": "phase_4"},
+            }
+            repository.write_session_state(session_state)
+            workflow_state = repository.read_workflow_state()
+            workflow_state["loop"] = {
+                "status": "running",
+                "request": {"expected_roadmap_phase_id": "phase_4"},
+            }
+            repository.write_workflow_state(workflow_state)
+
+            session_state = repository.read_session_state()
+            session_state["updated_at"] = "2026-04-20T21:21:02+09:00"
+            session_state["active_roadmap_phase_ids"] = ["phase_6"]
+            repository.write_session_state(session_state)
+
+            workflow_state = repository.read_workflow_state()
+            self.assertEqual(
+                workflow_state["loop"]["request"]["expected_roadmap_phase_id"],
+                "phase_6",
+            )
+
+    def test_write_workflow_state_syncs_loop_request_expected_roadmap_phase_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Workflow loop sync goal", active_roadmap_phase_ids=["phase_4"])
+
+            workflow_state = repository.read_workflow_state()
+            workflow_state["loop"] = {
+                "status": "running",
+                "request": {"expected_roadmap_phase_id": "phase_4"},
+            }
+            repository.write_workflow_state(workflow_state)
+            session_state = repository.read_session_state()
+            session_state["loop"] = {
+                "status": "running",
+                "request": {"expected_roadmap_phase_id": "phase_4"},
+            }
+            repository.write_session_state(session_state)
+
+            workflow_state = repository.read_workflow_state()
+            workflow_state["updated_at"] = "2026-04-20T21:21:03+09:00"
+            workflow_state.setdefault("roadmap", {})
+            workflow_state["roadmap"]["active_phase_ids"] = ["phase_6"]
+            repository.write_workflow_state(workflow_state)
+
+            session_state = repository.read_session_state()
+            self.assertEqual(
+                session_state["loop"]["request"]["expected_roadmap_phase_id"],
+                "phase_6",
+            )
+
+    def test_ensure_bootstrap_state_preserves_existing_active_roadmap_phase_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root, env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")})
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Preserve roadmap phase", active_roadmap_phase_ids=["phase_6"])
+
+            repository.ensure_bootstrap_state(goal="Preserve roadmap phase")
+
+            session_state = repository.read_session_state()
+            workflow_state = repository.read_workflow_state()
+            self.assertEqual(session_state["active_roadmap_phase_ids"], ["phase_6"])
+            self.assertEqual(workflow_state["roadmap"]["active_phase_ids"], ["phase_6"])
 
     def test_sync_operator_state_imports_newer_active_root_task_mirror(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

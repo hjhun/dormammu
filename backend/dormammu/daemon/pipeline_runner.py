@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any, Mapping, TextIO
 from dormammu.agent import CliAdapter
 from dormammu.agent.models import AgentRunRequest
 from dormammu.agent.profiles import AgentProfile
+from dormammu.artifacts import ArtifactWriter
 from dormammu.daemon._patterns import (
     GOAL_SOURCE_TAG_RE as _GOAL_SOURCE_TAG_RE,
 )
@@ -130,17 +131,49 @@ class PipelineRunner:
         )
         self._lifecycle: LifecycleRecorder | None = None
         self._current_stage_results: list[StageResult] | None = None
+        self._last_written_artifact_ref: ArtifactRef | None = None
 
     def _profile_for_role(self, role: str) -> AgentProfile:
         return self._app_config.resolve_agent_profile(role)
 
+    def _expected_roadmap_phase_id(self) -> str:
+        try:
+            workflow_state = self._repository.read_workflow_state()
+        except RuntimeError:
+            return "phase_4"
+        roadmap = workflow_state.get("roadmap", {})
+        active_phase_ids = roadmap.get("active_phase_ids", [])
+        if isinstance(active_phase_ids, list):
+            for phase_id in active_phase_ids:
+                if isinstance(phase_id, str) and phase_id.strip():
+                    return phase_id
+        return "phase_4"
 
     def _default_doc_path(self, *, role: str, stem: str, date_str: str) -> Path:
-        return self._app_config.base_dev_dir / "logs" / f"{date_str}_{role}_{stem}.md"
+        return self._artifact_writer(role=role, stage_name=role).stage_report_path(
+            role=role,
+            stem=stem,
+            date_str=date_str,
+        )
 
     def _record_stage_result(self, stage: StageResult) -> None:
         if self._current_stage_results is not None:
             self._current_stage_results.append(stage)
+
+    def _artifact_writer(
+        self,
+        *,
+        role: str | None = None,
+        stage_name: str | None = None,
+    ) -> ArtifactWriter:
+        return ArtifactWriter(
+            base_dir=self._app_config.base_dev_dir,
+            logs_dir=self._app_config.base_dev_dir / "logs",
+            default_run_id=self._lifecycle.run_id if self._lifecycle is not None else None,
+            default_role=role,
+            default_stage_name=stage_name if stage_name is not None else role,
+            default_session_id=self._session_id(),
+        )
 
     def _ensure_stage_result_recorded(self, stage: StageResult) -> None:
         if self._current_stage_results is None:
@@ -550,6 +583,7 @@ class PipelineRunner:
         self._emit_stage_start(role="refiner")
         self._log("pipeline: refiner stage starting")
         prompt = self._refiner_prompt(goal_text, stem=stem, date_str=date_str)
+        self._last_written_artifact_ref = None
         output = self._call_once(
             role="refiner",
             cli=cli,
@@ -615,6 +649,7 @@ class PipelineRunner:
             date_str=date_str,
             checkpoint_feedback_text=checkpoint_feedback_text,
         )
+        self._last_written_artifact_ref = None
         output = self._call_once(
             role="planner",
             cli=cli,
@@ -654,8 +689,12 @@ class PipelineRunner:
         if cli is None:
             raise RuntimeError("No CLI available for mandatory evaluator role.")
 
-        self._emit_stage_queued(role="evaluator", reason="Plan checkpoint evaluator is queued.")
-        self._emit_stage_start(role="evaluator")
+        self._emit_stage_queued(
+            role="evaluator",
+            stage_name="plan_evaluator",
+            reason="Plan checkpoint evaluator is queued.",
+        )
+        self._emit_stage_start(role="evaluator", stage_name="plan_evaluator")
         self._log("pipeline: plan evaluator stage starting")
         requirements_text = self._read_requirements_doc()
         prompt = self._plan_evaluator_prompt(
@@ -664,20 +703,28 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
         )
-        report_path = (
-            self._app_config.base_dev_dir
-            / "logs"
-            / f"check_plan_{date_str}_{stem}.md"
+        report_path = self._artifact_writer(
+            role="evaluator",
+            stage_name="plan_evaluator",
+        ).checkpoint_report_path(
+            checkpoint_kind="plan",
+            stem=stem,
+            date_str=date_str,
         )
+        self._last_written_artifact_ref = None
         output = self._call_once(
             role="evaluator",
+            stage_name="plan_evaluator",
             cli=cli,
             model=profile.model_override,
             prompt=prompt,
             stem=stem,
             date_str=date_str,
             doc_path=report_path,
+            artifact_kind="checkpoint_report",
+            artifact_label="plan_checkpoint_report",
         )
+        report_ref = self._last_written_artifact_ref
 
         verdict = parse_plan_evaluator_verdict(output)
         stage = StageResult(
@@ -686,27 +733,21 @@ class PipelineRunner:
             status=ResultStatus.COMPLETED,
             verdict=verdict,
             output=output,
-            report_path=report_path,
+            report_path=report_ref.path if report_ref is not None else report_path,
+            artifacts=(report_ref,) if report_ref is not None else (),
             retry=RetryMetadata(attempt=attempt),
         )
         if self._lifecycle is not None:
             self._lifecycle.emit(
                 event_type=LifecycleEventType.EVALUATOR_CHECKPOINT_DECISION,
                 role="evaluator",
-                stage="evaluator",
+                stage="plan_evaluator",
                 status=stage.status,
                 payload=EvaluatorCheckpointPayload(
                     checkpoint_kind="plan",
                     decision=stage.verdict,
                 ),
-                artifact_refs=(
-                    ArtifactRef.from_path(
-                        kind="checkpoint_report",
-                        path=report_path,
-                        label="plan_checkpoint_report",
-                        content_type="text/markdown",
-                    ),
-                ),
+                artifact_refs=(report_ref,) if report_ref is not None else (),
             )
         self._emit_stage_complete(stage=stage)
         self._record_stage_result(stage)
@@ -736,7 +777,7 @@ class PipelineRunner:
             extra_args=tuple(extra_args),
             run_label=f"pipeline-developer-{stem}",
             max_retries=_DEFAULT_MAX_RETRIES,
-            expected_roadmap_phase_id="phase_4",
+            expected_roadmap_phase_id=self._expected_roadmap_phase_id(),
         )
         result = LoopRunner(
             self._app_config,
@@ -785,6 +826,7 @@ class PipelineRunner:
         self._emit_stage_start(role="tester")
         self._log("pipeline: tester stage starting")
         prompt = self._tester_prompt(goal_text, stem=stem, date_str=date_str)
+        self._last_written_artifact_ref = None
         output = self._call_once(
             role="tester",
             cli=cli,
@@ -793,6 +835,7 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
         )
+        report_ref = self._last_written_artifact_ref
 
         verdict = parse_tester_verdict(output)
         stage = StageResult(
@@ -801,7 +844,12 @@ class PipelineRunner:
             status=ResultStatus.COMPLETED if verdict is not None else ResultStatus.FAILED,
             verdict=verdict,
             output=output,
-            report_path=self._default_doc_path(role="tester", stem=stem, date_str=date_str),
+            report_path=(
+                report_ref.path
+                if report_ref is not None
+                else self._default_doc_path(role="tester", stem=stem, date_str=date_str)
+            ),
+            artifacts=(report_ref,) if report_ref is not None else (),
             summary=(
                 None
                 if verdict is not None
@@ -836,6 +884,7 @@ class PipelineRunner:
         self._log("pipeline: reviewer stage starting")
         design_text = self._read_designer_doc(stem, date_str)
         prompt = self._reviewer_prompt(goal_text, design_text, stem=stem, date_str=date_str)
+        self._last_written_artifact_ref = None
         output = self._call_once(
             role="reviewer",
             cli=cli,
@@ -844,6 +893,7 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
         )
+        report_ref = self._last_written_artifact_ref
 
         verdict = parse_reviewer_verdict(output)
         stage = StageResult(
@@ -852,7 +902,12 @@ class PipelineRunner:
             status=ResultStatus.COMPLETED if verdict is not None else ResultStatus.FAILED,
             verdict=verdict,
             output=output,
-            report_path=self._default_doc_path(role="reviewer", stem=stem, date_str=date_str),
+            report_path=(
+                report_ref.path
+                if report_ref is not None
+                else self._default_doc_path(role="reviewer", stem=stem, date_str=date_str)
+            ),
+            artifacts=(report_ref,) if report_ref is not None else (),
             summary=(
                 None
                 if verdict is not None
@@ -879,6 +934,7 @@ class PipelineRunner:
         self._emit_stage_start(role="committer")
         self._log("pipeline: committer stage starting")
         prompt = self._committer_prompt(stem, date_str=date_str)
+        self._last_written_artifact_ref = None
         output = self._call_once(
             role="committer",
             cli=cli,
@@ -887,13 +943,19 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
         )
+        report_ref = self._last_written_artifact_ref
         stage = StageResult(
             role="committer",
             stage_name="committer",
             status=ResultStatus.COMPLETED,
             verdict=ResultVerdict.COMMITTED,
             output=output,
-            report_path=self._default_doc_path(role="committer", stem=stem, date_str=date_str),
+            report_path=(
+                report_ref.path
+                if report_ref is not None
+                else self._default_doc_path(role="committer", stem=stem, date_str=date_str)
+            ),
+            artifacts=(report_ref,) if report_ref is not None else (),
         )
         self._emit_stage_complete(stage=stage)
         self._record_stage_result(stage)
@@ -961,7 +1023,7 @@ class PipelineRunner:
         result = EvaluatorStage(
             progress_stream=self._progress_stream,
         ).run(request)
-        if self._lifecycle is not None and result.report_path is not None:
+        if self._lifecycle is not None and result.artifacts:
             self._lifecycle.emit(
                 event_type=LifecycleEventType.ARTIFACT_PERSISTED,
                 role="evaluator",
@@ -971,14 +1033,7 @@ class PipelineRunner:
                     artifact_kind="evaluator_report",
                     summary="Persisted the post-commit evaluator report.",
                 ),
-                artifact_refs=(
-                    ArtifactRef.from_path(
-                        kind="evaluator_report",
-                        path=result.report_path,
-                        label="evaluator_report",
-                        content_type="text/markdown",
-                    ),
-                ),
+                artifact_refs=tuple(result.artifacts),
             )
         self._log(
             f"pipeline: evaluator stage completed "
@@ -996,6 +1051,7 @@ class PipelineRunner:
         self,
         *,
         role: str,
+        stage_name: str | None = None,
         cli: Path,
         model: str | None,
         prompt: str,
@@ -1003,6 +1059,8 @@ class PipelineRunner:
         date_str: str,
         doc_path: Path | None = None,
         save_doc: bool = True,
+        artifact_kind: str = "stage_report",
+        artifact_label: str | None = None,
     ) -> str:
         """Run an agent CLI once and return its stdout.
 
@@ -1032,44 +1090,46 @@ class PipelineRunner:
             args=[str(cli)] + list(_model_args(cli.name, model)),
             cwd=self._app_config.repo_root,
         )
+        effective_stage_name = stage_name or role
+        artifact_writer = self._artifact_writer(
+            role=role,
+            stage_name=effective_stage_name,
+        )
         result = adapter.run_once(request)
         stdout_text = result.stdout_path.read_text(encoding="utf-8") if result.stdout_path.exists() else ""
         stderr_text = result.stderr_path.read_text(encoding="utf-8") if result.stderr_path.exists() else ""
         self._emit_cli_output(role=role, stdout_text=stdout_text, stderr_text=stderr_text)
         output = select_agent_output(stdout_text, stderr_text)
+        artifact_ref: ArtifactRef | None = None
 
         if save_doc:
             target_path = doc_path
             if target_path is None:
-                doc_dir = self._app_config.base_dev_dir / "logs"
-                doc_dir.mkdir(parents=True, exist_ok=True)
-                target_path = doc_dir / f"{date_str}_{role}_{stem}.md"
-            else:
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(
-                f"# {role.capitalize()} — {stem}\n\n{output}",
-                encoding="utf-8",
+                target_path = artifact_writer.stage_report_path(
+                    role=role,
+                    stem=stem,
+                    date_str=date_str,
+                )
+            artifact_ref = artifact_writer.write_markdown_report(
+                kind=artifact_kind,
+                markdown=f"# {role.capitalize()} — {stem}\n\n{output}",
+                path=target_path,
+                label=artifact_label or f"{role}_report",
             )
             self._log(f"pipeline: {role} document → {target_path}")
             if self._lifecycle is not None:
                 self._lifecycle.emit(
                     event_type=LifecycleEventType.ARTIFACT_PERSISTED,
                     role=role,
-                    stage=role,
+                    stage=effective_stage_name,
                     status="persisted",
                     payload=ArtifactPersistedPayload(
-                        artifact_kind="stage_report",
+                        artifact_kind=artifact_kind,
                         summary=f"Persisted the {role} stage report.",
                     ),
-                    artifact_refs=(
-                        ArtifactRef.from_path(
-                            kind="stage_report",
-                            path=target_path,
-                            label=f"{role}_report",
-                            content_type="text/markdown",
-                        ),
-                    ),
+                    artifact_refs=(artifact_ref,) if artifact_ref is not None else (),
                 )
+        self._last_written_artifact_ref = artifact_ref
         return output
 
     # ------------------------------------------------------------------
@@ -1127,10 +1187,13 @@ class PipelineRunner:
         date_str: str,
     ) -> str:
         rule_text = self._load_rule("evaluator-check-plan.md")
-        report_path = (
-            self._app_config.base_dev_dir
-            / "logs"
-            / f"check_plan_{date_str}_{stem}.md"
+        report_path = self._artifact_writer(
+            role="evaluator",
+            stage_name="plan_evaluator",
+        ).checkpoint_report_path(
+            checkpoint_kind="plan",
+            stem=stem,
+            date_str=date_str,
         )
         return build_rule_prompt(
             rule_text,
@@ -1208,7 +1271,11 @@ class PipelineRunner:
         return load_rule_text(self._app_config.agents_dir, rule_name)
 
     def _stage_doc_path(self, role: str, *, stem: str, date_str: str) -> Path:
-        return self._app_config.base_dev_dir / "logs" / f"{date_str}_{role}_{stem}.md"
+        return self._artifact_writer(role=role, stage_name=role).stage_report_path(
+            role=role,
+            stem=stem,
+            date_str=date_str,
+        )
 
     def _session_id(self) -> str | None:
         try:
@@ -1220,18 +1287,24 @@ class PipelineRunner:
             return session_id
         return None
 
-    def _emit_stage_queued(self, *, role: str, reason: str) -> None:
+    def _emit_stage_queued(
+        self,
+        *,
+        role: str,
+        reason: str,
+        stage_name: str | None = None,
+    ) -> None:
         if self._lifecycle is None:
             return
         self._lifecycle.emit(
             event_type=LifecycleEventType.STAGE_QUEUED,
             role=role,
-            stage=role,
+            stage=stage_name or role,
             status="queued",
             payload=StageEventPayload(reason=reason),
         )
 
-    def _emit_stage_start(self, *, role: str) -> None:
+    def _emit_stage_start(self, *, role: str, stage_name: str | None = None) -> None:
         profile = self._profile_for_role(role)
         runtime_skills = self._repository.record_runtime_skill_resolution(
             role=role,
@@ -1253,7 +1326,7 @@ class PipelineRunner:
             self._lifecycle.emit(
                 event_type=LifecycleEventType.STAGE_STARTED,
                 role=role,
-                stage=role,
+                stage=stage_name or role,
                 status="started",
                 payload=StageEventPayload(
                     reason="Pipeline stage entered active execution.",
@@ -1262,7 +1335,7 @@ class PipelineRunner:
             )
         self._hook_controller.emit_stage_start(
             source="pipeline_runner",
-            stage_name=role,
+            stage_name=stage_name or role,
             agent_role=role,
             session_id=self._session_id(),
             run_id=self._lifecycle.run_id if self._lifecycle is not None else None,

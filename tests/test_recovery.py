@@ -16,6 +16,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from dormammu.agent import cli_adapter as cli_adapter_module
+from dormammu.artifacts import ArtifactRef
 from dormammu.config import AppConfig
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
 from dormammu.recovery import RecoveryManager
@@ -374,6 +375,53 @@ class RecoveryManagerTests(unittest.TestCase):
                 (root / ".attempt-count").read_text(encoding="utf-8").strip(), "1"
             )
 
+    def test_resume_preserves_saved_continuation_prompt_artifact_metadata(self) -> None:
+        """resume() should reuse the saved continuation ArtifactRef on the max-iterations branch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=3)
+            config, repository, runner = self._make_runner(root)
+
+            first = runner.run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    agent_role="reviewer",
+                    run_label="budget-exhausted-artifact",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+            self.assertEqual(first.status, "failed")
+
+            expected_ref = next(
+                artifact for artifact in first.artifacts if artifact.kind == "continuation_prompt"
+            )
+            self.assertIsInstance(expected_ref, ArtifactRef)
+
+            resumed = RecoveryManager(
+                config, repository=repository, loop_runner=runner
+            ).resume(max_retries_override=0)
+
+            resumed_ref = next(
+                artifact for artifact in resumed.artifacts if artifact.kind == "continuation_prompt"
+            )
+            stage_ref = next(
+                artifact
+                for artifact in resumed.stage_results[0].artifacts
+                if artifact.kind == "continuation_prompt"
+            )
+
+            self.assertEqual(resumed_ref, expected_ref)
+            self.assertEqual(stage_ref, expected_ref)
+            self.assertEqual(resumed_ref.role, "reviewer")
+            self.assertEqual(resumed_ref.stage_name, "reviewer")
+            self.assertEqual(resumed_ref.session_id, repository.read_session_state()["session_id"])
+            self.assertIsNotNone(resumed_ref.created_at)
+
     def test_resume_repairs_stale_running_state_after_approved_revalidation(self) -> None:
         """resume() should not rerun the CLI when the saved state already validates cleanly."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -426,6 +474,21 @@ class RecoveryManagerTests(unittest.TestCase):
             self.assertEqual(resumed.stage_results[0].verdict, "approved")
             self.assertTrue(resumed.metadata["revalidated_from_saved_state"])
             self.assertIsNotNone(resumed.timing)
+            report_artifact = next(
+                artifact for artifact in resumed.artifacts if artifact.kind == "supervisor_report"
+            )
+            self.assertEqual(report_artifact.path, resumed.report_path)
+            self.assertEqual(report_artifact.run_id, resumed.latest_run_id)
+            self.assertEqual(report_artifact.role, "developer")
+            self.assertEqual(report_artifact.stage_name, "developer")
+            self.assertIsNotNone(report_artifact.created_at)
+            self.assertTrue(
+                any(
+                    artifact.kind == "supervisor_report"
+                    and artifact.created_at == report_artifact.created_at
+                    for artifact in resumed.stage_results[0].artifacts
+                )
+            )
             self.assertEqual(
                 (root / ".attempt-count").read_text(encoding="utf-8").strip(),
                 "1",
@@ -440,6 +503,76 @@ class RecoveryManagerTests(unittest.TestCase):
             self.assertEqual(repaired_session["loop"]["latest_supervisor_verdict"], "approved")
             self.assertEqual(repaired_workflow["supervisor"]["verdict"], "approved")
 
+    def test_resume_repairs_stale_expected_roadmap_phase_before_revalidation(self) -> None:
+        """resume() should realign a stale saved roadmap expectation with active session state."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+            config, repository, runner = self._make_runner(root)
+
+            first = runner.run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="repair-stale-roadmap-phase",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+            self.assertEqual(first.status, "completed")
+
+            session_id = json.loads(
+                (config.base_dev_dir / "session.json").read_text(encoding="utf-8")
+            )["active_session_id"]
+            session_path = config.sessions_dir / session_id / "session.json"
+            workflow_path = config.sessions_dir / session_id / "workflow_state.json"
+            session_state = json.loads(session_path.read_text(encoding="utf-8"))
+            workflow_state = json.loads(workflow_path.read_text(encoding="utf-8"))
+
+            session_state["active_roadmap_phase_ids"] = ["phase_6"]
+            session_state["loop"]["status"] = "running"
+            session_state["loop"]["latest_supervisor_verdict"] = "rework_required"
+            session_state["loop"]["request"]["expected_roadmap_phase_id"] = "phase_4"
+            workflow_state.setdefault("roadmap", {})
+            workflow_state["roadmap"]["active_phase_ids"] = ["phase_6"]
+            workflow_state["loop"]["status"] = "running"
+            workflow_state["loop"]["latest_supervisor_verdict"] = "rework_required"
+            workflow_state["loop"]["request"]["expected_roadmap_phase_id"] = "phase_4"
+            workflow_state.setdefault("supervisor", {})
+            workflow_state["supervisor"]["verdict"] = "rework_required"
+            workflow_state["supervisor"]["reason"] = "Stale roadmap expectation."
+            session_path.write_text(json.dumps(session_state), encoding="utf-8")
+            workflow_path.write_text(json.dumps(workflow_state), encoding="utf-8")
+
+            resumed = RecoveryManager(
+                config, repository=repository, loop_runner=runner
+            ).resume(max_retries_override=0)
+
+            self.assertEqual(resumed.status, "completed")
+            self.assertEqual(
+                (root / ".attempt-count").read_text(encoding="utf-8").strip(),
+                "1",
+            )
+
+            repaired_session = json.loads(session_path.read_text(encoding="utf-8"))
+            repaired_workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                repaired_session["loop"]["request"]["expected_roadmap_phase_id"],
+                "phase_6",
+            )
+            self.assertEqual(
+                repaired_workflow["loop"]["request"]["expected_roadmap_phase_id"],
+                "phase_6",
+            )
+            self.assertEqual(repaired_session["loop"]["latest_supervisor_verdict"], "approved")
+            self.assertEqual(repaired_workflow["supervisor"]["verdict"], "approved")
+            report_text = (config.sessions_dir / session_id / "supervisor_report.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("Verdict: `approved`", report_text)
 
     def test_resume_raises_when_loop_state_key_is_absent(self) -> None:
         """resume() must raise RuntimeError when the 'loop' key is missing from workflow_state."""

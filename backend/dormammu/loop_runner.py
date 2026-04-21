@@ -325,6 +325,9 @@ class LoopRunner:
         retries_used = max(start_attempt - 1, 0)
         continuation_prompt_path: Path | None = None
         report_path: Path | None = None
+        continuation_ref: ArtifactRef | None = None
+        report_ref: ArtifactRef | None = None
+        agent_run_refs: tuple[ResultArtifact, ...] = ()
         active_worktree: ManagedWorktree | None = None
         worktree_released = False
         run_started_at = _iso_now()
@@ -359,6 +362,19 @@ class LoopRunner:
             continuation_prompt_value: Path | None,
             terminal_error: str | None,
         ) -> LoopRunResult:
+            def _artifact_metadata_score(artifact: ResultArtifact) -> int:
+                return sum(
+                    1
+                    for value in (
+                        artifact.created_at,
+                        artifact.run_id,
+                        artifact.role,
+                        artifact.stage_name,
+                        artifact.session_id,
+                    )
+                    if value
+                ) + (1 if artifact.metadata else 0)
+
             completed_at = _iso_now()
             summary = result.summary
             if summary is None:
@@ -367,15 +383,25 @@ class LoopRunner:
                 else:
                     summary = terminal_error
             stage_artifacts: list[ResultArtifact] = []
-            if continuation_prompt_value is not None:
-                stage_artifacts.append(
-                    ResultArtifact(
-                        kind="continuation_prompt",
-                        path=continuation_prompt_value,
-                        label="continuation_prompt",
-                        content_type="text/plain",
-                    )
-                )
+            stage_seen: set[tuple[str, Path, str | None]] = set()
+            result_artifacts: list[ResultArtifact] = list(result.artifacts)
+            seen = {(artifact.kind, artifact.path, artifact.label) for artifact in result_artifacts}
+            for artifact in (*agent_run_refs, report_ref, continuation_ref):
+                if artifact is None:
+                    continue
+                key = (artifact.kind, artifact.path, artifact.label)
+                if key not in seen:
+                    result_artifacts.append(artifact)
+                    seen.add(key)
+                else:
+                    for index, existing in enumerate(result_artifacts):
+                        existing_key = (existing.kind, existing.path, existing.label)
+                        if existing_key == key and _artifact_metadata_score(artifact) > _artifact_metadata_score(existing):
+                            result_artifacts[index] = artifact
+                            break
+                if key not in stage_seen:
+                    stage_artifacts.append(artifact)
+                    stage_seen.add(key)
             stage_results = result.stage_results
             if not stage_results:
                 stage_results = (
@@ -402,6 +428,7 @@ class LoopRunner:
                 )
             return replace(
                 result,
+                artifacts=tuple(result_artifacts),
                 summary=summary,
                 stage_results=stage_results,
                 retry=result.retry
@@ -820,23 +847,6 @@ class LoopRunner:
             def _handle_started(started: Any) -> None:
                 runtime_repository.record_current_run(started)
                 self._emit_command_started(started)
-                lifecycle.emit(
-                    event_type=LifecycleEventType.ARTIFACT_PERSISTED,
-                    role=request.agent_role,
-                    stage=request.agent_role,
-                    status="persisted",
-                    payload=ArtifactPersistedPayload(
-                        artifact_kind="agent_run_artifacts",
-                        summary="Persisted prompt/stdout/stderr/metadata artifact references for the active agent run.",
-                    ),
-                    artifact_refs=(
-                        ArtifactRef.from_path(kind="prompt", path=started.prompt_path, label="prompt"),
-                        ArtifactRef.from_path(kind="stdout", path=started.stdout_path, label="stdout"),
-                        ArtifactRef.from_path(kind="stderr", path=started.stderr_path, label="stderr"),
-                        ArtifactRef.from_path(kind="metadata", path=started.metadata_path, label="metadata"),
-                    ),
-                    metadata={"agent_run_id": started.run_id},
-                )
                 self._persist_loop_state(
                     status="running",
                     request=request,
@@ -857,6 +867,19 @@ class LoopRunner:
                 on_started=_handle_started,
             )
             runtime_repository.record_latest_run(result)
+            agent_run_refs = tuple(result.artifact_refs)
+            lifecycle.emit(
+                event_type=LifecycleEventType.ARTIFACT_PERSISTED,
+                role=request.agent_role,
+                stage=request.agent_role,
+                status="persisted",
+                payload=ArtifactPersistedPayload(
+                    artifact_kind="agent_run_artifacts",
+                    summary="Persisted prompt/stdout/stderr/metadata artifact references for the active agent run.",
+                ),
+                artifact_refs=agent_run_refs,
+                metadata={"agent_run_id": result.run_id},
+            )
 
             if result.exit_code == 0 and self._stdout_has_promise_complete(result.stdout_path):
                 self._write_progress([
@@ -932,7 +955,13 @@ class LoopRunner:
                     expected_roadmap_phase_id=request.expected_roadmap_phase_id,
                 )
             )
-            report_path = runtime_repository.write_supervisor_report(report.to_markdown())
+            report_ref = runtime_repository.write_supervisor_report_ref(
+                report.to_markdown(),
+                run_id=result.run_id,
+                role=request.agent_role,
+                stage_name=request.agent_role,
+            )
+            report_path = report_ref.path
             lifecycle.emit(
                 event_type=LifecycleEventType.ARTIFACT_PERSISTED,
                 role=request.agent_role,
@@ -942,14 +971,7 @@ class LoopRunner:
                     artifact_kind="supervisor_report",
                     summary="Persisted the latest supervisor verification report.",
                 ),
-                artifact_refs=(
-                    ArtifactRef.from_path(
-                        kind="supervisor_report",
-                        path=report_path,
-                        label="supervisor_report",
-                        content_type="text/markdown",
-                    ),
-                ),
+                artifact_refs=(report_ref,),
             )
             report = report.with_report_path(report_path)
             self._emit_supervisor_result(report, attempt_number=attempt_number)
@@ -1118,7 +1140,13 @@ class LoopRunner:
                 patterns_text=runtime_repository.read_patterns_text(),
                 templates_dir=self.config.templates_dir,
             )
-            continuation_prompt_path = runtime_repository.write_continuation_prompt(continuation.text)
+            continuation_ref = runtime_repository.write_continuation_prompt_ref(
+                continuation.text,
+                run_id=result.run_id,
+                role=request.agent_role,
+                stage_name=request.agent_role,
+            )
+            continuation_prompt_path = continuation_ref.path
             lifecycle.emit(
                 event_type=LifecycleEventType.ARTIFACT_PERSISTED,
                 role=request.agent_role,
@@ -1128,14 +1156,7 @@ class LoopRunner:
                     artifact_kind="continuation_prompt",
                     summary="Persisted the continuation prompt for the next retry.",
                 ),
-                artifact_refs=(
-                    ArtifactRef.from_path(
-                        kind="continuation_prompt",
-                        path=continuation_prompt_path,
-                        label="continuation_prompt",
-                        content_type="text/plain",
-                    ),
-                ),
+                artifact_refs=(continuation_ref,),
             )
 
             if not self._should_retry(request.max_retries, retries_used):
@@ -1149,6 +1170,7 @@ class LoopRunner:
                     report=report,
                     report_path=report_path,
                     continuation_prompt_path=continuation_prompt_path,
+                    continuation_prompt_artifact=continuation_ref,
                     next_action=next_action,
                 )
                 final_result = LoopRunResult(
@@ -1206,14 +1228,7 @@ class LoopRunner:
                     reason=next_action,
                     attempt=attempt_number + 1,
                 ),
-                artifact_refs=(
-                    ArtifactRef.from_path(
-                        kind="continuation_prompt",
-                        path=continuation_prompt_path,
-                        label="continuation_prompt",
-                        content_type="text/plain",
-                    ),
-                ),
+                artifact_refs=(continuation_ref,),
             )
             self._persist_loop_state(
                 status="awaiting_retry",
@@ -1224,6 +1239,7 @@ class LoopRunner:
                 report=report,
                 report_path=report_path,
                 continuation_prompt_path=continuation_prompt_path,
+                continuation_prompt_artifact=continuation_ref,
                 next_action=next_action,
             )
             current_prompt = continuation.text
@@ -1381,6 +1397,7 @@ class LoopRunner:
         report: SupervisorReport | None,
         report_path: Path | None,
         continuation_prompt_path: Path | None,
+        continuation_prompt_artifact: ArtifactRef | None = None,
         next_action: str,
     ) -> None:
         timestamp = _iso_now()
@@ -1399,6 +1416,11 @@ class LoopRunner:
             "latest_supervisor_report_path": str(report_path) if report_path else None,
             "latest_continuation_prompt_path": (
                 str(continuation_prompt_path) if continuation_prompt_path else None
+            ),
+            "latest_continuation_prompt_artifact": (
+                continuation_prompt_artifact.to_dict()
+                if continuation_prompt_artifact is not None
+                else None
             ),
         }
 
@@ -1431,5 +1453,7 @@ class LoopRunner:
             "description": f"Loop state persisted with status '{status}'.",
         }
 
-        self.repository.write_session_state(session_state)
-        self.repository.write_workflow_state(workflow_state)
+        self.repository.write_state_pair(
+            session_payload=session_state,
+            workflow_payload=workflow_state,
+        )

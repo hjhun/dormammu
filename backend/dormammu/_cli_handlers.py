@@ -241,6 +241,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
             goal=args.goal,
             roadmap_phases=args.roadmap_phases,
             default_phase="phase_3",
+            prompt_text=prompt_text,
             prompt_text_provided=True,
         )
         repository.ensure_bootstrap_state(
@@ -371,6 +372,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
             goal=args.goal,
             roadmap_phases=args.roadmap_phases,
             default_phase="phase_4",
+            prompt_text=prompt_text,
             prompt_text_provided=True,
         )
         config, repository = _prepare_run_session_scope(

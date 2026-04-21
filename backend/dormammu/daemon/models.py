@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,28 @@ from dormammu.results import (
 if TYPE_CHECKING:
     from dormammu.daemon.autonomous_config import AutonomousConfig
     from dormammu.daemon.goals_config import GoalsConfig
+
+
+def _artifact_created_at(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+    except OSError:
+        return None
+
+
+def _merge_result_artifacts(*groups: tuple[ResultArtifact, ...]) -> tuple[ResultArtifact, ...]:
+    merged: list[ResultArtifact] = []
+    seen: set[tuple[str, str, str | None]] = set()
+    for group in groups:
+        for artifact in group:
+            key = (artifact.kind, str(artifact.path), artifact.label)
+            if key in seen:
+                continue
+            merged.append(artifact)
+            seen.add(key)
+    return tuple(merged)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,8 +116,10 @@ class DaemonPromptResult:
     watcher_backend: str
     sort_key: tuple[int, object, str]
     session_id: str | None
+    daemon_run_id: str | None = None
     run_result: RunResult | None = None
     phase_results: tuple[PhaseExecutionResult, ...] = field(default_factory=tuple)
+    daemon_artifacts: tuple[ResultArtifact, ...] = field(default_factory=tuple)
     error: str | None = None
     plan_all_completed: bool | None = None
     next_pending_task: str | None = None
@@ -136,15 +161,33 @@ class DaemonPromptResult:
     @property
     def artifacts(self) -> tuple[ResultArtifact, ...]:
         run_artifacts = tuple(self.run_result.artifacts) if self.run_result is not None else ()
-        result_report_artifact = artifact_from_path(
+        daemon_artifacts = tuple(self.daemon_artifacts)
+        result_report_artifact = self.result_report_artifact
+        if result_report_artifact is None:
+            return _merge_result_artifacts(run_artifacts, daemon_artifacts)
+        return _merge_result_artifacts(
+            run_artifacts,
+            daemon_artifacts,
+            (result_report_artifact,),
+        )
+
+    @property
+    def result_report_artifact(self) -> ResultArtifact | None:
+        for artifact in self.daemon_artifacts:
+            if artifact.kind == "result_report" and artifact.path == self.result_path:
+                return artifact
+        return artifact_from_path(
             kind="result_report",
             path=self.result_path,
             label="result_report",
             content_type="text/markdown",
+            created_at=_artifact_created_at(self.result_path),
+            run_id=self.daemon_run_id or self.latest_run_id,
+            role="daemon",
+            stage_name="daemon",
+            session_id=self.session_id,
+            require_exists=True,
         )
-        if result_report_artifact is None:
-            return run_artifacts
-        return run_artifacts + (result_report_artifact,)
 
     @property
     def retry(self) -> RetryMetadata | None:
@@ -173,6 +216,7 @@ class DaemonPromptResult:
             "watcher_backend": self.watcher_backend,
             "sort_key": list(self.sort_key),
             "session_id": self.session_id,
+            "daemon_run_id": self.daemon_run_id,
             "phase_results": [item.to_dict() for item in self.phase_results],
             "error": self.error,
             "plan_all_completed": self.plan_all_completed,

@@ -174,7 +174,7 @@ supervisor must:
 
 1. Confirm the preceding stage is complete (evidence present in `.dev/`).
 2. Invoke `skills/evaluating-agent/SKILL.md` in mid-pipeline check mode.
-3. Read the checkpoint report from `.dev/logs/check_<stage>_<date>.md`.
+3. Read the checkpoint report from `.dev/logs/check_<stage>_<stem>_<date>.md`.
 4. If `DECISION: PROCEED` — advance to the next stage.
 5. If `DECISION: REWORK` — route back to the stage indicated in the report.
 

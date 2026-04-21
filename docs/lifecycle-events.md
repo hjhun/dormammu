@@ -22,6 +22,11 @@ Every persisted event has the same envelope:
 The envelope is intentionally small. Large reports and logs stay on disk and
 are linked through `artifact_refs`.
 
+Each `artifact_ref` uses the shared `ArtifactRef` contract from
+`backend/dormammu/artifacts.py`, so persisted events can carry the artifact
+kind, filesystem path, creation timestamp, and run/stage association metadata
+without embedding the artifact body itself.
+
 For loop, pipeline, and daemon executions, runtime hook events reuse the
 parent execution `run_id` so hook activity can be reconstructed from the same
 timeline as the surrounding lifecycle events. The hook controller only falls

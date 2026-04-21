@@ -26,6 +26,7 @@ from dormammu.agent.models import (
 )
 from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.agent.presets import preset_for_executable_name
+from dormammu.artifacts import ArtifactWriter
 from dormammu.config import AppConfig, CliInvocationConfig, FallbackCliConfig
 
 
@@ -57,7 +58,6 @@ CLI_SHUTDOWN_GRACE_SECONDS = 2.0
 CLI_SHUTDOWN_MESSAGE = (
     "\n[dormammu] Agent CLI process interrupted by daemon shutdown request.\n"
 )
-_cli_calls_started = 0
 
 
 def _mirror_pipe(
@@ -90,6 +90,7 @@ class CliAdapter:
         self.config = config
         self.live_output_stream = live_output_stream if live_output_stream is not None else sys.stderr
         self.stop_event = stop_event
+        self._cli_calls_started = 0
 
     def _subprocess_env(self) -> dict[str, str]:
         env = dict(os.environ)
@@ -192,17 +193,15 @@ class CliAdapter:
         )
 
     def _pause_before_next_cli_call_if_needed(self) -> None:
-        global _cli_calls_started
-
-        if _cli_calls_started == 0:
-            _cli_calls_started += 1
+        if self._cli_calls_started == 0:
+            self._cli_calls_started += 1
             return
 
         if self.live_output_stream is not None:
             print(CLI_RETRY_DELAY_MESSAGE, file=self.live_output_stream)
             self.live_output_stream.flush()
         time.sleep(CLI_RETRY_DELAY_SECONDS)
-        _cli_calls_started += 1
+        self._cli_calls_started += 1
 
     def _run_single(
         self,
@@ -220,12 +219,22 @@ class CliAdapter:
         )
 
         run_id = _run_id(request.run_label)
-        prompt_path = self.config.logs_dir / f"{run_id}.prompt.txt"
-        stdout_path = self.config.logs_dir / f"{run_id}.stdout.log"
-        stderr_path = self.config.logs_dir / f"{run_id}.stderr.log"
-        metadata_path = self.config.logs_dir / f"{run_id}.meta.json"
+        artifact_writer = ArtifactWriter(
+            base_dir=self.config.base_dev_dir,
+            logs_dir=self.config.logs_dir,
+        )
+        prompt_path = artifact_writer.run_prompt_path(run_id=run_id)
+        stdout_path = artifact_writer.run_stdout_path(run_id=run_id)
+        stderr_path = artifact_writer.run_stderr_path(run_id=run_id)
+        metadata_path = artifact_writer.run_metadata_path(run_id=run_id)
 
-        prompt_path.write_text(request.prompt_text, encoding="utf-8")
+        artifact_writer.write_text_output(
+            kind="prompt",
+            text=request.prompt_text,
+            path=prompt_path,
+            label="prompt",
+            run_id=run_id,
+        )
 
         run_cwd = effective_workdir
         capabilities = self.inspect_capabilities(request.cli_path, cwd=run_cwd)
@@ -233,6 +242,9 @@ class CliAdapter:
         command_plan = build_command_plan(request, capabilities, prompt_path=prompt_path)
 
         started_at = _iso_now()
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        stdout_path.touch()
+        stderr_path.touch()
         started = AgentRunStarted(
             run_id=run_id,
             cli_path=_recorded_cli_path(request.cli_path),
@@ -245,6 +257,13 @@ class CliAdapter:
             stderr_path=stderr_path,
             metadata_path=metadata_path,
             capabilities=capabilities,
+        )
+        artifact_writer.write_json_metadata(
+            kind="metadata",
+            payload=started.to_dict(include_help_text=True),
+            path=metadata_path,
+            label="metadata",
+            run_id=run_id,
         )
         if on_started is not None:
             on_started(started)
@@ -342,9 +361,12 @@ class CliAdapter:
             timed_out=timed_out,
         )
 
-        metadata_path.write_text(
-            json.dumps(result.to_dict(include_help_text=True), indent=2, ensure_ascii=True) + "\n",
-            encoding="utf-8",
+        artifact_writer.write_json_metadata(
+            kind="metadata",
+            payload=result.to_dict(include_help_text=True),
+            path=metadata_path,
+            label="metadata",
+            run_id=run_id,
         )
         return result
 
