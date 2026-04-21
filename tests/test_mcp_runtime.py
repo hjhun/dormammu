@@ -138,6 +138,31 @@ def test_mcp_access_boundary_allows_visible_and_permitted_server(tmp_path: Path)
     assert boundary.require_access(_request()).status is McpAccessStatus.READY
 
 
+def test_mcp_access_boundary_reports_server_not_configured_when_catalog_is_empty(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+
+    config = _make_config(repo_root, home_dir)
+    boundary = McpAccessBoundary(config)
+
+    result = boundary.evaluate_access(_request())
+
+    assert result.status is McpAccessStatus.UNAVAILABLE
+    assert result.reason is McpAccessReason.SERVER_NOT_CONFIGURED
+    assert result.server is None
+    assert result.permission is None
+    assert result.hook_summary is None
+    assert result.availability is None
+    assert result.diagnostics["tool_target"] == "mcp:github"
+
+    with pytest.raises(McpServerUnavailableError, match="is not configured"):
+        boundary.require_access(_request())
+
+
 def test_mcp_access_boundary_denies_server_hidden_from_profile(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -163,6 +188,36 @@ def test_mcp_access_boundary_denies_server_hidden_from_profile(tmp_path: Path) -
     assert result.status is McpAccessStatus.DENIED
     assert result.reason is McpAccessReason.PROFILE_DENIED
     assert "MCP access configuration" in result.message
+
+
+def test_mcp_access_boundary_reports_disabled_server(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        _config_payload(
+            mcp_servers=[_server_payload("github", enabled=False)],
+        ),
+    )
+
+    config = _make_config(repo_root, home_dir)
+    boundary = McpAccessBoundary(config)
+
+    result = boundary.evaluate_access(_request())
+
+    assert result.status is McpAccessStatus.UNAVAILABLE
+    assert result.reason is McpAccessReason.SERVER_DISABLED
+    assert result.server is not None
+    assert result.server.id == "github"
+    assert result.permission is None
+    assert result.hook_summary is None
+    assert result.availability is None
+    assert "configured but disabled" in result.message
+
+    with pytest.raises(McpServerUnavailableError, match="configured but disabled"):
+        boundary.require_access(_request())
 
 
 def test_mcp_access_boundary_denies_server_by_tool_permission(tmp_path: Path) -> None:
@@ -193,6 +248,41 @@ def test_mcp_access_boundary_denies_server_by_tool_permission(tmp_path: Path) ->
     assert result.permission.matched_tool_name == "mcp"
 
     with pytest.raises(McpAccessDeniedError, match=r"denied for profile 'developer'"):
+        boundary.require_access(_request())
+
+
+def test_mcp_access_boundary_reports_permission_ask_for_server(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        _config_payload(
+            developer_permission_policy={
+                "tools": {
+                    "default": "deny",
+                    "rules": [{"tool": "mcp", "decision": "ask"}],
+                }
+            },
+        ),
+    )
+
+    config = _make_config(repo_root, home_dir)
+    boundary = McpAccessBoundary(config)
+
+    result = boundary.evaluate_access(_request())
+
+    assert result.status is McpAccessStatus.DENIED
+    assert result.reason is McpAccessReason.PERMISSION_ASK
+    assert result.permission is not None
+    assert result.permission.matched_tool_name == "mcp"
+    assert result.permission.source == "family_rule"
+    assert result.hook_summary is None
+    assert result.availability is None
+    assert "requires approval" in result.message
+
+    with pytest.raises(McpAccessDeniedError, match="requires approval"):
         boundary.require_access(_request())
 
 
@@ -478,6 +568,106 @@ def test_mcp_runtime_adapter_reports_missing_stdio_command(tmp_path: Path) -> No
     assert result.diagnostics["target"]["command"] == "definitely-missing-mcp-command-for-runtime-test"
 
     with pytest.raises(McpRuntimeInvocationError, match="could not be started"):
+        result.raise_for_status()
+
+
+def test_mcp_runtime_adapter_reports_stdio_timeout(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        {
+            "mcp": {
+                "servers": [
+                    {
+                        "id": "github",
+                        "enabled": True,
+                        "transport": {
+                            "kind": "stdio",
+                            "command": sys.executable,
+                            "args": ["-c", "import time; time.sleep(1)"],
+                        },
+                        "access": {"profiles": ["developer"]},
+                    }
+                ]
+            }
+        },
+    )
+
+    config = _make_config(repo_root, home_dir)
+    server = config.mcp.definitions_by_id()["github"]
+    adapter = McpRuntimeAdapter()
+
+    result = adapter.invoke(
+        McpRuntimeRequest(
+            server=server,
+            operation="ping",
+            timeout_seconds=0.01,
+        )
+    )
+
+    assert result.status is McpRuntimeStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.reason is McpRuntimeFailureReason.TIMEOUT
+    assert result.failure.diagnostics["timeout_seconds"] == 0.01
+    assert result.diagnostics["target"]["command"] == sys.executable
+    assert "timed out after 0.01 seconds" in result.message
+
+    with pytest.raises(McpRuntimeInvocationError, match="timed out after 0.01 seconds"):
+        result.raise_for_status()
+
+
+def test_mcp_runtime_adapter_reports_nonzero_stdio_exit(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    _write_json(
+        repo_root / "dormammu.json",
+        {
+            "mcp": {
+                "servers": [
+                    {
+                        "id": "github",
+                        "enabled": True,
+                        "transport": {
+                            "kind": "stdio",
+                            "command": sys.executable,
+                            "args": [
+                                "-c",
+                                (
+                                    "import sys; "
+                                    "sys.stdout.write('partial output'); "
+                                    "sys.stderr.write('runtime failed\\n'); "
+                                    "raise SystemExit(7)"
+                                ),
+                            ],
+                        },
+                        "access": {"profiles": ["developer"]},
+                    }
+                ]
+            }
+        },
+    )
+
+    config = _make_config(repo_root, home_dir)
+    server = config.mcp.definitions_by_id()["github"]
+    adapter = McpRuntimeAdapter()
+
+    result = adapter.invoke(McpRuntimeRequest(server=server, operation="ping"))
+
+    assert result.status is McpRuntimeStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.reason is McpRuntimeFailureReason.PROCESS_ERROR
+    assert result.failure.diagnostics["returncode"] == 7
+    assert result.failure.diagnostics["stdout"] == "partial output"
+    assert result.failure.diagnostics["stderr"] == "runtime failed\n"
+    assert result.diagnostics["target"]["command"] == sys.executable
+    assert "failed with exit code 7" in result.message
+
+    with pytest.raises(McpRuntimeInvocationError, match="failed with exit code 7"):
         result.raise_for_status()
 
 

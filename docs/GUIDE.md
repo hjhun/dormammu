@@ -21,6 +21,7 @@ Korean-language guide is at [docs/ko/GUIDE.md](ko/GUIDE.md).
 - [Commands Reference](#commands-reference)
 - [Configuration Reference](#configuration-reference)
 - [Lifecycle Hooks](#lifecycle-hooks)
+- [MCP Servers](#mcp-servers)
 - [Runtime Skills](#runtime-skills)
 - [Manifest-Backed Agent Profiles](#manifest-backed-agent-profiles)
 - [Agent Roles](#agent-roles)
@@ -543,6 +544,7 @@ Full example:
 | `cli_overrides` | Per-CLI extra arguments and settings |
 | `token_exhaustion_patterns` | Patterns in agent output that trigger CLI fallback |
 | `hooks` | Optional lifecycle hook definitions for policy, auditing, and annotations |
+| `mcp` | Optional MCP server catalog, profile allowlists, and per-server transport metadata |
 | `agents` | Role-based pipeline CLI and model assignments |
 | `worktree` | Optional managed worktree settings for isolated stage execution |
 
@@ -733,6 +735,173 @@ diagnostics under `.dev` state so later resume/review steps can see them.
 - Keep hooks focused on policy, auditing, and structured automation around
   stable lifecycle boundaries. They are not a replacement for the main
   workflow guidance or for long-running daemonized subsystems.
+
+---
+
+## MCP Servers
+
+MCP is a CLI-only runtime extension boundary in DORMAMMU. It is configured in
+the same runtime config files as profiles, permissions, and hooks, and it is
+governed by the same runtime policy layers rather than by a separate MCP-only
+policy system.
+
+### Where MCP config lives
+
+MCP server definitions live under the top-level `mcp` key in runtime config:
+
+1. If `DORMAMMU_CONFIG_PATH` is set, only that file is used.
+2. Otherwise `~/.dormammu/config` is loaded first.
+3. Then `<repo-root>/dormammu.json` is layered on top.
+
+Project config shadows global config by server `id`. If the same server `id`
+appears in both places, the project definition wins and the global definition
+is retained only in the catalog's `shadowed` diagnostics.
+
+Use `dormammu show-config --repo-root .` to inspect the effective MCP catalog,
+including enabled, disabled, and shadowed server entries.
+
+### Configuration shape
+
+Example:
+
+```json
+{
+  "mcp": {
+    "servers": [
+      {
+        "id": "github",
+        "enabled": true,
+        "transport": {
+          "kind": "stdio",
+          "command": "uvx",
+          "args": ["mcp-server-github"],
+          "env": {
+            "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+          },
+          "cwd": "./tools/mcp"
+        },
+        "access": {
+          "profiles": ["developer", "reviewer-custom"]
+        },
+        "failure_policy": "warn",
+        "metadata": {
+          "owner": "platform"
+        }
+      }
+    ]
+  }
+}
+```
+
+Supported MCP fields today:
+
+| Field | Meaning |
+|-------|---------|
+| `mcp.servers[].id` | Stable server identifier used for precedence, resolution, and diagnostics |
+| `mcp.servers[].enabled` | Whether the server is available for runtime use |
+| `mcp.servers[].transport.kind` | Transport type: `stdio`, `sse`, or `streamable_http` |
+| `mcp.servers[].transport.command` | Executable for `stdio` transports |
+| `mcp.servers[].transport.args` | Ordered argument list for `stdio` transports |
+| `mcp.servers[].transport.env` | Extra environment variables for `stdio` transports |
+| `mcp.servers[].transport.cwd` | Optional working directory for `stdio` transports |
+| `mcp.servers[].transport.url` | Endpoint URL for `sse` or `streamable_http` transports |
+| `mcp.servers[].transport.headers` | Extra headers for `sse` or `streamable_http` transports |
+| `mcp.servers[].access.profiles` | Effective profile names allowed to see the server |
+| `mcp.servers[].failure_policy` | Parsed configuration metadata exposed in diagnostics and hook payloads |
+| `mcp.servers[].metadata` | Arbitrary structured metadata preserved in the effective catalog |
+
+Validation is strict. Invalid field types, missing required transport fields,
+duplicate server identifiers inside one config layer, and unknown profile names
+fail fast during config loading.
+
+### Profile allowlists
+
+`access.profiles` is a profile allowlist, not a role allowlist. The values must
+match the effective profile names that DORMAMMU resolves at runtime.
+
+That means the allowlist can reference:
+
+- built-in profile names such as `developer`, `reviewer`, or `planner`
+- manifest-backed profile names such as `reviewer-custom`
+
+Visibility is resolved before permission policy evaluation. If a profile is not
+listed in `access.profiles`, the server is denied even if the tool permission
+policy would otherwise allow `mcp`.
+
+Disabled servers are also excluded from the visible runtime set. They remain in
+the catalog for inspection, but they are treated as unavailable during access
+checks.
+
+### How MCP interacts with permissions and hooks
+
+MCP access follows the same governed path as other runtime actions:
+
+1. Resolve the requested server from the effective MCP catalog.
+2. Check whether the effective profile is allowed by `access.profiles`.
+3. Apply the effective tool permission policy.
+4. Emit runtime hook evaluation for the MCP tool boundary.
+5. Probe server availability.
+6. Invoke the runtime adapter only after the earlier checks pass.
+
+Permission rules use the existing tool policy model:
+
+- `mcp` governs the whole MCP tool family
+- `mcp:<server-id>` governs one specific configured server
+
+Examples:
+
+- `{"tool": "mcp", "decision": "allow"}` allows the MCP family unless a more
+  specific rule overrides it.
+- `{"tool": "mcp:github", "decision": "deny"}` denies one server even when the
+  family rule allows MCP generally.
+
+Hook integration also uses the existing runtime hook system. MCP access emits a
+`tool execution` hook event with:
+
+- `tool_name` set to `mcp`
+- `tool_target` set to `mcp:<server-id>`
+- subject metadata describing the server id, profile, and transport kind
+
+Hooks can annotate or deny the request. A denying hook blocks access before the
+adapter runs. This is intentional: MCP is not a side channel around runtime
+governance.
+
+### Failure behavior
+
+Operators should expect these categories of MCP failure today:
+
+| Situation | What happens |
+|-----------|--------------|
+| No MCP config or unknown server id | Access fails as "not configured" |
+| Profile not in `access.profiles` | Access is denied by MCP access configuration |
+| Server is disabled | Access fails as unavailable before permission or adapter execution |
+| Tool permission is `deny` | Access is denied by the existing permission policy |
+| Tool permission is `ask` | Access is denied with a readable "requires approval" message |
+| Hook denies the request | Access is blocked by runtime hook evaluation |
+| `stdio` command is missing or not executable during governed access checks | The access boundary reports the server as unavailable |
+| `stdio` command is missing or not executable during direct adapter invocation | The adapter returns a structured `COMMAND_NOT_FOUND` or `LAUNCH_ERROR` failure |
+| `stdio` process times out or exits non-zero after launch | The adapter returns a structured runtime failure |
+| Transport executor is not implemented | The adapter returns a structured `TRANSPORT_UNSUPPORTED` failure |
+
+The effective behavior is intentionally conservative. If any earlier governance
+layer fails, DORMAMMU does not attempt an MCP invocation.
+
+### Current limitations
+
+The current Phase 6 MCP surface is intentionally narrow:
+
+- There is no dedicated `dormammu mcp ...` CLI yet. MCP is currently a config,
+  policy, and runtime-boundary surface.
+- Runtime execution is implemented only for `stdio` transports. `sse` and
+  `streamable_http` can be configured and inspected, but the default runtime
+  adapter reports them as unsupported unless a custom executor is supplied.
+- `failure_policy` is parsed, preserved, and exposed to hooks, but it does not
+  yet change adapter retry behavior or fallback semantics.
+- MCP server processes are not managed as long-lived background services by the
+  core runtime.
+- Repositories with no MCP config remain fully supported; the effective catalog
+  is empty and MCP access attempts fail clearly instead of partially enabling
+  behavior.
 
 ---
 
