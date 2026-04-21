@@ -12,11 +12,9 @@ import pytest
 from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.daemon.evaluator import (
     EvaluatorRequest,
-    EvaluatorResult,
     EvaluatorStage,
     resolve_evaluator_cli,
     resolve_evaluator_model,
-    _VERDICT_RE,
     _NEXT_GOAL_RE,
 )
 from dormammu.daemon.goals_config import (
@@ -27,6 +25,7 @@ from dormammu.daemon.goals_config import (
     VALID_NEXT_GOAL_STRATEGIES,
 )
 from dormammu.daemon.pipeline_runner import _strip_goal_source_tag
+from dormammu.results import ResultStatus, parse_final_evaluator_verdict
 
 AGENTS_DIR = Path(__file__).resolve().parents[1] / "agents"
 
@@ -264,32 +263,28 @@ class TestResolveCli:
 
 
 # ---------------------------------------------------------------------------
-# Regex helpers
+# Verdict helpers
 # ---------------------------------------------------------------------------
 
 
-class TestVerdictRegex:
+class TestVerdictParsing:
     def test_goal_achieved(self) -> None:
-        m = _VERDICT_RE.search("VERDICT: goal_achieved")
-        assert m is not None
-        assert m.group(1).lower() == "goal_achieved"
+        assert parse_final_evaluator_verdict("VERDICT: goal_achieved") == "goal_achieved"
 
     def test_partial(self) -> None:
-        m = _VERDICT_RE.search("VERDICT: partial")
-        assert m is not None
-        assert m.group(1).lower() == "partial"
+        assert parse_final_evaluator_verdict("VERDICT: partial") == "partial"
 
     def test_not_achieved(self) -> None:
-        m = _VERDICT_RE.search("Some text\nVERDICT: not_achieved\n")
-        assert m is not None
-        assert m.group(1).lower() == "not_achieved"
+        assert (
+            parse_final_evaluator_verdict("Some text\nVERDICT: not_achieved\n")
+            == "not_achieved"
+        )
 
     def test_case_insensitive(self) -> None:
-        m = _VERDICT_RE.search("verdict : GOAL_ACHIEVED")
-        assert m is not None
+        assert parse_final_evaluator_verdict("verdict : GOAL_ACHIEVED") == "goal_achieved"
 
     def test_no_match(self) -> None:
-        assert _VERDICT_RE.search("no verdict here") is None
+        assert parse_final_evaluator_verdict("no verdict here") == "unknown"
 
 
 class TestNextGoalRegex:
@@ -519,11 +514,11 @@ class TestEvaluatorStageRun:
         stage, _ = _make_stage(tmp_path)
         with self._patch_run(agent_output):
             result = stage.run(req)
-        assert result.status == "completed"
+        assert result.status == ResultStatus.COMPLETED
         assert result.verdict == "goal_achieved"
         assert result.report_path is not None
         assert result.report_path.exists()
-        assert result.goal_file_updated is False
+        assert result.metadata["goal_file_updated"] is False
 
     def test_run_writes_report_file(self, tmp_path: Path) -> None:
         req = _make_request(tmp_path)
@@ -539,9 +534,19 @@ class TestEvaluatorStageRun:
         stage, _ = _make_stage(tmp_path)
         with patch("subprocess.run", side_effect=OSError("no such file")):
             result = stage.run(req)
-        assert result.status == "failed"
+        assert result.status == ResultStatus.FAILED
         assert result.verdict == "unknown"
-        assert result.goal_file_updated is False
+        assert result.metadata["goal_file_updated"] is False
+
+    def test_run_failed_when_verdict_missing(self, tmp_path: Path) -> None:
+        req = _make_request(tmp_path)
+        stage, _ = _make_stage(tmp_path)
+        with self._patch_run("No verdict here"):
+            result = stage.run(req)
+        assert result.status == ResultStatus.FAILED
+        assert result.verdict == "unknown"
+        assert result.summary == "Evaluator output did not include a valid 'VERDICT:' line."
+        assert result.metadata["goal_file_updated"] is False
 
     def test_run_auto_strategy_overwrites_goal(self, tmp_path: Path) -> None:
         req = _make_request(tmp_path, next_goal_strategy="auto")
@@ -552,7 +557,7 @@ class TestEvaluatorStageRun:
         stage, _ = _make_stage(tmp_path)
         with self._patch_run(agent_output):
             result = stage.run(req)
-        assert result.goal_file_updated is True
+        assert result.metadata["goal_file_updated"] is True
         assert "feature Y" in req.goal_file_path.read_text()
 
     def test_report_stored_in_07_evaluator_slot(self, tmp_path: Path) -> None:

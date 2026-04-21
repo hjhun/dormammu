@@ -52,14 +52,9 @@ from dormammu.agent import CliAdapter
 from dormammu.agent.models import AgentRunRequest
 from dormammu.agent.profiles import AgentProfile
 from dormammu.daemon._patterns import (
-    CHECKPOINT_PROCEED_RE as _CHECKPOINT_PROCEED_RE,
-    CHECKPOINT_REWORK_RE as _CHECKPOINT_REWORK_RE,
     GOAL_SOURCE_TAG_RE as _GOAL_SOURCE_TAG_RE,
-    REVIEWER_REJECT_RE as _REVIEWER_REJECT_RE,
-    TESTER_FAIL_RE as _TESTER_FAIL_RE,
 )
 from dormammu.daemon.cli_output import model_args as _model_args, select_agent_output
-from dormammu.daemon.models import StageResult
 from dormammu.daemon.evaluator import (
     EvaluatorRequest,
     EvaluatorStage,
@@ -78,6 +73,21 @@ from dormammu.lifecycle import (
     SupervisorHandoffPayload,
 )
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
+from dormammu.results import (
+    ResultStatus,
+    ResultVerdict,
+    RetryMetadata,
+    StageResult,
+    aggregate_run_summary,
+    aggregate_run_status,
+    aggregate_run_verdict,
+    effective_stage_verdict,
+    parse_plan_evaluator_verdict,
+    parse_reviewer_verdict,
+    parse_tester_verdict,
+    stage_result_is_failure,
+    stage_result_requests_retry,
+)
 from dormammu.runtime_hooks import RuntimeHookBlocked, RuntimeHookController
 from dormammu.skills import runtime_skill_summary
 from dormammu.state import StateRepository
@@ -89,7 +99,6 @@ if TYPE_CHECKING:
 
 _DEFAULT_MAX_RETRIES = 49
 MAX_STAGE_ITERATIONS = _DEFAULT_MAX_RETRIES + 1
-_STAGE_FAILURE_VERDICTS = frozenset({"blocked", "failed", "fail", "needs_work", "rework"})
 
 
 class PipelineRunner:
@@ -119,9 +128,45 @@ class PipelineRunner:
             repository=self._repository,
             progress_stream=self._progress_stream,
         )
+        self._lifecycle: LifecycleRecorder | None = None
+        self._current_stage_results: list[StageResult] | None = None
 
     def _profile_for_role(self, role: str) -> AgentProfile:
         return self._app_config.resolve_agent_profile(role)
+
+
+    def _default_doc_path(self, *, role: str, stem: str, date_str: str) -> Path:
+        return self._app_config.base_dev_dir / "logs" / f"{date_str}_{role}_{stem}.md"
+
+    def _record_stage_result(self, stage: StageResult) -> None:
+        if self._current_stage_results is not None:
+            self._current_stage_results.append(stage)
+
+    def _ensure_stage_result_recorded(self, stage: StageResult) -> None:
+        if self._current_stage_results is None:
+            return
+        if self._current_stage_results and self._current_stage_results[-1] == stage:
+            return
+        self._current_stage_results.append(stage)
+
+    def _developer_stage_from_run_result(self, result: LoopRunResult) -> StageResult:
+        if result.stage_results:
+            return result.stage_results[-1]
+        return StageResult(
+            role="developer",
+            stage_name="developer",
+            status=result.status,
+            verdict=result.supervisor_verdict,
+            summary=result.summary,
+            report_path=result.report_path,
+            retry=RetryMetadata(
+                attempt=result.attempts_completed,
+                retries_used=result.retries_used,
+                max_retries=result.max_retries,
+                max_iterations=result.max_iterations,
+            ),
+            metadata={"latest_run_id": result.latest_run_id},
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -145,6 +190,7 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
             checkpoint_feedback_text=None,
+            attempt=1,
         )
         if not enable_plan_evaluator:
             self._log("pipeline: plan evaluator disabled for non-goals prompt")
@@ -156,8 +202,9 @@ class PipelineRunner:
                 goal_text,
                 stem=stem,
                 date_str=date_str,
+                attempt=iteration + 1,
             )
-            if stage.verdict == "proceed":
+            if stage.verdict == ResultVerdict.PROCEED:
                 self._log(
                     f"pipeline: plan evaluator PROCEED (iteration {iteration + 1})"
                 )
@@ -199,6 +246,7 @@ class PipelineRunner:
                     stem=stem,
                     date_str=date_str,
                     checkpoint_feedback_text=evaluator_feedback_text,
+                    attempt=iteration + 2,
                 )
                 continue
             raise RuntimeError(
@@ -228,6 +276,7 @@ class PipelineRunner:
         loop_result: LoopRunResult | None = None
         final_result: LoopRunResult | None = None
         terminal_error: str | None = None
+        self._current_stage_results = []
         session_id = self._session_id()
         self._lifecycle = LifecycleRecorder.for_execution(
             self._repository,
@@ -282,6 +331,9 @@ class PipelineRunner:
             # ---- developer → tester loop ----------------------------------------
             for tester_iter in range(MAX_STAGE_ITERATIONS):
                 loop_result = self._run_developer(dev_prompt, stem=stem)
+                self._ensure_stage_result_recorded(
+                    self._developer_stage_from_run_result(loop_result)
+                )
                 if loop_result.status not in ("completed",):
                     self._log(
                         f"pipeline: developer stage ended with status "
@@ -290,11 +342,27 @@ class PipelineRunner:
                     final_result = loop_result
                     break
 
-                tester_stage = self._run_tester(prompt_text, stem=stem, date_str=date_str)
+                tester_stage = self._run_tester(
+                    prompt_text,
+                    stem=stem,
+                    date_str=date_str,
+                    attempt=tester_iter + 1,
+                )
                 if tester_stage is None:
                     # Tester not configured — skip tester stage
                     break
-                if tester_stage.verdict == "pass":
+                self._ensure_stage_result_recorded(tester_stage)
+                if tester_stage.status != ResultStatus.COMPLETED:
+                    self._log(
+                        "pipeline: tester stage failed before producing a valid verdict "
+                        f"(iteration {tester_iter + 1}) — aborting pipeline"
+                    )
+                    final_result = self._failed_loop_result_from_stage(
+                        loop_result=loop_result,
+                        stage=tester_stage,
+                    )
+                    break
+                if not stage_result_requests_retry(tester_stage):
                     self._log(f"pipeline: tester PASS (iteration {tester_iter + 1})")
                     break
                 if tester_iter < MAX_STAGE_ITERATIONS - 1:
@@ -343,12 +411,26 @@ class PipelineRunner:
             # ---- developer → reviewer loop --------------------------------------
             for reviewer_iter in range(MAX_STAGE_ITERATIONS):
                 reviewer_stage = self._run_reviewer(
-                    prompt_text, stem=stem, date_str=date_str
+                    prompt_text,
+                    stem=stem,
+                    date_str=date_str,
+                    attempt=reviewer_iter + 1,
                 )
                 if reviewer_stage is None:
                     # Reviewer not configured — skip
                     break
-                if reviewer_stage.verdict == "approved":
+                self._ensure_stage_result_recorded(reviewer_stage)
+                if reviewer_stage.status != ResultStatus.COMPLETED:
+                    self._log(
+                        "pipeline: reviewer stage failed before producing a valid verdict "
+                        f"(iteration {reviewer_iter + 1}) — aborting pipeline"
+                    )
+                    final_result = self._failed_loop_result_from_stage(
+                        loop_result=loop_result,
+                        stage=reviewer_stage,
+                    )
+                    break
+                if not stage_result_requests_retry(reviewer_stage):
                     self._log(f"pipeline: reviewer APPROVED (iteration {reviewer_iter + 1})")
                     break
                 if reviewer_iter < MAX_STAGE_ITERATIONS - 1:
@@ -386,6 +468,9 @@ class PipelineRunner:
                         prompt_text, reviewer_stage.output, source="reviewer"
                     )
                     loop_result = self._run_developer(dev_prompt, stem=stem)
+                    self._ensure_stage_result_recorded(
+                        self._developer_stage_from_run_result(loop_result)
+                    )
                     if loop_result.status not in ("completed",):
                         final_result = loop_result
                         break
@@ -399,16 +484,30 @@ class PipelineRunner:
                 return self._finalize_pipeline_result(final_result)
 
             # ---- committer -------------------------------------------------------
-            self._run_committer(stem=stem, date_str=date_str)
+            committer_stage = self._run_committer(stem=stem, date_str=date_str)
+            if committer_stage is not None:
+                self._ensure_stage_result_recorded(committer_stage)
 
             # ---- evaluator (goals-scheduler context only) -----------------------
-            self._run_evaluator(
+            evaluator_stage = self._run_evaluator(
                 prompt_text=prompt_text,
                 stem=stem,
                 date_str=date_str,
                 goal_file_path=goal_file_path,
                 evaluator_config=evaluator_config,
             )
+            if (
+                evaluator_stage is not None
+                and evaluator_stage.status != ResultStatus.COMPLETED
+            ):
+                self._log(
+                    "pipeline: evaluator stage failed before producing a valid verdict "
+                    "— aborting pipeline"
+                )
+                final_result = self._failed_loop_result_from_stage(
+                    loop_result=loop_result,
+                    stage=evaluator_stage,
+                )
         except RuntimeHookBlocked as exc:
             self._log(f"pipeline: runtime hook blocked execution: {exc}")
             final_result = self._blocked_loop_result(loop_result)
@@ -421,12 +520,14 @@ class PipelineRunner:
                     final_result or loop_result,
                     terminal_error=error_text,
                 )
+                self._current_stage_results = None
 
         assert loop_result is not None or final_result is not None
         final_result = self._finalize_pipeline_result(
             final_result or loop_result,
             terminal_error=terminal_error,
         )
+        self._current_stage_results = None
         return final_result
 
     # ------------------------------------------------------------------
@@ -435,12 +536,10 @@ class PipelineRunner:
 
     def _run_refiner(
         self, goal_text: str, *, stem: str, date_str: str
-    ) -> str | None:
+    ) -> StageResult:
         """Run the refiner agent once.
 
         Produces ``.dev/REQUIREMENTS.md``.
-
-        Returns the agent output string.
         """
         profile = self._profile_for_role("refiner")
         cli = profile.resolve_cli(self._app_config.active_agent_cli)
@@ -460,9 +559,18 @@ class PipelineRunner:
             date_str=date_str,
             save_doc=False,
         )
+        stage = StageResult(
+            role="refiner",
+            status=ResultStatus.COMPLETED,
+            verdict=ResultVerdict.DONE,
+            output=output or "",
+            stage_name="refiner",
+            retry=RetryMetadata(attempt=1),
+        )
         self._log("pipeline: refiner stage completed")
-        self._emit_stage_complete(role="refiner", verdict="done")
-        return output
+        self._emit_stage_complete(stage=stage)
+        self._record_stage_result(stage)
+        return stage
 
     # ------------------------------------------------------------------
     # Planner stage (one-shot, mandatory)
@@ -475,14 +583,13 @@ class PipelineRunner:
         stem: str,
         date_str: str,
         checkpoint_feedback_text: str | None = None,
-    ) -> str | None:
+        attempt: int = 1,
+    ) -> StageResult:
         """Run the planner agent once.
 
         Reads ``.dev/REQUIREMENTS.md`` (produced by the refiner) if it exists,
         then instructs the agent to generate ``.dev/WORKFLOWS.md`` and update
         ``.dev/PLAN.md`` / ``.dev/DASHBOARD.md``.
-
-        Returns the agent output string.
         """
         profile = self._profile_for_role("planner")
         cli = profile.resolve_cli(self._app_config.active_agent_cli)
@@ -517,16 +624,25 @@ class PipelineRunner:
             date_str=date_str,
             save_doc=False,
         )
+        stage = StageResult(
+            role="planner",
+            status=ResultStatus.COMPLETED,
+            verdict=ResultVerdict.DONE,
+            output=output or "",
+            stage_name="planner",
+            retry=RetryMetadata(attempt=attempt),
+        )
         self._log("pipeline: planner stage completed")
-        self._emit_stage_complete(role="planner", verdict="done")
-        return output
+        self._emit_stage_complete(stage=stage)
+        self._record_stage_result(stage)
+        return stage
 
     # ------------------------------------------------------------------
     # Plan evaluator stage (one-shot, goals-scheduler context only)
     # ------------------------------------------------------------------
 
     def _run_plan_evaluator(
-        self, goal_text: str, *, stem: str, date_str: str
+        self, goal_text: str, *, stem: str, date_str: str, attempt: int = 1
     ) -> StageResult:
         """Run the mandatory evaluator checkpoint after planning for goals.
 
@@ -563,16 +679,25 @@ class PipelineRunner:
             doc_path=report_path,
         )
 
-        verdict = "proceed" if _CHECKPOINT_PROCEED_RE.search(output) else "rework"
+        verdict = parse_plan_evaluator_verdict(output)
+        stage = StageResult(
+            role="evaluator",
+            stage_name="plan_evaluator",
+            status=ResultStatus.COMPLETED,
+            verdict=verdict,
+            output=output,
+            report_path=report_path,
+            retry=RetryMetadata(attempt=attempt),
+        )
         if self._lifecycle is not None:
             self._lifecycle.emit(
                 event_type=LifecycleEventType.EVALUATOR_CHECKPOINT_DECISION,
                 role="evaluator",
                 stage="evaluator",
-                status=verdict,
+                status=stage.status,
                 payload=EvaluatorCheckpointPayload(
                     checkpoint_kind="plan",
-                    decision=verdict,
+                    decision=stage.verdict,
                 ),
                 artifact_refs=(
                     ArtifactRef.from_path(
@@ -583,8 +708,9 @@ class PipelineRunner:
                     ),
                 ),
             )
-        self._emit_stage_complete(role="evaluator", verdict=verdict)
-        return StageResult(role="evaluator", verdict=verdict, output=output, report_path=report_path)
+        self._emit_stage_complete(stage=stage)
+        self._record_stage_result(stage)
+        return stage
 
     # ------------------------------------------------------------------
     # Developer stage (LoopRunner)
@@ -628,17 +754,13 @@ class PipelineRunner:
             manage_session_lifecycle=False,
         )
         self._log(f"pipeline: developer stage completed with status '{result.status}'")
-        self._emit_stage_complete(
-            role="developer",
-            verdict=result.status,
-            run_id=result.latest_run_id,
-            payload={
-                "status": result.status,
-                "attempts_completed": result.attempts_completed,
-                "retries_used": result.retries_used,
-                "supervisor_verdict": result.supervisor_verdict,
-            },
-        )
+        developer_stage = self._developer_stage_from_run_result(result)
+        if result.stage_results:
+            for stage in result.stage_results:
+                self._record_stage_result(stage)
+        else:
+            self._record_stage_result(developer_stage)
+        self._emit_stage_complete(stage=developer_stage, run_id=result.latest_run_id)
         return result
 
     # ------------------------------------------------------------------
@@ -646,13 +768,13 @@ class PipelineRunner:
     # ------------------------------------------------------------------
 
     def _run_tester(
-        self, goal_text: str, *, stem: str, date_str: str
+        self, goal_text: str, *, stem: str, date_str: str, attempt: int = 1
     ) -> StageResult | None:
         """Run the tester agent once.
 
         Returns a :class:`StageResult` with verdict ``"pass"`` or ``"fail"``,
         or ``None`` if the tester role has no resolvable CLI.
-        Defaults to ``"pass"`` when the agent does not explicitly report failure.
+        Missing or malformed ``OVERALL:`` output fails the stage without a verdict.
         """
         profile = self._profile_for_role("tester")
         cli = profile.resolve_cli(self._app_config.active_agent_cli)
@@ -672,21 +794,37 @@ class PipelineRunner:
             date_str=date_str,
         )
 
-        verdict = "fail" if _TESTER_FAIL_RE.search(output) else "pass"
-        self._emit_stage_complete(role="tester", verdict=verdict)
-        return StageResult(role="tester", verdict=verdict, output=output)
+        verdict = parse_tester_verdict(output)
+        stage = StageResult(
+            role="tester",
+            stage_name="tester",
+            status=ResultStatus.COMPLETED if verdict is not None else ResultStatus.FAILED,
+            verdict=verdict,
+            output=output,
+            report_path=self._default_doc_path(role="tester", stem=stem, date_str=date_str),
+            summary=(
+                None
+                if verdict is not None
+                else "Tester output did not include a valid 'OVERALL:' verdict."
+            ),
+            retry=RetryMetadata(attempt=attempt),
+        )
+        self._emit_stage_complete(stage=stage)
+        self._record_stage_result(stage)
+        return stage
 
     # ------------------------------------------------------------------
     # Reviewer stage (one-shot)
     # ------------------------------------------------------------------
 
     def _run_reviewer(
-        self, goal_text: str, *, stem: str, date_str: str
+        self, goal_text: str, *, stem: str, date_str: str, attempt: int = 1
     ) -> StageResult | None:
         """Run the reviewer agent once.
 
         Returns a :class:`StageResult` with verdict ``"approved"`` or
         ``"needs_work"``, or ``None`` if no resolvable CLI.
+        Missing or malformed ``VERDICT:`` output fails the stage without a verdict.
         """
         profile = self._profile_for_role("reviewer")
         cli = profile.resolve_cli(self._app_config.active_agent_cli)
@@ -707,26 +845,41 @@ class PipelineRunner:
             date_str=date_str,
         )
 
-        verdict = "needs_work" if _REVIEWER_REJECT_RE.search(output) else "approved"
-        self._emit_stage_complete(role="reviewer", verdict=verdict)
-        return StageResult(role="reviewer", verdict=verdict, output=output)
+        verdict = parse_reviewer_verdict(output)
+        stage = StageResult(
+            role="reviewer",
+            stage_name="reviewer",
+            status=ResultStatus.COMPLETED if verdict is not None else ResultStatus.FAILED,
+            verdict=verdict,
+            output=output,
+            report_path=self._default_doc_path(role="reviewer", stem=stem, date_str=date_str),
+            summary=(
+                None
+                if verdict is not None
+                else "Reviewer output did not include a valid 'VERDICT:' line."
+            ),
+            retry=RetryMetadata(attempt=attempt),
+        )
+        self._emit_stage_complete(stage=stage)
+        self._record_stage_result(stage)
+        return stage
 
     # ------------------------------------------------------------------
     # Committer stage (one-shot)
     # ------------------------------------------------------------------
 
-    def _run_committer(self, *, stem: str, date_str: str) -> None:
+    def _run_committer(self, *, stem: str, date_str: str) -> StageResult | None:
         profile = self._profile_for_role("committer")
         cli = profile.resolve_cli(self._app_config.active_agent_cli)
         if cli is None:
             self._log("pipeline: committer has no CLI — skipping commit")
-            return
+            return None
 
         self._emit_stage_queued(role="committer", reason="Committer stage is queued.")
         self._emit_stage_start(role="committer")
         self._log("pipeline: committer stage starting")
         prompt = self._committer_prompt(stem, date_str=date_str)
-        self._call_once(
+        output = self._call_once(
             role="committer",
             cli=cli,
             model=profile.model_override,
@@ -734,7 +887,17 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
         )
-        self._emit_stage_complete(role="committer", verdict="committed")
+        stage = StageResult(
+            role="committer",
+            stage_name="committer",
+            status=ResultStatus.COMPLETED,
+            verdict=ResultVerdict.COMMITTED,
+            output=output,
+            report_path=self._default_doc_path(role="committer", stem=stem, date_str=date_str),
+        )
+        self._emit_stage_complete(stage=stage)
+        self._record_stage_result(stage)
+        return stage
 
     # ------------------------------------------------------------------
     # Evaluator stage (goals-scheduler context only)
@@ -748,10 +911,10 @@ class PipelineRunner:
         date_str: str,
         goal_file_path: Path | None,
         evaluator_config: "EvaluatorConfig | None",
-    ) -> None:
+    ) -> StageResult | None:
         """Run the mandatory post-commit evaluator for goals-scheduler prompts."""
         if goal_file_path is None:
-            return
+            return None
 
         from dormammu.daemon.goals_config import EvaluatorConfig  # noqa: PLC0415
 
@@ -798,8 +961,6 @@ class PipelineRunner:
         result = EvaluatorStage(
             progress_stream=self._progress_stream,
         ).run(request)
-        if result.status != "completed":
-            raise RuntimeError("Mandatory post-commit evaluator stage failed.")
         if self._lifecycle is not None and result.report_path is not None:
             self._lifecycle.emit(
                 event_type=LifecycleEventType.ARTIFACT_PERSISTED,
@@ -823,15 +984,9 @@ class PipelineRunner:
             f"pipeline: evaluator stage completed "
             f"(status={result.status}, verdict={result.verdict})"
         )
-        self._emit_stage_complete(
-            role="evaluator",
-            verdict=result.verdict,
-            payload={
-                "status": result.status,
-                "goal_file_updated": result.goal_file_updated,
-                "report_path": str(result.report_path) if result.report_path else None,
-            },
-        )
+        self._emit_stage_complete(stage=result)
+        self._record_stage_result(result)
+        return result
 
     # ------------------------------------------------------------------
     # Internal — one-shot agent call
@@ -1117,36 +1272,51 @@ class PipelineRunner:
     def _emit_stage_complete(
         self,
         *,
-        role: str,
-        verdict: str,
+        stage: StageResult | None = None,
+        role: str | None = None,
+        verdict: str | None = None,
         run_id: str | None = None,
         payload: Mapping[str, Any] | None = None,
     ) -> None:
-        completion_payload = {"verdict": verdict}
+        if stage is None:
+            if role is None or verdict is None:
+                raise ValueError("role and verdict are required when stage is not provided.")
+            try:
+                normalized_verdict = ResultVerdict(str(verdict).strip().lower().replace(" ", "_"))
+            except ValueError:
+                stage = StageResult(role=role, verdict=None, status=verdict)
+            else:
+                stage = StageResult(role=role, verdict=normalized_verdict)
+        completion_payload = {
+            "status": stage.status,
+            "verdict": stage.verdict,
+            "stage_name": stage.stage_name or stage.role,
+            "summary": stage.summary,
+        }
         if payload:
             completion_payload.update(dict(payload))
         if self._lifecycle is not None:
             event_type = (
                 LifecycleEventType.STAGE_FAILED
-                if verdict in _STAGE_FAILURE_VERDICTS
+                if stage_result_is_failure(stage)
                 else LifecycleEventType.STAGE_COMPLETED
             )
             self._lifecycle.emit(
                 event_type=event_type,
-                role=role,
-                stage=role,
-                status=verdict,
+                role=stage.role,
+                stage=stage.stage_name or stage.role,
+                status=stage.status,
                 payload=StageEventPayload(
-                    verdict=verdict,
-                    reason=completion_payload.get("status"),
+                    verdict=stage.verdict,
+                    reason=stage.summary or completion_payload.get("reason"),
                     error=completion_payload.get("error"),
                 ),
                 metadata={"run_id": run_id},
             )
         self._hook_controller.emit_stage_complete(
             source="pipeline_runner",
-            stage_name=role,
-            agent_role=role,
+            stage_name=stage.stage_name or stage.role,
+            agent_role=stage.role,
             session_id=self._session_id(),
             run_id=self._lifecycle.run_id if self._lifecycle is not None else run_id,
             payload=completion_payload,
@@ -1154,17 +1324,40 @@ class PipelineRunner:
 
     def _blocked_loop_result(self, loop_result: LoopRunResult | None) -> LoopRunResult:
         return LoopRunResult(
-            status="blocked",
+            status=ResultStatus.BLOCKED,
             attempts_completed=loop_result.attempts_completed if loop_result else 0,
             retries_used=loop_result.retries_used if loop_result else 0,
             max_retries=loop_result.max_retries if loop_result else 0,
             max_iterations=loop_result.max_iterations if loop_result else 1,
             latest_run_id=loop_result.latest_run_id if loop_result else None,
-            supervisor_verdict="blocked",
+            supervisor_verdict=ResultVerdict.BLOCKED,
             report_path=loop_result.report_path if loop_result else None,
             continuation_prompt_path=(
                 loop_result.continuation_prompt_path if loop_result else None
             ),
+            stage_results=tuple(self._current_stage_results or ()),
+        )
+
+    def _failed_loop_result_from_stage(
+        self,
+        *,
+        loop_result: LoopRunResult | None,
+        stage: StageResult,
+    ) -> LoopRunResult:
+        return LoopRunResult(
+            status=ResultStatus.FAILED,
+            attempts_completed=loop_result.attempts_completed if loop_result else 0,
+            retries_used=loop_result.retries_used if loop_result else 0,
+            max_retries=loop_result.max_retries if loop_result else 0,
+            max_iterations=loop_result.max_iterations if loop_result else 1,
+            latest_run_id=loop_result.latest_run_id if loop_result else None,
+            supervisor_verdict=effective_stage_verdict(stage),
+            report_path=loop_result.report_path if loop_result else None,
+            continuation_prompt_path=(
+                loop_result.continuation_prompt_path if loop_result else None
+            ),
+            summary=stage.summary,
+            stage_results=tuple(self._current_stage_results or ()),
         )
 
     def _emit_run_finished_event(
@@ -1211,29 +1404,61 @@ class PipelineRunner:
         terminal_error: str | None = None,
     ) -> LoopRunResult:
         session_id = self._session_id()
-        final_result = result
+        stage_results = tuple(self._current_stage_results or result.stage_results)
+        final_status = aggregate_run_status(
+            stage_results,
+            default=result.status,
+        )
+        final_verdict = aggregate_run_verdict(
+            stage_results,
+            default=result.supervisor_verdict,
+        )
+        final_summary = aggregate_run_summary(
+            stage_results,
+            default=result.summary or terminal_error,
+        )
+        final_result = LoopRunResult(
+            status=final_status,
+            attempts_completed=result.attempts_completed,
+            retries_used=result.retries_used,
+            max_retries=result.max_retries,
+            max_iterations=result.max_iterations,
+            latest_run_id=result.latest_run_id,
+            supervisor_verdict=final_verdict,
+            report_path=result.report_path,
+            continuation_prompt_path=result.continuation_prompt_path,
+            summary=final_summary,
+            output=result.output,
+            stage_results=stage_results,
+            artifacts=result.artifacts,
+            retry=result.retry,
+            timing=result.timing,
+            metadata=result.metadata,
+        )
         try:
             self._hook_controller.emit_session_end(
                 source="pipeline_runner",
                 session_id=session_id,
                 run_id=self._lifecycle.run_id if self._lifecycle is not None else result.latest_run_id,
                 agent_role="pipeline",
-                result=result.to_dict(),
+                result=final_result.to_dict(),
             )
         except RuntimeHookBlocked as exc:
             self._log(f"pipeline: session-end hook blocked exit: {exc}")
             if terminal_error is None or result.status == "completed":
                 terminal_error = str(exc)
             final_result = LoopRunResult(
-                status="blocked",
+                status=ResultStatus.BLOCKED,
                 attempts_completed=result.attempts_completed,
                 retries_used=result.retries_used,
                 max_retries=result.max_retries,
                 max_iterations=result.max_iterations,
                 latest_run_id=result.latest_run_id,
-                supervisor_verdict="blocked",
+                supervisor_verdict=ResultVerdict.BLOCKED,
                 report_path=result.report_path,
                 continuation_prompt_path=result.continuation_prompt_path,
+                summary=terminal_error,
+                stage_results=tuple(self._current_stage_results or result.stage_results),
             )
         self._emit_run_finished_event(final_result, terminal_error=terminal_error)
         return final_result

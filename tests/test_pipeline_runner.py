@@ -20,6 +20,7 @@ from dormammu.daemon.pipeline_runner import (
     _model_args,
 )
 from dormammu.loop_runner import LoopRunResult
+from dormammu.results import ResultStatus
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +132,9 @@ class TestMandatoryPreludeStages:
         with patch.object(runner, "_call_once", return_value="requirements") as mock_call:
             output = runner._run_refiner("goal", stem="g", date_str="20260412")
 
-        assert output == "requirements"
+        assert output.output == "requirements"
+        assert output.status == ResultStatus.COMPLETED
+        assert output.verdict == "done"
         assert mock_call.call_args.kwargs["cli"] == Path("claude")
 
     def test_planner_uses_active_cli_fallback(self, tmp_path: Path) -> None:
@@ -140,7 +143,9 @@ class TestMandatoryPreludeStages:
         with patch.object(runner, "_call_once", return_value="plan") as mock_call:
             output = runner._run_planner("goal", stem="g", date_str="20260412")
 
-        assert output == "plan"
+        assert output.output == "plan"
+        assert output.status == ResultStatus.COMPLETED
+        assert output.verdict == "done"
         assert mock_call.call_args.kwargs["cli"] == Path("claude")
 
     def test_plan_evaluator_proceed_verdict(self, tmp_path: Path) -> None:
@@ -306,6 +311,7 @@ class TestDeveloperStage:
         assert request.run_label == "pipeline-developer-phase1"
 
 
+
 # ---------------------------------------------------------------------------
 # Tester stage
 # ---------------------------------------------------------------------------
@@ -331,13 +337,14 @@ class TestTesterStage:
             stage = runner._run_tester("goal", stem="g", date_str="20260412")
         assert stage is not None and stage.verdict == "fail"
 
-    def test_pass_verdict_when_neither_marker_present(self, tmp_path: Path) -> None:
-        """Ambiguous output defaults to pass (conservative)."""
+    def test_missing_verdict_fails_stage(self, tmp_path: Path) -> None:
         agents = AgentsConfig(tester=RoleAgentConfig(cli=Path("echo")))
         runner = _make_runner(tmp_path, agents=agents)
         with patch.object(runner, "_call_once", return_value="No verdict line."):
             stage = runner._run_tester("goal", stem="g", date_str="20260412")
-        assert stage is not None and stage.verdict == "pass"
+        assert stage is not None
+        assert stage.status == ResultStatus.FAILED
+        assert stage.verdict is None
 
     def test_case_insensitive_fail(self, tmp_path: Path) -> None:
         agents = AgentsConfig(tester=RoleAgentConfig(cli=Path("echo")))
@@ -374,13 +381,14 @@ class TestReviewerStage:
             stage = runner._run_reviewer("goal", stem="g", date_str="20260412")
         assert stage is not None and stage.verdict == "needs_work"
 
-    def test_approved_when_neither_marker_present(self, tmp_path: Path) -> None:
-        """Ambiguous output defaults to approved (conservative)."""
+    def test_missing_verdict_fails_stage(self, tmp_path: Path) -> None:
         agents = AgentsConfig(reviewer=RoleAgentConfig(cli=Path("echo")))
         runner = _make_runner(tmp_path, agents=agents)
         with patch.object(runner, "_call_once", return_value="No verdict."):
             stage = runner._run_reviewer("goal", stem="g", date_str="20260412")
-        assert stage is not None and stage.verdict == "approved"
+        assert stage is not None
+        assert stage.status == ResultStatus.FAILED
+        assert stage.verdict is None
 
     def test_designer_doc_included_in_prompt(self, tmp_path: Path) -> None:
         agents = AgentsConfig(reviewer=RoleAgentConfig(cli=Path("echo")))
@@ -416,6 +424,7 @@ class TestStageResult:
     def test_fields_accessible(self) -> None:
         stage = StageResult(role="tester", verdict="pass", output="OVERALL: PASS")
         assert stage.role == "tester"
+        assert stage.status == ResultStatus.COMPLETED
         assert stage.verdict == "pass"
         assert stage.output == "OVERALL: PASS"
         assert stage.report_path is None
@@ -429,6 +438,7 @@ class TestStageResult:
         stage = StageResult(role="reviewer", verdict="approved", output="long output text")
         d = stage.to_dict()
         assert d["role"] == "reviewer"
+        assert d["status"] == "completed"
         assert d["verdict"] == "approved"
         assert "output" not in d
 
@@ -502,11 +512,16 @@ class TestPipelineRun:
                 runner, "_run_reviewer",
                 return_value=StageResult(role="reviewer", verdict="approved", output="VERDICT: APPROVED"),
             ) as mock_reviewer,
-            patch.object(runner, "_run_committer") as mock_committer,
+            patch.object(
+                runner,
+                "_run_committer",
+                return_value=StageResult(role="committer", verdict="committed", output="commit ok"),
+            ) as mock_committer,
         ):
             result = runner.run("goal", stem="s", date_str="20260412")
 
         assert result.status == "completed"
+        assert {stage.role for stage in result.stage_results} >= {"developer", "tester", "reviewer", "committer"}
         mock_prelude.assert_called_once()
         assert mock_dev.call_count == 1
         assert mock_tester.call_count == 1
@@ -528,7 +543,7 @@ class TestPipelineRun:
             patch.object(runner, "_run_developer", return_value=_make_loop_result("completed")),
             patch.object(runner, "_run_tester", return_value=StageResult(role="tester", verdict="pass", output="")),
             patch.object(runner, "_run_reviewer", return_value=StageResult(role="reviewer", verdict="approved", output="")),
-            patch.object(runner, "_run_committer"),
+            patch.object(runner, "_run_committer", return_value=None),
         ):
             runner.run("goal", stem="s", date_str="20260412")
 
@@ -552,8 +567,8 @@ class TestPipelineRun:
             patch.object(runner, "_run_developer", return_value=_make_loop_result("completed")),
             patch.object(runner, "_run_tester", return_value=StageResult(role="tester", verdict="pass", output="")),
             patch.object(runner, "_run_reviewer", return_value=StageResult(role="reviewer", verdict="approved", output="")),
-            patch.object(runner, "_run_committer"),
-            patch.object(runner, "_run_evaluator"),
+            patch.object(runner, "_run_committer", return_value=None),
+            patch.object(runner, "_run_evaluator", return_value=None),
         ):
             runner.run(
                 "goal",
@@ -586,7 +601,7 @@ class TestPipelineRun:
                 runner, "_run_tester", side_effect=tester_responses
             ) as mock_tester,
             patch.object(runner, "_run_reviewer", return_value=None),
-            patch.object(runner, "_run_committer"),
+            patch.object(runner, "_run_committer", return_value=None),
         ):
             result = runner.run("goal", stem="s", date_str="20260412")
 
@@ -618,7 +633,7 @@ class TestPipelineRun:
             patch.object(
                 runner, "_run_reviewer", side_effect=reviewer_responses
             ) as mock_reviewer,
-            patch.object(runner, "_run_committer"),
+            patch.object(runner, "_run_committer", return_value=None),
         ):
             result = runner.run("goal", stem="s", date_str="20260412")
 
@@ -640,7 +655,7 @@ class TestPipelineRun:
             ),
             patch.object(runner, "_run_tester", return_value=None) as mock_tester,
             patch.object(runner, "_run_reviewer", return_value=None) as mock_reviewer,
-            patch.object(runner, "_run_committer") as mock_committer,
+            patch.object(runner, "_run_committer", return_value=None) as mock_committer,
         ):
             result = runner.run("goal", stem="s", date_str="20260412")
 
@@ -671,11 +686,13 @@ class TestPipelineRun:
                 return_value=StageResult(role="tester", verdict="fail", output="OVERALL: FAIL"),
             ) as mock_tester,
             patch.object(runner, "_run_reviewer", return_value=None),
-            patch.object(runner, "_run_committer"),
+            patch.object(runner, "_run_committer", return_value=None),
         ):
             result = runner.run("goal", stem="s", date_str="20260412")
 
         assert result.status == "completed"
+        assert result.supervisor_verdict == "fail"
+        assert result.summary == "Stage 'tester' concluded with verdict 'fail'."
         assert mock_dev.call_count == MAX_STAGE_ITERATIONS
         assert mock_tester.call_count == MAX_STAGE_ITERATIONS
 
@@ -700,11 +717,13 @@ class TestPipelineRun:
                 runner, "_run_reviewer",
                 return_value=StageResult(role="reviewer", verdict="needs_work", output="VERDICT: NEEDS_WORK"),
             ) as mock_reviewer,
-            patch.object(runner, "_run_committer") as mock_committer,
+            patch.object(runner, "_run_committer", return_value=None) as mock_committer,
         ):
             result = runner.run("goal", stem="s", date_str="20260412")
 
         assert result.status == "completed"
+        assert result.supervisor_verdict == "needs_work"
+        assert result.summary == "Stage 'reviewer' concluded with verdict 'needs_work'."
         # developer re-ran MAX_STAGE_ITERATIONS times total
         assert mock_dev.call_count == MAX_STAGE_ITERATIONS
         assert mock_reviewer.call_count == MAX_STAGE_ITERATIONS
@@ -736,7 +755,7 @@ class TestPipelineRun:
             patch.object(runner, "_run_developer", side_effect=fake_dev),
             patch.object(runner, "_run_tester", side_effect=tester_responses),
             patch.object(runner, "_run_reviewer", return_value=None),
-            patch.object(runner, "_run_committer"),
+            patch.object(runner, "_run_committer", return_value=None),
         ):
             runner.run("original goal", stem="s", date_str="20260412")
 
@@ -745,18 +764,204 @@ class TestPipelineRun:
         assert "failure details here" in captured_prompts[1]
         assert "# Feedback from tester" in captured_prompts[1]
 
+    def test_invalid_tester_output_aborts_pipeline(self, tmp_path: Path) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(cli=Path("claude")),
+            tester=RoleAgentConfig(cli=Path("claude")),
+        )
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+
+        with (
+            patch.object(runner, "run_refine_and_plan"),
+            patch.object(
+                runner, "_run_developer", return_value=_make_loop_result("completed")
+            ) as mock_dev,
+            patch.object(
+                runner,
+                "_run_tester",
+                return_value=StageResult(
+                    role="tester",
+                    stage_name="tester",
+                    status=ResultStatus.FAILED,
+                    verdict=None,
+                    summary="Tester output did not include a valid 'OVERALL:' verdict.",
+                ),
+            ),
+            patch.object(runner, "_run_reviewer", return_value=None) as mock_reviewer,
+            patch.object(runner, "_run_committer", return_value=None) as mock_committer,
+        ):
+            result = runner.run("goal", stem="s", date_str="20260412")
+
+        assert result.status == ResultStatus.FAILED
+        assert mock_dev.call_count == 1
+        mock_reviewer.assert_not_called()
+        mock_committer.assert_not_called()
+
+    def test_invalid_reviewer_output_aborts_pipeline(self, tmp_path: Path) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(cli=Path("claude")),
+            reviewer=RoleAgentConfig(cli=Path("claude")),
+        )
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+
+        with (
+            patch.object(runner, "run_refine_and_plan"),
+            patch.object(
+                runner, "_run_developer", return_value=_make_loop_result("completed")
+            ) as mock_dev,
+            patch.object(runner, "_run_tester", return_value=None),
+            patch.object(
+                runner,
+                "_run_reviewer",
+                return_value=StageResult(
+                    role="reviewer",
+                    stage_name="reviewer",
+                    status=ResultStatus.FAILED,
+                    verdict=None,
+                    summary="Reviewer output did not include a valid 'VERDICT:' line.",
+                ),
+            ),
+            patch.object(runner, "_run_committer", return_value=None) as mock_committer,
+        ):
+            result = runner.run("goal", stem="s", date_str="20260412")
+
+        assert result.status == ResultStatus.FAILED
+        assert mock_dev.call_count == 1
+        mock_committer.assert_not_called()
+
+    def test_invalid_final_evaluator_output_aborts_pipeline_and_records_stage(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(cli=Path("claude")),
+            reviewer=RoleAgentConfig(cli=Path("claude")),
+            committer=RoleAgentConfig(cli=Path("claude")),
+            evaluator=RoleAgentConfig(cli=Path("claude")),
+        )
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+        goal_file = tmp_path / "goal.md"
+        goal_file.write_text("goal\n", encoding="utf-8")
+        evaluator_report = tmp_path / ".dev" / "logs" / "20260412_evaluator_s.md"
+        evaluator_stage = StageResult(
+            role="evaluator",
+            stage_name="final_evaluator",
+            status=ResultStatus.FAILED,
+            verdict="unknown",
+            summary="Evaluator output did not include a valid 'VERDICT:' line.",
+            report_path=evaluator_report,
+        )
+
+        with (
+            patch.object(runner, "run_refine_and_plan"),
+            patch.object(
+                runner, "_run_developer", return_value=_make_loop_result("completed")
+            ) as mock_dev,
+            patch.object(runner, "_run_tester", return_value=None),
+            patch.object(
+                runner,
+                "_run_reviewer",
+                return_value=StageResult(
+                    role="reviewer",
+                    verdict="approved",
+                    output="VERDICT: APPROVED",
+                ),
+            ),
+            patch.object(
+                runner,
+                "_run_committer",
+                return_value=StageResult(
+                    role="committer",
+                    verdict="committed",
+                    output="commit ok",
+                ),
+            ) as mock_committer,
+            patch(
+                "dormammu.daemon.pipeline_runner.EvaluatorStage.run",
+                return_value=evaluator_stage,
+            ),
+        ):
+            result = runner.run(
+                "goal",
+                stem="s",
+                date_str="20260412",
+                goal_file_path=goal_file,
+            )
+
+        assert result.status == ResultStatus.FAILED
+        assert result.supervisor_verdict == "unknown"
+        assert result.summary == evaluator_stage.summary
+        assert result.stage_results[-1] == evaluator_stage
+        assert result.stage_results[-1].artifacts[0].path == evaluator_report
+        assert mock_dev.call_count == 1
+        mock_committer.assert_called_once()
+
+    def test_run_evaluator_records_failed_stage_and_emits_report_artifact(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        agents = AgentsConfig(evaluator=RoleAgentConfig(cli=Path("claude")))
+        runner = _make_runner(tmp_path, agents=agents, active_agent_cli=Path("claude"))
+        goal_file = tmp_path / "goal.md"
+        goal_file.write_text("goal\n", encoding="utf-8")
+        evaluator_report = tmp_path / ".dev" / "logs" / "20260412_evaluator_s.md"
+        failed_stage = StageResult(
+            role="evaluator",
+            stage_name="final_evaluator",
+            status=ResultStatus.FAILED,
+            verdict="unknown",
+            summary="Evaluator output did not include a valid 'VERDICT:' line.",
+            report_path=evaluator_report,
+        )
+
+        runner._current_stage_results = []
+        runner._lifecycle = MagicMock()
+        runner._lifecycle.run_id = "pipeline:test"
+        runner._hook_controller.emit_stage_complete = MagicMock()
+
+        with patch(
+            "dormammu.daemon.pipeline_runner.EvaluatorStage.run",
+            return_value=failed_stage,
+        ):
+            result = runner._run_evaluator(
+                prompt_text="goal",
+                stem="s",
+                date_str="20260412",
+                goal_file_path=goal_file,
+                evaluator_config=None,
+            )
+
+        assert result == failed_stage
+        assert runner._current_stage_results == [failed_stage]
+        emitted_types = [
+            call_args.kwargs["event_type"].value
+            for call_args in runner._lifecycle.emit.call_args_list
+        ]
+        assert emitted_types[:2] == [
+            "stage.queued",
+            "stage.started",
+        ]
+        assert emitted_types[-2:] == [
+            "artifact.persisted",
+            "stage.failed",
+        ]
+        runner._hook_controller.emit_stage_complete.assert_called_once()
+
     @pytest.mark.parametrize(
-        ("verdict", "expected_event_type"),
+        ("verdict", "expected_event_type", "expected_status"),
         [
-            ("done", "stage.completed"),
-            ("pass", "stage.completed"),
-            ("approved", "stage.completed"),
-            ("committed", "stage.completed"),
-            ("fail", "stage.failed"),
-            ("needs_work", "stage.failed"),
-            ("rework", "stage.failed"),
-            ("blocked", "stage.failed"),
-            ("failed", "stage.failed"),
+            ("done", "stage.completed", "completed"),
+            ("pass", "stage.completed", "completed"),
+            ("approved", "stage.completed", "completed"),
+            ("committed", "stage.completed", "completed"),
+            ("fail", "stage.failed", "completed"),
+            ("needs_work", "stage.failed", "completed"),
+            ("rework", "stage.failed", "completed"),
+            ("blocked", "stage.failed", "completed"),
+            ("failed", "stage.failed", "failed"),
         ],
     )
     def test_stage_verdicts_map_to_expected_lifecycle_event_types(
@@ -764,6 +969,7 @@ class TestPipelineRun:
         tmp_path: Path,
         verdict: str,
         expected_event_type: str,
+        expected_status: str,
     ) -> None:
         runner = _make_runner(tmp_path, active_agent_cli=Path("claude"))
         runner._lifecycle = MagicMock()
@@ -773,7 +979,7 @@ class TestPipelineRun:
 
         emit_kwargs = runner._lifecycle.emit.call_args.kwargs
         assert emit_kwargs["event_type"].value == expected_event_type
-        assert emit_kwargs["status"] == verdict
+        assert emit_kwargs["status"] == expected_status
 
     def test_pipeline_emits_terminal_failure_event_when_setup_raises_early(
         self, tmp_path: Path

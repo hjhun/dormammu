@@ -4,6 +4,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from dormammu.results import (
+    ResultArtifact,
+    RunResult,
+    RetryMetadata,
+    StageResult,
+    TimingMetadata,
+    artifact_from_path,
+)
+
 if TYPE_CHECKING:
     from dormammu.daemon.autonomous_config import AutonomousConfig
     from dormammu.daemon.goals_config import GoalsConfig
@@ -40,32 +49,6 @@ class QueuedPrompt:
     filename: str
     sort_key: tuple[int, object, str]
     detected_at: str
-
-
-@dataclass(frozen=True, slots=True)
-class StageResult:
-    """Result from a one-shot pipeline stage (tester, reviewer, evaluator, etc.).
-
-    ``verdict`` is stage-specific:
-
-    - evaluator/plan checkpoint: ``"proceed"`` or ``"rework"``
-    - tester: ``"pass"`` or ``"fail"``
-    - reviewer: ``"approved"`` or ``"needs_work"``
-    - committer: ``"committed"``
-    - refiner / planner: ``"done"``
-    """
-
-    role: str
-    verdict: str
-    output: str
-    report_path: Path | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "role": self.role,
-            "verdict": self.verdict,
-            "report_path": str(self.report_path) if self.report_path else None,
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,15 +93,75 @@ class DaemonPromptResult:
     watcher_backend: str
     sort_key: tuple[int, object, str]
     session_id: str | None
+    run_result: RunResult | None = None
     phase_results: tuple[PhaseExecutionResult, ...] = field(default_factory=tuple)
     error: str | None = None
     plan_all_completed: bool | None = None
     next_pending_task: str | None = None
-    attempts_completed: int | None = None
-    latest_run_id: str | None = None
-    supervisor_verdict: str | None = None
-    supervisor_report_path: Path | None = None
-    continuation_prompt_path: Path | None = None
+
+    @property
+    def attempts_completed(self) -> int | None:
+        return self.run_result.attempts_completed if self.run_result is not None else None
+
+    @property
+    def latest_run_id(self) -> str | None:
+        return self.run_result.latest_run_id if self.run_result is not None else None
+
+    @property
+    def supervisor_verdict(self) -> str | None:
+        if self.run_result is None or self.run_result.supervisor_verdict is None:
+            return None
+        return self.run_result.supervisor_verdict.value
+
+    @property
+    def supervisor_report_path(self) -> Path | None:
+        return self.run_result.report_path if self.run_result is not None else None
+
+    @property
+    def continuation_prompt_path(self) -> Path | None:
+        return self.run_result.continuation_prompt_path if self.run_result is not None else None
+
+    @property
+    def summary(self) -> str | None:
+        return self.run_result.summary if self.run_result is not None else None
+
+    @property
+    def output(self) -> str | None:
+        return self.run_result.output if self.run_result is not None else None
+
+    @property
+    def stage_results(self) -> tuple[StageResult, ...]:
+        return self.run_result.stage_results if self.run_result is not None else ()
+
+    @property
+    def artifacts(self) -> tuple[ResultArtifact, ...]:
+        run_artifacts = tuple(self.run_result.artifacts) if self.run_result is not None else ()
+        result_report_artifact = artifact_from_path(
+            kind="result_report",
+            path=self.result_path,
+            label="result_report",
+            content_type="text/markdown",
+        )
+        if result_report_artifact is None:
+            return run_artifacts
+        return run_artifacts + (result_report_artifact,)
+
+    @property
+    def retry(self) -> RetryMetadata | None:
+        return self.run_result.retry if self.run_result is not None else None
+
+    @property
+    def timing(self) -> TimingMetadata | None:
+        if self.run_result is not None and self.run_result.timing is not None:
+            return self.run_result.timing
+        return TimingMetadata(
+            started_at=self.started_at,
+            completed_at=self.completed_at,
+        )
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return dict(self.run_result.metadata) if self.run_result is not None else {}
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -137,6 +180,17 @@ class DaemonPromptResult:
             "attempts_completed": self.attempts_completed,
             "latest_run_id": self.latest_run_id,
             "supervisor_verdict": self.supervisor_verdict,
+            "summary": self.summary,
+            "stage_results": [item.to_dict() for item in self.stage_results],
+            "artifacts": [item.to_dict() for item in self.artifacts],
+            "retry": self.retry.to_dict() if self.retry is not None else None,
+            "timing": self.timing.to_dict() if self.timing is not None else None,
+            "metadata": self.metadata,
+            "run_result": (
+                self.run_result.to_dict(include_output=True)
+                if self.run_result is not None
+                else None
+            ),
             "supervisor_report_path": str(self.supervisor_report_path) if self.supervisor_report_path else None,
             "continuation_prompt_path": (
                 str(self.continuation_prompt_path) if self.continuation_prompt_path else None

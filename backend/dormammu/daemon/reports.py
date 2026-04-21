@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from enum import Enum
 from typing import TextIO
 
 from dormammu._utils import iso_now as _iso_now
@@ -8,6 +9,12 @@ from dormammu.agent import AgentRunRequest, CliAdapter
 from dormammu.config import AppConfig
 from dormammu.daemon.cli_output import select_agent_output
 from dormammu.daemon.models import DaemonPromptResult
+
+
+def _display_value(value: object) -> object:
+    if isinstance(value, Enum):
+        return value.value
+    return value
 
 
 def render_result_markdown(
@@ -21,7 +28,7 @@ def render_result_markdown(
         "## Summary",
         "",
         f"- Generated at: `{generated_at or _iso_now()}`",
-        f"- Status: `{result.status}`",
+        f"- Status: `{_display_value(result.status)}`",
         f"- Prompt path: `{result.prompt_path}`",
         f"- Result path: `{result.result_path}`",
         f"- Session id: `{result.session_id or 'unknown'}`",
@@ -41,13 +48,49 @@ def render_result_markdown(
     if result.latest_run_id:
         lines.append(f"- Latest run id: `{result.latest_run_id}`")
     if result.supervisor_verdict:
-        lines.append(f"- Supervisor verdict: `{result.supervisor_verdict}`")
+        lines.append(f"- Supervisor verdict: `{_display_value(result.supervisor_verdict)}`")
+    if result.summary:
+        lines.append(f"- Run summary: {result.summary}")
     if result.supervisor_report_path:
         lines.append(f"- Supervisor report: `{result.supervisor_report_path}`")
     if result.continuation_prompt_path:
         lines.append(f"- Continuation prompt: `{result.continuation_prompt_path}`")
     if result.error:
         lines.extend(["", "## Error", "", result.error])
+    if result.stage_results:
+        lines.extend(["", "## Stage Results", ""])
+        for stage_result in result.stage_results:
+            lines.append(f"### {stage_result.stage_name or stage_result.role}")
+            lines.append("")
+            lines.append(f"- Role: `{stage_result.role}`")
+            lines.append(f"- Status: `{_display_value(stage_result.status)}`")
+            lines.append(
+                f"- Verdict: `{_display_value(stage_result.verdict) if stage_result.verdict else 'n/a'}`"
+            )
+            lines.append(f"- Report: `{stage_result.report_path or 'n/a'}`")
+            if stage_result.summary:
+                lines.append(f"- Summary: {stage_result.summary}")
+            if stage_result.retry is not None:
+                lines.append(
+                    f"- Retry: `attempt={stage_result.retry.attempt}, "
+                    f"retries_used={stage_result.retry.retries_used}, "
+                    f"max_retries={stage_result.retry.max_retries}, "
+                    f"max_iterations={stage_result.retry.max_iterations}`"
+                )
+            if stage_result.timing is not None:
+                lines.append(
+                    f"- Timing: `started_at={stage_result.timing.started_at or 'n/a'}, "
+                    f"completed_at={stage_result.timing.completed_at or 'n/a'}, "
+                    f"duration_seconds={stage_result.timing.duration_seconds if stage_result.timing.duration_seconds is not None else 'n/a'}`"
+                )
+            lines.append("")
+    if result.artifacts:
+        lines.extend(["", "## Artifacts", ""])
+        for artifact in result.artifacts:
+            lines.append(
+                f"- `{artifact.kind}`: `{artifact.path}`"
+                + (f" ({artifact.label})" if artifact.label else "")
+            )
     if result.phase_results:
         lines.extend(["", "## Phases", ""])
         for phase_result in result.phase_results:

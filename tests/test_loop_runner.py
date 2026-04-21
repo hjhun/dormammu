@@ -90,6 +90,10 @@ class LoopRunnerTests(unittest.TestCase):
             self.assertEqual(result.status, "completed")
             self.assertEqual(result.attempts_completed, 2)
             self.assertEqual(result.retries_used, 1)
+            self.assertEqual(len(result.stage_results), 1)
+            self.assertEqual(result.stage_results[0].role, "developer")
+            self.assertEqual(result.stage_results[0].status, "completed")
+            self.assertEqual(result.stage_results[0].verdict, "approved")
             self.assertTrue((root / "done.txt").exists())
             session_id = json.loads((config.base_dev_dir / "session.json").read_text(encoding="utf-8"))[
                 "active_session_id"

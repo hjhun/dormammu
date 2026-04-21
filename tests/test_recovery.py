@@ -360,6 +360,15 @@ class RecoveryManagerTests(unittest.TestCase):
 
             self.assertEqual(resumed.status, "failed")
             self.assertEqual(resumed.attempts_completed, 1)
+            self.assertIn("max_iterations is exhausted", resumed.summary)
+            self.assertEqual(len(resumed.stage_results), 1)
+            self.assertEqual(resumed.stage_results[0].status, "failed")
+            self.assertEqual(resumed.stage_results[0].summary, resumed.summary)
+            self.assertIsNotNone(resumed.retry)
+            self.assertIsNotNone(resumed.timing)
+            self.assertEqual(resumed.retry.attempt, 1)
+            self.assertEqual(resumed.stage_results[0].retry.attempt, 1)
+            self.assertIsNotNone(resumed.stage_results[0].timing)
             # The fake CLI was only invoked once (during the original run)
             self.assertEqual(
                 (root / ".attempt-count").read_text(encoding="utf-8").strip(), "1"
@@ -411,6 +420,12 @@ class RecoveryManagerTests(unittest.TestCase):
             ).resume(max_retries_override=0)
 
             self.assertEqual(resumed.status, "completed")
+            self.assertIn("All required work is complete", resumed.summary)
+            self.assertEqual(len(resumed.stage_results), 1)
+            self.assertEqual(resumed.stage_results[0].status, "completed")
+            self.assertEqual(resumed.stage_results[0].verdict, "approved")
+            self.assertTrue(resumed.metadata["revalidated_from_saved_state"])
+            self.assertIsNotNone(resumed.timing)
             self.assertEqual(
                 (root / ".attempt-count").read_text(encoding="utf-8").strip(),
                 "1",
@@ -424,6 +439,7 @@ class RecoveryManagerTests(unittest.TestCase):
             self.assertEqual(repaired_workflow["loop"]["status"], "completed")
             self.assertEqual(repaired_session["loop"]["latest_supervisor_verdict"], "approved")
             self.assertEqual(repaired_workflow["supervisor"]["verdict"], "approved")
+
 
     def test_resume_raises_when_loop_state_key_is_absent(self) -> None:
         """resume() must raise RuntimeError when the 'loop' key is missing from workflow_state."""

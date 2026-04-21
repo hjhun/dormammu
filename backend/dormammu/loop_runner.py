@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import sys
 from typing import TextIO
@@ -25,6 +25,14 @@ from dormammu.lifecycle import (
     WorktreeEventPayload,
 )
 from dormammu.runtime_hooks import RuntimeHookBlocked, RuntimeHookController
+from dormammu.results import (
+    ResultArtifact,
+    ResultStatus,
+    RetryMetadata,
+    RunResult as LoopRunResult,
+    StageResult,
+    TimingMetadata,
+)
 from dormammu.skills import runtime_skill_summary
 from dormammu.state import StateRepository
 from dormammu.supervisor import Supervisor, SupervisorReport, SupervisorRequest
@@ -153,34 +161,6 @@ class LoopRunRequest:
             require_worktree_changes=bool(payload.get("require_worktree_changes", False)),
             expected_roadmap_phase_id=payload.get("expected_roadmap_phase_id"),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class LoopRunResult:
-    status: str
-    attempts_completed: int
-    retries_used: int
-    max_retries: int
-    max_iterations: int
-    latest_run_id: str | None
-    supervisor_verdict: str
-    report_path: Path | None
-    continuation_prompt_path: Path | None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "status": self.status,
-            "attempts_completed": self.attempts_completed,
-            "retries_used": self.retries_used,
-            "max_retries": self.max_retries,
-            "max_iterations": self.max_iterations,
-            "latest_run_id": self.latest_run_id,
-            "supervisor_verdict": self.supervisor_verdict,
-            "report_path": str(self.report_path) if self.report_path else None,
-            "continuation_prompt_path": (
-                str(self.continuation_prompt_path) if self.continuation_prompt_path else None
-            ),
-        }
 
 
 class LoopRunner:
@@ -347,6 +327,7 @@ class LoopRunner:
         report_path: Path | None = None
         active_worktree: ManagedWorktree | None = None
         worktree_released = False
+        run_started_at = _iso_now()
         # Reset per run() call so resumed loops don't inherit stale state.
         # Read _STAGNATION_WINDOW at call time so tests can patch it dynamically.
         stagnation = _StagnationDetector(window_size=_STAGNATION_WINDOW)
@@ -371,6 +352,72 @@ class LoopRunner:
                 continuation_prompt_path=continuation_prompt_value,
             )
 
+        def _enrich_result(
+            result: LoopRunResult,
+            *,
+            report_value: SupervisorReport | None,
+            continuation_prompt_value: Path | None,
+            terminal_error: str | None,
+        ) -> LoopRunResult:
+            completed_at = _iso_now()
+            summary = result.summary
+            if summary is None:
+                if report_value is not None:
+                    summary = report_value.summary
+                else:
+                    summary = terminal_error
+            stage_artifacts: list[ResultArtifact] = []
+            if continuation_prompt_value is not None:
+                stage_artifacts.append(
+                    ResultArtifact(
+                        kind="continuation_prompt",
+                        path=continuation_prompt_value,
+                        label="continuation_prompt",
+                        content_type="text/plain",
+                    )
+                )
+            stage_results = result.stage_results
+            if not stage_results:
+                stage_results = (
+                    StageResult(
+                        role=request.agent_role,
+                        stage_name=request.agent_role,
+                        status=result.status,
+                        verdict=result.supervisor_verdict,
+                        summary=summary,
+                        report_path=result.report_path,
+                        artifacts=tuple(stage_artifacts),
+                        retry=RetryMetadata(
+                            attempt=result.attempts_completed,
+                            retries_used=result.retries_used,
+                            max_retries=result.max_retries,
+                            max_iterations=result.max_iterations,
+                        ),
+                        timing=TimingMetadata(
+                            started_at=run_started_at,
+                            completed_at=completed_at,
+                        ),
+                        metadata={"latest_run_id": result.latest_run_id},
+                    ),
+                )
+            return replace(
+                result,
+                summary=summary,
+                stage_results=stage_results,
+                retry=result.retry
+                or RetryMetadata(
+                    attempt=result.attempts_completed,
+                    retries_used=result.retries_used,
+                    max_retries=result.max_retries,
+                    max_iterations=result.max_iterations,
+                ),
+                timing=result.timing
+                or TimingMetadata(
+                    started_at=run_started_at,
+                    completed_at=completed_at,
+                ),
+            )
+
         def _finish(
             result: LoopRunResult,
             *,
@@ -383,7 +430,12 @@ class LoopRunner:
             terminal_error: str | None = None,
         ) -> LoopRunResult:
             nonlocal worktree_released
-            final_result = result
+            final_result = _enrich_result(
+                result,
+                report_value=report_value,
+                continuation_prompt_value=continuation_prompt_value,
+                terminal_error=terminal_error,
+            )
 
             if emit_stage_hooks and emit_stage_completion:
                 try:

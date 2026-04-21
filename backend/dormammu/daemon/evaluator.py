@@ -34,16 +34,11 @@ from typing import TYPE_CHECKING, TextIO
 from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.daemon.cli_output import select_agent_output
 from dormammu.daemon.rules import build_rule_prompt, load_rule_text
+from dormammu.results import ResultStatus, ResultVerdict, StageResult, parse_final_evaluator_verdict
 from dormammu.workspace import create_temp_text_file, remove_temp_path
 
 if TYPE_CHECKING:
     from dormammu.daemon.goals_config import EvaluatorConfig
-
-# Regex to detect the evaluator's verdict line in agent output.
-_VERDICT_RE = re.compile(
-    r"VERDICT\s*:\s*(goal_achieved|partial|not_achieved)",
-    re.IGNORECASE,
-)
 
 # Regex to extract the next-goal block when strategy is "auto".
 # The evaluator is instructed to wrap the next goal in these delimiters.
@@ -79,16 +74,6 @@ class EvaluatorRequest:
     date_str: str
 
 
-@dataclass
-class EvaluatorResult:
-    """Outcome of an evaluator run."""
-
-    status: str                  # completed | failed | skipped
-    verdict: str                 # goal_achieved | partial | not_achieved | unknown
-    report_path: Path | None     # .dev/logs/<date>_evaluator_<stem>.md
-    goal_file_updated: bool      # True when the goal file was rewritten
-
-
 class EvaluatorStage:
     """Runs the post-commit evaluation step for a single pipeline execution."""
 
@@ -103,8 +88,8 @@ class EvaluatorStage:
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self, request: EvaluatorRequest) -> EvaluatorResult:
-        """Execute the evaluator and return an :class:`EvaluatorResult`."""
+    def run(self, request: EvaluatorRequest) -> StageResult:
+        """Execute the evaluator and return a canonical stage result."""
         self._log("evaluator: stage starting")
 
         prompt = self._build_prompt(request)
@@ -112,11 +97,13 @@ class EvaluatorStage:
 
         if output is None:
             self._log("evaluator: agent call failed — skipping goal file update")
-            return EvaluatorResult(
-                status="failed",
-                verdict="unknown",
-                report_path=None,
-                goal_file_updated=False,
+            return StageResult(
+                role="evaluator",
+                stage_name="final_evaluator",
+                status=ResultStatus.FAILED,
+                verdict=ResultVerdict.UNKNOWN,
+                summary="Evaluator agent execution failed before a verdict was produced.",
+                metadata={"goal_file_updated": False},
             )
 
         verdict = self._parse_verdict(output)
@@ -124,17 +111,30 @@ class EvaluatorStage:
 
         report_path = self._write_report(request, output)
 
-        goal_file_updated = self._update_goal_file(request, output, verdict)
+        has_valid_verdict = verdict != ResultVerdict.UNKNOWN
+        goal_file_updated = (
+            self._update_goal_file(request, output, verdict)
+            if has_valid_verdict
+            else False
+        )
 
         self._log(
             f"evaluator: stage completed "
             f"(verdict={verdict}, goal_file_updated={goal_file_updated})"
         )
-        return EvaluatorResult(
-            status="completed",
+        return StageResult(
+            role="evaluator",
+            stage_name="final_evaluator",
+            status=ResultStatus.COMPLETED if has_valid_verdict else ResultStatus.FAILED,
             verdict=verdict,
+            output=output,
             report_path=report_path,
-            goal_file_updated=goal_file_updated,
+            summary=(
+                "Post-commit goal evaluation completed."
+                if has_valid_verdict
+                else "Evaluator output did not include a valid 'VERDICT:' line."
+            ),
+            metadata={"goal_file_updated": goal_file_updated},
         )
 
     # ------------------------------------------------------------------
@@ -225,10 +225,7 @@ class EvaluatorStage:
     # ------------------------------------------------------------------
 
     def _parse_verdict(self, output: str) -> str:
-        match = _VERDICT_RE.search(output)
-        if match:
-            return match.group(1).lower()
-        return "unknown"
+        return parse_final_evaluator_verdict(output).value
 
     def _write_report(self, req: EvaluatorRequest, output: str) -> Path | None:
         try:

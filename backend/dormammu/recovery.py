@@ -5,6 +5,13 @@ from pathlib import Path
 from dormammu._utils import iso_now as _iso_now
 from dormammu.config import AppConfig
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
+from dormammu.results import (
+    ResultStatus,
+    RetryMetadata,
+    StageResult,
+    TimingMetadata,
+    artifact_from_path,
+)
 from dormammu.state import StateRepository
 from dormammu.supervisor import Supervisor, SupervisorRequest
 
@@ -89,6 +96,7 @@ class RecoveryManager:
         self.repository.write_session_state(session_state)
         self.repository.write_workflow_state(workflow_state)
 
+
     def resume(
         self,
         *,
@@ -135,6 +143,44 @@ class RecoveryManager:
         if report.verdict in {"blocked", "manual_review_needed"}:
             raise RuntimeError(report.summary)
         if report.verdict == "approved":
+            timestamp = _iso_now()
+            latest_run = workflow_state.get("latest_run", {})
+            latest_run_id = latest_run.get("run_id") if isinstance(latest_run, dict) else None
+            latest_started_at = (
+                latest_run.get("started_at") if isinstance(latest_run, dict) else None
+            )
+            saved_continuation_prompt = loop_state.get("latest_continuation_prompt_path")
+            continuation_prompt_path = (
+                Path(saved_continuation_prompt)
+                if isinstance(saved_continuation_prompt, str) and saved_continuation_prompt
+                else None
+            )
+            summary = report.summary
+            stage_timing = TimingMetadata(
+                started_at=latest_started_at,
+                completed_at=timestamp,
+            )
+            stage_results = (
+                StageResult(
+                    role=request.agent_role,
+                    stage_name=request.agent_role,
+                    status=ResultStatus.COMPLETED,
+                    verdict=report.verdict,
+                    summary=summary,
+                    report_path=report_path,
+                    retry=RetryMetadata(
+                        attempt=int(loop_state.get("attempts_completed", 0)),
+                        retries_used=int(loop_state.get("retries_used", 0)),
+                        max_retries=request.max_retries,
+                        max_iterations=request.max_iterations,
+                    ),
+                    timing=stage_timing,
+                    metadata={
+                        "latest_run_id": latest_run_id,
+                        "revalidated_from_saved_state": True,
+                    },
+                ),
+            )
             self._persist_completed_revalidation(
                 request=request,
                 loop_state=loop_state,
@@ -149,10 +195,14 @@ class RecoveryManager:
                 retries_used=int(loop_state.get("retries_used", 0)),
                 max_retries=request.max_retries,
                 max_iterations=request.max_iterations,
-                latest_run_id=workflow_state.get("latest_run", {}).get("run_id"),
+                latest_run_id=latest_run_id,
                 supervisor_verdict=report.verdict,
                 report_path=report_path,
-                continuation_prompt_path=None,
+                continuation_prompt_path=continuation_prompt_path,
+                summary=summary,
+                stage_results=stage_results,
+                timing=stage_timing,
+                metadata={"revalidated_from_saved_state": True},
             )
 
         prompt_path = loop_state.get("latest_continuation_prompt_path")
@@ -167,16 +217,71 @@ class RecoveryManager:
 
         attempts_completed = int(loop_state.get("attempts_completed", 0))
         if request.max_iterations != -1 and attempts_completed >= request.max_iterations:
+            timestamp = _iso_now()
+            latest_run = workflow_state.get("latest_run", {})
+            latest_run_id = latest_run.get("run_id") if isinstance(latest_run, dict) else None
+            latest_started_at = (
+                latest_run.get("started_at") if isinstance(latest_run, dict) else None
+            )
+            continuation_prompt_path = Path(prompt_path) if prompt_path else None
+            summary = (
+                f"{report.summary} Resume stopped because max_iterations is exhausted."
+                if report.summary
+                else "Resume stopped because max_iterations is exhausted."
+            )
+            retry = RetryMetadata(
+                attempt=attempts_completed,
+                retries_used=int(loop_state.get("retries_used", 0)),
+                max_retries=request.max_retries,
+                max_iterations=request.max_iterations,
+            )
+            timing = TimingMetadata(
+                started_at=latest_started_at,
+                completed_at=timestamp,
+            )
+            stage_results = (
+                StageResult(
+                    role=request.agent_role,
+                    stage_name=request.agent_role,
+                    status=ResultStatus.FAILED,
+                    verdict=report.verdict,
+                    summary=summary,
+                    report_path=report_path,
+                    artifacts=tuple(
+                        artifact
+                        for artifact in (
+                            artifact_from_path(
+                                kind="continuation_prompt",
+                                path=continuation_prompt_path,
+                                label="continuation_prompt",
+                                content_type="text/plain",
+                            ),
+                        )
+                        if artifact is not None
+                    ),
+                    retry=retry,
+                    timing=timing,
+                    metadata={
+                        "latest_run_id": latest_run_id,
+                        "resume_blocked": "max_iterations_exhausted",
+                    },
+                ),
+            )
             return LoopRunResult(
                 status="failed",
                 attempts_completed=attempts_completed,
                 retries_used=int(loop_state.get("retries_used", 0)),
                 max_retries=request.max_retries,
                 max_iterations=request.max_iterations,
-                latest_run_id=workflow_state.get("latest_run", {}).get("run_id"),
+                latest_run_id=latest_run_id,
                 supervisor_verdict=report.verdict,
                 report_path=report_path,
-                continuation_prompt_path=Path(prompt_path) if prompt_path else None,
+                continuation_prompt_path=continuation_prompt_path,
+                summary=summary,
+                stage_results=stage_results,
+                retry=retry,
+                timing=timing,
+                metadata={"resume_blocked": "max_iterations_exhausted"},
             )
         return self.loop_runner.run(
             request,

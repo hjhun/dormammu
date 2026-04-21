@@ -563,14 +563,10 @@ class DaemonRunner:
                 watcher_backend=watcher_backend,
                 sort_key=sort_key,
                 session_id=session_id,
+                run_result=loop_result,
                 error=error,
                 plan_all_completed=plan_all_completed,
                 next_pending_task=next_pending_task,
-                attempts_completed=(loop_result.attempts_completed if loop_result else None),
-                latest_run_id=(loop_result.latest_run_id if loop_result else None),
-                supervisor_verdict=(loop_result.supervisor_verdict if loop_result else None),
-                supervisor_report_path=(loop_result.report_path if loop_result else None),
-                continuation_prompt_path=(loop_result.continuation_prompt_path if loop_result else None),
             )
             if not interrupted and not skipped:
                 prompt_result = self._write_result_report_with_fallback(prompt_result)

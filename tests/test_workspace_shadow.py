@@ -18,8 +18,9 @@ from dormammu.config import AppConfig
 from dormammu.daemon.config import load_daemon_config
 from dormammu.daemon.evaluator import EvaluatorRequest, EvaluatorStage
 from dormammu.daemon.models import DaemonConfig, DaemonPromptResult, QueueConfig, WatchConfig
-from dormammu.daemon.reports import ResultReportAuthor
+from dormammu.daemon.reports import ResultReportAuthor, render_result_markdown
 from dormammu.daemon.runner import DaemonRunner
+from dormammu.results import RunResult, StageResult
 from dormammu.state import StateRepository
 from dormammu.workspace import resolve_workspace_project_root
 
@@ -393,6 +394,49 @@ class WorkspaceTempCleanupTests(unittest.TestCase):
 
 
 class ResultReportAuthorTests(unittest.TestCase):
+    def test_daemon_prompt_result_exposes_canonical_run_result_fields(self) -> None:
+        run_result = RunResult(
+            status="completed",
+            attempts_completed=2,
+            retries_used=1,
+            max_retries=3,
+            max_iterations=4,
+            latest_run_id="run-shadow",
+            supervisor_verdict="needs_work",
+            report_path=Path("/tmp/supervisor.md"),
+            continuation_prompt_path=Path("/tmp/continue.txt"),
+            summary="Stage 'reviewer' concluded with verdict 'needs_work'.",
+            stage_results=(
+                StageResult(
+                    role="reviewer",
+                    stage_name="reviewer",
+                    status="completed",
+                    verdict="needs_work",
+                    output="VERDICT: NEEDS_WORK",
+                ),
+            ),
+        )
+        result = DaemonPromptResult(
+            prompt_path=Path("/tmp/queue/001-shadow.md"),
+            result_path=Path("/tmp/results/001-shadow_RESULT.md"),
+            status="completed",
+            started_at="2026-04-19T00:00:00+00:00",
+            completed_at="2026-04-19T00:01:00+00:00",
+            watcher_backend="polling",
+            sort_key=(0, 1, "001-shadow.md"),
+            session_id="shadow-session",
+            run_result=run_result,
+        )
+
+        payload = result.to_dict()
+
+        self.assertEqual(payload["attempts_completed"], 2)
+        self.assertEqual(payload["supervisor_verdict"], "needs_work")
+        self.assertEqual(payload["summary"], "Stage 'reviewer' concluded with verdict 'needs_work'.")
+        self.assertEqual(payload["stage_results"][0]["role"], "reviewer")
+        self.assertEqual(payload["retry"]["attempt"], 2)
+        self.assertEqual(payload["run_result"]["status"], "completed")
+
     def test_result_report_author_uses_configured_cli_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -443,6 +487,46 @@ class ResultReportAuthorTests(unittest.TestCase):
 
             with self.assertRaises(RuntimeError):
                 ResultReportAuthor(config).render(result)
+
+    def test_fallback_result_report_renders_stage_results_from_run_result(self) -> None:
+        result = DaemonPromptResult(
+            prompt_path=Path("/tmp/queue/001-shadow.md"),
+            result_path=Path("/tmp/results/001-shadow_RESULT.md"),
+            status="completed",
+            started_at="2026-04-19T00:00:00+00:00",
+            completed_at="2026-04-19T00:01:00+00:00",
+            watcher_backend="polling",
+            sort_key=(0, 1, "001-shadow.md"),
+            session_id="shadow-session",
+            run_result=RunResult(
+                status="completed",
+                attempts_completed=1,
+                retries_used=0,
+                max_retries=0,
+                max_iterations=1,
+                latest_run_id="run-shadow",
+                supervisor_verdict="needs_work",
+                report_path=Path("/tmp/supervisor.md"),
+                continuation_prompt_path=None,
+                summary="Stage 'reviewer' concluded with verdict 'needs_work'.",
+                stage_results=(
+                    StageResult(
+                        role="reviewer",
+                        stage_name="reviewer",
+                        status="completed",
+                        verdict="needs_work",
+                        output="VERDICT: NEEDS_WORK",
+                    ),
+                ),
+            ),
+        )
+
+        rendered = render_result_markdown(result)
+
+        self.assertIn("## Stage Results", rendered)
+        self.assertIn("### reviewer", rendered)
+        self.assertIn("- Verdict: `needs_work`", rendered)
+        self.assertIn("## Artifacts", rendered)
 
 
 if __name__ == "__main__":

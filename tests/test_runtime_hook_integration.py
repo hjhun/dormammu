@@ -20,6 +20,7 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.agent.role_config import AgentsConfig
 from dormammu.config import AppConfig
+from dormammu.daemon.models import StageResult
 from dormammu.daemon.pipeline_runner import PipelineRunner
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
 from dormammu.state import StateRepository
@@ -603,7 +604,7 @@ def test_pipeline_runner_prompt_intake_hook_does_not_crash_without_active_sessio
         ),
         patch.object(runner, "_run_tester", return_value=None),
         patch.object(runner, "_run_reviewer", return_value=None),
-        patch.object(runner, "_run_committer"),
+        patch.object(runner, "_run_committer", return_value=None),
     ):
         result = runner.run(
             "Plan the runtime hook integration.",
@@ -675,7 +676,7 @@ def test_pipeline_runner_session_end_uses_bootstrapped_session_id(
         ),
         patch.object(runner, "_run_tester", return_value=None),
         patch.object(runner, "_run_reviewer", return_value=None),
-        patch.object(runner, "_run_committer"),
+        patch.object(runner, "_run_committer", return_value=None),
     ):
         result = runner.run(
             "Plan the runtime hook integration.",
@@ -691,6 +692,99 @@ def test_pipeline_runner_session_end_uses_bootstrapped_session_id(
     assert history[-1]["hook_input"]["session_id"] == session_id
     assert history[-1]["hook_input"]["subject"]["id"] == session_id
     assert history[-1]["subject"]["id"] == session_id
+
+
+def test_pipeline_runner_session_end_payload_uses_aggregated_pipeline_result(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path
+    _seed_repo(root)
+    hook_script = _write_hook_script(root)
+    _write_json(
+        root / "dormammu.json",
+        {
+            "active_agent_cli": sys.executable,
+            "hooks": [
+                _hook_payload(
+                    hook_script,
+                    name="session-end-allow",
+                    event="session end",
+                    mode="allow",
+                )
+            ],
+        },
+    )
+    config = _load_config(root)
+    repository = StateRepository(config)
+    repository.ensure_bootstrap_state(
+        goal="Pipeline aggregation hook payload",
+        prompt_text="Plan the runtime hook integration.",
+        active_roadmap_phase_ids=["phase_4"],
+    )
+    runner = PipelineRunner(
+        config,
+        config.agents or AgentsConfig(),
+        repository=repository,
+        progress_stream=io.StringIO(),
+    )
+
+    with (
+        patch.object(runner, "run_refine_and_plan"),
+        patch.object(
+            runner,
+            "_run_developer",
+            return_value=LoopRunResult(
+                status="completed",
+                attempts_completed=1,
+                retries_used=0,
+                max_retries=0,
+                max_iterations=1,
+                latest_run_id="run-1",
+                supervisor_verdict="approved",
+                report_path=None,
+                continuation_prompt_path=None,
+            ),
+        ),
+        patch.object(
+            runner,
+            "_run_tester",
+            return_value=StageResult(role="tester", verdict="pass", output="OVERALL: PASS"),
+        ),
+        patch.object(
+            runner,
+            "_run_reviewer",
+            return_value=StageResult(
+                role="reviewer",
+                verdict="approved",
+                output="VERDICT: APPROVED",
+            ),
+        ),
+        patch.object(
+            runner,
+            "_run_committer",
+            return_value=StageResult(
+                role="committer",
+                verdict="committed",
+                output="commit ok",
+            ),
+        ),
+    ):
+        result = runner.run(
+            "Plan the runtime hook integration.",
+            stem="runtime-hooks",
+            date_str="20260421",
+        )
+
+    assert result.status == "completed"
+    history = _event_history(repository)
+    session_end = history[-1]["hook_input"]["payload"]["result"]
+    assert [stage["role"] for stage in session_end["stage_results"]] == [
+        "developer",
+        "tester",
+        "reviewer",
+        "committer",
+    ]
+    assert session_end["status"] == "completed"
 
 
 def test_pipeline_runner_emits_session_end_when_prompt_intake_hook_denies(
@@ -851,7 +945,7 @@ def test_pipeline_runner_hook_events_share_pipeline_execution_run_id(
         patch.object(runner, "_run_developer", side_effect=_run_developer),
         patch.object(runner, "_run_tester", return_value=None),
         patch.object(runner, "_run_reviewer", return_value=None),
-        patch.object(runner, "_run_committer"),
+        patch.object(runner, "_run_committer", return_value=None),
     ):
         result = runner.run(
             "Plan the runtime hook integration.",
@@ -943,7 +1037,7 @@ def test_pipeline_runner_session_end_hook_block_updates_terminal_lifecycle_event
         ),
         patch.object(runner, "_run_tester", return_value=None),
         patch.object(runner, "_run_reviewer", return_value=None),
-        patch.object(runner, "_run_committer"),
+        patch.object(runner, "_run_committer", return_value=None),
     ):
         result = runner.run(
             "Plan the runtime hook integration.",
@@ -1045,7 +1139,7 @@ def test_pipeline_runner_emits_plan_start_hook_at_planner_boundary(tmp_path: Pat
             date_str="20260421",
         )
 
-    assert output == "planner output"
+    assert output.output == "planner output"
     history = _event_history(repository)
     plan_start_record = next(item for item in history if item["event"] == "plan start")
     assert plan_start_record["annotations"] == [
