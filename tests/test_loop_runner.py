@@ -254,6 +254,27 @@ Use this skill in loop runner tests.
                     {artifact.kind for artifact in result.stage_results[0].artifacts}
                 )
             )
+            execution = repository.read_session_state()["execution"]
+            self.assertEqual(
+                execution["latest_run_id"],
+                execution["latest_run"]["execution_run_id"],
+            )
+            self.assertEqual(
+                execution["latest_run"]["latest_run_id"],
+                result.latest_run_id,
+            )
+            self.assertEqual(execution["latest_run"]["status"], "completed")
+            self.assertEqual(execution["latest_run"]["supervisor_verdict"], "approved")
+            self.assertEqual(execution["latest_stage_result"]["stage_name"], "developer")
+            self.assertEqual(execution["latest_stage_result"]["verdict"], "approved")
+            self.assertTrue(
+                {"prompt", "stdout", "stderr", "metadata"}.issubset(
+                    {
+                        artifact["kind"]
+                        for artifact in execution["latest_stage_result"]["artifacts"]
+                    }
+                )
+            )
 
     def test_resume_continues_failed_loop_from_saved_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

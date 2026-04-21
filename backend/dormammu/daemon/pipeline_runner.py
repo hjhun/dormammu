@@ -75,6 +75,7 @@ from dormammu.lifecycle import (
 )
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
 from dormammu.results import (
+    collect_result_artifacts,
     ResultStatus,
     ResultVerdict,
     RetryMetadata,
@@ -159,6 +160,15 @@ class PipelineRunner:
     def _record_stage_result(self, stage: StageResult) -> None:
         if self._current_stage_results is not None:
             self._current_stage_results.append(stage)
+        try:
+            self._repository.record_stage_result(
+                stage,
+                run_id=self._lifecycle.run_id if self._lifecycle is not None else None,
+            )
+        except Exception:
+            # Stage-result persistence is additive runtime state. Do not break
+            # the active pipeline when the projection layer cannot be updated.
+            pass
 
     def _artifact_writer(
         self,
@@ -1019,6 +1029,8 @@ class PipelineRunner:
             next_goal_strategy=effective_config.next_goal_strategy,
             stem=stem,
             date_str=date_str,
+            run_id=self._lifecycle.run_id if self._lifecycle is not None else None,
+            session_id=self._session_id(),
         )
         result = EvaluatorStage(
             progress_stream=self._progress_stream,
@@ -1027,7 +1039,7 @@ class PipelineRunner:
             self._lifecycle.emit(
                 event_type=LifecycleEventType.ARTIFACT_PERSISTED,
                 role="evaluator",
-                stage="evaluator",
+                stage=result.stage_name or "evaluator",
                 status="persisted",
                 payload=ArtifactPersistedPayload(
                     artifact_kind="evaluator_report",
@@ -1384,7 +1396,11 @@ class PipelineRunner:
                     reason=stage.summary or completion_payload.get("reason"),
                     error=completion_payload.get("error"),
                 ),
-                metadata={"run_id": run_id},
+                artifact_refs=tuple(stage.artifacts),
+                metadata={
+                    "run_id": run_id,
+                    "stage_result": stage.to_dict(include_output=False),
+                },
             )
         self._hook_controller.emit_stage_complete(
             source="pipeline_runner",
@@ -1503,16 +1519,17 @@ class PipelineRunner:
             summary=final_summary,
             output=result.output,
             stage_results=stage_results,
-            artifacts=result.artifacts,
+            artifacts=collect_result_artifacts(stage_results, result.artifacts),
             retry=result.retry,
             timing=result.timing,
             metadata=result.metadata,
         )
+        pipeline_run_id = self._lifecycle.run_id if self._lifecycle is not None else result.latest_run_id
         try:
             self._hook_controller.emit_session_end(
                 source="pipeline_runner",
                 session_id=session_id,
-                run_id=self._lifecycle.run_id if self._lifecycle is not None else result.latest_run_id,
+                run_id=pipeline_run_id,
                 agent_role="pipeline",
                 result=final_result.to_dict(),
             )
@@ -1534,6 +1551,15 @@ class PipelineRunner:
                 stage_results=tuple(self._current_stage_results or result.stage_results),
             )
         self._emit_run_finished_event(final_result, terminal_error=terminal_error)
+        try:
+            self._repository.record_run_result(
+                final_result,
+                run_id=pipeline_run_id,
+            )
+        except Exception:
+            # Run-result projection is additive machine state. Avoid masking the
+            # terminal pipeline result when it cannot be recorded.
+            pass
         return final_result
 
     @staticmethod

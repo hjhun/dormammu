@@ -68,12 +68,18 @@ This block is the machine-truth event stream for the active execution. It is
 designed so `.dev` operator files can be derived as projections from lifecycle
 history plus the existing state snapshots.
 
+The runtime also keeps an additive `execution` projection beside the raw
+lifecycle history. It stores the latest explicit run, stage, checkpoint, and
+artifact facts that were emitted or recorded during execution, so resume and
+supervisor flows do not need to reconstruct those facts from ad hoc strings.
+
 ## Current Emitters
 
-The first runtime integrations emit lifecycle events from:
+The active runtime integrations emit lifecycle events from:
 
-- `LoopRunner` for loop admission, retries, supervisor handoff, worktree prep, and persisted artifacts
-- `PipelineRunner` for pipeline run boundaries, stage transitions, retry loops, and evaluator checkpoint decisions
+- `LoopRunner` for loop admission, stage completion or failure, retries, supervisor handoff, worktree prep, and persisted artifacts
+- `PipelineRunner` for pipeline run boundaries, one-shot stage transitions, retry loops, stage-result completion records, and evaluator checkpoint decisions
+- `StateRepository` for projecting explicit run/stage/checkpoint facts into the session and workflow `execution` blocks
 - `RuntimeHookController` for hook execution start and finish
 - `DaemonRunner` for daemon prompt processing, prompt/result artifacts, and planner-to-developer handoff
 

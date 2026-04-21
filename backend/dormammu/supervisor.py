@@ -40,6 +40,19 @@ def _normalize_latest_run(payload: Mapping[str, Any] | None) -> dict[str, Any] |
     }
 
 
+def _normalize_execution_run(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    return {
+        "run_id": payload.get("run_id"),
+        "status": payload.get("status"),
+        "attempts_completed": payload.get("attempts_completed"),
+        "retries_used": payload.get("retries_used"),
+        "supervisor_verdict": payload.get("supervisor_verdict"),
+        "outcome": payload.get("outcome"),
+    }
+
+
 def _resolve_path(repo_root: Path, value: str) -> Path:
     path = Path(value)
     if path.is_absolute():
@@ -508,6 +521,44 @@ class Supervisor:
                 name="latest-run-state",
                 ok=latest_run_ok,
                 summary="Latest run metadata exists in both state files." if latest_run_ok else "Latest run metadata is missing or mismatched across state files.",
+            )
+        )
+
+        session_execution_run = None
+        workflow_execution_run = None
+        if isinstance(session_state.get("execution"), Mapping):
+            session_execution_run = session_state["execution"].get("latest_run")
+        if isinstance(workflow_state.get("execution"), Mapping):
+            workflow_execution_run = workflow_state["execution"].get("latest_run")
+        execution_run_present = (
+            isinstance(session_execution_run, Mapping)
+            and isinstance(workflow_execution_run, Mapping)
+        )
+        execution_run_ok = True
+        execution_run_details: list[str] = []
+        if execution_run_present:
+            execution_run_ok = _normalize_execution_run(session_execution_run) == _normalize_execution_run(
+                workflow_execution_run
+            )
+            if not execution_run_ok:
+                execution_run_details = [
+                    f"session.execution.latest_run={_normalize_execution_run(session_execution_run)}",
+                    f"workflow.execution.latest_run={_normalize_execution_run(workflow_execution_run)}",
+                ]
+        checks.append(
+            SupervisorCheck(
+                name="execution-state",
+                ok=execution_run_ok,
+                summary=(
+                    "Explicit execution facts are aligned across session and workflow state."
+                    if execution_run_present and execution_run_ok
+                    else (
+                        "Explicit execution facts are not recorded for this run yet."
+                        if not execution_run_present
+                        else "Explicit execution facts diverged across session and workflow state."
+                    )
+                ),
+                details=execution_run_details,
             )
         )
 

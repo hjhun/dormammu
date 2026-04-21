@@ -137,6 +137,29 @@ def _merge_artifacts(
     return tuple(merged)
 
 
+def collect_result_artifacts(
+    stage_results: Sequence["StageResult"],
+    *artifact_groups: Iterable[ResultArtifact],
+) -> tuple[ResultArtifact, ...]:
+    latest = latest_stage_results(stage_results)
+    merged: list[ResultArtifact] = []
+    seen: set[tuple[str, str, str | None]] = set()
+
+    def _add(group: Iterable[ResultArtifact]) -> None:
+        for artifact in group:
+            key = (artifact.kind, str(artifact.path), artifact.label)
+            if key in seen:
+                continue
+            merged.append(artifact)
+            seen.add(key)
+
+    for group in artifact_groups:
+        _add(group)
+    for stage in latest:
+        _add(stage.artifacts)
+    return tuple(merged)
+
+
 @dataclass(frozen=True, slots=True)
 class StageResult:
     role: str

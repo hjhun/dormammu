@@ -1033,6 +1033,45 @@ class TestPipelineRun:
         ]
         runner._hook_controller.emit_stage_complete.assert_called_once()
 
+    def test_run_evaluator_passes_pipeline_execution_identity_into_request(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        agents = AgentsConfig(evaluator=RoleAgentConfig(cli=Path("claude")))
+        runner = _make_runner(tmp_path, agents=agents, active_agent_cli=Path("claude"))
+        goal_file = tmp_path / "goal.md"
+        goal_file.write_text("goal\n", encoding="utf-8")
+        runner._repository = MagicMock()
+        runner._repository.read_session_state.return_value = {"session_id": "session-42"}
+        runner._current_stage_results = []
+        runner._lifecycle = MagicMock()
+        runner._lifecycle.run_id = "pipeline:test"
+        runner._hook_controller.emit_stage_complete = MagicMock()
+
+        evaluator_stage = StageResult(
+            role="evaluator",
+            stage_name="final_evaluator",
+            status=ResultStatus.COMPLETED,
+            verdict="partial",
+            summary="Evaluator completed.",
+        )
+
+        with patch(
+            "dormammu.daemon.pipeline_runner.EvaluatorStage.run",
+            return_value=evaluator_stage,
+        ) as mock_run:
+            runner._run_evaluator(
+                prompt_text="goal",
+                stem="s",
+                date_str="20260412",
+                goal_file_path=goal_file,
+                evaluator_config=None,
+            )
+
+        request = mock_run.call_args.args[0]
+        assert request.run_id == "pipeline:test"
+        assert request.session_id == "session-42"
+
     @pytest.mark.parametrize(
         ("verdict", "expected_event_type", "expected_status"),
         [
@@ -1063,6 +1102,119 @@ class TestPipelineRun:
         emit_kwargs = runner._lifecycle.emit.call_args.kwargs
         assert emit_kwargs["event_type"].value == expected_event_type
         assert emit_kwargs["status"] == expected_status
+
+    def test_emit_stage_complete_attaches_stage_result_metadata_and_artifacts(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        runner = _make_runner(tmp_path, active_agent_cli=Path("claude"))
+        runner._lifecycle = MagicMock()
+        runner._hook_controller.emit_stage_complete = MagicMock()
+        artifact = ArtifactRef.from_path(
+            kind="stage_report",
+            path=tmp_path / ".dev" / "logs" / "20260412_tester_s.md",
+            label="tester_report",
+            content_type="text/markdown",
+            role="tester",
+            stage_name="tester",
+        )
+        stage = StageResult(
+            role="tester",
+            stage_name="tester",
+            verdict="pass",
+            artifacts=(artifact,),
+            summary="Tests passed.",
+        )
+
+        runner._emit_stage_complete(stage=stage, run_id="pipeline:test")
+
+        emit_kwargs = runner._lifecycle.emit.call_args.kwargs
+        assert emit_kwargs["artifact_refs"] == (artifact,)
+        assert emit_kwargs["metadata"]["run_id"] == "pipeline:test"
+        assert emit_kwargs["metadata"]["stage_result"]["stage_name"] == "tester"
+        assert emit_kwargs["metadata"]["stage_result"]["artifacts"][0]["kind"] == "stage_report"
+
+    def test_finalize_pipeline_result_aggregates_stage_artifacts_and_records_run_result(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        runner = _make_runner(tmp_path, active_agent_cli=Path("claude"))
+        runner._repository = MagicMock()
+        runner._hook_controller.emit_session_end = MagicMock()
+        runner._lifecycle = MagicMock()
+        runner._lifecycle.run_id = "pipeline:test"
+        stage_artifact = ArtifactRef.from_path(
+            kind="stage_report",
+            path=tmp_path / ".dev" / "logs" / "20260412_tester_s.md",
+            label="tester_report",
+            content_type="text/markdown",
+            role="tester",
+            stage_name="tester",
+        )
+        runner._current_stage_results = [
+            StageResult(
+                role="tester",
+                stage_name="tester",
+                verdict="pass",
+                artifacts=(stage_artifact,),
+                summary="Tests passed.",
+            )
+        ]
+
+        with patch.object(runner, "_emit_run_finished_event") as mock_finished:
+            result = runner._finalize_pipeline_result(_make_loop_result("completed"))
+
+        assert result.artifacts == (stage_artifact,)
+        runner._repository.record_run_result.assert_called_once()
+        assert runner._repository.record_run_result.call_args.kwargs["run_id"] == "pipeline:test"
+        mock_finished.assert_called_once()
+
+    def test_finalize_pipeline_result_excludes_artifacts_from_superseded_stage_attempts(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        runner = _make_runner(tmp_path, active_agent_cli=Path("claude"))
+        runner._repository = MagicMock()
+        runner._hook_controller.emit_session_end = MagicMock()
+        runner._lifecycle = MagicMock()
+        runner._lifecycle.run_id = "pipeline:test"
+        stale_artifact = ArtifactRef.from_path(
+            kind="stage_report",
+            path=tmp_path / ".dev" / "logs" / "20260412_tester_fail.md",
+            label="tester_report",
+            content_type="text/markdown",
+            role="tester",
+            stage_name="tester",
+        )
+        latest_artifact = ArtifactRef.from_path(
+            kind="stage_report",
+            path=tmp_path / ".dev" / "logs" / "20260412_tester_pass.md",
+            label="tester_report",
+            content_type="text/markdown",
+            role="tester",
+            stage_name="tester",
+        )
+        runner._current_stage_results = [
+            StageResult(
+                role="tester",
+                stage_name="tester",
+                verdict="fail",
+                artifacts=(stale_artifact,),
+                summary="Initial failure.",
+            ),
+            StageResult(
+                role="tester",
+                stage_name="tester",
+                verdict="pass",
+                artifacts=(latest_artifact,),
+                summary="Retry succeeded.",
+            ),
+        ]
+
+        with patch.object(runner, "_emit_run_finished_event"):
+            result = runner._finalize_pipeline_result(_make_loop_result("completed"))
+
+        assert result.artifacts == (latest_artifact,)
 
     def test_pipeline_emits_terminal_failure_event_when_setup_raises_early(
         self, tmp_path: Path

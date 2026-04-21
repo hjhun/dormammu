@@ -73,6 +73,8 @@ class EvaluatorRequest:
     next_goal_strategy: str     # none | suggest | auto
     stem: str                   # prompt stem (used for output doc naming)
     date_str: str
+    run_id: str | None = None
+    session_id: str | None = None
 
 
 class EvaluatorStage:
@@ -231,14 +233,20 @@ class EvaluatorStage:
 
     def _write_report(self, req: EvaluatorRequest, output: str) -> ArtifactRef | None:
         try:
-            writer = ArtifactWriter(base_dir=req.dev_dir, logs_dir=req.dev_dir / "logs")
+            writer = ArtifactWriter(
+                base_dir=req.dev_dir,
+                logs_dir=req.dev_dir / "logs",
+            ).bind(
+                run_id=req.run_id,
+                role="evaluator",
+                stage_name="final_evaluator",
+                session_id=req.session_id,
+            )
             artifact = writer.write_markdown_report(
                 kind="evaluator_report",
                 markdown=f"# Evaluator — {req.stem}\n\n{output}",
                 path=writer.evaluator_report_path(stem=req.stem, date_str=req.date_str),
                 label="evaluator_report",
-                role="evaluator",
-                stage_name="final_evaluator",
             )
             self._log(f"evaluator: report written to {artifact.path}")
             return artifact

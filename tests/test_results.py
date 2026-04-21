@@ -6,6 +6,7 @@ from dormammu.artifacts import ArtifactRef
 from dormammu.results import (
     aggregate_run_summary,
     effective_stage_verdict,
+    collect_result_artifacts,
     ResultStatus,
     ResultVerdict,
     RunResult,
@@ -123,6 +124,46 @@ def test_latest_stage_results_preserve_chronology_of_latest_attempts() -> None:
     latest = latest_stage_results(stage_results)
 
     assert [stage.role for stage in latest] == ["developer", "reviewer"]
+
+
+def test_collect_result_artifacts_uses_only_latest_stage_attempt_per_key(
+    tmp_path: Path,
+) -> None:
+    stale_artifact = ArtifactRef.from_path(
+        kind="stage_report",
+        path=tmp_path / "tester-stale.md",
+        label="tester_report",
+        content_type="text/markdown",
+        role="tester",
+        stage_name="tester",
+    )
+    latest_artifact = ArtifactRef.from_path(
+        kind="stage_report",
+        path=tmp_path / "tester-latest.md",
+        label="tester_report",
+        content_type="text/markdown",
+        role="tester",
+        stage_name="tester",
+    )
+
+    artifacts = collect_result_artifacts(
+        (
+            StageResult(
+                role="tester",
+                stage_name="tester",
+                verdict="fail",
+                artifacts=(stale_artifact,),
+            ),
+            StageResult(
+                role="tester",
+                stage_name="tester",
+                verdict="pass",
+                artifacts=(latest_artifact,),
+            ),
+        )
+    )
+
+    assert artifacts == (latest_artifact,)
 
 
 def test_aggregate_run_status_preserves_completed_default_for_domain_verdict_failures() -> None:

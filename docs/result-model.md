@@ -79,6 +79,11 @@ It also adds:
 
 Run-level aggregation uses the latest result per stage key instead of every historical attempt. That allows retries to behave sensibly: an earlier tester `fail` does not force the final run status once a later tester attempt returns `pass`.
 
+When a pipeline or loop run is finalized, run-level `artifacts` are aggregated
+from both explicit run attachments and the latest `StageResult.artifacts`. That
+keeps persisted reports visible from the top-level runtime result without
+duplicating artifact-writing logic in each runner.
+
 The shared helpers now aggregate more than operational status:
 
 - `aggregate_run_status()` reports whether the run completed, failed, blocked, or needs manual review

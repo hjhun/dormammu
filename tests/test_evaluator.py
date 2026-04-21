@@ -42,6 +42,8 @@ def _make_request(
     next_goal_strategy: str = "none",
     cli: Path | None = None,
     model: str | None = None,
+    run_id: str | None = None,
+    session_id: str | None = None,
 ) -> EvaluatorRequest:
     goal_file = tmp_path / "goals" / "feature_x.md"
     goal_file.parent.mkdir(parents=True, exist_ok=True)
@@ -67,6 +69,8 @@ def _make_request(
         next_goal_strategy=next_goal_strategy,
         stem="feature_x",
         date_str="20260413",
+        run_id=run_id,
+        session_id=session_id,
     )
 
 
@@ -533,6 +537,21 @@ class TestEvaluatorStageRun:
         assert result.artifacts[0].path == result.report_path
         assert result.artifacts[0].stage_name == "final_evaluator"
         assert result.artifacts[0].created_at is not None
+
+    def test_run_binds_report_artifact_to_execution_identity(self, tmp_path: Path) -> None:
+        req = _make_request(
+            tmp_path,
+            run_id="pipeline:test",
+            session_id="session-42",
+        )
+        stage, _ = _make_stage(tmp_path)
+        with self._patch_run("VERDICT: partial"):
+            result = stage.run(req)
+        assert result.artifacts
+        assert result.artifacts[0].run_id == "pipeline:test"
+        assert result.artifacts[0].session_id == "session-42"
+        assert result.artifacts[0].role == "evaluator"
+        assert result.artifacts[0].stage_name == "final_evaluator"
 
     def test_run_failed_when_subprocess_raises(self, tmp_path: Path) -> None:
         req = _make_request(tmp_path)

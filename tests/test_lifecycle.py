@@ -16,11 +16,13 @@ from dormammu.config import AppConfig
 from dormammu.lifecycle import (
     ArtifactPersistedPayload,
     ArtifactRef,
+    EvaluatorCheckpointPayload,
     LifecycleEventType,
     LifecycleRecorder,
     RunEventPayload,
     StageEventPayload,
 )
+from dormammu.results import RunResult, StageResult
 from dormammu.state import StateRepository
 
 
@@ -176,6 +178,198 @@ class LifecycleRepositoryTests(unittest.TestCase):
                 "stage.completed",
             )
             self.assertEqual(len(session_state["lifecycle"]["history"]), 1)
+            self.assertEqual(
+                session_state["execution"]["latest_stage_result"]["stage_name"],
+                "developer",
+            )
+            self.assertEqual(
+                workflow_state["execution"]["latest_stage_result"]["verdict"],
+                "approved",
+            )
+
+    def test_record_lifecycle_event_projects_current_run_and_checkpoint_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Lifecycle projection test")
+
+            recorder = LifecycleRecorder.for_execution(
+                repository,
+                scope="pipeline",
+                session_id=repository.read_session_state()["session_id"],
+                label="projection-test",
+            )
+            recorder.emit(
+                event_type=LifecycleEventType.RUN_REQUESTED,
+                role="pipeline",
+                stage="pipeline",
+                status="requested",
+                payload=RunEventPayload(
+                    source="pipeline_runner",
+                    entrypoint="PipelineRunner.run",
+                    trigger="pipeline",
+                ),
+            )
+            recorder.emit(
+                event_type=LifecycleEventType.RUN_STARTED,
+                role="pipeline",
+                stage="pipeline",
+                status="started",
+                payload=RunEventPayload(
+                    source="pipeline_runner",
+                    entrypoint="PipelineRunner.run",
+                    trigger="pipeline",
+                ),
+            )
+            recorder.emit(
+                event_type=LifecycleEventType.EVALUATOR_CHECKPOINT_DECISION,
+                role="evaluator",
+                stage="plan_evaluator",
+                status="completed",
+                payload=EvaluatorCheckpointPayload(
+                    checkpoint_kind="plan",
+                    decision="proceed",
+                ),
+            )
+
+            session_state = repository.read_session_state()
+            execution = session_state["execution"]
+            assert execution["current_run"]["status"] == "started"
+            assert execution["current_run"]["entrypoint"] == "PipelineRunner.run"
+            assert execution["latest_checkpoint"]["decision"] == "proceed"
+
+    def test_record_stage_result_and_run_result_persist_explicit_execution_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Run result projection test")
+
+            artifact = ArtifactRef.from_path(
+                kind="stage_report",
+                path=root / ".dev" / "logs" / "stage.md",
+                label="stage_report",
+                content_type="text/markdown",
+                role="tester",
+                stage_name="tester",
+            )
+            stage = StageResult(
+                role="tester",
+                stage_name="tester",
+                verdict="pass",
+                artifacts=(artifact,),
+                summary="Tests passed.",
+            )
+            repository.record_stage_result(stage, run_id="pipeline:test")
+            repository.record_run_result(
+                RunResult(
+                    status="completed",
+                    attempts_completed=1,
+                    retries_used=0,
+                    max_retries=0,
+                    max_iterations=1,
+                    latest_run_id="pipeline:test",
+                    supervisor_verdict="approved",
+                    report_path=None,
+                    continuation_prompt_path=None,
+                    stage_results=(stage,),
+                    artifacts=(artifact,),
+                    summary="Pipeline finished cleanly.",
+                ),
+                run_id="pipeline:test",
+            )
+
+            session_state = repository.read_session_state()
+            execution = session_state["execution"]
+            assert execution["latest_run_id"] == "pipeline:test"
+            assert execution["latest_execution_id"] == "pipeline:test"
+            assert execution["latest_run"]["status"] == "completed"
+            assert execution["latest_run"]["stage_results"][0]["stage_name"] == "tester"
+            assert execution["stage_results"]["tester"]["verdict"] == "pass"
+
+    def test_record_stage_result_populates_latest_run_id_before_run_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Stage result projection test")
+
+            stage = StageResult(
+                role="tester",
+                stage_name="tester",
+                verdict="pass",
+                summary="Tests passed.",
+            )
+
+            repository.record_stage_result(stage, run_id="run-123")
+
+            session_execution = repository.read_session_state()["execution"]
+            workflow_execution = repository.read_workflow_state()["execution"]
+            assert session_execution["latest_run_id"] == "run-123"
+            assert session_execution["latest_execution_id"] == "run-123"
+            assert workflow_execution["latest_run_id"] == "run-123"
+            assert workflow_execution["latest_execution_id"] == "run-123"
+
+    def test_record_run_result_prefers_explicit_execution_run_id_over_nested_agent_run_id(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Execution run id projection test")
+
+            stage = StageResult(
+                role="developer",
+                stage_name="developer",
+                verdict="done",
+                summary="Developer loop completed.",
+            )
+
+            repository.record_run_result(
+                RunResult(
+                    status="completed",
+                    attempts_completed=1,
+                    retries_used=0,
+                    max_retries=0,
+                    max_iterations=1,
+                    latest_run_id="agent-run-42",
+                    supervisor_verdict="approved",
+                    report_path=None,
+                    continuation_prompt_path=None,
+                    stage_results=(stage,),
+                    summary="Pipeline finished cleanly.",
+                ),
+                run_id="pipeline-run-9",
+            )
+
+            execution = repository.read_session_state()["execution"]
+            assert execution["latest_run_id"] == "pipeline-run-9"
+            assert execution["latest_execution_id"] == "pipeline-run-9"
+            assert execution["latest_run"]["run_id"] == "pipeline-run-9"
+            assert execution["latest_run"]["execution_run_id"] == "pipeline-run-9"
+            assert execution["latest_run"]["latest_run_id"] == "agent-run-42"
 
     @staticmethod
     def _seed_repo(root: Path) -> None:

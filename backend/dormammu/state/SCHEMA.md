@@ -78,6 +78,7 @@ the active session subdirectory. It is never the canonical run state itself.
 | `latest_continuation_prompt` | string or null | Most recent continuation prompt text |
 | `current_run` | object or null | Metadata for the in-flight run (cleared on completion) |
 | `latest_run` | object or null | Metadata for the most recently completed run |
+| `execution` | object, optional | Explicit runtime facts projected from lifecycle events and unified stage/run results |
 | `operator_state_mtime` | float or null | mtime of the operator task file at last sync |
 | `worktrees` | object, optional | Session-scoped managed worktree registry (see below) |
 
@@ -116,6 +117,22 @@ checkout path rather than the primary repository root.
 | `synced_at` | ISO-8601 string | Timestamp of last sync |
 | `resume_checkpoint` | string or null | Task item used as resume target |
 | `items` | list[object] | Parsed task items (`text`, `completed`, `is_checkpoint`) |
+
+`execution` sub-object:
+
+This additive block keeps the latest explicit runtime facts beside the legacy
+`current_run` / `latest_run` payloads.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `latest_run_id` | string or null | Most recent lifecycle/run identifier recorded for this execution |
+| `current_run` | object or null | Run-start fact projected from `run.requested` / `run.started` |
+| `latest_run` | object or null | Final loop/pipeline result projected from `run.finished` and `RunResult` |
+| `latest_agent_run` | object or null | Most recent external agent CLI call recorded by `record_latest_run()` |
+| `stage_results` | object | Latest `StageResult` per stage key |
+| `latest_stage_result` | object or null | Most recent recorded stage result |
+| `latest_checkpoint` | object or null | Most recent evaluator checkpoint decision |
+| `latest_artifact` | object or null | Most recent persisted artifact fact |
 
 `worktrees` sub-object:
 
@@ -194,6 +211,7 @@ Like `session.json`, the root file acts as an **index** when a session is active
 | `operator_sync` | object | Task sync state (mirrors `task_sync` in session) |
 | `current_run` | object or null | In-flight run metadata |
 | `latest_run` | object or null | Most recently completed run metadata |
+| `execution` | object, optional | Explicit runtime facts projected from lifecycle events and unified stage/run results |
 | `intake` | object | Request classification result from `intake.classify_request` |
 | `workflow_policy` | object | Phase enablement policy from `workflow_policy` |
 | `worktrees` | object, optional | Workflow-scoped managed worktree registry (same shape as `session.json`) |

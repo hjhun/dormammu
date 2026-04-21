@@ -502,6 +502,17 @@ class LoopRunner:
                     )
 
             if emit_stage_completion:
+                latest_stage_result = None
+                if final_result.stage_results:
+                    latest_stage_result = next(
+                        (
+                            stage_result
+                            for stage_result in reversed(final_result.stage_results)
+                            if (stage_result.stage_name or stage_result.role)
+                            == request.agent_role
+                        ),
+                        final_result.stage_results[-1],
+                    )
                 event_type = (
                     LifecycleEventType.STAGE_COMPLETED
                     if final_result.status == "completed"
@@ -523,7 +534,27 @@ class LoopRunner:
                             else None
                         ),
                     ),
+                    artifact_refs=(
+                        latest_stage_result.artifacts
+                        if latest_stage_result is not None
+                        else ()
+                    ),
+                    metadata=(
+                        {
+                            "stage_result": latest_stage_result.to_dict(include_output=False),
+                        }
+                        if latest_stage_result is not None
+                        else None
+                    ),
                 )
+                if latest_stage_result is not None:
+                    try:
+                        runtime_repository.record_stage_result(
+                            latest_stage_result,
+                            run_id=lifecycle.run_id,
+                        )
+                    except Exception:
+                        pass
 
             if active_worktree is not None and not worktree_released:
                 lifecycle.emit(
@@ -591,6 +622,13 @@ class LoopRunner:
                     error=run_error,
                 ),
             )
+            try:
+                runtime_repository.record_run_result(
+                    final_result,
+                    run_id=lifecycle.run_id,
+                )
+            except Exception:
+                pass
             return final_result
 
         worktree_create_allowed = (
