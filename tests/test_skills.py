@@ -5,6 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from dormammu.agent.permissions import (
+    AgentPermissionPolicy,
+    PermissionDecision,
+    SkillPermissionPolicy,
+    SkillPermissionRule,
+)
+from dormammu.agent.profiles import AgentProfile
 from dormammu.config import AppConfig
 from dormammu.skills import (
     SKILL_CONTENT_MODE_INLINE_MARKDOWN,
@@ -14,6 +21,7 @@ from dormammu.skills import (
     SkillDocumentError,
     discover_skills,
     enumerate_skill_candidates,
+    filter_skills_for_profile,
     load_skill_definition,
     load_skill_document,
     normalize_skill_source_scope,
@@ -449,3 +457,233 @@ class TestSkillDiscovery:
         assert empty.candidates == ()
         assert empty.selected == ()
         assert empty.shadowed == ()
+
+
+class TestSkillFiltering:
+    def _config_with_built_in_root(
+        self,
+        *,
+        repo_root: Path,
+        home_dir: Path,
+        built_in_agents_dir: Path,
+    ) -> AppConfig:
+        config = _make_config(repo_root, home_dir)
+        return config.with_overrides(
+            built_in_agents_dir=built_in_agents_dir.resolve(),
+            built_in_skills_dir=(built_in_agents_dir / "skills").resolve(),
+        )
+
+    def test_default_visibility_keeps_precedence_resolved_skills_visible(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        built_in_agents_dir = tmp_path / "built-in-agents"
+        config = self._config_with_built_in_root(
+            repo_root=repo_root,
+            home_dir=home_dir,
+            built_in_agents_dir=built_in_agents_dir,
+        )
+
+        _write_skill(config.project_skills_dir / "alpha" / "SKILL.md", name="alpha-skill")
+        _write_skill(config.user_skills_dir / "beta" / "SKILL.md", name="beta-skill")
+        _write_skill(
+            config.built_in_skills_dir / "planning-agent" / "SKILL.md",
+            name="planning-agent",
+        )
+
+        visibility = filter_skills_for_profile(
+            discover_skills(config),
+            AgentProfile(name="planner", description="Planner profile."),
+        )
+
+        assert visibility.default_decision is PermissionDecision.ASK
+        assert [entry.name for entry in visibility.visible] == [
+            "alpha-skill",
+            "beta-skill",
+            "planning-agent",
+        ]
+        assert visibility.hidden == ()
+        assert visibility.preloaded == ()
+        assert visibility.missing_preloads == ()
+        assert [entry.visibility_decision for entry in visibility.entries] == [
+            PermissionDecision.ASK,
+            PermissionDecision.ASK,
+            PermissionDecision.ASK,
+        ]
+
+    def test_profile_can_hide_named_skill_without_affecting_others(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        built_in_agents_dir = tmp_path / "built-in-agents"
+        config = self._config_with_built_in_root(
+            repo_root=repo_root,
+            home_dir=home_dir,
+            built_in_agents_dir=built_in_agents_dir,
+        )
+
+        _write_skill(config.project_skills_dir / "alpha" / "SKILL.md", name="alpha-skill")
+        _write_skill(config.user_skills_dir / "beta" / "SKILL.md", name="beta-skill")
+
+        profile = AgentProfile(
+            name="reviewer",
+            description="Reviewer profile.",
+            permission_policy=AgentPermissionPolicy(
+                skills=SkillPermissionPolicy(
+                    rules=(SkillPermissionRule("beta-skill", PermissionDecision.DENY),),
+                )
+            ),
+        )
+
+        visibility = filter_skills_for_profile(discover_skills(config), profile)
+
+        assert [entry.name for entry in visibility.visible] == ["alpha-skill"]
+        assert [entry.name for entry in visibility.hidden] == ["beta-skill"]
+        assert visibility.hidden[0].visibility_decision is PermissionDecision.DENY
+
+    def test_profile_can_preload_visible_skills_and_report_missing_or_denied_requests(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        built_in_agents_dir = tmp_path / "built-in-agents"
+        config = self._config_with_built_in_root(
+            repo_root=repo_root,
+            home_dir=home_dir,
+            built_in_agents_dir=built_in_agents_dir,
+        )
+
+        _write_skill(
+            config.built_in_skills_dir / "planning-agent" / "SKILL.md",
+            name="planning-agent",
+        )
+        _write_skill(
+            config.project_skills_dir / "designing-agent" / "SKILL.md",
+            name="designing-agent",
+        )
+
+        profile = AgentProfile(
+            name="designer",
+            description="Designer profile.",
+            preloaded_skills=("planning-agent", "designing-agent", "missing-skill"),
+            permission_policy=AgentPermissionPolicy(
+                skills=SkillPermissionPolicy(
+                    rules=(SkillPermissionRule("designing-agent", PermissionDecision.DENY),),
+                )
+            ),
+        )
+
+        visibility = filter_skills_for_profile(discover_skills(config), profile)
+
+        assert [entry.name for entry in visibility.preloaded] == ["planning-agent"]
+        assert [entry.name for entry in visibility.hidden] == ["designing-agent"]
+        assert visibility.hidden[0].requested_preload is True
+        assert visibility.hidden[0].preloaded is False
+        assert [item.to_dict() for item in visibility.missing_preloads] == [
+            {"name": "missing-skill", "reason": "not_discovered"},
+        ]
+
+    def test_filtering_uses_selected_duplicate_winner_after_precedence_resolution(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        built_in_agents_dir = tmp_path / "built-in-agents"
+        config = self._config_with_built_in_root(
+            repo_root=repo_root,
+            home_dir=home_dir,
+            built_in_agents_dir=built_in_agents_dir,
+        )
+
+        _write_skill(
+            config.built_in_skills_dir / "planner" / "SKILL.md",
+            name="shared-skill",
+            description="built-in version",
+        )
+        _write_skill(
+            config.user_skills_dir / "planner" / "SKILL.md",
+            name="shared-skill",
+            description="user version",
+        )
+        _write_skill(
+            config.project_skills_dir / "planner" / "SKILL.md",
+            name="shared-skill",
+            description="project version",
+        )
+
+        visibility = filter_skills_for_profile(
+            discover_skills(config),
+            AgentProfile(
+                name="planner",
+                description="Planner profile.",
+                permission_policy=AgentPermissionPolicy(
+                    skills=SkillPermissionPolicy(default=PermissionDecision.DENY)
+                ),
+            ),
+        )
+
+        assert [entry.name for entry in visibility.hidden] == ["shared-skill"]
+        assert visibility.hidden[0].scope == "project"
+        assert visibility.hidden[0].path == (
+            config.project_skills_dir / "planner" / "SKILL.md"
+        ).resolve()
+        assert [skill.scope for skill in visibility.shadowed] == ["user", "built_in"]
+
+    def test_profile_can_allow_named_skills_when_default_visibility_is_denied(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        built_in_agents_dir = tmp_path / "built-in-agents"
+        config = self._config_with_built_in_root(
+            repo_root=repo_root,
+            home_dir=home_dir,
+            built_in_agents_dir=built_in_agents_dir,
+        )
+
+        _write_skill(config.project_skills_dir / "alpha" / "SKILL.md", name="alpha-skill")
+        _write_skill(config.user_skills_dir / "beta" / "SKILL.md", name="beta-skill")
+        _write_skill(
+            config.built_in_skills_dir / "planning-agent" / "SKILL.md",
+            name="planning-agent",
+        )
+
+        profile = AgentProfile(
+            name="custom",
+            description="Custom profile.",
+            permission_policy=AgentPermissionPolicy(
+                skills=SkillPermissionPolicy(
+                    default=PermissionDecision.DENY,
+                    rules=(
+                        SkillPermissionRule("alpha-skill", PermissionDecision.ALLOW),
+                        SkillPermissionRule("planning-agent", PermissionDecision.ALLOW),
+                    ),
+                )
+            ),
+        )
+
+        visibility = filter_skills_for_profile(discover_skills(config), profile)
+
+        assert [entry.name for entry in visibility.visible] == [
+            "alpha-skill",
+            "planning-agent",
+        ]
+        assert [entry.name for entry in visibility.hidden] == ["beta-skill"]
+        assert [entry.scope for entry in visibility.visible] == ["project", "built_in"]

@@ -31,6 +31,10 @@ def _valid_manifest_payload() -> dict[str, object]:
                     {"tool": "rg", "decision": "allow"},
                 ]
             },
+            "skills": {
+                "default": "deny",
+                "rules": [{"skill": "planning-agent", "decision": "allow"}],
+            },
             "filesystem": {
                 "rules": [
                     {
@@ -67,6 +71,14 @@ class TestAgentManifestParsing:
         assert manifest.model_override == "gpt-5.4"
         assert manifest.permission_policy.evaluate_tool("shell") is PermissionDecision.DENY
         assert manifest.permission_policy.evaluate_tool("rg") is PermissionDecision.ALLOW
+        assert (
+            manifest.permission_policy.evaluate_skill("planning-agent")
+            is PermissionDecision.ALLOW
+        )
+        assert (
+            manifest.permission_policy.evaluate_skill("designing-agent")
+            is PermissionDecision.DENY
+        )
         assert (
             manifest.permission_policy.evaluate_filesystem(
                 tmp_path / "workspace" / "note.md",
@@ -170,6 +182,7 @@ class TestAgentManifestParsing:
         assert profile.cli_override == (tmp_path / "bin" / "project-planner").resolve()
         assert profile.model_override == "gpt-5.4"
         assert profile.permission_policy.evaluate_tool("shell") is PermissionDecision.DENY
+        assert profile.permission_policy.evaluate_skill("planning-agent") is PermissionDecision.ALLOW
         assert profile.preloaded_skills == ("planning-agent", "designing-agent")
         assert profile.metadata == {"owner": "project", "priority": 2}
 

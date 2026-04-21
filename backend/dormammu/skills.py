@@ -6,7 +6,10 @@ from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Any, Mapping
 
+from dormammu.agent.permissions import PermissionDecision
+
 if TYPE_CHECKING:
+    from dormammu.agent.profiles import AgentProfile
     from dormammu.config import AppConfig
 
 
@@ -202,6 +205,103 @@ class SkillDiscovery:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class MissingSkillPreload:
+    name: str
+    reason: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "name": self.name,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FilteredSkillEntry:
+    discovered: DiscoveredSkill
+    visibility_decision: PermissionDecision
+    requested_preload: bool = False
+
+    @property
+    def name(self) -> str:
+        return self.discovered.name
+
+    @property
+    def scope(self) -> str:
+        return self.discovered.scope
+
+    @property
+    def path(self) -> Path:
+        return self.discovered.path
+
+    @property
+    def visible(self) -> bool:
+        return self.visibility_decision is not PermissionDecision.DENY
+
+    @property
+    def preloaded(self) -> bool:
+        return self.visible and self.requested_preload
+
+    def to_dict(self) -> dict[str, object]:
+        payload = self.discovered.to_dict()
+        payload.update(
+            {
+                "visibility_decision": self.visibility_decision.value,
+                "visible": self.visible,
+                "requested_preload": self.requested_preload,
+                "preloaded": self.preloaded,
+            }
+        )
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileSkillVisibility:
+    profile_name: str
+    profile_source: str
+    default_decision: PermissionDecision
+    entries: tuple[FilteredSkillEntry, ...]
+    shadowed: tuple[DiscoveredSkill, ...]
+    missing_preloads: tuple[MissingSkillPreload, ...] = ()
+
+    @property
+    def visible(self) -> tuple[FilteredSkillEntry, ...]:
+        return tuple(entry for entry in self.entries if entry.visible)
+
+    @property
+    def hidden(self) -> tuple[FilteredSkillEntry, ...]:
+        return tuple(entry for entry in self.entries if not entry.visible)
+
+    @property
+    def preloaded(self) -> tuple[FilteredSkillEntry, ...]:
+        return tuple(entry for entry in self.entries if entry.preloaded)
+
+    @property
+    def visible_definitions(self) -> tuple[LoadedSkillDefinition, ...]:
+        return tuple(entry.discovered.definition for entry in self.visible)
+
+    @property
+    def preloaded_definitions(self) -> tuple[LoadedSkillDefinition, ...]:
+        return tuple(entry.discovered.definition for entry in self.preloaded)
+
+    def visible_by_name(self) -> dict[str, FilteredSkillEntry]:
+        return {entry.name: entry for entry in self.visible}
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "profile_name": self.profile_name,
+            "profile_source": self.profile_source,
+            "default_decision": self.default_decision.value,
+            "entries": [entry.to_dict() for entry in self.entries],
+            "visible": [entry.to_dict() for entry in self.visible],
+            "hidden": [entry.to_dict() for entry in self.hidden],
+            "preloaded": [entry.to_dict() for entry in self.preloaded],
+            "missing_preloads": [item.to_dict() for item in self.missing_preloads],
+            "shadowed": [skill.to_dict() for skill in self.shadowed],
+        }
+
+
 def load_skill_document(path: Path) -> SkillDocument:
     normalized_path = path.resolve()
     if normalized_path.name != SKILL_DOCUMENT_FILENAME:
@@ -369,6 +469,36 @@ def discover_skills(config: "AppConfig") -> SkillDiscovery:
         candidates=candidates,
         selected=selected,
         shadowed=shadowed,
+    )
+
+
+def filter_skills_for_profile(
+    discovery: SkillDiscovery,
+    profile: "AgentProfile",
+) -> ProfileSkillVisibility:
+    requested_preloads = _normalize_requested_preloads(profile.preloaded_skills)
+    requested_preload_names = {name for name in requested_preloads}
+    selected_by_name = discovery.selected_by_name()
+    entries = tuple(
+        FilteredSkillEntry(
+            discovered=discovered,
+            visibility_decision=profile.permission_policy.evaluate_skill(discovered.name),
+            requested_preload=discovered.name in requested_preload_names,
+        )
+        for discovered in discovery.selected
+    )
+    missing_preloads = tuple(
+        MissingSkillPreload(name=name, reason="not_discovered")
+        for name in requested_preloads
+        if name not in selected_by_name
+    )
+    return ProfileSkillVisibility(
+        profile_name=profile.name,
+        profile_source=profile.source,
+        default_decision=profile.permission_policy.skills.default,
+        entries=entries,
+        shadowed=discovery.shadowed,
+        missing_preloads=missing_preloads,
     )
 
 
@@ -571,3 +701,12 @@ def _validate_unique_scope_per_skill_name(
                 f"{name!r} in {contender.scope} scope: {existing_path} and {contender.path}"
             )
         seen_scopes[contender.scope] = contender.path
+
+
+def _normalize_requested_preloads(values: tuple[str, ...]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for value in values:
+        candidate = value.strip()
+        if candidate and candidate not in normalized:
+            normalized.append(candidate)
+    return tuple(normalized)

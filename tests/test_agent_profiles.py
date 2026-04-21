@@ -71,6 +71,7 @@ class TestBuiltInProfiles:
         assert profile.model_override is None
         assert profile.resolve_cli(None) is None
         assert profile.permission_policy.tools.default is PermissionDecision.ASK
+        assert profile.permission_policy.skills.default is PermissionDecision.ASK
         assert profile.permission_policy.filesystem.default is PermissionDecision.ASK
         assert profile.permission_policy.network.default is PermissionDecision.ASK
         assert profile.worktree_policy.default is PermissionDecision.ASK
@@ -84,10 +85,12 @@ class TestBuiltInProfiles:
             assert profile.name == role
             assert profile.source == "built_in"
             assert profile.permission_policy.tools.default is PermissionDecision.ASK
+            assert profile.permission_policy.skills.default is PermissionDecision.ASK
             assert profile.permission_policy.filesystem.default is PermissionDecision.ASK
             assert profile.permission_policy.network.default is PermissionDecision.ASK
             assert profile.permission_policy.worktree.default is PermissionDecision.ASK
             assert profile.permission_policy.tools.rules == ()
+            assert profile.permission_policy.skills.rules == ()
             assert profile.permission_policy.filesystem.rules == ()
             assert profile.permission_policy.network.rules == ()
             assert profile.permission_policy.worktree.rules == ()
@@ -122,6 +125,7 @@ class TestProfileNormalization:
                 permission_policy=parse_permission_policy_override(
                     {
                         "tools": {"rules": [{"tool": "shell", "decision": "deny"}]},
+                        "skills": {"default": "deny"},
                         "network": "deny",
                     },
                     config_root=None,
@@ -135,6 +139,7 @@ class TestProfileNormalization:
 
         assert profile.source == "configured"
         assert profile.permission_policy.evaluate_tool("shell") is PermissionDecision.DENY
+        assert profile.permission_policy.skills.default is PermissionDecision.DENY
         assert profile.permission_policy.network.default is PermissionDecision.DENY
         assert profile.permission_policy.filesystem.default is PermissionDecision.ASK
 

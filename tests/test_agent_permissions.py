@@ -15,6 +15,9 @@ from dormammu.agent.permissions import (
     NetworkPermissionPolicyOverride,
     NetworkPermissionRule,
     PermissionDecision,
+    SkillPermissionPolicy,
+    SkillPermissionPolicyOverride,
+    SkillPermissionRule,
     ToolPermissionPolicy,
     ToolPermissionPolicyOverride,
     ToolPermissionRule,
@@ -36,6 +39,10 @@ class TestAgentPermissionPolicy:
                     ToolPermissionRule("deploy", PermissionDecision.DENY),
                 ),
             ),
+            skills=SkillPermissionPolicy(
+                default=PermissionDecision.ASK,
+                rules=(SkillPermissionRule("planning-agent", PermissionDecision.DENY),),
+            ),
             network=NetworkPermissionPolicy(
                 default=PermissionDecision.DENY,
                 rules=(NetworkPermissionRule("api.example.com", PermissionDecision.ASK),),
@@ -48,6 +55,8 @@ class TestAgentPermissionPolicy:
 
         assert policy.evaluate_tool("shell") is PermissionDecision.ALLOW
         assert policy.evaluate_tool("unknown") is PermissionDecision.ASK
+        assert policy.evaluate_skill("planning-agent") is PermissionDecision.DENY
+        assert policy.evaluate_skill("designing-agent") is PermissionDecision.ASK
         assert policy.evaluate_network("api.example.com") is PermissionDecision.ASK
         assert policy.evaluate_network("other.example.com") is PermissionDecision.DENY
         assert policy.evaluate_worktree("create") is PermissionDecision.ALLOW
@@ -137,6 +146,10 @@ class TestAgentPermissionPolicy:
                 default=PermissionDecision.ASK,
                 rules=(ToolPermissionRule("shell", PermissionDecision.ALLOW),),
             ),
+            skills=SkillPermissionPolicy(
+                default=PermissionDecision.ASK,
+                rules=(SkillPermissionRule("planning-agent", PermissionDecision.ALLOW),),
+            ),
             filesystem=FilesystemPermissionPolicy(default=PermissionDecision.DENY),
             network=NetworkPermissionPolicy(default=PermissionDecision.DENY),
             worktree=WorktreePermissionPolicy(default=PermissionDecision.ASK),
@@ -144,6 +157,10 @@ class TestAgentPermissionPolicy:
         override = AgentPermissionPolicyOverride(
             tools=ToolPermissionPolicyOverride(
                 rules=(ToolPermissionRule("shell", PermissionDecision.DENY),)
+            ),
+            skills=SkillPermissionPolicyOverride(
+                default=PermissionDecision.DENY,
+                rules=(SkillPermissionRule("designing-agent", PermissionDecision.ALLOW),),
             ),
             filesystem=FilesystemPermissionPolicyOverride(default=PermissionDecision.ASK),
             network=NetworkPermissionPolicyOverride(
@@ -155,6 +172,9 @@ class TestAgentPermissionPolicy:
         merged = merge_permission_policy(base, override)
 
         assert merged.evaluate_tool("shell") is PermissionDecision.DENY
+        assert merged.evaluate_skill("planning-agent") is PermissionDecision.ALLOW
+        assert merged.evaluate_skill("designing-agent") is PermissionDecision.ALLOW
+        assert merged.evaluate_skill("reviewer-custom") is PermissionDecision.DENY
         assert merged.evaluate_filesystem("/tmp/example", access="read") is PermissionDecision.ASK
         assert merged.evaluate_network("api.example.com") is PermissionDecision.ALLOW
         assert merged.evaluate_network("other.example.com") is PermissionDecision.DENY
@@ -167,6 +187,10 @@ class TestAgentPermissionPolicy:
         override = parse_permission_policy_override(
             {
                 "tools": "deny",
+                "skills": {
+                    "default": "deny",
+                    "rules": [{"skill": "planning-agent", "decision": "allow"}],
+                },
                 "filesystem": {
                     "default": "ask",
                     "rules": [
@@ -187,6 +211,9 @@ class TestAgentPermissionPolicy:
 
         assert override.tools is not None
         assert override.tools.default is PermissionDecision.DENY
+        assert override.skills is not None
+        assert override.skills.default is PermissionDecision.DENY
+        assert override.skills.rules[0].skill == "planning-agent"
         assert override.filesystem is not None
         assert override.filesystem.rules[0].path == (tmp_path / "sandbox").resolve()
         assert override.network is not None

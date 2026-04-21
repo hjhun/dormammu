@@ -152,6 +152,15 @@ class ToolPermissionRule:
 
 
 @dataclass(frozen=True, slots=True)
+class SkillPermissionRule:
+    skill: str
+    decision: PermissionDecision
+
+    def to_dict(self) -> dict[str, str]:
+        return {"skill": self.skill, "decision": self.decision.value}
+
+
+@dataclass(frozen=True, slots=True)
 class NetworkPermissionRule:
     host: str
     decision: PermissionDecision
@@ -198,6 +207,25 @@ class ToolPermissionPolicy:
         normalized_tool = tool.strip()
         for rule in reversed(self.rules):
             if rule.tool == normalized_tool:
+                return rule.decision
+        return self.default
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "default": self.default.value,
+            "rules": [rule.to_dict() for rule in self.rules],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SkillPermissionPolicy:
+    default: PermissionDecision = PermissionDecision.ASK
+    rules: tuple[SkillPermissionRule, ...] = ()
+
+    def evaluate(self, skill: str) -> PermissionDecision:
+        normalized_skill = skill.strip()
+        for rule in reversed(self.rules):
+            if rule.skill == normalized_skill:
                 return rule.decision
         return self.default
 
@@ -287,12 +315,16 @@ class WorktreePermissionPolicy:
 @dataclass(frozen=True, slots=True)
 class AgentPermissionPolicy:
     tools: ToolPermissionPolicy = field(default_factory=ToolPermissionPolicy)
+    skills: SkillPermissionPolicy = field(default_factory=SkillPermissionPolicy)
     filesystem: FilesystemPermissionPolicy = field(default_factory=FilesystemPermissionPolicy)
     network: NetworkPermissionPolicy = field(default_factory=NetworkPermissionPolicy)
     worktree: WorktreePermissionPolicy = field(default_factory=WorktreePermissionPolicy)
 
     def evaluate_tool(self, tool: str) -> PermissionDecision:
         return self.tools.evaluate(tool)
+
+    def evaluate_skill(self, skill: str) -> PermissionDecision:
+        return self.skills.evaluate(skill)
 
     def evaluate_filesystem(
         self,
@@ -316,6 +348,7 @@ class AgentPermissionPolicy:
     def to_dict(self) -> dict[str, object]:
         return {
             "tools": self.tools.to_dict(),
+            "skills": self.skills.to_dict(),
             "filesystem": self.filesystem.to_dict(),
             "network": self.network.to_dict(),
             "worktree": self.worktree.to_dict(),
@@ -326,6 +359,18 @@ class AgentPermissionPolicy:
 class ToolPermissionPolicyOverride:
     default: PermissionDecision | None = None
     rules: tuple[ToolPermissionRule, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "default": self.default.value if self.default is not None else None,
+            "rules": [rule.to_dict() for rule in self.rules],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SkillPermissionPolicyOverride:
+    default: PermissionDecision | None = None
+    rules: tuple[SkillPermissionRule, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -373,6 +418,7 @@ class WorktreePermissionPolicyOverride:
 @dataclass(frozen=True, slots=True)
 class AgentPermissionPolicyOverride:
     tools: ToolPermissionPolicyOverride | None = None
+    skills: SkillPermissionPolicyOverride | None = None
     filesystem: FilesystemPermissionPolicyOverride | None = None
     network: NetworkPermissionPolicyOverride | None = None
     worktree: WorktreePermissionPolicyOverride | None = None
@@ -380,6 +426,7 @@ class AgentPermissionPolicyOverride:
     def is_empty(self) -> bool:
         return (
             self.tools is None
+            and self.skills is None
             and self.filesystem is None
             and self.network is None
             and self.worktree is None
@@ -388,6 +435,7 @@ class AgentPermissionPolicyOverride:
     def to_dict(self) -> dict[str, object]:
         return {
             "tools": self.tools.to_dict() if self.tools is not None else None,
+            "skills": self.skills.to_dict() if self.skills is not None else None,
             "filesystem": (
                 self.filesystem.to_dict() if self.filesystem is not None else None
             ),
@@ -406,6 +454,7 @@ def merge_permission_policy_override(
         return base
     return AgentPermissionPolicyOverride(
         tools=_merge_tool_policy_override(base.tools, override.tools),
+        skills=_merge_skill_policy_override(base.skills, override.skills),
         filesystem=_merge_filesystem_policy_override(base.filesystem, override.filesystem),
         network=_merge_network_policy_override(base.network, override.network),
         worktree=_merge_worktree_policy_override(base.worktree, override.worktree),
@@ -426,6 +475,16 @@ def merge_permission_policy(
                 else base.tools.default
             ),
             rules=base.tools.rules + (override.tools.rules if override.tools is not None else ()),
+        ),
+        skills=SkillPermissionPolicy(
+            default=(
+                override.skills.default
+                if override.skills is not None and override.skills.default is not None
+                else base.skills.default
+            ),
+            rules=base.skills.rules + (
+                override.skills.rules if override.skills is not None else ()
+            ),
         ),
         filesystem=FilesystemPermissionPolicy(
             default=(
@@ -469,6 +528,20 @@ def _merge_tool_policy_override(
     if override is None:
         return base
     return ToolPermissionPolicyOverride(
+        default=override.default if override.default is not None else base.default,
+        rules=base.rules + override.rules,
+    )
+
+
+def _merge_skill_policy_override(
+    base: SkillPermissionPolicyOverride | None,
+    override: SkillPermissionPolicyOverride | None,
+) -> SkillPermissionPolicyOverride | None:
+    if base is None:
+        return override
+    if override is None:
+        return base
+    return SkillPermissionPolicyOverride(
         default=override.default if override.default is not None else base.default,
         rules=base.rules + override.rules,
     )
@@ -526,7 +599,7 @@ def parse_permission_policy_override(
     payload = _coerce_mapping(value, field_name=field_name, source=source)
     _reject_unknown_keys(
         payload,
-        allowed_keys={"tools", "filesystem", "network", "worktree"},
+        allowed_keys={"tools", "skills", "filesystem", "network", "worktree"},
         field_name=field_name,
         source=source,
     )
@@ -535,6 +608,11 @@ def parse_permission_policy_override(
         tools=_parse_tool_policy_override(
             payload.get("tools"),
             field_name=f"{field_name}.tools",
+            source=source,
+        ),
+        skills=_parse_skill_policy_override(
+            payload.get("skills"),
+            field_name=f"{field_name}.skills",
             source=source,
         ),
         filesystem=_parse_filesystem_policy_override(
@@ -606,6 +684,65 @@ def _parse_tool_policy_override(
         )
     default = payload.get("default")
     return ToolPermissionPolicyOverride(
+        default=(
+            _normalize_decision(default, field_name=f"{field_name}.default", source=source)
+            if default is not None
+            else None
+        ),
+        rules=tuple(rules),
+    )
+
+
+def _parse_skill_policy_override(
+    value: Any,
+    *,
+    field_name: str,
+    source: str,
+) -> SkillPermissionPolicyOverride | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return SkillPermissionPolicyOverride(
+            default=_normalize_decision(value, field_name=field_name, source=source)
+        )
+    payload = _coerce_mapping(value, field_name=field_name, source=source)
+    _reject_unknown_keys(
+        payload,
+        allowed_keys={"default", "rules"},
+        field_name=field_name,
+        source=source,
+    )
+    rules: list[SkillPermissionRule] = []
+    for index, raw_rule in enumerate(
+        _coerce_rule_list(payload.get("rules"), field_name=f"{field_name}.rules", source=source)
+    ):
+        rule_payload = _coerce_mapping(
+            raw_rule,
+            field_name=f"{field_name}.rules[{index}]",
+            source=source,
+        )
+        _reject_unknown_keys(
+            rule_payload,
+            allowed_keys={"skill", "decision"},
+            field_name=f"{field_name}.rules[{index}]",
+            source=source,
+        )
+        rules.append(
+            SkillPermissionRule(
+                skill=_normalize_non_empty_string(
+                    rule_payload.get("skill"),
+                    field_name=f"{field_name}.rules[{index}].skill",
+                    source=source,
+                ),
+                decision=_normalize_decision(
+                    rule_payload.get("decision"),
+                    field_name=f"{field_name}.rules[{index}].decision",
+                    source=source,
+                ),
+            )
+        )
+    default = payload.get("default")
+    return SkillPermissionPolicyOverride(
         default=(
             _normalize_decision(default, field_name=f"{field_name}.default", source=source)
             if default is not None
