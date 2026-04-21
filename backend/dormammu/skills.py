@@ -4,7 +4,10 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:
+    from dormammu.config import AppConfig
 
 
 SKILL_DOCUMENT_FILENAME = "SKILL.md"
@@ -20,6 +23,10 @@ SKILL_SOURCE_PRECEDENCE: dict[str, int] = {
 
 class SkillDocumentError(RuntimeError):
     """Raised when a skill document is malformed."""
+
+
+class SkillDiscoveryError(RuntimeError):
+    """Raised when discovered skills cannot be resolved deterministically."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +121,84 @@ class LoadedSkillDefinition:
             "source_path": str(self.source_path),
             "content": self.content.to_dict(),
             "metadata": dict(self.document.metadata),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SkillSearchRoot:
+    scope: str
+    path: Path
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "scope": self.scope,
+            "path": str(self.path),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SkillCandidate:
+    scope: str
+    root_dir: Path
+    path: Path
+
+    @property
+    def relative_path(self) -> str:
+        return self.path.relative_to(self.root_dir).as_posix()
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "scope": self.scope,
+            "root_dir": str(self.root_dir),
+            "path": str(self.path),
+            "relative_path": self.relative_path,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveredSkill:
+    definition: LoadedSkillDefinition
+    candidate: SkillCandidate
+
+    @property
+    def name(self) -> str:
+        return self.definition.name
+
+    @property
+    def scope(self) -> str:
+        return self.candidate.scope
+
+    @property
+    def path(self) -> Path:
+        return self.candidate.path
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "scope": self.scope,
+            "path": str(self.path),
+            "relative_path": self.candidate.relative_path,
+            "source_precedence": self.definition.source_precedence,
+            "description": self.definition.description,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SkillDiscovery:
+    search_roots: tuple[SkillSearchRoot, ...]
+    candidates: tuple[SkillCandidate, ...]
+    selected: tuple[DiscoveredSkill, ...]
+    shadowed: tuple[DiscoveredSkill, ...]
+
+    def selected_by_name(self) -> dict[str, DiscoveredSkill]:
+        return {skill.name: skill for skill in self.selected}
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "search_roots": [root.to_dict() for root in self.search_roots],
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "selected": [skill.to_dict() for skill in self.selected],
+            "shadowed": [skill.to_dict() for skill in self.shadowed],
         }
 
 
@@ -242,6 +327,49 @@ def skill_source_precedence(scope: str) -> int:
         source_name="skill source precedence",
     )
     return SKILL_SOURCE_PRECEDENCE[normalized_scope]
+
+
+def skill_search_roots(config: "AppConfig") -> tuple[SkillSearchRoot, ...]:
+    return (
+        SkillSearchRoot(scope="project", path=config.project_skills_dir),
+        SkillSearchRoot(scope="user", path=config.user_skills_dir),
+        SkillSearchRoot(scope="built_in", path=config.built_in_skills_dir),
+    )
+
+
+def enumerate_skill_candidates(
+    config: "AppConfig",
+) -> tuple[SkillCandidate, ...]:
+    candidates: list[SkillCandidate] = []
+    for root in skill_search_roots(config):
+        if not root.path.is_dir():
+            continue
+        for path in sorted(
+            candidate.resolve()
+            for candidate in root.path.rglob(SKILL_DOCUMENT_FILENAME)
+            if candidate.is_file()
+        ):
+            candidates.append(
+                SkillCandidate(
+                    scope=root.scope,
+                    root_dir=root.path,
+                    path=path,
+                )
+            )
+    return tuple(candidates)
+
+
+def discover_skills(config: "AppConfig") -> SkillDiscovery:
+    search_roots = skill_search_roots(config)
+    candidates = enumerate_skill_candidates(config)
+    discovered = tuple(_load_discovered_skill(candidate) for candidate in candidates)
+    selected, shadowed = _resolve_skill_precedence(discovered)
+    return SkillDiscovery(
+        search_roots=search_roots,
+        candidates=candidates,
+        selected=selected,
+        shadowed=shadowed,
+    )
 
 
 def _split_frontmatter(
@@ -394,3 +522,52 @@ def _parse_metadata(
         return {}
     payload = _coerce_mapping(value, field_name=field_name, source_name=source_name)
     return dict(payload)
+
+
+def _load_discovered_skill(candidate: SkillCandidate) -> DiscoveredSkill:
+    return DiscoveredSkill(
+        definition=load_skill_definition(
+            candidate.path,
+            source_scope=candidate.scope,
+        ),
+        candidate=candidate,
+    )
+
+
+def _resolve_skill_precedence(
+    discovered_skills: tuple[DiscoveredSkill, ...],
+) -> tuple[tuple[DiscoveredSkill, ...], tuple[DiscoveredSkill, ...]]:
+    discovered_by_name: dict[str, list[DiscoveredSkill]] = {}
+    for discovered in discovered_skills:
+        discovered_by_name.setdefault(discovered.name, []).append(discovered)
+
+    selected: list[DiscoveredSkill] = []
+    shadowed: list[DiscoveredSkill] = []
+    for name in sorted(discovered_by_name):
+        contenders = sorted(
+            discovered_by_name[name],
+            key=lambda item: (
+                item.definition.source_precedence,
+                str(item.path),
+            ),
+        )
+        _validate_unique_scope_per_skill_name(name, contenders)
+        selected.append(contenders[0])
+        shadowed.extend(contenders[1:])
+
+    return tuple(selected), tuple(shadowed)
+
+
+def _validate_unique_scope_per_skill_name(
+    name: str,
+    contenders: list[DiscoveredSkill],
+) -> None:
+    seen_scopes: dict[str, Path] = {}
+    for contender in contenders:
+        existing_path = seen_scopes.get(contender.scope)
+        if existing_path is not None:
+            raise SkillDiscoveryError(
+                "Duplicate skill name "
+                f"{name!r} in {contender.scope} scope: {existing_path} and {contender.path}"
+            )
+        seen_scopes[contender.scope] = contender.path

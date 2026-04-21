@@ -83,6 +83,22 @@ def _user_agent_manifests_dir(global_home_dir: Path) -> Path:
     return (global_home_dir / USER_AGENT_MANIFESTS_DIRNAME).resolve()
 
 
+def _project_agents_dir(root: Path) -> Path:
+    return (root / "agents").resolve()
+
+
+def _user_agents_dir(global_home_dir: Path) -> Path:
+    return (global_home_dir / "agents").resolve()
+
+
+def _built_in_agents_dir() -> Path:
+    return (Path(__file__).resolve().parent / "assets" / "agents").resolve()
+
+
+def _skills_dir(agents_dir: Path) -> Path:
+    return (agents_dir / "skills").resolve()
+
+
 def _resolve_path_override(
     raw_value: str | None,
     *,
@@ -434,7 +450,7 @@ def _discover_agents_dir(
     if (global_agents_dir / "AGENTS.md").exists():
         return global_agents_dir
 
-    repo_agents_dir = root / "agents"
+    repo_agents_dir = _project_agents_dir(root)
     if (repo_agents_dir / "AGENTS.md").exists():
         return repo_agents_dir
 
@@ -611,6 +627,12 @@ class AppConfig:
     worktree: WorktreeServiceConfig
     templates_dir: Path
     agents_dir: Path
+    project_agents_dir: Path
+    user_agents_dir: Path
+    built_in_agents_dir: Path
+    project_skills_dir: Path
+    user_skills_dir: Path
+    built_in_skills_dir: Path
     project_agent_manifests_dir: Path
     user_agent_manifests_dir: Path
     config_file: Path | None
@@ -701,6 +723,12 @@ class AppConfig:
             ),
             templates_dir=asset_root / "templates",
             agents_dir=agents_dir,
+            project_agents_dir=_project_agents_dir(root),
+            user_agents_dir=_user_agents_dir(global_home_dir),
+            built_in_agents_dir=_built_in_agents_dir(),
+            project_skills_dir=_skills_dir(_project_agents_dir(root)),
+            user_skills_dir=_skills_dir(_user_agents_dir(global_home_dir)),
+            built_in_skills_dir=_skills_dir(_built_in_agents_dir()),
             project_agent_manifests_dir=_project_agent_manifests_dir(root),
             user_agent_manifests_dir=_user_agent_manifests_dir(global_home_dir),
             config_file=config_file,
@@ -801,6 +829,12 @@ class AppConfig:
             "worktree": self.worktree.to_dict(),
             "templates_dir": str(self.templates_dir),
             "agents_dir": str(self.agents_dir),
+            "project_agents_dir": str(self.project_agents_dir),
+            "user_agents_dir": str(self.user_agents_dir),
+            "built_in_agents_dir": str(self.built_in_agents_dir),
+            "project_skills_dir": str(self.project_skills_dir),
+            "user_skills_dir": str(self.user_skills_dir),
+            "built_in_skills_dir": str(self.built_in_skills_dir),
             "project_agent_manifests_dir": str(self.project_agent_manifests_dir),
             "user_agent_manifests_dir": str(self.user_agent_manifests_dir),
             "config_file": str(self.config_file) if self.config_file else None,
@@ -987,14 +1021,45 @@ def _derived_config_overrides(
 ) -> dict[str, object]:
     derived = dict(overrides)
 
+    if "repo_root" in overrides or "project_agents_dir" in overrides:
+        project_agents_dir = overrides.get("project_agents_dir")
+        if project_agents_dir is None:
+            repo_root = overrides.get("repo_root")
+            assert isinstance(repo_root, Path)
+            project_agents_dir = _project_agents_dir(repo_root)
+            derived["project_agents_dir"] = project_agents_dir
+        else:
+            assert isinstance(project_agents_dir, Path)
+
+        if "project_skills_dir" not in overrides:
+            derived["project_skills_dir"] = _skills_dir(project_agents_dir)
+
     if "repo_root" in overrides and "project_agent_manifests_dir" not in overrides:
         repo_root = overrides["repo_root"]
         assert isinstance(repo_root, Path)
         derived["project_agent_manifests_dir"] = _project_agent_manifests_dir(repo_root)
 
+    if "global_home_dir" in overrides or "user_agents_dir" in overrides:
+        user_agents_dir = overrides.get("user_agents_dir")
+        if user_agents_dir is None:
+            global_home_dir = overrides.get("global_home_dir")
+            assert isinstance(global_home_dir, Path)
+            user_agents_dir = _user_agents_dir(global_home_dir)
+            derived["user_agents_dir"] = user_agents_dir
+        else:
+            assert isinstance(user_agents_dir, Path)
+
+        if "user_skills_dir" not in overrides:
+            derived["user_skills_dir"] = _skills_dir(user_agents_dir)
+
     if "global_home_dir" in overrides and "user_agent_manifests_dir" not in overrides:
         global_home_dir = overrides["global_home_dir"]
         assert isinstance(global_home_dir, Path)
         derived["user_agent_manifests_dir"] = _user_agent_manifests_dir(global_home_dir)
+
+    if "built_in_agents_dir" in overrides and "built_in_skills_dir" not in overrides:
+        built_in_agents_dir = overrides["built_in_agents_dir"]
+        assert isinstance(built_in_agents_dir, Path)
+        derived["built_in_skills_dir"] = _skills_dir(built_in_agents_dir)
 
     return derived
