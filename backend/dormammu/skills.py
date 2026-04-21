@@ -159,6 +159,17 @@ class SkillCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class InvalidSkillCandidate:
+    candidate: SkillCandidate
+    error: str
+
+    def to_dict(self) -> dict[str, str]:
+        payload = self.candidate.to_dict()
+        payload["error"] = self.error
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
 class DiscoveredSkill:
     definition: LoadedSkillDefinition
     candidate: SkillCandidate
@@ -192,6 +203,7 @@ class SkillDiscovery:
     candidates: tuple[SkillCandidate, ...]
     selected: tuple[DiscoveredSkill, ...]
     shadowed: tuple[DiscoveredSkill, ...]
+    invalid: tuple[InvalidSkillCandidate, ...] = ()
 
     def selected_by_name(self) -> dict[str, DiscoveredSkill]:
         return {skill.name: skill for skill in self.selected}
@@ -202,6 +214,7 @@ class SkillDiscovery:
             "candidates": [candidate.to_dict() for candidate in self.candidates],
             "selected": [skill.to_dict() for skill in self.selected],
             "shadowed": [skill.to_dict() for skill in self.shadowed],
+            "invalid": [candidate.to_dict() for candidate in self.invalid],
         }
 
 
@@ -299,6 +312,133 @@ class ProfileSkillVisibility:
             "preloaded": [entry.to_dict() for entry in self.preloaded],
             "missing_preloads": [item.to_dict() for item in self.missing_preloads],
             "shadowed": [skill.to_dict() for skill in self.shadowed],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSkillResolution:
+    role: str
+    profile: "AgentProfile"
+    discovery: SkillDiscovery
+    visibility: ProfileSkillVisibility
+
+    @property
+    def custom_selected(self) -> tuple[DiscoveredSkill, ...]:
+        return tuple(
+            skill for skill in self.discovery.selected if skill.scope in {"project", "user"}
+        )
+
+    @property
+    def custom_visible(self) -> tuple[FilteredSkillEntry, ...]:
+        return tuple(
+            entry for entry in self.visibility.visible if entry.scope in {"project", "user"}
+        )
+
+    @property
+    def summary(self) -> dict[str, object]:
+        return {
+            "role": self.role,
+            "profile_name": self.profile.name,
+            "profile_source": self.profile.source,
+            "candidate_count": len(self.discovery.candidates),
+            "selected_count": len(self.discovery.selected),
+            "invalid_count": len(self.discovery.invalid),
+            "visible_count": len(self.visibility.visible),
+            "hidden_count": len(self.visibility.hidden),
+            "preloaded_count": len(self.visibility.preloaded),
+            "missing_preload_count": len(self.visibility.missing_preloads),
+            "shadowed_count": len(self.visibility.shadowed),
+            "custom_selected_count": len(self.custom_selected),
+            "custom_visible_count": len(self.custom_visible),
+            "interesting_for_operator": self.is_interesting_for_operator,
+        }
+
+    @property
+    def is_interesting_for_operator(self) -> bool:
+        return any(
+            (
+                self.custom_selected,
+                self.visibility.hidden,
+                self.visibility.preloaded,
+                self.visibility.missing_preloads,
+                self.visibility.shadowed,
+            )
+        )
+
+    def prompt_lines(self) -> tuple[str, ...]:
+        if not self.is_interesting_for_operator:
+            return ()
+
+        lines = [
+            (
+                "Runtime skills for "
+                f"{self.role} / {self.profile.name} ({self.profile.source} profile):"
+            ),
+        ]
+        if self.custom_visible:
+            lines.append(
+                "Visible project/user skills: "
+                + ", ".join(
+                    f"{entry.name} [{entry.scope}]"
+                    for entry in self.custom_visible
+                )
+            )
+        if self.visibility.preloaded:
+            lines.append(
+                "Preloaded skills: "
+                + ", ".join(entry.name for entry in self.visibility.preloaded)
+            )
+        if self.visibility.hidden:
+            lines.append(
+                "Hidden by profile policy: "
+                + ", ".join(entry.name for entry in self.visibility.hidden)
+            )
+        if self.visibility.missing_preloads:
+            lines.append(
+                "Missing requested preloads: "
+                + ", ".join(item.name for item in self.visibility.missing_preloads)
+            )
+        if self.visibility.shadowed:
+            lines.append(
+                "Shadowed by precedence: "
+                + ", ".join(
+                    f"{skill.name} [{skill.scope}]"
+                    for skill in self.visibility.shadowed
+                )
+            )
+        return tuple(lines)
+
+    def log_line(self) -> str | None:
+        if not self.is_interesting_for_operator:
+            return None
+        summary = self.summary
+        return (
+            "runtime skills: "
+            f"visible={summary['visible_count']} "
+            f"custom={summary['custom_visible_count']} "
+            f"hidden={summary['hidden_count']} "
+            f"preloaded={summary['preloaded_count']} "
+            f"missing_preloads={summary['missing_preload_count']} "
+            f"shadowed={summary['shadowed_count']}"
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        runtime_metadata = self.profile.metadata.get("dormammu_runtime")
+        return {
+            "role": self.role,
+            "profile": {
+                "name": self.profile.name,
+                "source": self.profile.source,
+                "description": self.profile.description,
+                "preloaded_skills": list(self.profile.preloaded_skills),
+                "runtime_metadata": (
+                    dict(runtime_metadata) if isinstance(runtime_metadata, Mapping) else {}
+                ),
+            },
+            "summary": self.summary,
+            "discovery": self.discovery.to_dict(),
+            "visibility": self.visibility.to_dict(),
+            "prompt_lines": list(self.prompt_lines()),
         }
 
 
@@ -460,15 +600,32 @@ def enumerate_skill_candidates(
 
 
 def discover_skills(config: "AppConfig") -> SkillDiscovery:
+    return _discover_skills(config, ignore_invalid=False)
+
+
+def _discover_skills(
+    config: "AppConfig",
+    *,
+    ignore_invalid: bool,
+) -> SkillDiscovery:
     search_roots = skill_search_roots(config)
     candidates = enumerate_skill_candidates(config)
-    discovered = tuple(_load_discovered_skill(candidate) for candidate in candidates)
+    discovered: list[DiscoveredSkill] = []
+    invalid: list[InvalidSkillCandidate] = []
+    for candidate in candidates:
+        try:
+            discovered.append(_load_discovered_skill(candidate))
+        except SkillDocumentError as exc:
+            if not ignore_invalid:
+                raise
+            invalid.append(InvalidSkillCandidate(candidate=candidate, error=str(exc)))
     selected, shadowed = _resolve_skill_precedence(discovered)
     return SkillDiscovery(
         search_roots=search_roots,
         candidates=candidates,
         selected=selected,
         shadowed=shadowed,
+        invalid=tuple(invalid),
     )
 
 
@@ -500,6 +657,45 @@ def filter_skills_for_profile(
         shadowed=discovery.shadowed,
         missing_preloads=missing_preloads,
     )
+
+
+def resolve_runtime_skill_resolution(
+    config: "AppConfig",
+    *,
+    role: str,
+    profile: "AgentProfile" | None = None,
+) -> RuntimeSkillResolution:
+    effective_profile = profile or config.resolve_agent_profile(role)
+    discovery = _discover_skills(config, ignore_invalid=True)
+    visibility = filter_skills_for_profile(discovery, effective_profile)
+    return RuntimeSkillResolution(
+        role=role,
+        profile=effective_profile,
+        discovery=discovery,
+        visibility=visibility,
+    )
+
+
+def runtime_skill_prompt_lines(payload: Mapping[str, Any] | None) -> tuple[str, ...]:
+    if not isinstance(payload, Mapping):
+        return ()
+    prompt_lines = payload.get("prompt_lines")
+    if not isinstance(prompt_lines, list):
+        return ()
+    return tuple(
+        line for line in prompt_lines if isinstance(line, str) and line.strip()
+    )
+
+
+def runtime_skill_summary(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        return {}
+    summary = payload.get("summary")
+    if not isinstance(summary, Mapping):
+        return {}
+    return {
+        key: value for key, value in summary.items() if isinstance(key, str)
+    }
 
 
 def _split_frontmatter(

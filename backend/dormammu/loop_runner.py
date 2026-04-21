@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 from typing import TextIO
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import AgentRunRequest, CliAdapter
@@ -14,6 +14,7 @@ from dormammu.agent.profiles import AgentProfile
 from dormammu.config import AppConfig
 from dormammu.continuation import build_continuation_prompt
 from dormammu.runtime_hooks import RuntimeHookBlocked, RuntimeHookController
+from dormammu.skills import runtime_skill_summary
 from dormammu.state import StateRepository
 from dormammu.supervisor import Supervisor, SupervisorReport, SupervisorRequest
 from dormammu.worktree import ManagedWorktree, WorktreeOwner, WorktreeService, WorktreeServiceError
@@ -292,6 +293,10 @@ class LoopRunner:
         session_id = session_state.get("session_id")
         if not isinstance(session_id, str) or not session_id.strip():
             session_id = None
+        runtime_skill_state = runtime_repository.record_runtime_skill_resolution(
+            role=request.agent_role,
+            profile=profile,
+        )
         hook_controller = RuntimeHookController(
             self.config,
             repository=runtime_repository,
@@ -507,6 +512,7 @@ class LoopRunner:
                         "run_label": request.run_label,
                         "start_attempt": start_attempt,
                     },
+                    metadata={"runtime_skills": runtime_skill_summary(runtime_skill_state.get("latest"))},
                 )
             except RuntimeHookBlocked as exc:
                 next_action = f"Stage start hook blocked execution: {exc}"
@@ -570,6 +576,7 @@ class LoopRunner:
                 repository=runtime_repository,
                 request=request,
                 profile=profile,
+                runtime_skill_state=runtime_skill_state,
                 attempt_number=attempt_number,
                 retries_used=retries_used,
             )
@@ -831,6 +838,11 @@ class LoopRunner:
                 next_task=next_task,
                 original_prompt_text=request.prompt_text,
                 repo_guidance=workflow_state.get("bootstrap", {}).get("repo_guidance"),
+                runtime_skills=(
+                    workflow_state.get("runtime_skills", {}).get("latest")
+                    if isinstance(workflow_state.get("runtime_skills"), dict)
+                    else None
+                ),
                 runtime_paths_text=self.config.runtime_path_prompt(),
                 patterns_text=runtime_repository.read_patterns_text(),
                 templates_dir=self.config.templates_dir,
@@ -927,6 +939,7 @@ class LoopRunner:
         repository: StateRepository,
         request: LoopRunRequest,
         profile: AgentProfile,
+        runtime_skill_state: Mapping[str, Any] | None,
         attempt_number: int,
         retries_used: int,
     ) -> None:
@@ -942,6 +955,21 @@ class LoopRunner:
             f"cli: {request.cli_path}",
             f"workdir: {(request.workdir or request.repo_root).resolve()}",
         ]
+        skill_summary = runtime_skill_summary(
+            runtime_skill_state.get("latest")
+            if isinstance(runtime_skill_state, Mapping)
+            else None
+        )
+        if skill_summary.get("interesting_for_operator"):
+            lines.append(
+                "runtime skills: "
+                f"visible={skill_summary.get('visible_count', 0)} "
+                f"custom={skill_summary.get('custom_visible_count', 0)} "
+                f"hidden={skill_summary.get('hidden_count', 0)} "
+                f"preloaded={skill_summary.get('preloaded_count', 0)} "
+                f"missing_preloads={skill_summary.get('missing_preload_count', 0)} "
+                f"shadowed={skill_summary.get('shadowed_count', 0)}"
+            )
         self._write_progress(lines)
         self._emit_state_snapshot(repository, "DASHBOARD.md")
         self._emit_state_snapshot(repository, "PLAN.md")

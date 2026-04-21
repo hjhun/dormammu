@@ -27,6 +27,7 @@ from dormammu.skills import (
     normalize_skill_source_scope,
     parse_skill_document_payload,
     parse_skill_document_text,
+    resolve_runtime_skill_resolution,
     skill_search_roots,
 )
 
@@ -687,3 +688,96 @@ class TestSkillFiltering:
         ]
         assert [entry.name for entry in visibility.hidden] == ["beta-skill"]
         assert [entry.scope for entry in visibility.visible] == ["project", "built_in"]
+
+
+class TestRuntimeSkillResolution:
+    def _config_with_built_in_root(
+        self,
+        *,
+        repo_root: Path,
+        home_dir: Path,
+        built_in_agents_dir: Path,
+    ) -> AppConfig:
+        config = _make_config(repo_root, home_dir)
+        return config.with_overrides(
+            built_in_agents_dir=built_in_agents_dir.resolve(),
+            built_in_skills_dir=(built_in_agents_dir / "skills").resolve(),
+        )
+
+    def test_resolution_is_quiet_when_only_built_in_visibility_applies(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        built_in_agents_dir = tmp_path / "built-in-agents"
+        config = self._config_with_built_in_root(
+            repo_root=repo_root,
+            home_dir=home_dir,
+            built_in_agents_dir=built_in_agents_dir,
+        )
+        _write_skill(
+            config.built_in_skills_dir / "planning-agent" / "SKILL.md",
+            name="planning-agent",
+        )
+
+        resolution = resolve_runtime_skill_resolution(
+            config,
+            role="planner",
+            profile=AgentProfile(name="planner", description="Planner profile."),
+        )
+
+        assert resolution.summary["custom_visible_count"] == 0
+        assert resolution.summary["interesting_for_operator"] is False
+        assert resolution.prompt_lines() == ()
+        assert resolution.log_line() is None
+
+    def test_resolution_reports_custom_and_hidden_skill_visibility(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        built_in_agents_dir = tmp_path / "built-in-agents"
+        config = self._config_with_built_in_root(
+            repo_root=repo_root,
+            home_dir=home_dir,
+            built_in_agents_dir=built_in_agents_dir,
+        )
+        _write_skill(
+            config.project_skills_dir / "designing-agent" / "SKILL.md",
+            name="designing-agent",
+        )
+        _write_skill(
+            config.user_skills_dir / "reviewer-agent" / "SKILL.md",
+            name="reviewer-agent",
+        )
+
+        resolution = resolve_runtime_skill_resolution(
+            config,
+            role="designer",
+            profile=AgentProfile(
+                name="designer",
+                description="Designer profile.",
+                preloaded_skills=("designing-agent", "missing-skill"),
+                permission_policy=AgentPermissionPolicy(
+                    skills=SkillPermissionPolicy(
+                        rules=(SkillPermissionRule("reviewer-agent", PermissionDecision.DENY),),
+                    )
+                ),
+            ),
+        )
+
+        assert resolution.summary["custom_visible_count"] == 1
+        assert resolution.summary["hidden_count"] == 1
+        assert resolution.summary["preloaded_count"] == 1
+        assert resolution.summary["missing_preload_count"] == 1
+        assert resolution.summary["interesting_for_operator"] is True
+        assert any("Visible project/user skills:" in line for line in resolution.prompt_lines())
+        assert any("Preloaded skills:" in line for line in resolution.prompt_lines())
+        assert any("Hidden by profile policy:" in line for line in resolution.prompt_lines())
+        assert any("Missing requested preloads:" in line for line in resolution.prompt_lines())

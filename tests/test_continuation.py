@@ -4,17 +4,50 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import os
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
+from dormammu.agent.profiles import AgentProfile
+from dormammu.config import AppConfig
 from dormammu.continuation import (
     build_continuation_prompt,
+    build_supervisor_handoff_prompt_for_repository,
     build_supervisor_handoff_prompt_from_agents,
 )
+from dormammu.skills import resolve_runtime_skill_resolution
+from dormammu.state import StateRepository
 from dormammu.supervisor import SupervisorCheck, SupervisorReport
+
+
+def _make_config(repo_root: Path, home_dir: Path) -> AppConfig:
+    return AppConfig.load(
+        repo_root=repo_root,
+        env={
+            "HOME": str(home_dir),
+            **{key: value for key, value in os.environ.items() if key != "HOME"},
+        },
+    )
+
+
+def _write_skill(path: Path, *, name: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"""---
+schema_version: 1
+name: {name}
+description: {name} description
+---
+
+# {name}
+
+Use this skill in continuation tests.
+""",
+        encoding="utf-8",
+    )
 
 
 class ContinuationPromptTests(unittest.TestCase):
@@ -217,6 +250,61 @@ class ContinuationPromptEdgeCaseTests(unittest.TestCase):
         self.assertIn("Repository workflows:", continuation.text)
         self.assertIn("agents/workflows/refine-plan.md", continuation.text)
 
+    def test_runtime_skills_section_is_omitted_for_built_in_only_visibility(self) -> None:
+        report = self._make_report()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir()
+            config = _make_config(repo_root, home_dir)
+            runtime_skills = resolve_runtime_skill_resolution(
+                config,
+                role="planner",
+                profile=AgentProfile(name="planner", description="Planner profile."),
+            ).to_dict()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "skills-quiet", "artifacts": {}},
+            report=report,
+            next_task="Continue",
+            original_prompt_text="Do the work.",
+            runtime_skills=runtime_skills,
+        )
+
+        self.assertNotIn("Runtime skills for", continuation.text)
+
+    def test_runtime_skills_section_appears_separately_from_repo_guidance(self) -> None:
+        report = self._make_report()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir()
+            _write_skill(
+                repo_root / "agents" / "skills" / "designing-agent" / "SKILL.md",
+                name="designing-agent",
+            )
+            config = _make_config(repo_root, home_dir)
+            runtime_skills = resolve_runtime_skill_resolution(
+                config,
+                role="designer",
+                profile=AgentProfile(name="designer", description="Designer profile."),
+            ).to_dict()
+
+        continuation = build_continuation_prompt(
+            latest_run={"run_id": "skills-visible", "artifacts": {}},
+            report=report,
+            next_task="Continue",
+            original_prompt_text="Do the work.",
+            repo_guidance={"rule_files": ["AGENTS.md"], "workflow_files": []},
+            runtime_skills=runtime_skills,
+        )
+
+        self.assertIn("Repository rules:", continuation.text)
+        self.assertIn("Runtime skills for designer / designer (built_in profile):", continuation.text)
+        self.assertIn("Visible project/user skills: designing-agent [project]", continuation.text)
+
     def test_source_run_id_matches_latest_run(self) -> None:
         """The returned ContinuationPrompt.source_run_id matches the run_id in latest_run."""
         report = self._make_report()
@@ -290,6 +378,78 @@ class SupervisorHandoffPromptTests(ContinuationPromptEdgeCaseTests):
         self.assertIn("Orchestrates planning, design, development", prompt)
         self.assertIn("Recommended resume phase: design", prompt)
         self.assertIn("agents/workflows/supervised-downstream.md", prompt)
+
+    def test_handoff_prompt_uses_downstream_role_runtime_skills_over_latest_stage(self) -> None:
+        prompt = build_supervisor_handoff_prompt_from_agents(
+            agents_dir=ROOT / "agents",
+            workflow_state={
+                "workflow": {
+                    "active_phase": "plan",
+                    "last_completed_phase": "plan",
+                    "resume_from_phase": "design",
+                },
+                "supervisor": {"verdict": "approved"},
+                "runtime_skills": {
+                    "latest": {
+                        "prompt_lines": [
+                            "Runtime skills for planner / planner (built_in profile):",
+                            "Visible project/user skills: planner-only [project]",
+                        ]
+                    },
+                    "by_role": {
+                        "developer": {
+                            "prompt_lines": [
+                                "Runtime skills for developer / developer (built_in profile):",
+                                "Visible project/user skills: developer-only [project]",
+                                "Preloaded skills: fix-ci",
+                            ]
+                        }
+                    },
+                },
+            },
+            original_prompt_text="Implement the requested feature.",
+        )
+
+        self.assertIn(
+            "Runtime skills for developer / developer (built_in profile):",
+            prompt,
+        )
+        self.assertIn("Visible project/user skills: developer-only [project]", prompt)
+        self.assertIn("Preloaded skills: fix-ci", prompt)
+        self.assertNotIn("planner-only", prompt)
+
+    def test_repository_handoff_refreshes_downstream_role_after_planner_prelude(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir()
+            _write_skill(
+                repo_root / "agents" / "skills" / "phase5-project-skill" / "SKILL.md",
+                name="phase5-project-skill",
+            )
+            config = _make_config(repo_root, home_dir)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(goal="Phase 05 handoff refresh")
+            repository.record_runtime_skill_resolution(role="planner")
+
+            before = repository.read_workflow_state()["runtime_skills"]
+            self.assertEqual(before["latest"]["role"], "planner")
+            self.assertNotIn("developer", before["by_role"])
+
+            prompt = build_supervisor_handoff_prompt_for_repository(
+                repository=repository,
+                agents_dir=ROOT / "agents",
+                original_prompt_text="Implement the requested feature.",
+            )
+
+            after = repository.read_workflow_state()["runtime_skills"]
+            self.assertEqual(after["latest"]["role"], "developer")
+            self.assertIn("planner", after["by_role"])
+            self.assertIn("developer", after["by_role"])
+            self.assertIn("Runtime skills for developer /", prompt)
+            self.assertIn("Visible project/user skills: phase5-project-skill [project]", prompt)
+            self.assertNotIn("Runtime skills for planner /", prompt)
 
     def test_none_patterns_text_does_not_add_patterns_section(self) -> None:
         """When patterns_text is None, no patterns section appears."""

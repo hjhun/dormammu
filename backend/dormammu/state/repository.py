@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent.models import AgentRunResult, AgentRunStarted
 from dormammu.config import AppConfig
 from dormammu.guidance import resolve_guidance_files
+from dormammu.skills import resolve_runtime_skill_resolution
 from dormammu.state.models import (
     ManagedWorktreeState,
     default_dashboard_context,
@@ -28,6 +29,9 @@ from dormammu.state.persistence import (
 )
 from dormammu.state.session_manager import SessionManager
 from dormammu.worktree import ManagedWorktree
+
+if TYPE_CHECKING:
+    from dormammu.agent.profiles import AgentProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -613,6 +617,73 @@ class StateRepository:
         _write_json(self.state_file("session.json"), session_state)
         _write_json(self.state_file("workflow_state.json"), workflow_state)
         self._sync_root_index(timestamp=timestamp)
+
+    def record_runtime_skill_resolution(
+        self,
+        *,
+        role: str,
+        profile: "AgentProfile" | None = None,
+        timestamp: str | None = None,
+    ) -> dict[str, Any]:
+        if self.session_id is None:
+            try:
+                active_repository = self._active_session_repository()
+            except RuntimeError:
+                update_timestamp = timestamp or _iso_now()
+                resolution = resolve_runtime_skill_resolution(
+                    self.config,
+                    role=role,
+                    profile=profile,
+                ).to_dict()
+                return {
+                    "updated_at": update_timestamp,
+                    "active_role": role,
+                    "latest": resolution,
+                    "by_role": {role: resolution},
+                }
+            active_repository.record_runtime_skill_resolution(
+                role=role,
+                profile=profile,
+                timestamp=timestamp,
+            )
+            active_session = active_repository.read_session_state()
+            runtime_skills = active_session.get("runtime_skills")
+            return dict(runtime_skills) if isinstance(runtime_skills, Mapping) else {}
+
+        update_timestamp = timestamp or _iso_now()
+        resolution = resolve_runtime_skill_resolution(
+            self.config,
+            role=role,
+            profile=profile,
+        ).to_dict()
+
+        session_state = _read_json(self.state_file("session.json"))
+        workflow_state = _read_json(self.state_file("workflow_state.json"))
+
+        for state in (session_state, workflow_state):
+            state["updated_at"] = update_timestamp
+            current_runtime_skills = state.get("runtime_skills")
+            by_role = {}
+            if isinstance(current_runtime_skills, Mapping):
+                existing_by_role = current_runtime_skills.get("by_role")
+                if isinstance(existing_by_role, Mapping):
+                    by_role = {
+                        key: dict(value)
+                        for key, value in existing_by_role.items()
+                        if isinstance(key, str) and isinstance(value, Mapping)
+                    }
+            by_role[role] = resolution
+            state["runtime_skills"] = {
+                "updated_at": update_timestamp,
+                "active_role": role,
+                "latest": resolution,
+                "by_role": by_role,
+            }
+
+        _write_json(self.state_file("session.json"), session_state)
+        _write_json(self.state_file("workflow_state.json"), workflow_state)
+        self._sync_root_index(timestamp=update_timestamp)
+        return dict(session_state["runtime_skills"])
 
     def read_patterns_text(self) -> str:
         """Return the content of .dev/PATTERNS.md, or empty string if not present."""

@@ -69,6 +69,60 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertEqual(workflow_state["bootstrap"]["goal"], "Bootstrap test goal")
             self.assertIn("AGENTS.md", workflow_state["bootstrap"]["repo_guidance"]["rule_files"])
 
+    def test_record_runtime_skill_resolution_persists_structured_skill_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            skill_path = root / "agents" / "skills" / "designing-agent" / "SKILL.md"
+            skill_path.parent.mkdir(parents=True, exist_ok=True)
+            skill_path.write_text(
+                """---
+schema_version: 1
+name: designing-agent
+description: Project designing skill
+---
+
+# designing-agent
+
+Use this skill in state repository tests.
+""",
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            artifacts = repository.ensure_bootstrap_state(goal="Runtime skills state")
+
+            runtime_skills = repository.record_runtime_skill_resolution(role="designer")
+
+            session_state = json.loads(artifacts.session.read_text(encoding="utf-8"))
+            workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
+            root_session_index = json.loads(
+                (config.base_dev_dir / "session.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(runtime_skills["active_role"], "designer")
+            self.assertEqual(session_state["runtime_skills"]["active_role"], "designer")
+            self.assertEqual(
+                session_state["runtime_skills"]["latest"]["summary"]["custom_visible_count"],
+                1,
+            )
+            self.assertIn(
+                "designing-agent",
+                [
+                    entry["name"]
+                    for entry in workflow_state["runtime_skills"]["latest"]["visibility"]["visible"]
+                ],
+            )
+            self.assertIn("AGENTS.md", workflow_state["bootstrap"]["repo_guidance"]["rule_files"])
+            self.assertEqual(
+                root_session_index["current_session"]["runtime_skills"]["active_role"],
+                "designer",
+            )
+
     def test_worktree_state_reads_as_empty_without_persisting_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -3,10 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from dormammu._utils import iso_now as _iso_now
+from dormammu.skills import runtime_skill_prompt_lines
 from dormammu.supervisor import SupervisorReport
+
+if TYPE_CHECKING:
+    from dormammu.state.repository import StateRepository
 
 # Packaged fallback directory — always resolvable relative to this module so
 # that the template is found even when the repo's templates/ directory is
@@ -67,6 +71,23 @@ def load_prompt_text(latest_run: Mapping[str, Any]) -> str:
     return Path(str(prompt_path)).read_text(encoding="utf-8")
 
 
+def _select_runtime_skill_payload(
+    runtime_skills: Mapping[str, Any] | None,
+    *,
+    role: str | None = None,
+) -> Mapping[str, Any] | None:
+    if not isinstance(runtime_skills, Mapping):
+        return None
+    if role:
+        by_role = runtime_skills.get("by_role")
+        if isinstance(by_role, Mapping):
+            payload = by_role.get(role)
+            if isinstance(payload, Mapping):
+                return payload
+    latest = runtime_skills.get("latest")
+    return latest if isinstance(latest, Mapping) else None
+
+
 def build_continuation_prompt(
     *,
     latest_run: Mapping[str, Any],
@@ -74,6 +95,7 @@ def build_continuation_prompt(
     next_task: str | None,
     original_prompt_text: str | None = None,
     repo_guidance: Mapping[str, Any] | None = None,
+    runtime_skills: Mapping[str, Any] | None = None,
     runtime_paths_text: str | None = None,
     patterns_text: str | None = None,
     templates_dir: Path | None = None,
@@ -118,6 +140,9 @@ def build_continuation_prompt(
             guidance_lines.append(
                 "Repository workflows: " + ", ".join(str(item) for item in workflow_files)
             )
+    skill_lines = list(runtime_skill_prompt_lines(runtime_skills))
+    if skill_lines:
+        guidance_lines.extend(skill_lines)
     # When guidance is present, append a blank line so the next paragraph is
     # visually separated in the rendered prompt.
     guidance_section = ("\n".join(guidance_lines) + "\n\n") if guidance_lines else ""
@@ -191,6 +216,7 @@ def build_supervisor_handoff_prompt(
     original_prompt_text: str,
     workflow_text: str,
     skill_text: str,
+    downstream_role: str = "developer",
     runtime_paths_text: str | None = None,
     patterns_text: str | None = None,
 ) -> str:
@@ -202,6 +228,7 @@ def build_supervisor_handoff_prompt(
         if isinstance(bootstrap, Mapping)
         else {}
     )
+    runtime_skills = workflow_state.get("runtime_skills", {})
 
     guidance_lines: list[str] = []
     if isinstance(repo_guidance, Mapping):
@@ -215,6 +242,11 @@ def build_supervisor_handoff_prompt(
             guidance_lines.append(
                 "Repository workflows: " + ", ".join(str(item) for item in workflow_files)
             )
+    guidance_lines.extend(
+        runtime_skill_prompt_lines(
+            _select_runtime_skill_payload(runtime_skills, role=downstream_role)
+        )
+    )
 
     _default_placeholder = "(no patterns recorded yet"
     patterns_section: list[str] = []
@@ -274,6 +306,7 @@ def build_supervisor_handoff_prompt_from_agents(
     agents_dir: Path,
     workflow_state: Mapping[str, Any],
     original_prompt_text: str,
+    downstream_role: str = "developer",
     runtime_paths_text: str | None = None,
     patterns_text: str | None = None,
 ) -> str:
@@ -290,6 +323,35 @@ def build_supervisor_handoff_prompt_from_agents(
         original_prompt_text=original_prompt_text,
         workflow_text=workflow_text,
         skill_text=skill_text,
+        downstream_role=downstream_role,
+        runtime_paths_text=runtime_paths_text,
+        patterns_text=patterns_text,
+    )
+
+
+def build_supervisor_handoff_prompt_for_repository(
+    *,
+    repository: "StateRepository",
+    agents_dir: Path,
+    original_prompt_text: str,
+    downstream_role: str = "developer",
+    runtime_paths_text: str | None = None,
+    patterns_text: str | None = None,
+) -> str:
+    """Build a downstream handoff prompt after refreshing role-specific skills.
+
+    The refine -> plan prelude records runtime-skill metadata for the stages it
+    executes. Before handing off to a downstream role, refresh that role's
+    resolution so the prompt reflects the target profile instead of the latest
+    prelude stage.
+    """
+
+    repository.record_runtime_skill_resolution(role=downstream_role)
+    return build_supervisor_handoff_prompt_from_agents(
+        agents_dir=agents_dir,
+        workflow_state=repository.read_workflow_state(),
+        original_prompt_text=original_prompt_text,
+        downstream_role=downstream_role,
         runtime_paths_text=runtime_paths_text,
         patterns_text=patterns_text,
     )

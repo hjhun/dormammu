@@ -27,7 +27,7 @@ from dormammu.config import (
     set_config_value,
     write_active_agent_cli_config,
 )
-from dormammu.continuation import build_supervisor_handoff_prompt_from_agents
+from dormammu.continuation import build_supervisor_handoff_prompt_for_repository
 from dormammu.daemon import DaemonAlreadyRunningError, DaemonRunner, SessionProgressLogStream, load_daemon_config
 from dormammu.daemon.autonomous_config import AutonomousConfig
 from dormammu.daemon.pipeline_runner import PipelineRunner
@@ -320,9 +320,9 @@ def _handle_run_once(args: argparse.Namespace) -> int:
 
         request = AgentRunRequest(
             cli_path=agent_cli,
-            prompt_text=build_supervisor_handoff_prompt_from_agents(
+            prompt_text=build_supervisor_handoff_prompt_for_repository(
+                repository=repository,
                 agents_dir=config.agents_dir,
-                workflow_state=repository.read_workflow_state(),
                 original_prompt_text=enriched_prompt,
                 runtime_paths_text=config.runtime_path_prompt(),
                 patterns_text=repository.read_patterns_text(),
@@ -463,9 +463,9 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
 
             request = LoopRunRequest(
                 cli_path=agent_cli,
-                prompt_text=build_supervisor_handoff_prompt_from_agents(
+                prompt_text=build_supervisor_handoff_prompt_for_repository(
+                    repository=repository,
                     agents_dir=config.agents_dir,
-                    workflow_state=repository.read_workflow_state(),
                     original_prompt_text=enriched_prompt,
                     runtime_paths_text=config.runtime_path_prompt(),
                     patterns_text=repository.read_patterns_text(),

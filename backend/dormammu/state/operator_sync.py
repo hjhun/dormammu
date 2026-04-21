@@ -13,7 +13,7 @@ import contextlib
 import shutil
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generator, Sequence
+from typing import TYPE_CHECKING, Any, Generator, Mapping, Sequence
 
 try:
     import fcntl as _fcntl
@@ -37,6 +37,35 @@ ROOT_OPERATOR_MIRROR_FILENAMES = (
     "TASKS.md",
     "WORKFLOWS.md",
 )
+
+
+def _runtime_skill_summary(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    latest = payload.get("latest")
+    if not isinstance(latest, Mapping):
+        return None
+    summary = latest.get("summary")
+    profile = latest.get("profile")
+    if not isinstance(summary, Mapping) or not isinstance(profile, Mapping):
+        return None
+    result = {
+        "active_role": payload.get("active_role"),
+        "profile_name": profile.get("name"),
+        "profile_source": profile.get("source"),
+    }
+    for key in (
+        "selected_count",
+        "visible_count",
+        "hidden_count",
+        "preloaded_count",
+        "missing_preload_count",
+        "shadowed_count",
+        "custom_visible_count",
+        "interesting_for_operator",
+    ):
+        result[key] = summary.get(key)
+    return result
 
 
 class OperatorSync:
@@ -135,6 +164,7 @@ class OperatorSync:
                 "active_roadmap_phase_ids": session_state.get("active_roadmap_phase_ids", []),
                 "active_worktree_id": session_worktrees.active_worktree_id,
                 "managed_worktree_count": session_worktrees.managed_count,
+                "runtime_skills": _runtime_skill_summary(session_state.get("runtime_skills")),
             },
         }
         workflow_defaults: dict[str, Any] = {
@@ -169,6 +199,7 @@ class OperatorSync:
                 "updated_at": workflow_state.get("updated_at"),
                 "active_worktree_id": workflow_worktrees.active_worktree_id,
                 "managed_worktree_count": workflow_worktrees.managed_count,
+                "runtime_skills": _runtime_skill_summary(workflow_state.get("runtime_skills")),
             },
             "sessions": list_sessions_fn(),
         }

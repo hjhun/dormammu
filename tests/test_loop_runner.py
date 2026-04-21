@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 from pathlib import Path
@@ -134,6 +135,57 @@ class LoopRunnerTests(unittest.TestCase):
             third_prompt = prompt_paths[-1].read_text(encoding="utf-8")
             self.assertEqual(third_prompt.count("Original prompt:"), 1)
             self.assertIn("Build a /proc-based memory CLI and create the marker file.", third_prompt)
+
+    def test_loop_snapshot_and_state_include_runtime_skill_visibility_for_custom_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            (root / "agents" / "skills" / "designing-agent").mkdir(parents=True, exist_ok=True)
+            (root / "agents" / "skills" / "designing-agent" / "SKILL.md").write_text(
+                """---
+schema_version: 1
+name: designing-agent
+description: Project designing skill
+---
+
+# designing-agent
+
+Use this skill in loop runner tests.
+""",
+                encoding="utf-8",
+            )
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            progress = io.StringIO()
+            result = LoopRunner(
+                config,
+                repository=repository,
+                progress_stream=progress,
+            ).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="runtime-skills-log-test",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertIn("runtime skills: visible=", progress.getvalue())
+            session_state = repository.read_session_state()
+            self.assertEqual(session_state["runtime_skills"]["active_role"], "developer")
+            self.assertEqual(
+                session_state["runtime_skills"]["latest"]["summary"]["custom_visible_count"],
+                1,
+            )
 
     def test_resume_continues_failed_loop_from_saved_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

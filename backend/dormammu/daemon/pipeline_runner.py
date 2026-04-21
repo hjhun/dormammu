@@ -69,6 +69,7 @@ from dormammu.daemon.evaluator import (
 from dormammu.daemon.rules import build_rule_prompt, load_rule_text
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
 from dormammu.runtime_hooks import RuntimeHookBlocked, RuntimeHookController
+from dormammu.skills import runtime_skill_summary
 from dormammu.state import StateRepository
 
 if TYPE_CHECKING:
@@ -865,11 +866,29 @@ class PipelineRunner:
         return None
 
     def _emit_stage_start(self, *, role: str) -> None:
+        profile = self._profile_for_role(role)
+        runtime_skills = self._repository.record_runtime_skill_resolution(
+            role=role,
+            profile=profile,
+        )
+        summary = runtime_skill_summary(runtime_skills.get("latest"))
+        if summary.get("interesting_for_operator"):
+            self._log(
+                "pipeline: runtime skills "
+                f"for {role}/{profile.name} "
+                f"(visible={summary.get('visible_count', 0)}, "
+                f"custom={summary.get('custom_visible_count', 0)}, "
+                f"hidden={summary.get('hidden_count', 0)}, "
+                f"preloaded={summary.get('preloaded_count', 0)}, "
+                f"missing_preloads={summary.get('missing_preload_count', 0)}, "
+                f"shadowed={summary.get('shadowed_count', 0)})"
+            )
         self._hook_controller.emit_stage_start(
             source="pipeline_runner",
             stage_name=role,
             agent_role=role,
             session_id=self._session_id(),
+            metadata={"runtime_skills": summary},
         )
 
     def _emit_stage_complete(

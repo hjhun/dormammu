@@ -30,7 +30,7 @@ class DaemonAlreadyRunningError(RuntimeError):
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import CliAdapter
 from dormammu.config import AppConfig
-from dormammu.continuation import build_supervisor_handoff_prompt_from_agents
+from dormammu.continuation import build_supervisor_handoff_prompt_for_repository
 from dormammu.daemon._patterns import (
     GOAL_SOURCE_RE as _GOAL_SOURCE_RE,
     RESULT_STATUS_RE as _RESULT_STATUS_RE,
@@ -603,9 +603,9 @@ class DaemonRunner:
 
         request = LoopRunRequest(
             cli_path=agent_cli,
-            prompt_text=build_supervisor_handoff_prompt_from_agents(
+            prompt_text=build_supervisor_handoff_prompt_for_repository(
+                repository=session_repository,
                 agents_dir=scoped_config.agents_dir,
-                workflow_state=session_repository.read_workflow_state(),
                 original_prompt_text=enriched_text,
                 runtime_paths_text=scoped_config.runtime_path_prompt(),
                 patterns_text=session_repository.read_patterns_text(),
