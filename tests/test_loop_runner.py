@@ -187,6 +187,44 @@ Use this skill in loop runner tests.
                 1,
             )
 
+    def test_run_persists_lifecycle_events_for_successful_loop_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            result = LoopRunner(config, repository=repository).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="lifecycle-loop-test",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            lifecycle = repository.read_session_state()["lifecycle"]
+            event_types = [entry["event_type"] for entry in lifecycle["history"]]
+            self.assertIn("run.requested", event_types)
+            self.assertIn("run.started", event_types)
+            self.assertIn("stage.queued", event_types)
+            self.assertIn("stage.started", event_types)
+            self.assertIn("artifact.persisted", event_types)
+            self.assertIn("stage.completed", event_types)
+            self.assertIn("run.finished", event_types)
+            self.assertEqual(
+                lifecycle["latest_event"]["event_type"],
+                "run.finished",
+            )
+
     def test_resume_continues_failed_loop_from_saved_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -374,6 +412,14 @@ Use this skill in loop runner tests.
             self.assertEqual(
                 (managed_worktree.isolated_path / "cwd.txt").read_text(encoding="utf-8").strip(),
                 str(managed_worktree.isolated_path),
+            )
+            lifecycle = repository.read_session_state()["lifecycle"]
+            event_types = [entry["event_type"] for entry in lifecycle["history"]]
+            self.assertIn("worktree.prepared", event_types)
+            self.assertIn("worktree.released", event_types)
+            self.assertLess(
+                event_types.index("worktree.prepared"),
+                event_types.index("worktree.released"),
             )
 
     def test_run_keeps_primary_checkout_when_worktree_is_not_permitted(self) -> None:

@@ -43,9 +43,17 @@ from dormammu.daemon.queue import is_prompt_candidate, prompt_sort_key
 from dormammu.daemon.reports import ResultReportAuthor, render_result_markdown
 from dormammu.daemon.watchers import EFFECTIVE_POLL_INTERVAL_SECONDS, PromptWatcher, build_watcher
 from dormammu.guidance import build_guidance_prompt
+from dormammu.lifecycle import (
+    ArtifactPersistedPayload,
+    ArtifactRef,
+    LifecycleEventType,
+    LifecycleRecorder,
+    RunEventPayload,
+    SupervisorHandoffPayload,
+)
 from dormammu.loop_runner import LoopRunResult, LoopRunRequest, LoopRunner
 from dormammu.state import StateRepository
-from dormammu.state.models import summarize_prompt_goal
+from dormammu.state.models import infer_primary_roadmap_phase_id, summarize_prompt_goal
 
 
 DEFAULT_DAEMON_MAX_RETRIES = 49
@@ -450,6 +458,7 @@ class DaemonRunner:
         next_pending_task: str | None = None
         loop_result: LoopRunResult | None = None
         interrupted = False
+        lifecycle: LifecycleRecorder | None = None
 
         skipped = False
         try:
@@ -470,11 +479,61 @@ class DaemonRunner:
                 prompt_path=prompt_path,
                 prompt_text=prompt_text,
             )
+            lifecycle = LifecycleRecorder.for_execution(
+                session_repository,
+                scope="daemon",
+                session_id=session_id,
+                label=prompt_path.stem,
+                default_metadata={"source": "daemon_runner", "entrypoint": "DaemonRunner._process_prompt"},
+            )
+            lifecycle.emit(
+                event_type=LifecycleEventType.RUN_REQUESTED,
+                role="daemon",
+                stage="daemon",
+                status="requested",
+                payload=RunEventPayload(
+                    source="daemon_runner",
+                    entrypoint="DaemonRunner._process_prompt",
+                    trigger="daemon_queue",
+                    prompt_summary=prompt_text.splitlines()[0].strip() if prompt_text.strip() else None,
+                ),
+                metadata={"prompt_path": str(prompt_path)},
+            )
+            lifecycle.emit(
+                event_type=LifecycleEventType.RUN_STARTED,
+                role="daemon",
+                stage="daemon",
+                status="started",
+                payload=RunEventPayload(
+                    source="daemon_runner",
+                    entrypoint="DaemonRunner._process_prompt",
+                    trigger="daemon_queue",
+                ),
+            )
+            lifecycle.emit(
+                event_type=LifecycleEventType.ARTIFACT_PERSISTED,
+                role="daemon",
+                stage="daemon",
+                status="persisted",
+                payload=ArtifactPersistedPayload(
+                    artifact_kind="input_prompt",
+                    summary="Persisted the daemon prompt into the active session workspace.",
+                ),
+                artifact_refs=(
+                    ArtifactRef.from_path(
+                        kind="input_prompt",
+                        path=session_repository.state_file("PROMPT.md"),
+                        label="input_prompt",
+                        content_type="text/markdown",
+                    ),
+                ),
+            )
             loop_result = self._run_prompt_loop(
                 scoped_config=scoped_config,
                 session_repository=session_repository,
                 prompt_path=prompt_path,
                 prompt_text=prompt_text,
+                lifecycle=lifecycle,
             )
             plan_all_completed, next_pending_task = self._sync_plan_state(session_repository)
             status = loop_result.status
@@ -519,6 +578,51 @@ class DaemonRunner:
                     prompt_path.unlink()
             with self._in_progress_lock:
                 self._in_progress.discard(prompt_path)
+            if lifecycle is not None and result_path.exists():
+                lifecycle.emit(
+                    event_type=LifecycleEventType.ARTIFACT_PERSISTED,
+                    role="daemon",
+                    stage="daemon",
+                    status="persisted",
+                    payload=ArtifactPersistedPayload(
+                        artifact_kind="result_report",
+                        summary="Persisted the daemon result report.",
+                    ),
+                    artifact_refs=(
+                        ArtifactRef.from_path(
+                            kind="result_report",
+                            path=result_path,
+                            label="result_report",
+                            content_type="text/markdown",
+                        ),
+                    ),
+                )
+            if lifecycle is not None:
+                lifecycle.emit(
+                    event_type=LifecycleEventType.RUN_FINISHED,
+                    role="daemon",
+                    stage="daemon",
+                    status=status,
+                    payload=RunEventPayload(
+                        source="daemon_runner",
+                        entrypoint="DaemonRunner._process_prompt",
+                        attempts_completed=(loop_result.attempts_completed if loop_result else None),
+                        retries_used=(loop_result.retries_used if loop_result else None),
+                        supervisor_verdict=(loop_result.supervisor_verdict if loop_result else None),
+                        outcome=status,
+                        error=error,
+                    ),
+                    artifact_refs=(
+                        ArtifactRef.from_path(
+                            kind="result_report",
+                            path=result_path,
+                            label="result_report",
+                            content_type="text/markdown",
+                        ),
+                    )
+                    if result_path.exists()
+                    else (),
+                )
             print(f"daemon prompt {prompt_path.name}: {status} -> {result_path}", file=self.progress_stream)
             self.progress_stream.flush()
             if interrupted:
@@ -532,10 +636,11 @@ class DaemonRunner:
         prompt_text: str,
     ) -> tuple[StateRepository, AppConfig, str]:
         goal = summarize_prompt_goal(prompt_text, fallback=f"Process daemon prompt {prompt_path.name}")
+        roadmap_phase_id = infer_primary_roadmap_phase_id(goal=goal, prompt_text=prompt_text) or "phase_4"
         self.repository.start_new_session(
             goal=goal,
             prompt_text=prompt_text,
-            active_roadmap_phase_ids=["phase_4"],
+            active_roadmap_phase_ids=[roadmap_phase_id],
         )
         session_state = self.repository.read_session_state()
         session_id = str(session_state.get("active_session_id") or session_state.get("session_id") or "").strip()
@@ -557,6 +662,7 @@ class DaemonRunner:
         session_repository: StateRepository,
         prompt_path: Path,
         prompt_text: str,
+        lifecycle: LifecycleRecorder | None = None,
     ) -> LoopRunResult:
         enriched_text = build_guidance_prompt(
             prompt_text,
@@ -600,6 +706,19 @@ class DaemonRunner:
             stem=prompt_path.stem,
             enable_plan_evaluator=goal_file_path is not None,
         )
+        if lifecycle is not None:
+            lifecycle.emit(
+                event_type=LifecycleEventType.SUPERVISOR_HANDOFF,
+                role="planner",
+                stage="developer",
+                status="handoff",
+                payload=SupervisorHandoffPayload(
+                    from_role="planner",
+                    to_role="developer",
+                    reason="Mandatory refine/plan prelude completed; handing off to the supervised developer loop.",
+                    attempt=1,
+                ),
+            )
 
         request = LoopRunRequest(
             cli_path=agent_cli,
@@ -617,7 +736,7 @@ class DaemonRunner:
             extra_args=(),
             run_label=f"daemon-{prompt_path.stem}",
             max_retries=DEFAULT_DAEMON_MAX_RETRIES,
-            expected_roadmap_phase_id="phase_4",
+            expected_roadmap_phase_id=self._expected_roadmap_phase_id(session_repository),
         )
         return LoopRunner(
             scoped_config,
@@ -629,6 +748,16 @@ class DaemonRunner:
             ),
             progress_stream=self.progress_stream,
         ).run(request)
+
+    def _expected_roadmap_phase_id(self, repository: StateRepository) -> str:
+        workflow_state = repository.read_workflow_state()
+        roadmap = workflow_state.get("roadmap", {})
+        active_phase_ids = roadmap.get("active_phase_ids", [])
+        if isinstance(active_phase_ids, list):
+            for phase_id in active_phase_ids:
+                if isinstance(phase_id, str) and phase_id.strip():
+                    return phase_id
+        return "phase_4"
 
     def _resolve_agent_cli(self, config: AppConfig) -> Path:
         if config.active_agent_cli is not None:

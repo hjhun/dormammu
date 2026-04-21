@@ -93,7 +93,7 @@ class HookRunner:
         self._builtin_handlers = dict(builtin_handlers or {})
 
     def run_sync(self, hook_input: HookInputPayload) -> HookRunResult:
-        selected_hooks = tuple(self._select_sync_hooks(hook_input.event))
+        selected_hooks = self.select_sync_hooks(hook_input.event)
         executed: list[HookExecutionRecord] = []
 
         for hook in selected_hooks:
@@ -117,6 +117,12 @@ class HookRunner:
             blocked=False,
             blocking_record=None,
         )
+
+    def select_sync_hooks(
+        self,
+        event: HookEventName,
+    ) -> tuple[EffectiveHookDefinition, ...]:
+        return tuple(self._select_sync_hooks(event))
 
     def _select_sync_hooks(self, event: HookEventName) -> tuple[EffectiveHookDefinition, ...]:
         catalog = self._config.hooks

@@ -67,6 +67,16 @@ from dormammu.daemon.evaluator import (
     resolve_evaluator_model,
 )
 from dormammu.daemon.rules import build_rule_prompt, load_rule_text
+from dormammu.lifecycle import (
+    ArtifactPersistedPayload,
+    ArtifactRef,
+    EvaluatorCheckpointPayload,
+    LifecycleEventType,
+    LifecycleRecorder,
+    RunEventPayload,
+    StageEventPayload,
+    SupervisorHandoffPayload,
+)
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
 from dormammu.runtime_hooks import RuntimeHookBlocked, RuntimeHookController
 from dormammu.skills import runtime_skill_summary
@@ -79,6 +89,7 @@ if TYPE_CHECKING:
 
 _DEFAULT_MAX_RETRIES = 49
 MAX_STAGE_ITERATIONS = _DEFAULT_MAX_RETRIES + 1
+_STAGE_FAILURE_VERDICTS = frozenset({"blocked", "failed", "fail", "needs_work", "rework"})
 
 
 class PipelineRunner:
@@ -157,6 +168,32 @@ class PipelineRunner:
                     "— re-entering planner"
                 )
                 evaluator_feedback_text = stage.output
+                if self._lifecycle is not None:
+                    self._lifecycle.emit(
+                        event_type=LifecycleEventType.STAGE_RETRIED,
+                        role="planner",
+                        stage="planner",
+                        status="retried",
+                        payload=StageEventPayload(
+                            attempt=iteration + 1,
+                            next_attempt=iteration + 2,
+                            source_stage="evaluator",
+                            target_stage="planner",
+                            reason="Plan evaluator requested rework.",
+                        ),
+                    )
+                    self._lifecycle.emit(
+                        event_type=LifecycleEventType.SUPERVISOR_HANDOFF,
+                        role="evaluator",
+                        stage="planner",
+                        status="handoff",
+                        payload=SupervisorHandoffPayload(
+                            from_role="evaluator",
+                            to_role="planner",
+                            reason="Plan checkpoint requested rework.",
+                            attempt=iteration + 2,
+                        ),
+                    )
                 self._run_planner(
                     goal_text,
                     stem=stem,
@@ -190,14 +227,47 @@ class PipelineRunner:
         dev_prompt = prompt_text
         loop_result: LoopRunResult | None = None
         final_result: LoopRunResult | None = None
+        terminal_error: str | None = None
         session_id = self._session_id()
+        self._lifecycle = LifecycleRecorder.for_execution(
+            self._repository,
+            scope="pipeline",
+            session_id=session_id,
+            label=stem,
+            default_metadata={"source": "pipeline_runner", "entrypoint": "PipelineRunner.run"},
+        )
+        self._lifecycle.emit(
+            event_type=LifecycleEventType.RUN_REQUESTED,
+            role="pipeline",
+            stage="pipeline",
+            status="requested",
+            payload=RunEventPayload(
+                source="pipeline_runner",
+                entrypoint="PipelineRunner.run",
+                trigger="pipeline",
+                prompt_summary=prompt_text.splitlines()[0].strip() if prompt_text.strip() else None,
+            ),
+            metadata={"goal_file_path": str(goal_file_path) if goal_file_path else None},
+        )
 
         try:
+            self._lifecycle.emit(
+                event_type=LifecycleEventType.RUN_STARTED,
+                role="pipeline",
+                stage="pipeline",
+                status="started",
+                payload=RunEventPayload(
+                    source="pipeline_runner",
+                    entrypoint="PipelineRunner.run",
+                    trigger="pipeline",
+                ),
+            )
             self._hook_controller.emit_prompt_intake(
                 prompt_text=prompt_text,
                 source="pipeline_runner",
                 entrypoint="PipelineRunner.run",
                 session_id=session_id,
+                run_id=self._lifecycle.run_id,
                 agent_role="pipeline",
             )
 
@@ -232,6 +302,32 @@ class PipelineRunner:
                         f"pipeline: tester FAIL (iteration {tester_iter + 1}) "
                         "— re-entering developer"
                     )
+                    if self._lifecycle is not None:
+                        self._lifecycle.emit(
+                            event_type=LifecycleEventType.STAGE_RETRIED,
+                            role="developer",
+                            stage="developer",
+                            status="retried",
+                            payload=StageEventPayload(
+                                attempt=tester_iter + 1,
+                                next_attempt=tester_iter + 2,
+                                source_stage="tester",
+                                target_stage="developer",
+                                reason="Tester requested another developer pass.",
+                            ),
+                        )
+                        self._lifecycle.emit(
+                            event_type=LifecycleEventType.SUPERVISOR_HANDOFF,
+                            role="tester",
+                            stage="developer",
+                            status="handoff",
+                            payload=SupervisorHandoffPayload(
+                                from_role="tester",
+                                to_role="developer",
+                                reason="Tester reported FAIL and handed the slice back to developer.",
+                                attempt=tester_iter + 2,
+                            ),
+                        )
                     dev_prompt = self._append_feedback(
                         prompt_text, tester_stage.output, source="tester"
                     )
@@ -260,6 +356,32 @@ class PipelineRunner:
                         f"pipeline: reviewer NEEDS_WORK (iteration {reviewer_iter + 1}) "
                         "— re-entering developer"
                     )
+                    if self._lifecycle is not None:
+                        self._lifecycle.emit(
+                            event_type=LifecycleEventType.STAGE_RETRIED,
+                            role="developer",
+                            stage="developer",
+                            status="retried",
+                            payload=StageEventPayload(
+                                attempt=reviewer_iter + 1,
+                                next_attempt=reviewer_iter + 2,
+                                source_stage="reviewer",
+                                target_stage="developer",
+                                reason="Reviewer requested another developer pass.",
+                            ),
+                        )
+                        self._lifecycle.emit(
+                            event_type=LifecycleEventType.SUPERVISOR_HANDOFF,
+                            role="reviewer",
+                            stage="developer",
+                            status="handoff",
+                            payload=SupervisorHandoffPayload(
+                                from_role="reviewer",
+                                to_role="developer",
+                                reason="Reviewer reported NEEDS_WORK and handed the slice back to developer.",
+                                attempt=reviewer_iter + 2,
+                            ),
+                        )
                     dev_prompt = self._append_feedback(
                         prompt_text, reviewer_stage.output, source="reviewer"
                     )
@@ -290,9 +412,21 @@ class PipelineRunner:
         except RuntimeHookBlocked as exc:
             self._log(f"pipeline: runtime hook blocked execution: {exc}")
             final_result = self._blocked_loop_result(loop_result)
+            terminal_error = str(exc)
+        finally:
+            active_exception = sys.exc_info()[1]
+            if active_exception is not None:
+                error_text = terminal_error or str(active_exception)
+                self._emit_run_finished_event(
+                    final_result or loop_result,
+                    terminal_error=error_text,
+                )
 
         assert loop_result is not None or final_result is not None
-        final_result = self._finalize_pipeline_result(final_result or loop_result)
+        final_result = self._finalize_pipeline_result(
+            final_result or loop_result,
+            terminal_error=terminal_error,
+        )
         return final_result
 
     # ------------------------------------------------------------------
@@ -313,6 +447,7 @@ class PipelineRunner:
         if cli is None:
             raise RuntimeError("No CLI available for refiner role.")
 
+        self._emit_stage_queued(role="refiner", reason="Mandatory refine stage is ready to run.")
         self._emit_stage_start(role="refiner")
         self._log("pipeline: refiner stage starting")
         prompt = self._refiner_prompt(goal_text, stem=stem, date_str=date_str)
@@ -360,7 +495,9 @@ class PipelineRunner:
             stem=stem,
             date_str=date_str,
             session_id=self._session_id(),
+            run_id=self._lifecycle.run_id if self._lifecycle is not None else None,
         )
+        self._emit_stage_queued(role="planner", reason="Mandatory planning stage is ready to run.")
         self._emit_stage_start(role="planner")
         self._log("pipeline: planner stage starting")
         requirements_text = self._read_requirements_doc()
@@ -401,6 +538,7 @@ class PipelineRunner:
         if cli is None:
             raise RuntimeError("No CLI available for mandatory evaluator role.")
 
+        self._emit_stage_queued(role="evaluator", reason="Plan checkpoint evaluator is queued.")
         self._emit_stage_start(role="evaluator")
         self._log("pipeline: plan evaluator stage starting")
         requirements_text = self._read_requirements_doc()
@@ -426,6 +564,25 @@ class PipelineRunner:
         )
 
         verdict = "proceed" if _CHECKPOINT_PROCEED_RE.search(output) else "rework"
+        if self._lifecycle is not None:
+            self._lifecycle.emit(
+                event_type=LifecycleEventType.EVALUATOR_CHECKPOINT_DECISION,
+                role="evaluator",
+                stage="evaluator",
+                status=verdict,
+                payload=EvaluatorCheckpointPayload(
+                    checkpoint_kind="plan",
+                    decision=verdict,
+                ),
+                artifact_refs=(
+                    ArtifactRef.from_path(
+                        kind="checkpoint_report",
+                        path=report_path,
+                        label="plan_checkpoint_report",
+                        content_type="text/markdown",
+                    ),
+                ),
+            )
         self._emit_stage_complete(role="evaluator", verdict=verdict)
         return StageResult(role="evaluator", verdict=verdict, output=output, report_path=report_path)
 
@@ -434,6 +591,7 @@ class PipelineRunner:
     # ------------------------------------------------------------------
 
     def _run_developer(self, prompt_text: str, *, stem: str) -> LoopRunResult:
+        self._emit_stage_queued(role="developer", reason="Developer stage is queued.")
         self._emit_stage_start(role="developer")
         self._log("pipeline: developer stage starting")
         profile = self._profile_for_role("developer")
@@ -501,6 +659,7 @@ class PipelineRunner:
         if cli is None:
             return None
 
+        self._emit_stage_queued(role="tester", reason="Tester stage is queued.")
         self._emit_stage_start(role="tester")
         self._log("pipeline: tester stage starting")
         prompt = self._tester_prompt(goal_text, stem=stem, date_str=date_str)
@@ -534,6 +693,7 @@ class PipelineRunner:
         if cli is None:
             return None
 
+        self._emit_stage_queued(role="reviewer", reason="Reviewer stage is queued.")
         self._emit_stage_start(role="reviewer")
         self._log("pipeline: reviewer stage starting")
         design_text = self._read_designer_doc(stem, date_str)
@@ -562,6 +722,7 @@ class PipelineRunner:
             self._log("pipeline: committer has no CLI — skipping commit")
             return
 
+        self._emit_stage_queued(role="committer", reason="Committer stage is queued.")
         self._emit_stage_start(role="committer")
         self._log("pipeline: committer stage starting")
         prompt = self._committer_prompt(stem, date_str=date_str)
@@ -617,6 +778,7 @@ class PipelineRunner:
         # Extract the original goal text (strip the metadata comment if present).
         goal_text = _strip_goal_source_tag(prompt_text)
 
+        self._emit_stage_queued(role="evaluator", reason="Post-commit evaluator is queued.")
         self._emit_stage_start(role="evaluator")
         self._log("pipeline: evaluator stage starting")
         request = EvaluatorRequest(
@@ -638,6 +800,25 @@ class PipelineRunner:
         ).run(request)
         if result.status != "completed":
             raise RuntimeError("Mandatory post-commit evaluator stage failed.")
+        if self._lifecycle is not None and result.report_path is not None:
+            self._lifecycle.emit(
+                event_type=LifecycleEventType.ARTIFACT_PERSISTED,
+                role="evaluator",
+                stage="evaluator",
+                status="persisted",
+                payload=ArtifactPersistedPayload(
+                    artifact_kind="evaluator_report",
+                    summary="Persisted the post-commit evaluator report.",
+                ),
+                artifact_refs=(
+                    ArtifactRef.from_path(
+                        kind="evaluator_report",
+                        path=result.report_path,
+                        label="evaluator_report",
+                        content_type="text/markdown",
+                    ),
+                ),
+            )
         self._log(
             f"pipeline: evaluator stage completed "
             f"(status={result.status}, verdict={result.verdict})"
@@ -715,6 +896,25 @@ class PipelineRunner:
                 encoding="utf-8",
             )
             self._log(f"pipeline: {role} document → {target_path}")
+            if self._lifecycle is not None:
+                self._lifecycle.emit(
+                    event_type=LifecycleEventType.ARTIFACT_PERSISTED,
+                    role=role,
+                    stage=role,
+                    status="persisted",
+                    payload=ArtifactPersistedPayload(
+                        artifact_kind="stage_report",
+                        summary=f"Persisted the {role} stage report.",
+                    ),
+                    artifact_refs=(
+                        ArtifactRef.from_path(
+                            kind="stage_report",
+                            path=target_path,
+                            label=f"{role}_report",
+                            content_type="text/markdown",
+                        ),
+                    ),
+                )
         return output
 
     # ------------------------------------------------------------------
@@ -865,6 +1065,17 @@ class PipelineRunner:
             return session_id
         return None
 
+    def _emit_stage_queued(self, *, role: str, reason: str) -> None:
+        if self._lifecycle is None:
+            return
+        self._lifecycle.emit(
+            event_type=LifecycleEventType.STAGE_QUEUED,
+            role=role,
+            stage=role,
+            status="queued",
+            payload=StageEventPayload(reason=reason),
+        )
+
     def _emit_stage_start(self, *, role: str) -> None:
         profile = self._profile_for_role(role)
         runtime_skills = self._repository.record_runtime_skill_resolution(
@@ -883,11 +1094,23 @@ class PipelineRunner:
                 f"missing_preloads={summary.get('missing_preload_count', 0)}, "
                 f"shadowed={summary.get('shadowed_count', 0)})"
             )
+        if self._lifecycle is not None:
+            self._lifecycle.emit(
+                event_type=LifecycleEventType.STAGE_STARTED,
+                role=role,
+                stage=role,
+                status="started",
+                payload=StageEventPayload(
+                    reason="Pipeline stage entered active execution.",
+                ),
+                metadata={"runtime_skills": summary},
+            )
         self._hook_controller.emit_stage_start(
             source="pipeline_runner",
             stage_name=role,
             agent_role=role,
             session_id=self._session_id(),
+            run_id=self._lifecycle.run_id if self._lifecycle is not None else None,
             metadata={"runtime_skills": summary},
         )
 
@@ -902,12 +1125,30 @@ class PipelineRunner:
         completion_payload = {"verdict": verdict}
         if payload:
             completion_payload.update(dict(payload))
+        if self._lifecycle is not None:
+            event_type = (
+                LifecycleEventType.STAGE_FAILED
+                if verdict in _STAGE_FAILURE_VERDICTS
+                else LifecycleEventType.STAGE_COMPLETED
+            )
+            self._lifecycle.emit(
+                event_type=event_type,
+                role=role,
+                stage=role,
+                status=verdict,
+                payload=StageEventPayload(
+                    verdict=verdict,
+                    reason=completion_payload.get("status"),
+                    error=completion_payload.get("error"),
+                ),
+                metadata={"run_id": run_id},
+            )
         self._hook_controller.emit_stage_complete(
             source="pipeline_runner",
             stage_name=role,
             agent_role=role,
             session_id=self._session_id(),
-            run_id=run_id,
+            run_id=self._lifecycle.run_id if self._lifecycle is not None else run_id,
             payload=completion_payload,
         )
 
@@ -926,22 +1167,64 @@ class PipelineRunner:
             ),
         )
 
+    def _emit_run_finished_event(
+        self,
+        result: LoopRunResult | None,
+        *,
+        terminal_error: str | None = None,
+    ) -> None:
+        lifecycle = self._lifecycle
+        if lifecycle is None:
+            return
+        if result is not None:
+            status = result.status
+            payload = RunEventPayload(
+                source="pipeline_runner",
+                entrypoint="PipelineRunner.run",
+                attempts_completed=result.attempts_completed,
+                retries_used=result.retries_used,
+                supervisor_verdict=result.supervisor_verdict,
+                outcome=result.status,
+                error=terminal_error,
+            )
+        else:
+            status = "failed"
+            payload = RunEventPayload(
+                source="pipeline_runner",
+                entrypoint="PipelineRunner.run",
+                outcome=status,
+                error=terminal_error,
+            )
+        lifecycle.emit(
+            event_type=LifecycleEventType.RUN_FINISHED,
+            role="pipeline",
+            stage="pipeline",
+            status=status,
+            payload=payload,
+        )
+        self._lifecycle = None
+
     def _finalize_pipeline_result(
         self,
         result: LoopRunResult,
+        *,
+        terminal_error: str | None = None,
     ) -> LoopRunResult:
         session_id = self._session_id()
+        final_result = result
         try:
             self._hook_controller.emit_session_end(
                 source="pipeline_runner",
                 session_id=session_id,
-                run_id=result.latest_run_id,
+                run_id=self._lifecycle.run_id if self._lifecycle is not None else result.latest_run_id,
                 agent_role="pipeline",
                 result=result.to_dict(),
             )
         except RuntimeHookBlocked as exc:
             self._log(f"pipeline: session-end hook blocked exit: {exc}")
-            return LoopRunResult(
+            if terminal_error is None or result.status == "completed":
+                terminal_error = str(exc)
+            final_result = LoopRunResult(
                 status="blocked",
                 attempts_completed=result.attempts_completed,
                 retries_used=result.retries_used,
@@ -952,7 +1235,8 @@ class PipelineRunner:
                 report_path=result.report_path,
                 continuation_prompt_path=result.continuation_prompt_path,
             )
-        return result
+        self._emit_run_finished_event(final_result, terminal_error=terminal_error)
+        return final_result
 
     @staticmethod
     def _append_feedback(

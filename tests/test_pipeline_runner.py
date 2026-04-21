@@ -745,6 +745,64 @@ class TestPipelineRun:
         assert "failure details here" in captured_prompts[1]
         assert "# Feedback from tester" in captured_prompts[1]
 
+    @pytest.mark.parametrize(
+        ("verdict", "expected_event_type"),
+        [
+            ("done", "stage.completed"),
+            ("pass", "stage.completed"),
+            ("approved", "stage.completed"),
+            ("committed", "stage.completed"),
+            ("fail", "stage.failed"),
+            ("needs_work", "stage.failed"),
+            ("rework", "stage.failed"),
+            ("blocked", "stage.failed"),
+            ("failed", "stage.failed"),
+        ],
+    )
+    def test_stage_verdicts_map_to_expected_lifecycle_event_types(
+        self,
+        tmp_path: Path,
+        verdict: str,
+        expected_event_type: str,
+    ) -> None:
+        runner = _make_runner(tmp_path, active_agent_cli=Path("claude"))
+        runner._lifecycle = MagicMock()
+        runner._hook_controller.emit_stage_complete = MagicMock()
+
+        runner._emit_stage_complete(role="tester", verdict=verdict)
+
+        emit_kwargs = runner._lifecycle.emit.call_args.kwargs
+        assert emit_kwargs["event_type"].value == expected_event_type
+        assert emit_kwargs["status"] == verdict
+
+    def test_pipeline_emits_terminal_failure_event_when_setup_raises_early(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(developer=RoleAgentConfig(cli=Path("claude")))
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+        recorder = MagicMock()
+        recorder.run_id = "pipeline:test"
+
+        with (
+            patch("dormammu.daemon.pipeline_runner.LifecycleRecorder.for_execution", return_value=recorder),
+            patch.object(runner, "run_refine_and_plan", side_effect=RuntimeError("planner exploded")),
+            pytest.raises(RuntimeError, match="planner exploded"),
+        ):
+            runner.run("goal", stem="s", date_str="20260412")
+
+        emitted_types = [call.kwargs["event_type"].value for call in recorder.emit.call_args_list]
+        assert emitted_types == [
+            "run.requested",
+            "run.started",
+            "run.finished",
+        ]
+        finished_call = recorder.emit.call_args_list[-1]
+        finished_payload = finished_call.kwargs["payload"]
+        assert finished_call.kwargs["status"] == "failed"
+        assert finished_payload.outcome == "failed"
+        assert finished_payload.error == "planner exploded"
+
 
 # ---------------------------------------------------------------------------
 # Document writing

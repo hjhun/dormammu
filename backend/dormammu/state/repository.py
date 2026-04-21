@@ -9,6 +9,7 @@ from dormammu._utils import iso_now as _iso_now
 from dormammu.agent.models import AgentRunResult, AgentRunStarted
 from dormammu.config import AppConfig
 from dormammu.guidance import resolve_guidance_files
+from dormammu.lifecycle import LifecycleEvent
 from dormammu.skills import resolve_runtime_skill_resolution
 from dormammu.state.models import (
     ManagedWorktreeState,
@@ -613,6 +614,51 @@ class StateRepository:
                 "history": normalized_history[-history_limit:],
             }
             state["hooks"] = hooks_payload
+
+        _write_json(self.state_file("session.json"), session_state)
+        _write_json(self.state_file("workflow_state.json"), workflow_state)
+        self._sync_root_index(timestamp=timestamp)
+
+    def record_lifecycle_event(
+        self,
+        event: LifecycleEvent | Mapping[str, Any],
+        *,
+        history_limit: int = 200,
+    ) -> None:
+        if self.session_id is None:
+            active_session_id = self._session_mgr.read_active_session_id()
+            if active_session_id is None:
+                return
+            self.for_session(active_session_id).record_lifecycle_event(
+                event,
+                history_limit=history_limit,
+            )
+            return
+
+        event_payload = (
+            event.to_dict() if isinstance(event, LifecycleEvent) else dict(event)
+        )
+        timestamp = str(event_payload.get("timestamp") or _iso_now())
+        session_state = _read_json(self.state_file("session.json"))
+        workflow_state = _read_json(self.state_file("workflow_state.json"))
+
+        for state in (session_state, workflow_state):
+            state["updated_at"] = timestamp
+            lifecycle_block = state.get("lifecycle")
+            if not isinstance(lifecycle_block, Mapping):
+                lifecycle_block = {}
+            history = lifecycle_block.get("history")
+            normalized_history: list[dict[str, Any]] = []
+            if isinstance(history, list):
+                normalized_history = [
+                    dict(item) for item in history if isinstance(item, Mapping)
+                ]
+            normalized_history.append(event_payload)
+            state["lifecycle"] = {
+                "updated_at": timestamp,
+                "latest_event": event_payload,
+                "history": normalized_history[-history_limit:],
+            }
 
         _write_json(self.state_file("session.json"), session_state)
         _write_json(self.state_file("workflow_state.json"), workflow_state)

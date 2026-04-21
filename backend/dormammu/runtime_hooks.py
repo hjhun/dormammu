@@ -6,6 +6,12 @@ from typing import TYPE_CHECKING, Any, Mapping, TextIO
 from dormammu._utils import iso_now
 from dormammu.hook_runner import HookRunResult, HookRunner
 from dormammu.hooks import HookEventName, HookResultAction, HookInputPayload, HookSubjectRef
+from dormammu.lifecycle import (
+    HookExecutionPayload,
+    LifecycleEventType,
+    LifecycleRecorder,
+    build_lifecycle_run_id,
+)
 
 if TYPE_CHECKING:
     from dormammu.config import AppConfig
@@ -81,12 +87,14 @@ class RuntimeHookController:
         source: str,
         entrypoint: str,
         session_id: str | None,
+        run_id: str | None = None,
         agent_role: str | None,
     ) -> RuntimeHookSummary | None:
         return self._emit(
             event=HookEventName.PROMPT_INTAKE,
             source=source,
             session_id=session_id,
+            run_id=run_id,
             agent_role=agent_role,
             subject=HookSubjectRef(kind="prompt", name=entrypoint),
             payload={
@@ -103,11 +111,13 @@ class RuntimeHookController:
         stem: str,
         date_str: str,
         session_id: str | None,
+        run_id: str | None = None,
     ) -> RuntimeHookSummary | None:
         return self._emit(
             event=HookEventName.PLAN_START,
             source=source,
             session_id=session_id,
+            run_id=run_id,
             agent_role="planner",
             subject=HookSubjectRef(kind="stage", id="planner", name="planner"),
             payload={
@@ -280,6 +290,10 @@ class RuntimeHookController:
         if not self._has_runtime_hooks():
             return None
 
+        selected_hooks = self._runner.select_sync_hooks(event)
+        if not selected_hooks:
+            return None
+
         hook_input = HookInputPayload(
             event=event,
             emitted_at=iso_now(),
@@ -290,11 +304,46 @@ class RuntimeHookController:
             payload=dict(payload or {}),
             metadata=dict(metadata or {}),
         )
+        lifecycle = LifecycleRecorder(
+            repository=self._repository,
+            run_id=run_id or build_lifecycle_run_id(
+                "hook",
+                session_id=session_id,
+                label=event.value,
+            ),
+            session_id=session_id,
+            default_metadata={"source": source},
+        )
+        lifecycle.emit(
+            event_type=LifecycleEventType.HOOK_EXECUTION_STARTED,
+            role=agent_role,
+            stage=subject.id if subject is not None else None,
+            status="started",
+            payload=HookExecutionPayload(
+                hook_event=event.public_name,
+                selected_hooks=tuple(hook.name for hook in selected_hooks),
+            ),
+        )
         run_result = self._runner.run_sync(hook_input)
-        if not run_result.selected_hooks:
-            return None
 
         summary = self._summarize(run_result=run_result, source=source)
+        lifecycle.emit(
+            event_type=LifecycleEventType.HOOK_EXECUTION_FINISHED,
+            role=agent_role,
+            stage=subject.id if subject is not None else None,
+            status="blocked" if summary.blocked else "completed",
+            payload=HookExecutionPayload(
+                hook_event=event.public_name,
+                selected_hooks=tuple(hook.name for hook in run_result.selected_hooks),
+                executed_hooks=tuple(record.hook.name for record in run_result.executed),
+                blocking_hook=(
+                    run_result.blocking_record.hook.name
+                    if run_result.blocking_record is not None
+                    else None
+                ),
+                message=summary.message,
+            ),
+        )
         if self._repository is not None:
             self._repository.record_hook_event(
                 summary.to_state_dict(),

@@ -312,12 +312,18 @@ def test_loop_runner_records_prompt_stage_final_and_completion_hook_diagnostics(
                         event="final verification",
                         mode="annotate-final",
                     ),
-                    _hook_payload(
-                        hook_script,
-                        name="stage-complete-annotate",
-                        event="stage completion",
-                        mode="annotate-stage-complete",
-                    ),
+                _hook_payload(
+                    hook_script,
+                    name="stage-complete-annotate",
+                    event="stage completion",
+                    mode="annotate-stage-complete",
+                ),
+                _hook_payload(
+                    hook_script,
+                    name="session-end-allow",
+                    event="session end",
+                    mode="allow",
+                ),
                 ]
             },
         )
@@ -344,6 +350,7 @@ def test_loop_runner_records_prompt_stage_final_and_completion_hook_diagnostics(
         assert "stage start" in events
         assert "final verification" in events
         assert "stage completion" in events
+        assert "session end" in events
 
         prompt_record = next(item for item in history if item["event"] == "prompt intake")
         assert prompt_record["warnings"] == [
@@ -371,6 +378,65 @@ def test_loop_runner_records_prompt_stage_final_and_completion_hook_diagnostics(
                 "message": "stage completion annotated",
             }
         ]
+        lifecycle_history = repository.read_session_state()["lifecycle"]["history"]
+        loop_run_id = next(
+            item["run_id"] for item in lifecycle_history if item["event_type"] == "run.requested"
+        )
+        assert {item["hook_input"]["run_id"] for item in history} == {loop_run_id}
+        assert {
+            item["run_id"]
+            for item in lifecycle_history
+            if item["event_type"].startswith("hook.execution")
+        } == {loop_run_id}
+
+
+def test_loop_runner_prompt_intake_hook_block_updates_terminal_lifecycle_event() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        _seed_repo(root)
+        cli = _write_loop_cli(root)
+        hook_script = _write_hook_script(root)
+        _write_json(
+            root / "dormammu.json",
+            {
+                "hooks": [
+                    _hook_payload(
+                        hook_script,
+                        name="deny-prompt-intake",
+                        event="prompt intake",
+                        mode="deny-prompt-intake",
+                    ),
+                    _hook_payload(
+                        hook_script,
+                        name="session-end-allow",
+                        event="session end",
+                        mode="allow",
+                    ),
+                ]
+            },
+        )
+        config = _load_config(root)
+        repository = StateRepository(config)
+
+        result = LoopRunner(config, repository=repository).run(
+            LoopRunRequest(
+                cli_path=cli,
+                prompt_text="Create the required marker file.",
+                repo_root=root,
+                run_label="deny-prompt-intake",
+                max_retries=0,
+                required_paths=("done.txt",),
+                expected_roadmap_phase_id="phase_4",
+            )
+        )
+
+        assert result.status == "blocked"
+        assert not (root / ".attempt-count").exists()
+        lifecycle = repository.read_session_state()["lifecycle"]
+        assert lifecycle["latest_event"]["event_type"] == "run.finished"
+        assert lifecycle["latest_event"]["status"] == "blocked"
+        assert lifecycle["latest_event"]["payload"]["outcome"] == "blocked"
+        assert lifecycle["latest_event"]["payload"]["error"] == "blocked prompt intake"
 
 
 def test_loop_runner_blocks_before_agent_execution_when_stage_start_hook_denies() -> None:
@@ -422,6 +488,11 @@ def test_loop_runner_blocks_before_agent_execution_when_stage_start_hook_denies(
         assert history[-1]["blocked"] is False
         latest_event = repository.read_workflow_state()["hooks"]["latest_event"]
         assert latest_event["event"] == "session end"
+        lifecycle = repository.read_session_state()["lifecycle"]
+        assert lifecycle["latest_event"]["event_type"] == "run.finished"
+        assert lifecycle["latest_event"]["status"] == "blocked"
+        assert lifecycle["latest_event"]["payload"]["outcome"] == "blocked"
+        assert lifecycle["latest_event"]["payload"]["error"] == "blocked stage start"
 
 
 def test_loop_runner_emits_session_end_when_stage_completion_hook_denies() -> None:
@@ -473,6 +544,15 @@ def test_loop_runner_emits_session_end_when_stage_completion_hook_denies() -> No
         ]
         assert history[-2]["blocked"] is True
         assert history[-1]["blocked"] is False
+        lifecycle = repository.read_session_state()["lifecycle"]
+        assert lifecycle["latest_event"]["event_type"] == "run.finished"
+        assert lifecycle["latest_event"]["status"] == "blocked"
+        assert lifecycle["latest_event"]["payload"]["outcome"] == "blocked"
+        assert lifecycle["latest_event"]["payload"]["error"] == "blocked stage completion"
+        stage_failed = next(
+            item for item in lifecycle["history"] if item["event_type"] == "stage.failed"
+        )
+        assert stage_failed["payload"]["error"] == "blocked stage completion"
 
 
 def test_pipeline_runner_prompt_intake_hook_does_not_crash_without_active_session(
@@ -669,6 +749,216 @@ def test_pipeline_runner_emits_session_end_when_prompt_intake_hook_denies(
     assert history[-1]["blocked"] is False
 
 
+def test_pipeline_runner_hook_events_share_pipeline_execution_run_id(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path
+    _seed_repo(root)
+    hook_script = _write_hook_script(root)
+    _write_json(
+        root / "dormammu.json",
+        {
+            "active_agent_cli": sys.executable,
+            "hooks": [
+                _hook_payload(
+                    hook_script,
+                    name="prompt-allow",
+                    event="prompt intake",
+                    mode="allow",
+                ),
+                _hook_payload(
+                    hook_script,
+                    name="plan-start",
+                    event="plan start",
+                    mode="annotate-plan-start",
+                ),
+                _hook_payload(
+                    hook_script,
+                    name="stage-start-allow",
+                    event="stage start",
+                    mode="allow",
+                ),
+                _hook_payload(
+                    hook_script,
+                    name="stage-complete-allow",
+                    event="stage completion",
+                    mode="allow",
+                ),
+                _hook_payload(
+                    hook_script,
+                    name="session-end-allow",
+                    event="session end",
+                    mode="allow",
+                ),
+            ],
+        },
+    )
+    config = _load_config(root)
+    repository = StateRepository(config)
+    repository.ensure_bootstrap_state(
+        goal="Pipeline run-id integration test",
+        prompt_text="Plan the runtime hook integration.",
+        active_roadmap_phase_ids=["phase_4"],
+    )
+    runner = PipelineRunner(
+        config,
+        config.agents or AgentsConfig(),
+        repository=repository,
+        progress_stream=io.StringIO(),
+    )
+
+    def _run_refine_and_plan(
+        prompt_text: str,
+        *,
+        stem: str,
+        date_str: str,
+        enable_plan_evaluator: bool = False,
+    ) -> None:
+        assert enable_plan_evaluator is False
+        runner._run_refiner(prompt_text, stem=stem, date_str=date_str)
+        runner._run_planner(prompt_text, stem=stem, date_str=date_str)
+
+    def _run_developer(prompt_text: str, *, stem: str) -> LoopRunResult:
+        runner._emit_stage_queued(role="developer", reason="Developer stage is queued.")
+        runner._emit_stage_start(role="developer")
+        result = LoopRunResult(
+            status="completed",
+            attempts_completed=1,
+            retries_used=0,
+            max_retries=0,
+            max_iterations=1,
+            latest_run_id="agent-run-1",
+            supervisor_verdict="approved",
+            report_path=None,
+            continuation_prompt_path=None,
+        )
+        runner._emit_stage_complete(
+            role="developer",
+            verdict=result.status,
+            run_id=result.latest_run_id,
+            payload={
+                "status": result.status,
+                "attempts_completed": result.attempts_completed,
+                "retries_used": result.retries_used,
+                "supervisor_verdict": result.supervisor_verdict,
+            },
+        )
+        return result
+
+    with (
+        patch.object(runner, "_call_once", return_value="ok"),
+        patch.object(runner, "run_refine_and_plan", side_effect=_run_refine_and_plan),
+        patch.object(runner, "_run_developer", side_effect=_run_developer),
+        patch.object(runner, "_run_tester", return_value=None),
+        patch.object(runner, "_run_reviewer", return_value=None),
+        patch.object(runner, "_run_committer"),
+    ):
+        result = runner.run(
+            "Plan the runtime hook integration.",
+            stem="runtime-hooks",
+            date_str="20260421",
+        )
+
+    assert result.status == "completed"
+    history = _event_history(repository)
+    pipeline_run_id = next(
+        item["run_id"]
+        for item in repository.read_session_state()["lifecycle"]["history"]
+        if item["event_type"] == "run.requested" and item["role"] == "pipeline"
+    )
+    assert {
+        item["event"]
+        for item in history
+    } >= {"prompt intake", "plan start", "stage start", "stage completion", "session end"}
+    assert {item["hook_input"]["run_id"] for item in history} == {pipeline_run_id}
+    assert {
+        item["run_id"]
+        for item in repository.read_session_state()["lifecycle"]["history"]
+        if item["event_type"].startswith("hook.execution")
+    } == {pipeline_run_id}
+
+
+def test_pipeline_runner_session_end_hook_block_updates_terminal_lifecycle_event(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path
+    _seed_repo(root)
+    hook_script = _write_hook_script(root)
+    _write_json(
+        root / "dormammu.json",
+        {
+            "active_agent_cli": sys.executable,
+            "hooks": [
+                _hook_payload(
+                    hook_script,
+                    name="deny-session-end",
+                    event="session end",
+                    mode="deny-session-end",
+                )
+            ],
+        },
+    )
+    config = _load_config(root)
+    repository = StateRepository(config)
+    repository.ensure_bootstrap_state(
+        goal="Pipeline session-end lifecycle test",
+        prompt_text="Plan the runtime hook integration.",
+        active_roadmap_phase_ids=["phase_4"],
+    )
+    runner = PipelineRunner(
+        config,
+        config.agents or AgentsConfig(),
+        repository=repository,
+        progress_stream=io.StringIO(),
+    )
+
+    def _bootstrap_session_during_developer_run(
+        prompt_text: str,
+        *,
+        stem: str,
+    ) -> LoopRunResult:
+        repository.ensure_bootstrap_state(
+            goal="Runtime hook integration",
+            prompt_text=prompt_text,
+            active_roadmap_phase_ids=["phase_4"],
+        )
+        return LoopRunResult(
+            status="completed",
+            attempts_completed=1,
+            retries_used=0,
+            max_retries=0,
+            max_iterations=1,
+            latest_run_id=None,
+            supervisor_verdict="approved",
+            report_path=None,
+            continuation_prompt_path=None,
+        )
+
+    with (
+        patch.object(runner, "run_refine_and_plan"),
+        patch.object(
+            runner,
+            "_run_developer",
+            side_effect=_bootstrap_session_during_developer_run,
+        ),
+        patch.object(runner, "_run_tester", return_value=None),
+        patch.object(runner, "_run_reviewer", return_value=None),
+        patch.object(runner, "_run_committer"),
+    ):
+        result = runner.run(
+            "Plan the runtime hook integration.",
+            stem="runtime-hooks",
+            date_str="20260421",
+        )
+
+    assert result.status == "blocked"
+    lifecycle = repository.read_session_state()["lifecycle"]
+    assert lifecycle["latest_event"]["event_type"] == "run.finished"
+    assert lifecycle["latest_event"]["status"] == "blocked"
+    assert lifecycle["latest_event"]["payload"]["outcome"] == "blocked"
+    assert lifecycle["latest_event"]["payload"]["error"] == "blocked session end"
+
+
 def test_loop_runner_session_end_hook_can_block_successful_completion() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -709,6 +999,11 @@ def test_loop_runner_session_end_hook_can_block_successful_completion() -> None:
         assert workflow_state["loop"]["status"] == "blocked"
         assert workflow_state["hooks"]["latest_event"]["event"] == "session end"
         assert workflow_state["hooks"]["latest_event"]["blocked"] is True
+        lifecycle = repository.read_session_state()["lifecycle"]
+        assert lifecycle["latest_event"]["event_type"] == "run.finished"
+        assert lifecycle["latest_event"]["status"] == "blocked"
+        assert lifecycle["latest_event"]["payload"]["outcome"] == "blocked"
+        assert lifecycle["latest_event"]["payload"]["error"] == "blocked session end"
 
 
 def test_pipeline_runner_emits_plan_start_hook_at_planner_boundary(tmp_path: Path) -> None:

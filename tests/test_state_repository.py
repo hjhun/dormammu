@@ -53,7 +53,7 @@ class StateRepositoryTests(unittest.TestCase):
             self.assertIn("Bootstrap test goal", dashboard)
 
             workflow_state = json.loads(artifacts.workflow_state.read_text(encoding="utf-8"))
-            self.assertEqual(workflow_state["state_schema_version"], 8)
+            self.assertEqual(workflow_state["state_schema_version"], 9)
             self.assertEqual(
                 workflow_state["operator_sync"]["tasks"]["pending_tasks"],
                 3,
@@ -574,8 +574,8 @@ Use this skill in state repository tests.
             root_workflow = json.loads(
                 (config.base_dev_dir / "workflow_state.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(root_session["state_schema_version"], 8)
-            self.assertEqual(root_workflow["state_schema_version"], 8)
+            self.assertEqual(root_session["state_schema_version"], 9)
+            self.assertEqual(root_workflow["state_schema_version"], 9)
             self.assertEqual(root_session["current_session"]["active_worktree_id"], worktree.worktree_id)
             self.assertEqual(root_workflow["current_session"]["active_worktree_id"], worktree.worktree_id)
             self.assertEqual(root_session["current_session"]["managed_worktree_count"], 1)

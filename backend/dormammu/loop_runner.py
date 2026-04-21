@@ -13,6 +13,17 @@ from dormammu.agent.permissions import PermissionDecision
 from dormammu.agent.profiles import AgentProfile
 from dormammu.config import AppConfig
 from dormammu.continuation import build_continuation_prompt
+from dormammu.lifecycle import (
+    ArtifactPersistedPayload,
+    ArtifactRef,
+    LifecycleEventType,
+    LifecycleRecorder,
+    PermissionGatePayload,
+    RunEventPayload,
+    StageEventPayload,
+    SupervisorHandoffPayload,
+    WorktreeEventPayload,
+)
 from dormammu.runtime_hooks import RuntimeHookBlocked, RuntimeHookController
 from dormammu.skills import runtime_skill_summary
 from dormammu.state import StateRepository
@@ -302,6 +313,32 @@ class LoopRunner:
             repository=runtime_repository,
             progress_stream=self.progress_stream,
         )
+        lifecycle = LifecycleRecorder.for_execution(
+            runtime_repository,
+            scope="loop",
+            session_id=session_id,
+            label=request.run_label or request.agent_role,
+            default_metadata={"source": "loop_runner", "entrypoint": "LoopRunner.run"},
+        )
+        lifecycle.emit(
+            event_type=LifecycleEventType.RUN_REQUESTED,
+            role=request.agent_role,
+            stage=request.agent_role,
+            status="requested",
+            payload=RunEventPayload(
+                source="loop_runner",
+                entrypoint="LoopRunner.run",
+                trigger="interactive",
+                prompt_summary=request.prompt_text.splitlines()[0].strip()
+                if request.prompt_text.strip()
+                else None,
+            ),
+            metadata={
+                "run_label": request.run_label,
+                "max_retries": request.max_retries,
+                "expected_roadmap_phase_id": request.expected_roadmap_phase_id,
+            },
+        )
 
         current_prompt = prompt_text if prompt_text is not None else request.prompt_text
         attempt_number = start_attempt
@@ -309,6 +346,7 @@ class LoopRunner:
         continuation_prompt_path: Path | None = None
         report_path: Path | None = None
         active_worktree: ManagedWorktree | None = None
+        worktree_released = False
         # Reset per run() call so resumed loops don't inherit stale state.
         # Read _STAGNATION_WINDOW at call time so tests can patch it dynamically.
         stagnation = _StagnationDetector(window_size=_STAGNATION_WINDOW)
@@ -342,7 +380,9 @@ class LoopRunner:
             report_value: SupervisorReport | None,
             continuation_prompt_value: Path | None,
             emit_stage_completion: bool = True,
+            terminal_error: str | None = None,
         ) -> LoopRunResult:
+            nonlocal worktree_released
             final_result = result
 
             if emit_stage_hooks and emit_stage_completion:
@@ -352,7 +392,7 @@ class LoopRunner:
                         stage_name=request.agent_role,
                         agent_role=request.agent_role,
                         session_id=session_id,
-                        run_id=latest_run_id_value,
+                        run_id=lifecycle.run_id,
                         payload={
                             "status": result.status,
                             "attempts_completed": result.attempts_completed,
@@ -362,6 +402,7 @@ class LoopRunner:
                     )
                 except RuntimeHookBlocked as exc:
                     next_action = f"Stage completion hook blocked loop exit: {exc}"
+                    terminal_error = str(exc)
                     self._persist_loop_state(
                         status="blocked",
                         request=request,
@@ -381,17 +422,59 @@ class LoopRunner:
                         continuation_prompt_value=continuation_prompt_value,
                     )
 
+            if emit_stage_completion:
+                event_type = (
+                    LifecycleEventType.STAGE_COMPLETED
+                    if final_result.status == "completed"
+                    else LifecycleEventType.STAGE_FAILED
+                )
+                lifecycle.emit(
+                    event_type=event_type,
+                    role=request.agent_role,
+                    stage=request.agent_role,
+                    status=final_result.status,
+                    payload=StageEventPayload(
+                        attempt=attempts_completed_value,
+                        verdict=final_result.supervisor_verdict,
+                        reason=report_value.summary if report_value is not None else None,
+                        error=terminal_error
+                        or (
+                            report_value.summary
+                            if report_value is not None and final_result.status != "completed"
+                            else None
+                        ),
+                    ),
+                )
+
+            if active_worktree is not None and not worktree_released:
+                lifecycle.emit(
+                    event_type=LifecycleEventType.WORKTREE_RELEASED,
+                    role=request.agent_role,
+                    stage=request.agent_role,
+                    status="released",
+                    payload=WorktreeEventPayload(
+                        worktree_id=active_worktree.worktree_id,
+                        source_repo_root=str(active_worktree.source_repo_root),
+                        isolated_path=str(active_worktree.isolated_path),
+                        owner_role=active_worktree.owner.agent_role,
+                        owner_run_id=active_worktree.owner.run_id,
+                    ),
+                    metadata={"result_status": final_result.status},
+                )
+                worktree_released = True
+
             if manage_session_lifecycle:
                 try:
                     hook_controller.emit_session_end(
                         source="loop_runner",
                         session_id=session_id,
-                        run_id=latest_run_id_value,
+                        run_id=lifecycle.run_id,
                         agent_role=request.agent_role,
                         result=final_result.to_dict(),
                     )
                 except RuntimeHookBlocked as exc:
                     next_action = f"Session-end hook blocked loop exit: {exc}"
+                    terminal_error = str(exc)
                     self._persist_loop_state(
                         status="blocked",
                         request=request,
@@ -403,14 +486,65 @@ class LoopRunner:
                         continuation_prompt_path=continuation_prompt_value,
                         next_action=next_action,
                     )
-                    return _blocked_result(
+                    final_result = _blocked_result(
                         attempts_completed_value=attempts_completed_value,
                         retries_used_value=retries_used_value,
                         latest_run_id_value=latest_run_id_value,
                         report_value=report_value,
                         continuation_prompt_value=continuation_prompt_value,
                     )
+
+            run_error = terminal_error
+            if run_error is None and report_value is not None and final_result.status != "completed":
+                run_error = report_value.summary
+            lifecycle.emit(
+                event_type=LifecycleEventType.RUN_FINISHED,
+                role=request.agent_role,
+                stage=request.agent_role,
+                status=final_result.status,
+                payload=RunEventPayload(
+                    source="loop_runner",
+                    entrypoint="LoopRunner.run",
+                    attempts_completed=attempts_completed_value,
+                    retries_used=retries_used_value,
+                    supervisor_verdict=final_result.supervisor_verdict,
+                    outcome=final_result.status,
+                    error=run_error,
+                ),
+            )
             return final_result
+
+        worktree_create_allowed = (
+            profile.worktree_policy.evaluate("create") is PermissionDecision.ALLOW
+        )
+        worktree_reuse_allowed = (
+            profile.worktree_policy.evaluate("reuse") is PermissionDecision.ALLOW
+        )
+        if request.agent_role == "developer" and self.config.worktree.enabled:
+            lifecycle.emit(
+                event_type=LifecycleEventType.PERMISSION_GATE,
+                role=request.agent_role,
+                stage=request.agent_role,
+                status=(
+                    "approved"
+                    if (worktree_create_allowed or worktree_reuse_allowed)
+                    else "blocked"
+                ),
+                payload=PermissionGatePayload(
+                    gate_name="managed_worktree",
+                    decision=(
+                        "approved"
+                        if (worktree_create_allowed or worktree_reuse_allowed)
+                        else "blocked"
+                    ),
+                    reason=(
+                        "Agent profile allows managed worktree isolation."
+                        if (worktree_create_allowed or worktree_reuse_allowed)
+                        else "Agent profile denied managed worktree create/reuse actions."
+                    ),
+                    requested_action="create_or_reuse",
+                ),
+            )
 
         if self._managed_worktree_requested(request=request, profile=profile):
             try:
@@ -462,6 +596,19 @@ class LoopRunner:
                     runtime_config,
                     repository=runtime_repository,
                 )
+                lifecycle.emit(
+                    event_type=LifecycleEventType.WORKTREE_PREPARED,
+                    role=request.agent_role,
+                    stage=request.agent_role,
+                    status="prepared",
+                    payload=WorktreeEventPayload(
+                        worktree_id=active_worktree.worktree_id,
+                        source_repo_root=str(active_worktree.source_repo_root),
+                        isolated_path=str(active_worktree.isolated_path),
+                        owner_role=active_worktree.owner.agent_role,
+                        owner_run_id=active_worktree.owner.run_id,
+                    ),
+                )
 
         if emit_prompt_intake:
             try:
@@ -470,6 +617,7 @@ class LoopRunner:
                     source="loop_runner",
                     entrypoint="LoopRunner.run",
                     session_id=session_id,
+                    run_id=lifecycle.run_id,
                     agent_role=request.agent_role,
                 )
             except RuntimeHookBlocked as exc:
@@ -499,7 +647,30 @@ class LoopRunner:
                     report_value=None,
                     continuation_prompt_value=None,
                     emit_stage_completion=False,
+                    terminal_error=str(exc),
                 )
+
+        lifecycle.emit(
+            event_type=LifecycleEventType.STAGE_QUEUED,
+            role=request.agent_role,
+            stage=request.agent_role,
+            status="queued",
+            payload=StageEventPayload(
+                attempt=start_attempt,
+                reason="Loop runner accepted the stage for supervised execution.",
+            ),
+        )
+        lifecycle.emit(
+            event_type=LifecycleEventType.RUN_STARTED,
+            role=request.agent_role,
+            stage=request.agent_role,
+            status="started",
+            payload=RunEventPayload(
+                source="loop_runner",
+                entrypoint="LoopRunner.run",
+                trigger="supervised_loop",
+            ),
+        )
 
         if emit_stage_hooks:
             try:
@@ -508,6 +679,7 @@ class LoopRunner:
                     stage_name=request.agent_role,
                     agent_role=request.agent_role,
                     session_id=session_id,
+                    run_id=lifecycle.run_id,
                     payload={
                         "run_label": request.run_label,
                         "start_attempt": start_attempt,
@@ -541,7 +713,19 @@ class LoopRunner:
                     report_value=None,
                     continuation_prompt_value=None,
                     emit_stage_completion=False,
+                    terminal_error=str(exc),
                 )
+        lifecycle.emit(
+            event_type=LifecycleEventType.STAGE_STARTED,
+            role=request.agent_role,
+            stage=request.agent_role,
+            status="started",
+            payload=StageEventPayload(
+                attempt=start_attempt,
+                reason="Stage start hooks completed and agent execution can begin.",
+            ),
+            metadata={"runtime_skills": runtime_skill_summary(runtime_skill_state.get("latest"))},
+        )
 
         while True:
             self._persist_loop_state(
@@ -584,6 +768,23 @@ class LoopRunner:
             def _handle_started(started: Any) -> None:
                 runtime_repository.record_current_run(started)
                 self._emit_command_started(started)
+                lifecycle.emit(
+                    event_type=LifecycleEventType.ARTIFACT_PERSISTED,
+                    role=request.agent_role,
+                    stage=request.agent_role,
+                    status="persisted",
+                    payload=ArtifactPersistedPayload(
+                        artifact_kind="agent_run_artifacts",
+                        summary="Persisted prompt/stdout/stderr/metadata artifact references for the active agent run.",
+                    ),
+                    artifact_refs=(
+                        ArtifactRef.from_path(kind="prompt", path=started.prompt_path, label="prompt"),
+                        ArtifactRef.from_path(kind="stdout", path=started.stdout_path, label="stdout"),
+                        ArtifactRef.from_path(kind="stderr", path=started.stderr_path, label="stderr"),
+                        ArtifactRef.from_path(kind="metadata", path=started.metadata_path, label="metadata"),
+                    ),
+                    metadata={"agent_run_id": started.run_id},
+                )
                 self._persist_loop_state(
                     status="running",
                     request=request,
@@ -680,13 +881,31 @@ class LoopRunner:
                 )
             )
             report_path = runtime_repository.write_supervisor_report(report.to_markdown())
+            lifecycle.emit(
+                event_type=LifecycleEventType.ARTIFACT_PERSISTED,
+                role=request.agent_role,
+                stage=request.agent_role,
+                status="persisted",
+                payload=ArtifactPersistedPayload(
+                    artifact_kind="supervisor_report",
+                    summary="Persisted the latest supervisor verification report.",
+                ),
+                artifact_refs=(
+                    ArtifactRef.from_path(
+                        kind="supervisor_report",
+                        path=report_path,
+                        label="supervisor_report",
+                        content_type="text/markdown",
+                    ),
+                ),
+            )
             report = report.with_report_path(report_path)
             self._emit_supervisor_result(report, attempt_number=attempt_number)
             try:
                 hook_controller.emit_final_verification(
                     source="loop_runner",
                     session_id=session_id,
-                    run_id=result.run_id,
+                    run_id=lifecycle.run_id,
                     agent_role=request.agent_role,
                     attempt_number=attempt_number,
                     report=report.to_dict(),
@@ -848,6 +1067,24 @@ class LoopRunner:
                 templates_dir=self.config.templates_dir,
             )
             continuation_prompt_path = runtime_repository.write_continuation_prompt(continuation.text)
+            lifecycle.emit(
+                event_type=LifecycleEventType.ARTIFACT_PERSISTED,
+                role=request.agent_role,
+                stage=request.agent_role,
+                status="persisted",
+                payload=ArtifactPersistedPayload(
+                    artifact_kind="continuation_prompt",
+                    summary="Persisted the continuation prompt for the next retry.",
+                ),
+                artifact_refs=(
+                    ArtifactRef.from_path(
+                        kind="continuation_prompt",
+                        path=continuation_prompt_path,
+                        label="continuation_prompt",
+                        content_type="text/plain",
+                    ),
+                ),
+            )
 
             if not self._should_retry(request.max_retries, retries_used):
                 next_action = "Retry budget is exhausted before every PLAN.md item reached [O]. Resume later or increase the loop budget."
@@ -895,6 +1132,37 @@ class LoopRunner:
                 )
             if isinstance(next_task, str) and next_task.strip():
                 next_action = f"{next_action} Next pending item: {next_task}"
+            lifecycle.emit(
+                event_type=LifecycleEventType.STAGE_RETRIED,
+                role=request.agent_role,
+                stage=request.agent_role,
+                status="retried",
+                payload=StageEventPayload(
+                    attempt=attempt_number,
+                    next_attempt=attempt_number + 1,
+                    reason=next_action,
+                ),
+            )
+            lifecycle.emit(
+                event_type=LifecycleEventType.SUPERVISOR_HANDOFF,
+                role="supervisor",
+                stage=request.agent_role,
+                status="handoff",
+                payload=SupervisorHandoffPayload(
+                    from_role="supervisor",
+                    to_role=request.agent_role,
+                    reason=next_action,
+                    attempt=attempt_number + 1,
+                ),
+                artifact_refs=(
+                    ArtifactRef.from_path(
+                        kind="continuation_prompt",
+                        path=continuation_prompt_path,
+                        label="continuation_prompt",
+                        content_type="text/plain",
+                    ),
+                ),
+            )
             self._persist_loop_state(
                 status="awaiting_retry",
                 request=request,

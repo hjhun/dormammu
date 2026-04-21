@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 from dormammu.worktree import ManagedWorktree, WorktreeLifecycleStatus
 
 
-STATE_SCHEMA_VERSION = 8
+STATE_SCHEMA_VERSION = 9
 
 PHASE_LABELS = {
     "phase_1": "Phase 1. Core Foundation and Repository Bootstrap",
@@ -538,6 +538,11 @@ def default_session_state(
         "loop": {
             "status": "idle",
         },
+        "lifecycle": {
+            "updated_at": timestamp,
+            "latest_event": None,
+            "history": [],
+        },
         "supervisor_report": {
             "path": _state_path(state_root, "supervisor_report.md"),
             "status": "not_run",
@@ -703,6 +708,11 @@ def default_workflow_state(
         ],
         "loop": {
             "status": "idle",
+        },
+        "lifecycle": {
+            "updated_at": timestamp,
+            "latest_event": None,
+            "history": [],
         },
         "supervisor_report": {
             "path": _state_path(state_root, "supervisor_report.md"),
