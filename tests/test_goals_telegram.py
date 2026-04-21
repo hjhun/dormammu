@@ -67,6 +67,7 @@ def _make_update(chat_id: int = 123, text: str = "") -> Any:
     update.message = MagicMock()
     update.message.text = text
     update.message.reply_text = AsyncMock()
+    update.effective_message = update.message
     return update
 
 

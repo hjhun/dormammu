@@ -115,15 +115,31 @@ def _make_update(chat_id: int = 42) -> mock.MagicMock:
     upd.effective_chat.id = chat_id
     upd.callback_query = None
     upd.message = mock.AsyncMock()
+    upd.effective_message = upd.message
     return upd
 
 
 def _last_reply(update: mock.MagicMock) -> str:
-    return update.message.reply_text.call_args[0][0]
+    message = getattr(update, "effective_message", None) or update.message
+    return message.reply_text.call_args[0][0]
 
 
 def _last_reply_kwargs(update: mock.MagicMock) -> dict:
-    return update.message.reply_text.call_args[1]
+    message = getattr(update, "effective_message", None) or update.message
+    return message.reply_text.call_args[1]
+
+
+def _make_channel_update(text: str, chat_id: int = 42) -> mock.MagicMock:
+    upd = mock.MagicMock()
+    upd.effective_chat.id = chat_id
+    upd.callback_query = None
+    upd.message = None
+    upd.channel_post = mock.AsyncMock()
+    upd.channel_post.text = text
+    upd.channel_post.caption = None
+    upd.channel_post.reply_text = mock.AsyncMock()
+    upd.effective_message = upd.channel_post
+    return upd
 
 
 # ===========================================================================
@@ -523,6 +539,52 @@ class RepoAndClearSessionsRegistrationTests(unittest.TestCase):
         from dormammu.telegram import bot as bot_module
         source = inspect.getsource(bot_module.TelegramBot._cmd_callback)
         self.assertIn("clear_sessions", source)
+
+
+class ChannelCommandTests(unittest.IsolatedAsyncioTestCase):
+
+    async def test_channel_status_command_uses_channel_post_reply(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/status")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            reply = _last_reply(update)
+            self.assertIn("daemon status", reply.lower())
+            update.channel_post.reply_text.assert_called_once()
+
+    async def test_channel_run_command_queues_prompt_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/run investigate telegram channel failure")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            prompt_files = sorted(bot._daemon_config.prompt_path.glob("tg_*.md"))
+            self.assertEqual(len(prompt_files), 1)
+            self.assertIn("investigate telegram channel failure", prompt_files[0].read_text(encoding="utf-8"))
+            self.assertIn("Queued", _last_reply(update))
+
+    async def test_channel_command_ignores_other_bot_mentions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            bot._app = mock.MagicMock()
+            bot._app.bot.username = "dormammu_bot"
+            update = _make_channel_update("/status@other_bot")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            update.channel_post.reply_text.assert_not_called()
 
 
 if __name__ == "__main__":

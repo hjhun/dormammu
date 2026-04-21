@@ -27,12 +27,21 @@ from dormammu.interactive_shell import InteractiveShellRunner
 class CliTests(unittest.TestCase):
     def setUp(self) -> None:
         super().setUp()
+        self._temp_home = tempfile.TemporaryDirectory()
+        isolated_env = dict(os.environ)
+        isolated_env["HOME"] = self._temp_home.name
+        isolated_env.pop("DORMAMMU_CONFIG_PATH", None)
+        isolated_env.pop("DORMAMMU_SESSIONS_DIR", None)
+        self._env_patcher = mock.patch.dict(os.environ, isolated_env, clear=True)
+        self._env_patcher.start()
         cli_adapter_module._cli_calls_started = 0
         self._sleep_patcher = mock.patch.object(cli_adapter_module.time, "sleep", return_value=None)
         self._sleep_patcher.start()
 
     def tearDown(self) -> None:
         self._sleep_patcher.stop()
+        self._env_patcher.stop()
+        self._temp_home.cleanup()
         super().tearDown()
 
     @staticmethod

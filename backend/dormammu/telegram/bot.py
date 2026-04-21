@@ -300,6 +300,12 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("goals", self._cmd_goals))
         self._app.add_handler(CommandHandler("shutdown", self._cmd_shutdown))
         self._app.add_handler(CallbackQueryHandler(self._cmd_callback))
+        self._app.add_handler(
+            MessageHandler(
+                filters.UpdateType.CHANNEL_POSTS & (filters.TEXT | filters.CAPTION),
+                self._cmd_channel_post_command,
+            )
+        )
         # Record any incoming message so the sender is tracked for broadcasts.
         self._app.add_handler(
             MessageHandler(filters.ALL, self._track_chat),
@@ -361,8 +367,10 @@ class TelegramBot:
         if chat_id is None or not self._is_allowed(chat_id):
             if update.callback_query is not None:
                 await update.callback_query.answer("Access denied.", show_alert=True)
-            elif update.message:
-                await update.message.reply_text("Access denied.")
+            else:
+                message = self._target_message(update)
+                if message is not None:
+                    await message.reply_text("Access denied.")
             return False
         self._record_chat(chat_id)
         return True
@@ -380,6 +388,65 @@ class TelegramBot:
     # ------------------------------------------------------------------
     # Command handlers
     # ------------------------------------------------------------------
+
+    def _target_message(self, update: Any) -> Any:
+        if update.callback_query is not None:
+            return update.callback_query.message
+        message = getattr(update, "effective_message", None)
+        if message is not None:
+            return message
+        if getattr(update, "message", None) is not None:
+            return update.message
+        return getattr(update, "channel_post", None)
+
+    def _command_text(self, update: Any) -> str:
+        message = self._target_message(update)
+        if message is None:
+            return ""
+        return (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
+
+    def _parse_command(self, text: str) -> tuple[str, list[str]] | None:
+        match = re.match(r"^/([A-Za-z0-9_]+)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$", text)
+        if match is None:
+            return None
+        command = match.group(1).lower()
+        addressed_username = match.group(2)
+        if addressed_username:
+            bot_username = getattr(getattr(self._app, "bot", None), "username", None)
+            if bot_username and addressed_username.lower() != str(bot_username).lower():
+                return None
+        arg_text = (match.group(3) or "").strip()
+        args = arg_text.split() if arg_text else []
+        return command, args
+
+    async def _cmd_channel_post_command(self, update: Any, context: Any) -> None:
+        parsed = self._parse_command(self._command_text(update))
+        if parsed is None:
+            return
+        command, args = parsed
+        handlers = {
+            "start": self._cmd_help,
+            "help": self._cmd_help,
+            "status": self._cmd_status,
+            "run": self._cmd_run,
+            "queue": self._cmd_queue,
+            "tail": self._cmd_tail,
+            "result": self._cmd_result,
+            "sessions": self._cmd_sessions,
+            "repo": self._cmd_repo,
+            "clear_sessions": self._cmd_clear_sessions,
+            "goals": self._cmd_goals,
+            "shutdown": self._cmd_shutdown,
+        }
+        handler = handlers.get(command)
+        if handler is None:
+            return
+        previous_args = list(getattr(context, "args", ()))
+        context.args = args
+        try:
+            await handler(update, context)
+        finally:
+            context.args = previous_args
 
     def _build_menu_keyboard(self) -> list[list[dict[str, str]]]:
         """Return the full menu layout with a dynamic tail-toggle row."""
@@ -404,7 +471,8 @@ class TelegramBot:
     async def _cmd_help(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
-        await update.message.reply_text(
+        await self._reply(
+            update,
             _HELP_TEXT,
             parse_mode="MarkdownV2",
             reply_markup=self._build_menu_markup(),
@@ -421,10 +489,9 @@ class TelegramBot:
         kwargs: dict[str, Any] = {"parse_mode": parse_mode}
         if reply_markup is not None:
             kwargs["reply_markup"] = reply_markup
-        if update.callback_query is not None:
-            await update.callback_query.message.reply_text(text, **kwargs)
-        elif update.message is not None:
-            await update.message.reply_text(text, **kwargs)
+        message = self._target_message(update)
+        if message is not None:
+            await message.reply_text(text, **kwargs)
 
     async def _cmd_callback(self, update: Any, context: Any) -> None:
         query = update.callback_query
@@ -935,7 +1002,7 @@ class TelegramBot:
         if goals_path is None:
             return
 
-        text = (update.message.text or "").strip()
+        text = self._command_text(update)
         if not text:
             await self._reply(update, "❌ Goal content cannot be empty.")
             return

@@ -1313,7 +1313,7 @@ class LoopRunner:
         repository: StateRepository,
         request: LoopRunRequest,
         profile: AgentProfile,
-        runtime_skill_state: Mapping[str, Any] | None,
+        runtime_skill_state: Mapping[str, Any] | None = None,
         attempt_number: int,
         retries_used: int,
     ) -> None:

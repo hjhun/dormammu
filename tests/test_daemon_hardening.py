@@ -373,6 +373,7 @@ class TelegramShutdownCommandTests(unittest.IsolatedAsyncioTestCase):
         mock_update.effective_chat.id = 42
         mock_update.callback_query = None
         mock_update.message = mock.AsyncMock()
+        mock_update.effective_message = mock_update.message
         mock_context = mock.MagicMock()
 
         await bot._send_shutdown(mock_update, mock_context)
@@ -387,6 +388,7 @@ class TelegramShutdownCommandTests(unittest.IsolatedAsyncioTestCase):
         mock_update.effective_chat.id = 42
         mock_update.callback_query = None
         mock_update.message = mock.AsyncMock()
+        mock_update.effective_message = mock_update.message
         mock_context = mock.MagicMock()
 
         await bot._send_shutdown(mock_update, mock_context)
@@ -403,6 +405,7 @@ class TelegramShutdownCommandTests(unittest.IsolatedAsyncioTestCase):
         mock_update.effective_chat.id = 42
         mock_update.callback_query = None
         mock_update.message = mock.AsyncMock()
+        mock_update.effective_message = mock_update.message
         mock_context = mock.MagicMock()
 
         await bot._send_shutdown(mock_update, mock_context)
@@ -418,6 +421,7 @@ class TelegramShutdownCommandTests(unittest.IsolatedAsyncioTestCase):
         mock_update.effective_chat.id = 42
         mock_update.callback_query = None
         mock_update.message = mock.AsyncMock()
+        mock_update.effective_message = mock_update.message
         mock_context = mock.MagicMock()
 
         await bot._send_shutdown(mock_update, mock_context)
