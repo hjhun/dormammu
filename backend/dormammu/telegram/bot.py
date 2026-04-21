@@ -8,7 +8,7 @@ import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 _log = logging.getLogger(__name__)
 
@@ -82,6 +82,14 @@ class TelegramBot:
     _SEND_INTERVAL_S: float = 0.05
     # Maximum queued outgoing messages; older items are dropped if exceeded.
     _SEND_QUEUE_MAXSIZE: int = 200
+    # The python-telegram-bot defaults use a 5s connect timeout, which is
+    # short enough to trip during transient network jitter on modest links.
+    _REQUEST_CONNECT_TIMEOUT_S: float = 20.0
+    _REQUEST_READ_TIMEOUT_S: float = 20.0
+    _REQUEST_WRITE_TIMEOUT_S: float = 20.0
+    _REQUEST_POOL_TIMEOUT_S: float = 5.0
+    # Retry direct reply/send operations a small number of times before giving up.
+    _SEND_RETRY_DELAYS_S: tuple[float, ...] = (1.0, 3.0)
 
     def __init__(
         self,
@@ -194,7 +202,13 @@ class TelegramBot:
         for chat_id in targets:
             try:
                 future = asyncio.run_coroutine_threadsafe(
-                    self._app.bot.send_message(chat_id=chat_id, text=message),
+                    self._perform_telegram_request(
+                        lambda chat_id=chat_id: self._app.bot.send_message(
+                            chat_id=chat_id,
+                            text=message,
+                        ),
+                        action=f"startup notification to chat {chat_id}",
+                    ),
                     self._loop,
                 )
                 future.result(timeout=10)
@@ -245,7 +259,13 @@ class TelegramBot:
                 break
             try:
                 if self._app is not None:
-                    await self._app.bot.send_message(chat_id=chat_id, text=text)
+                    await self._perform_telegram_request(
+                        lambda chat_id=chat_id, text=text: self._app.bot.send_message(
+                            chat_id=chat_id,
+                            text=text,
+                        ),
+                        action=f"queued Telegram send to chat {chat_id}",
+                    )
             except Exception as exc:
                 _log.warning("_drain_send_queue: send to chat %s failed: %s", chat_id, exc)
             finally:
@@ -286,7 +306,19 @@ class TelegramBot:
         from telegram import BotCommand
         from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
-        self._app = Application.builder().token(self._config.bot_token).build()
+        builder = (
+            Application.builder()
+            .token(self._config.bot_token)
+            .connect_timeout(self._REQUEST_CONNECT_TIMEOUT_S)
+            .read_timeout(self._REQUEST_READ_TIMEOUT_S)
+            .write_timeout(self._REQUEST_WRITE_TIMEOUT_S)
+            .pool_timeout(self._REQUEST_POOL_TIMEOUT_S)
+            .get_updates_connect_timeout(self._REQUEST_CONNECT_TIMEOUT_S)
+            .get_updates_read_timeout(self._REQUEST_READ_TIMEOUT_S)
+            .get_updates_write_timeout(self._REQUEST_WRITE_TIMEOUT_S)
+            .get_updates_pool_timeout(self._REQUEST_POOL_TIMEOUT_S)
+        )
+        self._app = builder.build()
         self._app.add_handler(CommandHandler("start", self._cmd_help))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
         self._app.add_handler(CommandHandler("status", self._cmd_status))
@@ -316,6 +348,7 @@ class TelegramBot:
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_text_input),
             group=2,
         )
+        self._app.add_error_handler(self._handle_application_error)
 
         async with self._app:
             await self._app.bot.set_my_commands([
@@ -370,7 +403,11 @@ class TelegramBot:
             else:
                 message = self._target_message(update)
                 if message is not None:
-                    await message.reply_text("Access denied.")
+                    await self._reply_text(
+                        message,
+                        "Access denied.",
+                        action="access denied reply",
+                    )
             return False
         self._record_chat(chat_id)
         return True
@@ -468,6 +505,82 @@ class TelegramBot:
         ]
         return InlineKeyboardMarkup(keyboard)
 
+    @staticmethod
+    def _retry_delay_seconds(exc: BaseException, fallback: float) -> float:
+        retry_after = getattr(exc, "retry_after", None)
+        if retry_after is None:
+            return fallback
+        if hasattr(retry_after, "total_seconds"):
+            return max(0.0, float(retry_after.total_seconds()))
+        try:
+            return max(0.0, float(retry_after))
+        except (TypeError, ValueError):
+            return fallback
+
+    async def _perform_telegram_request(
+        self,
+        send: Callable[[], Awaitable[Any]],
+        *,
+        action: str,
+    ) -> Any | None:
+        try:
+            from telegram.error import NetworkError, RetryAfter, TimedOut
+        except ImportError:
+            return await send()
+
+        max_attempts = len(self._SEND_RETRY_DELAYS_S) + 1
+        last_exc: BaseException | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await send()
+            except (TimedOut, NetworkError, RetryAfter) as exc:
+                last_exc = exc
+                if attempt >= max_attempts:
+                    break
+                delay = self._retry_delay_seconds(exc, self._SEND_RETRY_DELAYS_S[attempt - 1])
+                _log.warning(
+                    "%s failed with transient Telegram network error (%s/%s): %s; retrying in %.1fs",
+                    action,
+                    attempt,
+                    max_attempts,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        _log.warning(
+            "%s failed after %s attempt(s): %s",
+            action,
+            max_attempts,
+            last_exc,
+        )
+        return None
+
+    async def _reply_text(self, message: Any, text: str, *, action: str, **kwargs: Any) -> Any | None:
+        return await self._perform_telegram_request(
+            lambda: message.reply_text(text, **kwargs),
+            action=action,
+        )
+
+    async def _handle_application_error(self, update: object, context: Any) -> None:
+        error = getattr(context, "error", None)
+        if error is None:
+            return
+        try:
+            from telegram.error import NetworkError, RetryAfter, TimedOut
+        except ImportError:
+            _log.error(
+                "telegram update handler failed",
+                exc_info=(type(error), error, error.__traceback__),
+            )
+            return
+        if isinstance(error, (TimedOut, NetworkError, RetryAfter)):
+            _log.warning("telegram update handler network error: %s", error)
+            return
+        _log.error(
+            "telegram update handler failed",
+            exc_info=(type(error), error, error.__traceback__),
+        )
+
     async def _cmd_help(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
             return
@@ -491,7 +604,7 @@ class TelegramBot:
             kwargs["reply_markup"] = reply_markup
         message = self._target_message(update)
         if message is not None:
-            await message.reply_text(text, **kwargs)
+            await self._reply_text(message, text, action="telegram command reply", **kwargs)
 
     async def _cmd_callback(self, update: Any, context: Any) -> None:
         query = update.callback_query
