@@ -77,6 +77,15 @@ def _make_context() -> Any:
     return ctx
 
 
+def test_help_text_is_plain_and_does_not_include_markdown_escapes() -> None:
+    from dormammu.telegram.bot import _HELP_TEXT
+
+    assert "*dormammu bot commands*" not in _HELP_TEXT
+    assert r"\[on\|off\]" not in _HELP_TEXT
+    assert r"\<prompt\>" not in _HELP_TEXT
+    assert "/tail [on|off]" in _HELP_TEXT
+
+
 # ---------------------------------------------------------------------------
 # _goals_path
 # ---------------------------------------------------------------------------
@@ -149,6 +158,8 @@ class TestSendGoals:
 
         text = bot._reply.call_args[0][1]
         assert "no goal files" in text.lower()
+        assert "*" not in text
+        assert "`" not in text
 
     def test_lists_files(self, tmp_path: Path) -> None:
         goals_dir = tmp_path / "goals"
@@ -181,6 +192,9 @@ class TestGoalsAddFlow:
         _run(bot._handle_goals_add_start(update, _make_context()))
 
         assert bot._goals_pending.get(42) == "add_waiting"
+        text = bot._reply.call_args[0][1]
+        assert "*" not in text
+        assert "`" not in text
 
     def test_add_content_creates_file(self, tmp_path: Path) -> None:
         goals_dir = tmp_path / "goals"
@@ -302,6 +316,7 @@ class TestGoalsDelFlow:
         assert not target.exists()
         text = bot._reply.call_args[0][1]
         assert "goal-a" in text
+        assert "`" not in text
 
     def test_del_no_files_message(self, tmp_path: Path) -> None:
         goals_dir = tmp_path / "goals"

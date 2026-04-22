@@ -35,6 +35,7 @@ from dormammu.telegram.stream import TelegramProgressStream
 from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
+from dormammu.progress import ConciseProgressStream
 from dormammu.recovery import RecoveryManager
 from dormammu.state import StateRepository
 
@@ -63,6 +64,12 @@ from dormammu._cli_utils import (
 
 def _default_daemon_config_path(config: AppConfig) -> Path:
     return (config.home_dir / ".dormammu" / "daemonize.json").expanduser().resolve()
+
+
+def _live_progress_stream(base_stream: TextIO, *, verbose: bool) -> TextIO:
+    if verbose:
+        return base_stream
+    return ConciseProgressStream(base_stream)
 
 
 def _pipeline_runtime(
@@ -101,6 +108,7 @@ def _run_mandatory_refine_and_plan(
     date_str: str,
     agent_cli_override: Path | None = None,
     enable_plan_evaluator: bool = False,
+    progress_stream: TextIO | None = None,
 ) -> None:
     runtime_config, runtime_agents = _pipeline_runtime(
         config,
@@ -110,6 +118,7 @@ def _run_mandatory_refine_and_plan(
         runtime_config,
         runtime_agents,
         repository=repository,
+        progress_stream=progress_stream,
     ).run_refine_and_plan(
         prompt_text,
         stem=stem,
@@ -235,7 +244,16 @@ def _handle_run_once(args: argparse.Namespace) -> int:
     config = _with_guidance_overrides(config, args.guidance_files)
     repository = StateRepository(config, session_id=repository.session_id)
     prompt_text, prompt_source_path = _read_prompt_input(args)
-    with _project_log_capture(config.repo_root, "run-once", enabled=args.debug):
+    progress_stream = _live_progress_stream(
+        sys.stderr,
+        verbose=getattr(args, "verbose", False),
+    )
+    with contextlib.redirect_stderr(progress_stream), _project_log_capture(
+        config.repo_root,
+        "run-once",
+        enabled=args.debug,
+    ):
+        active_progress_stream = sys.stderr
         goal, roadmap_phases = _resolve_bootstrap_inputs(
             repository=repository,
             goal=args.goal,
@@ -282,6 +300,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
                     runtime_config,
                     runtime_agents,
                     repository=repository,
+                    progress_stream=active_progress_stream,
                 ).run(enriched_prompt, stem=stem, date_str=date_str)
             except (RuntimeError, ValueError, OSError) as exc:
                 print(str(exc), file=sys.stderr)
@@ -314,6 +333,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
                 date_str=date_str,
                 agent_cli_override=agent_cli,
                 enable_plan_evaluator=False,
+                progress_stream=active_progress_stream,
             )
         except (RuntimeError, ValueError, OSError) as exc:
             print(str(exc), file=sys.stderr)
@@ -337,6 +357,9 @@ def _handle_run_once(args: argparse.Namespace) -> int:
         )
 
         try:
+            print("stage: developer [single-agent-cli]", file=sys.stderr)
+            sys.stderr.flush()
+
             def _handle_started(started: AgentRunStarted) -> None:
                 repository.record_current_run(started)
                 print("=== dormammu command ===", file=sys.stderr)
@@ -347,7 +370,10 @@ def _handle_run_once(args: argparse.Namespace) -> int:
                 print(f"command: {' '.join(started.command)}", file=sys.stderr)
                 sys.stderr.flush()
 
-            agent_result = CliAdapter(config).run_once(request, on_started=_handle_started)
+            agent_result = CliAdapter(config, live_output_stream=active_progress_stream).run_once(
+                request,
+                on_started=_handle_started,
+            )
         except (RuntimeError, ValueError, OSError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
@@ -361,7 +387,16 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
     config = _load_config(args.repo_root, discover=args.repo_root is not None)
     config = _with_guidance_overrides(config, args.guidance_files)
     prompt_text, prompt_source_path = _read_prompt_input(args)
-    with _project_log_capture(config.repo_root, "run", enabled=args.debug):
+    progress_stream = _live_progress_stream(
+        sys.stderr,
+        verbose=getattr(args, "verbose", False),
+    )
+    with contextlib.redirect_stderr(progress_stream), _project_log_capture(
+        config.repo_root,
+        "run",
+        enabled=args.debug,
+    ):
+        active_progress_stream = sys.stderr
         requested_session_id = args.session_id or _read_session_marker(config.repo_root)
         goal, roadmap_phases = _resolve_bootstrap_inputs(
             repository=(
@@ -437,6 +472,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
                     runtime_config,
                     runtime_agents,
                     repository=repository,
+                    progress_stream=active_progress_stream,
                 ).run(enriched_prompt, stem=stem, date_str=date_str)
             except (RuntimeError, ValueError, OSError) as exc:
                 print(str(exc), file=sys.stderr)
@@ -458,6 +494,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
                     stem=stem,
                     date_str=date_str,
                     agent_cli_override=agent_cli,
+                    progress_stream=active_progress_stream,
                 )
             except (RuntimeError, ValueError, OSError) as exc:
                 print(str(exc), file=sys.stderr)
@@ -484,7 +521,11 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
                 expected_roadmap_phase_id=(roadmap_phases[0] if roadmap_phases else "phase_4"),
             )
             try:
-                result = LoopRunner(config, repository=repository).run(request)
+                result = LoopRunner(
+                    config,
+                    repository=repository,
+                    progress_stream=active_progress_stream,
+                ).run(request)
             except (RuntimeError, ValueError, OSError) as exc:
                 print(str(exc), file=sys.stderr)
                 return 2
@@ -501,7 +542,15 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
     )
     config = _with_guidance_overrides(config, args.guidance_files)
     repository = StateRepository(config, session_id=repository.session_id)
-    with _project_log_capture(config.repo_root, "resume", enabled=args.debug):
+    progress_stream = _live_progress_stream(
+        sys.stderr,
+        verbose=getattr(args, "verbose", False),
+    )
+    with contextlib.redirect_stderr(progress_stream), _project_log_capture(
+        config.repo_root,
+        "resume",
+        enabled=args.debug,
+    ):
         config, repository = _ensure_resume_session_scope(config, repository)
 
         workflow_state = repository.read_workflow_state()
@@ -636,6 +685,11 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
             session_log_stream = SessionProgressLogStream(sys.stderr)
             stack.enter_context(contextlib.redirect_stderr(session_log_stream))
             progress_stream = session_log_stream
+
+        progress_stream = _live_progress_stream(
+            progress_stream,
+            verbose=getattr(args, "verbose", False),
+        )
 
         if config.telegram_config is not None:
             tg_stream = TelegramProgressStream(

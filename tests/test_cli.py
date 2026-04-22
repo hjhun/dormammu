@@ -76,6 +76,17 @@ class CliTests(unittest.TestCase):
         self.assertIn("./dormammu.json", help_text)
         self.assertIn("$DORMAMMU_CONFIG_PATH", help_text)
 
+    def test_runtime_commands_accept_verbose_flag(self) -> None:
+        parser = build_parser()
+
+        run_once = parser.parse_args(["run-once", "--prompt", "hello", "--verbose"])
+        run_loop = parser.parse_args(["run", "--prompt", "hello", "--verbose"])
+        daemonize = parser.parse_args(["daemonize", "--verbose"])
+
+        self.assertTrue(run_once.verbose)
+        self.assertTrue(run_loop.verbose)
+        self.assertTrue(daemonize.verbose)
+
     def test_daemonize_uses_default_global_daemon_config_when_flag_is_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -967,6 +978,7 @@ class CliTests(unittest.TestCase):
                         "run-once",
                         "--repo-root",
                         str(root),
+                        "--verbose",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",
@@ -1050,6 +1062,7 @@ class CliTests(unittest.TestCase):
                         "run-once",
                         "--repo-root",
                         str(root),
+                        "--verbose",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",
@@ -1113,6 +1126,7 @@ class CliTests(unittest.TestCase):
                         "run-once",
                         "--repo-root",
                         str(root),
+                        "--verbose",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",
@@ -1143,6 +1157,7 @@ class CliTests(unittest.TestCase):
                         "run",
                         "--repo-root",
                         str(root),
+                        "--verbose",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",
@@ -1210,6 +1225,7 @@ class CliTests(unittest.TestCase):
                         "run",
                         "--repo-root",
                         str(root),
+                        "--verbose",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",
@@ -1263,6 +1279,7 @@ class CliTests(unittest.TestCase):
                         "run",
                         "--repo-root",
                         str(root),
+                        "--verbose",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",
@@ -1404,6 +1421,7 @@ class CliTests(unittest.TestCase):
                         "run-once",
                         "--repo-root",
                         str(root),
+                        "--verbose",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",
@@ -1443,6 +1461,7 @@ class CliTests(unittest.TestCase):
                         "run",
                         "--repo-root",
                         str(root),
+                        "--verbose",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",
@@ -1522,6 +1541,7 @@ class CliTests(unittest.TestCase):
                         "--repo-root",
                         str(root),
                         "--debug",
+                        "--verbose",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",
@@ -1563,6 +1583,7 @@ class CliTests(unittest.TestCase):
                         "--repo-root",
                         str(root),
                         "--debug",
+                        "--verbose",
                         "--agent-cli",
                         str(fake_cli),
                         "--prompt",

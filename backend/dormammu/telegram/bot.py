@@ -13,13 +13,6 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 _log = logging.getLogger(__name__)
 
 
-def _md(text: str) -> str:
-    """Escape special characters for Telegram MarkdownV1."""
-    for ch in ("_", "*", "`", "["):
-        text = text.replace(ch, f"\\{ch}")
-    return text
-
-
 if TYPE_CHECKING:
     from dormammu.config import AppConfig
     from dormammu.daemon.models import DaemonConfig
@@ -29,15 +22,15 @@ if TYPE_CHECKING:
 
 
 _HELP_TEXT = (
-    "🤖 *dormammu bot commands*\n\n"
+    "dormammu bot commands\n\n"
     "📊 /status — daemon status and active prompt\n"
-    r"▶️ /run \<prompt\> — queue a new prompt for execution" "\n"
+    "▶️ /run <prompt> — queue a new prompt for execution\n"
     "📋 /queue — list pending prompts\n"
-    r"📡 /tail \[on\|off\] — stream skill progress \(on: show skill banners \+ output digest\)" "\n"
-    r"📄 /result \[name\] — last \(or named\) result file content" "\n"
+    "📡 /tail [on|off] — stream prompt and stage updates only\n"
+    "📄 /result [name] — last (or named) result file content\n"
     "🗂️ /sessions — recent session list\n"
-    r"🗂️ /repo \[path\] — switch working repo \(or pick from sibling list\)" "\n"
-    r"🗑️ /clear\_sessions — delete all session data for the current repo" "\n"
+    "🗂️ /repo [path] — switch working repo (or pick from sibling list)\n"
+    "🗑️ /clear_sessions — delete all session data for the current repo\n"
     "🎯 /goals — list, add, or delete goal files\n"
     "🔌 /shutdown — finish current prompt then stop the daemon\n"
     "❓ /help — this message"
@@ -355,7 +348,7 @@ class TelegramBot:
                 BotCommand("status", "📊 daemon status"),
                 BotCommand("run", "▶️ run a prompt"),
                 BotCommand("queue", "📋 pending prompts"),
-                BotCommand("tail", "📡 stream skill progress (on/off)"),
+                BotCommand("tail", "📡 prompt/stage updates (on/off)"),
                 BotCommand("result", "📄 last result"),
                 BotCommand("sessions", "🗂️ session list"),
                 BotCommand("repo", "🗂️ switch working repo"),
@@ -587,7 +580,6 @@ class TelegramBot:
         await self._reply(
             update,
             _HELP_TEXT,
-            parse_mode="MarkdownV2",
             reply_markup=self._build_menu_markup(),
         )
 
@@ -595,11 +587,13 @@ class TelegramBot:
         self,
         update: Any,
         text: str,
-        parse_mode: str = "Markdown",
+        parse_mode: str | None = None,
         reply_markup: Any = None,
     ) -> None:
         """Send a reply whether the update came from a message or a callback query."""
-        kwargs: dict[str, Any] = {"parse_mode": parse_mode}
+        kwargs: dict[str, Any] = {}
+        if parse_mode is not None:
+            kwargs["parse_mode"] = parse_mode
         if reply_markup is not None:
             kwargs["reply_markup"] = reply_markup
         message = self._target_message(update)
@@ -653,9 +647,9 @@ class TelegramBot:
     async def _send_status(self, update: Any, context: Any) -> None:
         in_progress = list(self._runner.in_progress_snapshot())
         streaming_id = self._stream.streaming_chat_id
-        lines = ["📊 *dormammu daemon status*"]
+        lines = ["📊 dormammu daemon status"]
         if in_progress:
-            lines.append("▶️ Active: " + ", ".join(_md(p.name) for p in in_progress))
+            lines.append("▶️ Active: " + ", ".join(p.name for p in in_progress))
         else:
             lines.append("💤 Active: idle")
         from dormammu.daemon.queue import is_prompt_candidate
@@ -671,7 +665,7 @@ class TelegramBot:
             )
         lines.append(f"📋 Queued: {pending_count}")
         lines.append(f"📡 Streaming: {'on (chat ' + str(streaming_id) + ')' if streaming_id else 'off'}")
-        lines.append(f"📁 Repo: `{_md(str(self._app_config.repo_root))}`")
+        lines.append(f"📁 Repo: {self._app_config.repo_root}")
         await self._reply(update, "\n".join(lines))
 
     async def _cmd_run(self, update: Any, context: Any) -> None:
@@ -685,7 +679,7 @@ class TelegramBot:
         prompt_path = self._daemon_config.prompt_path / f"tg_{ts}.md"
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text(prompt_text, encoding="utf-8")
-        await self._reply(update, f"▶️ Queued: `{prompt_path.name}`")
+        await self._reply(update, f"▶️ Queued: {prompt_path.name}")
 
     async def _cmd_queue(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
@@ -706,7 +700,7 @@ class TelegramBot:
         if not items:
             await self._reply(update, "📋 Prompt queue is empty.")
             return
-        lines = [f"📋 *Prompt queue ({len(items)})*"] + [f"• {name}" for name in items]
+        lines = [f"📋 Prompt queue ({len(items)})"] + [f"• {name}" for name in items]
         await self._reply(update, "\n".join(lines))
 
     async def _cmd_tail(self, update: Any, context: Any) -> None:
@@ -723,8 +717,8 @@ class TelegramBot:
             state = "ON ✓" if streaming else "OFF"
             await self._reply(
                 update,
-                f"📡 Tail is currently *{state}*.\n"
-                "Use `/tail on` to start or `/tail off` to stop.",
+                f"📡 Tail is currently {state}.\n"
+                "Use /tail on to start or /tail off to stop.",
                 reply_markup=self._build_menu_markup(),
             )
             return
@@ -732,7 +726,7 @@ class TelegramBot:
             self._stream.disable_streaming()
             await self._reply(
                 update,
-                "📡 Tail *OFF* — streaming stopped.",
+                "📡 Tail OFF — streaming stopped.",
                 reply_markup=self._build_menu_markup(),
             )
         else:
@@ -740,10 +734,9 @@ class TelegramBot:
             self._stream.enable_streaming(chat_id)
             await self._reply(
                 update,
-                "📡 Tail *ON* — streaming skill progress.\n"
-                "Shows each skill as it starts, a digest of its output when it "
-                "finishes, and supervisor verdicts.\n"
-                "Use `/tail off` or tap the Tail button to stop.",
+                "📡 Tail ON — streaming prompt and stage updates.\n"
+                "Shows the active prompt and the current stage only.\n"
+                "Use /tail off or tap the Tail button to stop.",
                 reply_markup=self._build_menu_markup(),
             )
 
@@ -796,7 +789,7 @@ class TelegramBot:
         if not session_dirs:
             await self._reply(update, "🗂️ No sessions found.")
             return
-        lines = [f"🗂️ *Recent sessions ({len(session_dirs)})*"] + [f"• {s.name}" for s in session_dirs]
+        lines = [f"🗂️ Recent sessions ({len(session_dirs)})"] + [f"• {s.name}" for s in session_dirs]
         await self._reply(update, "\n".join(lines))
 
     async def _cmd_repo(self, update: Any, context: Any) -> None:
@@ -830,9 +823,9 @@ class TelegramBot:
         if not candidates or not other_candidates:
             await self._reply(
                 update,
-                f"🗂️ Current repo: `{current}`\n"
-                f"No sibling repos found under `{parent}`.\n"
-                "Use `/repo <path>` to switch directly.",
+                f"🗂️ Current repo: {current}\n"
+                f"No sibling repos found under {parent}.\n"
+                "Use /repo <path> to switch directly.",
             )
             return
 
@@ -850,7 +843,7 @@ class TelegramBot:
         except ImportError:
             reply_markup = None
 
-        lines = [f"🗂️ *Select repository*", f"Current: `{current.name}`", ""]
+        lines = ["🗂️ Select repository", f"Current: {current.name}", ""]
         for i, path in enumerate(candidates):
             marker = "✅" if path == current else "  "
             lines.append(f"{marker} {i}. {path.name}")
@@ -885,17 +878,17 @@ class TelegramBot:
         from dormammu.state import StateRepository
 
         if not new_root.exists() or not new_root.is_dir():
-            await self._reply(update, f"❌ Path not found: `{new_root}`")
+            await self._reply(update, f"❌ Path not found: {new_root}")
             return
         if not any((new_root / marker).exists() for marker in REPO_MARKERS):
             await self._reply(
                 update,
-                f"⚠️ `{new_root.name}` does not look like a dormammu repo\n"
+                f"⚠️ {new_root.name} does not look like a dormammu repo\n"
                 "(missing AGENTS.md, .dev/, and pyproject.toml).",
             )
             return
         if new_root.resolve() == self._app_config.repo_root.resolve():
-            await self._reply(update, f"🗂️ Already using repo `{new_root.name}`.")
+            await self._reply(update, f"🗂️ Already using repo {new_root.name}.")
             return
 
         in_progress = self._runner.in_progress_snapshot()
@@ -907,7 +900,7 @@ class TelegramBot:
         try:
             new_config = AppConfig.load(repo_root=new_root)
         except Exception as exc:
-            await self._reply(update, f"❌ Failed to load config for `{new_root.name}`: {exc}")
+            await self._reply(update, f"❌ Failed to load config for {new_root.name}: {exc}")
             return
 
         self._app_config = new_config
@@ -916,7 +909,7 @@ class TelegramBot:
         _log.info("repo switched to %s", new_root)
         await self._reply(
             update,
-            f"✅ Switched to repo: `{new_root}`{warning}",
+            f"✅ Switched to repo: {new_root}{warning}",
         )
 
     async def _cmd_clear_sessions(self, update: Any, context: Any) -> None:
@@ -946,12 +939,12 @@ class TelegramBot:
             err_text = "\n".join(errors)
             await self._reply(
                 update,
-                f"⚠️ Cleared with errors:\n```\n{err_text}\n```",
+                f"⚠️ Cleared with errors:\n{err_text}",
             )
         else:
             await self._reply(
                 update,
-                f"🗑️ Cleared {len(session_dirs)} session(s) from `{sessions_dir}`.",
+                f"🗑️ Cleared {len(session_dirs)} session(s) from {sessions_dir}.",
             )
 
     async def _cmd_shutdown(self, update: Any, context: Any) -> None:
@@ -1001,15 +994,15 @@ class TelegramBot:
             await self._reply(
                 update,
                 "🎯 Goals are not configured.\n"
-                "Add a `goals` section to your daemonize config.",
+                "Add a goals section to your daemonize config.",
             )
             return
 
         files = self._list_goal_files()
         if not files:
-            lines = ["🎯 *Goals* — no goal files yet."]
+            lines = ["🎯 Goals — no goal files yet."]
         else:
-            lines = [f"🎯 *Goals ({len(files)})*"]
+            lines = [f"🎯 Goals ({len(files)})"]
             for f in files:
                 lines.append(f"• {f.stem}")
 
@@ -1038,7 +1031,7 @@ class TelegramBot:
         self._goals_pending[chat_id] = "add_waiting"
         await self._reply(
             update,
-            "🎯 *Add goal*\n\nPlease type your goal content.\n"
+            "🎯 Add goal\n\nPlease type your goal content.\n"
             "The first line will be used as the filename stem.",
         )
 
@@ -1070,7 +1063,7 @@ class TelegramBot:
             except ImportError:
                 reply_markup = None
 
-            lines = ["🗑️ *Select goal to delete*"] + [
+            lines = ["🗑️ Select goal to delete"] + [
                 f"{i}. {f.stem}" for i, f in enumerate(files)
             ]
             await self._reply(update, "\n".join(lines), reply_markup=reply_markup)
@@ -1090,9 +1083,9 @@ class TelegramBot:
         self._pending_goal_choices = []
         try:
             target.unlink(missing_ok=True)
-            await self._reply(update, f"🗑️ Deleted goal: `{target.stem}`")
+            await self._reply(update, f"🗑️ Deleted goal: {target.stem}")
         except OSError as exc:
-            await self._reply(update, f"❌ Failed to delete `{target.name}`: {exc}")
+            await self._reply(update, f"❌ Failed to delete {target.name}: {exc}")
 
     async def _handle_text_input(self, update: Any, context: Any) -> None:
         """Process free-text input during active conversation flows (e.g. goals_add)."""
@@ -1134,6 +1127,6 @@ class TelegramBot:
         try:
             goals_path.mkdir(parents=True, exist_ok=True)
             dest.write_text(text, encoding="utf-8")
-            await self._reply(update, f"✅ Goal saved: `{filename}`")
+            await self._reply(update, f"✅ Goal saved: {filename}")
         except OSError as exc:
             await self._reply(update, f"❌ Failed to save goal: {exc}")

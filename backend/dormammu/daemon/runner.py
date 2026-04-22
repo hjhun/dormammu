@@ -483,6 +483,10 @@ class DaemonRunner:
                 error = "Prompt file was deleted before processing."
                 # Jump to finally by re-raising a sentinel; handled as non-interrupted exit
                 raise _PromptSkipped()
+            self._log(
+                "daemon prompt summary: "
+                f"{summarize_prompt_goal(prompt_text, fallback=prompt_path.name)}"
+            )
             session_repository, scoped_config, session_id = self._start_prompt_session(
                 prompt_path=prompt_path,
                 prompt_text=prompt_text,

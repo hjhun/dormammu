@@ -75,6 +75,10 @@ def _add_debug(parser: argparse.ArgumentParser, *, help: str) -> None:
     parser.add_argument("--debug", action="store_true", help=help)
 
 
+def _add_verbose(parser: argparse.ArgumentParser, *, help: str) -> None:
+    parser.add_argument("--verbose", action="store_true", help=help)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dormammu",
@@ -299,6 +303,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_guidance_files(run_once, help="Repeatable Markdown guidance file to embed into the run prompt when it has content.")
+    _add_verbose(run_once, help="Show the full live runtime stream, including raw agent stdout/stderr.")
     _add_debug(run_once, help="Mirror command stderr into a repository-root DORMAMMU.log file.")
     run_once.set_defaults(handler=_handle_run_once)
 
@@ -400,6 +405,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Require git worktree changes before the supervisor approves the run.",
     )
     _add_guidance_files(run_loop, help="Repeatable Markdown guidance file to embed into the run prompt when it has content.")
+    _add_verbose(run_loop, help="Show the full live runtime stream, including raw agent stdout/stderr.")
     _add_debug(run_loop, help="Mirror command stderr into a repository-root DORMAMMU.log file.")
     run_loop.set_defaults(handler=_handle_run_loop)
 
@@ -427,6 +433,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resume this saved session id without switching the active root `.dev` view.",
     )
     _add_guidance_files(resume_loop, help="Repeatable Markdown guidance file to refresh bootstrap guidance before resuming.")
+    _add_verbose(resume_loop, help="Show the full live runtime stream, including raw agent stdout/stderr.")
     _add_debug(resume_loop, help="Mirror command stderr into a repository-root DORMAMMU.log file.")
     resume_loop.set_defaults(handler=_handle_resume_loop)
 
@@ -521,6 +528,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_guidance_files(daemonize, help="Repeatable Markdown guidance file to embed into daemon phase prompts when it has content.")
+    _add_verbose(daemonize, help="Show the full live runtime stream, including raw agent stdout/stderr.")
     _add_debug(daemonize, help="Mirror daemon stderr into <result_path>/../progress/<prompt>_progress.log and reset it for each new prompt session.")
     daemonize.set_defaults(handler=_handle_daemonize)
 

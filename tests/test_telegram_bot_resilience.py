@@ -7,7 +7,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telegram.error import TimedOut
+
+telegram_error = pytest.importorskip("telegram.error")
+TimedOut = telegram_error.TimedOut
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -50,6 +52,19 @@ def test_reply_retries_after_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert message.reply_text.await_count == 2
     assert delays == [bot._SEND_RETRY_DELAYS_S[0]]
+
+
+def test_reply_omits_parse_mode_when_none() -> None:
+    bot = _make_bot()
+    message = MagicMock()
+    message.reply_text = AsyncMock(return_value=None)
+    update = _make_update(message)
+
+    _run(bot._reply(update, "hello"))
+
+    _args, kwargs = message.reply_text.await_args
+    assert kwargs.get("parse_mode") is None
+    assert "parse_mode" not in kwargs
 
 
 def test_reply_swallows_transient_timeout_after_retry_budget(

@@ -5,6 +5,8 @@ import threading
 from collections import deque
 from typing import Callable, TextIO
 
+from dormammu.progress import skill_label_for_role
+
 # DASHBOARD.md / PLAN.md section headers shown in dashboard mode.
 _DASHBOARD_SECTION_HEADERS = frozenset(["=== DASHBOARD.md ===", "=== PLAN.md ==="])
 
@@ -327,6 +329,84 @@ def _join_msgs(*parts: str | None) -> str:
     return "\n\n".join(p for p in parts if p and p.strip())
 
 
+class PromptStageTailFilter:
+    """Reduce Telegram streaming to prompt and stage updates only."""
+
+    def __init__(self) -> None:
+        self._current_prompt_name: str | None = None
+        self._current_prompt_summary: str | None = None
+        self._pending_loop_attempt: str | None = None
+
+    def add_line(self, line: str) -> str | None:
+        stripped = line.rstrip("\n").strip()
+        if not stripped:
+            return None
+
+        pipeline_section = _PIPELINE_SECTION_RE.match(stripped)
+        if pipeline_section is not None and pipeline_section.group(2) == "cli":
+            return self._stage_message(role=pipeline_section.group(1), attempt=None)
+
+        if stripped == _LOOP_BOUNDARY:
+            self._pending_loop_attempt = None
+            return None
+
+        if stripped.startswith("attempt: "):
+            self._pending_loop_attempt = stripped.split(":", 1)[1].strip()
+            return None
+
+        if stripped.startswith("agent role: "):
+            role = stripped.split(":", 1)[1].strip()
+            attempt = self._pending_loop_attempt
+            self._pending_loop_attempt = None
+            return self._stage_message(role=role, attempt=attempt)
+
+        if stripped.startswith("daemon prompt detected: "):
+            self._current_prompt_name = stripped[len("daemon prompt detected: "):].split(" (", 1)[0]
+            self._current_prompt_summary = None
+            return self._prompt_message()
+
+        if stripped.startswith("daemon prompt summary: "):
+            self._current_prompt_summary = stripped[len("daemon prompt summary: "):].strip()
+            return self._prompt_message()
+
+        if stripped == _SUPERVISOR_HEADER:
+            return self._stage_message(role="supervisor", attempt=None)
+
+        if stripped.startswith("daemon prompt ") and " -> " in stripped:
+            status = stripped.split(": ", 1)[1].split(" -> ", 1)[0]
+            return self._with_prompt(f"status: {status}")
+
+        return None
+
+    def collect_final(self) -> str | None:
+        return None
+
+    def _prompt_message(self) -> str | None:
+        prompt_text = self._prompt_text()
+        if prompt_text is None:
+            return None
+        return f"📝 Prompt: {prompt_text}"
+
+    def _stage_message(self, *, role: str, attempt: str | None) -> str:
+        stage = role
+        if role == "supervisor":
+            stage = "supervisor verification"
+        if attempt:
+            stage = f"{stage} (attempt {attempt})"
+        return self._with_prompt(f"stage: {stage} [{skill_label_for_role(role)}]")
+
+    def _with_prompt(self, message: str) -> str:
+        prompt_text = self._prompt_text()
+        if prompt_text is None:
+            return f"🔧 {message}"
+        return f"📝 Prompt: {prompt_text}\n🔧 {message}"
+
+    def _prompt_text(self) -> str | None:
+        if self._current_prompt_summary:
+            return self._current_prompt_summary
+        return self._current_prompt_name
+
+
 class TelegramProgressStream:
     """TextIO-compatible stream wrapper that optionally forwards output to a Telegram chat.
 
@@ -361,7 +441,7 @@ class TelegramProgressStream:
         self._buffer_size = 0
         self._closed = False
         self.encoding = getattr(base_stream, "encoding", "utf-8")
-        self._skill_filter: SkillTailFilter | None = None
+        self._tail_filter: PromptStageTailFilter | None = None
         self._line_buf: str = ""  # partial-line accumulator for filter mode
 
         # Delegate session log methods only when the base supports them so that
@@ -401,14 +481,11 @@ class TelegramProgressStream:
     def enable_streaming(self, chat_id: int) -> None:
         """Start forwarding writes to the given Telegram chat.
 
-        Uses :class:`SkillTailFilter` to emit compact, skill-aware summaries:
-        role banners when each pipeline skill starts, a digest of the last few
-        output lines when each skill finishes, and supervisor verdicts.
-        For plain loop-runner runs the same digest logic applies per loop.
+        Uses :class:`PromptStageTailFilter` to emit prompt/stage summaries only.
         """
         with self._lock:
             self._streaming_chat_id = chat_id
-            self._skill_filter = SkillTailFilter()
+            self._tail_filter = PromptStageTailFilter()
             self._line_buf = ""
 
     def disable_streaming(self) -> None:
@@ -417,7 +494,7 @@ class TelegramProgressStream:
         self._send_chunks(chunks)
         with self._lock:
             self._streaming_chat_id = None
-            self._skill_filter = None
+            self._tail_filter = None
             self._line_buf = ""
             self._buffer.clear()
             self._buffer_size = 0
@@ -445,7 +522,7 @@ class TelegramProgressStream:
         chunks: list[tuple[int, str]] = []
         with self._lock:
             if self._streaming_chat_id is not None and self._send_fn is not None:
-                if self._skill_filter is not None:
+                if self._tail_filter is not None:
                     self._write_skill_locked(data)
                     if self._buffer_size >= self._chunk_size:
                         chunks = self._collect_buffer_locked()
@@ -453,14 +530,14 @@ class TelegramProgressStream:
         return len(data)
 
     def _write_skill_locked(self, data: str) -> None:
-        """Feed data into SkillTailFilter line-by-line and buffer emitted messages."""
+        """Feed data into the tail filter line-by-line and buffer emitted messages."""
         self._line_buf += data
         while "\n" in self._line_buf:
             line, self._line_buf = self._line_buf.split("\n", 1)
             full_line = line + "\n"
-            if self._skill_filter is None:
+            if self._tail_filter is None:
                 return
-            msg = self._skill_filter.add_line(full_line)
+            msg = self._tail_filter.add_line(full_line)
             if msg:
                 payload = msg + "\n"
                 self._buffer.append(payload)
@@ -506,16 +583,16 @@ class TelegramProgressStream:
         with self._lock:
             if self._streaming_chat_id is None or self._send_fn is None:
                 return []
-            if self._skill_filter is not None:
+            if self._tail_filter is not None:
                 # Flush any partial line then collect remaining buffered content.
                 if self._line_buf:
-                    msg = self._skill_filter.add_line(self._line_buf + "\n")
+                    msg = self._tail_filter.add_line(self._line_buf + "\n")
                     if msg:
                         payload = msg + "\n"
                         self._buffer.append(payload)
                         self._buffer_size += len(payload)
                     self._line_buf = ""
-                final = self._skill_filter.collect_final()
+                final = self._tail_filter.collect_final()
                 if final:
                     payload = final + "\n"
                     self._buffer.append(payload)

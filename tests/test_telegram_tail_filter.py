@@ -4,7 +4,7 @@ Scenarios covered:
   1. DashboardLineFilter unit tests — header / section body / metadata / agent output
   2. AgentDigestFilter unit tests — ring buffer, loop boundary, verbose suppression
   3. SkillTailFilter unit tests — role banners, stdout digest, supervisor verdict
-  4. TelegramProgressStream with skill tail — pipeline role output, partial lines
+  4. TelegramProgressStream with prompt/stage tail — prompt identity and stage transitions
   5. disable_streaming resets state
   6. Partial-line writes reassembled correctly
   7. Flush / close correctness
@@ -299,15 +299,17 @@ class SkillTailFilterTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 4. TelegramProgressStream with skill tail
+# 4. TelegramProgressStream with prompt/stage tail
 # ---------------------------------------------------------------------------
 
 class SkillTailStreamTests(unittest.TestCase):
-    """Integration tests for TelegramProgressStream in skill-tail mode."""
+    """Integration tests for TelegramProgressStream in prompt/stage mode."""
 
     def _write_pipeline_run(self, stream: TelegramProgressStream) -> None:
         """Write a minimal pipeline sequence through the stream."""
         lines = [
+            "daemon prompt detected: 001-fix-logs.md (sort_key=(0, '001-fix-logs.md'), watcher=polling, result=001-fix-logs_RESULT.md)\n",
+            "daemon prompt summary: Fix noisy operator logging\n",
             "=== pipeline developer cli ===\n",
             "command: claude --prompt /tmp/p.txt\n",
             "cwd: /tmp/repo\n",
@@ -329,46 +331,44 @@ class SkillTailStreamTests(unittest.TestCase):
             stream.write(line)
         stream.flush()
 
-    def test_skill_tail_shows_developer_role_banner(self) -> None:
+    def test_tail_shows_prompt_summary(self) -> None:
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
         self._write_pipeline_run(stream)
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("developer", combined)
-        self.assertIn("▶️", combined)
+        self.assertIn("Fix noisy operator logging", combined)
 
-    def test_skill_tail_shows_developer_output(self) -> None:
+    def test_tail_shows_developer_stage(self) -> None:
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
         self._write_pipeline_run(stream)
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("Analysing the codebase", combined)
-        self.assertIn("Created done.txt", combined)
+        self.assertIn("stage: developer", combined)
+        self.assertIn("developing-agent", combined)
 
-    def test_skill_tail_shows_tester_role_banner(self) -> None:
+    def test_tail_shows_tester_stage(self) -> None:
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
         self._write_pipeline_run(stream)
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("tester", combined)
+        self.assertIn("stage: tester", combined)
 
-    def test_skill_tail_shows_supervisor_verdict(self) -> None:
+    def test_tail_shows_supervisor_stage(self) -> None:
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
         self._write_pipeline_run(stream)
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("verdict: approved", combined)
-        self.assertIn("🧑‍⚖️", combined)
+        self.assertIn("stage: supervisor verification", combined)
 
-    def test_skill_tail_suppresses_verbose_cli_metadata(self) -> None:
+    def test_tail_omits_raw_agent_output_and_verbose_metadata(self) -> None:
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
         self._write_pipeline_run(stream)
@@ -377,6 +377,8 @@ class SkillTailStreamTests(unittest.TestCase):
         combined = "\n".join(sent)
         self.assertNotIn("cwd:", combined)
         self.assertNotIn("command:", combined)
+        self.assertNotIn("Analysing the codebase", combined)
+        self.assertNotIn("All tests passed.", combined)
 
 
 # ---------------------------------------------------------------------------
@@ -438,18 +440,17 @@ class PartialLineWriteTests(unittest.TestCase):
         self.assertIn("developer", combined)
 
     def test_partial_output_line_is_buffered(self) -> None:
-        """Agent output split across writes appears in the emitted digest."""
+        """Prompt summary split across writes still appears after flush."""
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
 
-        stream.write("=== pipeline developer stdout ===\n")
-        stream.write("partial ")
-        stream.write("output line\n")
+        stream.write("daemon prompt summary: partial ")
+        stream.write("prompt line\n")
         stream.flush()
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("partial output line", combined)
+        self.assertIn("partial prompt line", combined)
 
 
 # ---------------------------------------------------------------------------
@@ -460,42 +461,39 @@ class FlushCorrectnessTests(unittest.TestCase):
     """flush() and close() must not lose buffered or partial-line content."""
 
     def test_explicit_flush_drains_partial_supervisor_line(self) -> None:
-        """A partial supervisor line (no \\n) is sent on flush()."""
+        """A partial prompt-summary line (no \\n) is sent on flush()."""
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
 
-        stream.write("=== dormammu supervisor ===\n")
-        stream.write("verdict: approved")  # no \n — sits in _line_buf
+        stream.write("daemon prompt summary: partial prompt")  # no \n — sits in _line_buf
         stream.flush()
         stream.disable_streaming()
 
         combined = "\n".join(sent)
-        self.assertIn("verdict: approved", combined)
+        self.assertIn("partial prompt", combined)
 
     def test_close_flushes_remaining_skill_buffer(self) -> None:
-        """close() must send any content still in _buffer."""
+        """close() must send any content still waiting in the line buffer."""
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
 
-        stream.write("=== pipeline developer stdout ===\n")
-        stream.write("Last output before close\n")
+        stream.write("daemon prompt summary: Last prompt before close\n")
         # Do NOT call flush — rely on close() to do it
         stream.close()
 
         combined = "\n".join(sent)
-        self.assertIn("Last output before close", combined)
+        self.assertIn("Last prompt before close", combined)
 
     def test_close_flushes_partial_line(self) -> None:
         """close() must send a partial line that was never terminated with \\n."""
         stream, sent = _make_stream()
         stream.enable_streaming(chat_id=1)
 
-        stream.write("=== dormammu supervisor ===\n")
-        stream.write("Unterminated verdict")  # no \n
+        stream.write("daemon prompt summary: Unterminated prompt")  # no \n
         stream.close()
 
         combined = "\n".join(sent)
-        self.assertIn("Unterminated verdict", combined)
+        self.assertIn("Unterminated prompt", combined)
 
 
 if __name__ == "__main__":

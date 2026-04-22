@@ -9,6 +9,7 @@ Covers gaps not addressed by existing test files:
        streaming_chat_id property, base stream writes always happen
   5. LoopRunner._emit_state_snapshot — file present / missing / empty
   6. LoopRunner._write_progress — output format and flush guarantee
+  7. ConciseProgressStream — reduced live operator output
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ if str(BACKEND) not in sys.path:
 
 from dormammu.daemon.runner import SessionProgressLogStream
 from dormammu._cli_utils import _TeeStream
+from dormammu.progress import ConciseProgressStream
 from dormammu.telegram.stream import DashboardLineFilter, TelegramProgressStream
 
 
@@ -257,6 +259,36 @@ class DashboardLineFilterEscalationTests(unittest.TestCase):
         f.should_include("Escalation note.\n")
         f.should_include("=== DASHBOARD.md ===\n")
         self.assertTrue(f.should_include("# Dashboard heading\n"))
+
+
+# ===========================================================================
+# 3.5 ConciseProgressStream
+# ===========================================================================
+
+class ConciseProgressStreamTests(unittest.TestCase):
+    """Unit tests for reduced live operator output."""
+
+    def test_pipeline_stage_is_emitted_without_raw_output(self) -> None:
+        base = io.StringIO()
+        stream = ConciseProgressStream(base)
+        stream.write("=== pipeline developer cli ===\n")
+        stream.write("command: claude --prompt /tmp/p.txt\n")
+        stream.write("=== pipeline developer stdout ===\n")
+        stream.write("raw agent output\n")
+        stream.flush()
+
+        text = base.getvalue()
+        self.assertIn("stage: developer", text)
+        self.assertNotIn("command:", text)
+        self.assertNotIn("raw agent output", text)
+
+    def test_daemon_prompt_summary_is_emitted(self) -> None:
+        base = io.StringIO()
+        stream = ConciseProgressStream(base)
+        stream.write("daemon prompt summary: Tighten daemon logs\n")
+        stream.flush()
+
+        self.assertIn("prompt summary: Tighten daemon logs", base.getvalue())
 
 
 # ===========================================================================
@@ -597,19 +629,20 @@ class TelegramProgressStreamIntegrationTests(unittest.TestCase):
             tps.set_send_fn(lambda _cid, text: sent.append(text))
             tps.enable_streaming(chat_id=1)
 
-            tps.write("=== dormammu loop attempt ===\n")
-            tps.write("attempt: 1\n")
+            tps.write("daemon prompt detected: 001-tail.md (sort_key=(0, '001-tail.md'), watcher=polling, result=001-tail_RESULT.md)\n")
+            tps.write("daemon prompt summary: Reduce noisy logs\n")
+            tps.write("=== pipeline planner cli ===\n")
             tps.flush()
             tps.disable_streaming()
             session_stream.close_log()
 
             log_text = log_path.read_text(encoding="utf-8")
-            self.assertIn("=== dormammu loop attempt ===", log_text)
-            self.assertIn("attempt: 1", log_text)
+            self.assertIn("daemon prompt detected: 001-tail.md", log_text)
+            self.assertIn("=== pipeline planner cli ===", log_text)
 
             combined = "\n".join(sent)
-            # Skill tail filter converts the loop boundary to a compact marker.
-            self.assertIn("🔄", combined)
+            self.assertIn("Reduce noisy logs", combined)
+            self.assertIn("stage: planner", combined)
 
     def test_session_log_methods_available_on_tps_when_base_is_session_log_stream(self) -> None:
         terminal = io.StringIO()
