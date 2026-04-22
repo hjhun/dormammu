@@ -372,7 +372,7 @@ dormammu daemonize --repo-root .
     "gemini"
   ],
   "cli_overrides": {
-    "cline": { "extra_args": ["-y", "--verbose", "--timeout", "1200"] }
+    "cline": { "extra_args": ["-y", "--timeout", "1200"] }
   },
   "token_exhaustion_patterns": [
     "usage limit", "quota exceeded", "rate limit exceeded"
@@ -671,7 +671,7 @@ CLI별 기본값은 `cli_overrides`에서 설정합니다:
 ```json
 {
   "cli_overrides": {
-    "cline": { "extra_args": ["-y", "--verbose", "--timeout", "1200"] }
+    "cline": { "extra_args": ["-y", "--timeout", "1200"] }
   }
 }
 ```

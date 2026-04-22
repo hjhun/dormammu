@@ -386,6 +386,50 @@ class CliAdapterTests(unittest.TestCase):
             self.assertIn("VERBOSE::yes", result.stdout_path.read_text(encoding="utf-8"))
             self.assertIn("TIMEOUT::1200", result.stdout_path.read_text(encoding="utf-8"))
 
+    def test_run_once_applies_default_timeout_but_not_verbose_for_cline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cline_cli(root)
+            workdir = root / "workspace"
+            workdir.mkdir()
+            home_dir = root / "home"
+            home_dir.mkdir()
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    **os.environ,
+                    "HOME": str(home_dir),
+                },
+            )
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Summarize the repository.",
+                    repo_root=root,
+                    workdir=workdir,
+                    run_label="phase-7-cline-defaults",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.prompt_mode, "positional")
+            self.assertEqual(
+                list(result.command),
+                [
+                    str(fake_cli),
+                    "--cwd",
+                    str(workdir),
+                    "--timeout",
+                    "1200",
+                    prepend_cli_identity("Summarize the repository.", fake_cli),
+                ],
+            )
+            stdout_text = result.stdout_path.read_text(encoding="utf-8")
+            self.assertIn("VERBOSE::no", stdout_text)
+            self.assertIn("TIMEOUT::1200", stdout_text)
+
     def test_run_once_defaults_workdir_to_current_directory_when_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

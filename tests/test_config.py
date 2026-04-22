@@ -149,7 +149,7 @@ class ConfigTests(unittest.TestCase):
                             "cline": {
                                 "input_mode": "arg",
                                 "prompt_flag": "--prompt",
-                                "extra_args": ["-y", "--verbose", "--timeout", "1200"],
+                                "extra_args": ["-y", "--timeout", "1200"],
                             }
                         },
                     }
@@ -168,7 +168,7 @@ class ConfigTests(unittest.TestCase):
             self.assertIsNotNone(config.cli_overrides)
             self.assertEqual(
                 config.cli_overrides["cline"].extra_args,
-                ("-y", "--verbose", "--timeout", "1200"),
+                ("-y", "--timeout", "1200"),
             )
             self.assertEqual(config.cli_overrides["cline"].input_mode, "arg")
             self.assertEqual(config.cli_overrides["cline"].prompt_flag, "--prompt")
@@ -189,7 +189,7 @@ class ConfigTests(unittest.TestCase):
                     {
                         "active_agent_cli": "/opt/tools/codex",
                         "cli_overrides": {
-                            "cline": {"extra_args": ["-y", "--verbose", "--timeout", "1200"]}
+                            "cline": {"extra_args": ["-y", "--timeout", "1200"]}
                         },
                     }
                 ),
@@ -209,7 +209,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.active_agent_cli, Path("/opt/tools/codex"))
             self.assertEqual(
                 config.cli_overrides["cline"].extra_args,
-                ("-y", "--verbose", "--timeout", "1200"),
+                ("-y", "--timeout", "1200"),
             )
 
     def test_load_rejects_non_boolean_worktree_enabled(self) -> None:

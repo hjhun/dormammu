@@ -135,8 +135,6 @@ if not isinstance(extra_args, list):
     extra_args = []
 if "-y" not in extra_args:
     extra_args.append("-y")
-if "--verbose" not in extra_args:
-    extra_args.append("--verbose")
 if "--timeout" not in extra_args:
     extra_args.extend(["--timeout", "1200"])
 cline_override["extra_args"] = extra_args

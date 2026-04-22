@@ -443,7 +443,7 @@ class InstallScriptTests(unittest.TestCase):
             self.assertEqual(config_payload["active_agent_cli"], str(codex_path))
             self.assertEqual(
                 config_payload["cli_overrides"]["cline"]["extra_args"],
-                ["-y", "--verbose", "--timeout", "1200"],
+                ["-y", "--timeout", "1200"],
             )
 
             export_line = f'export PATH="{launcher_dir}:$PATH"'

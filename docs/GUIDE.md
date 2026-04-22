@@ -511,7 +511,7 @@ Full example:
   ],
   "cli_overrides": {
     "cline": {
-      "extra_args": ["-y", "--verbose", "--timeout", "1200"]
+      "extra_args": ["-y", "--timeout", "1200"]
     }
   },
   "token_exhaustion_patterns": [
@@ -1716,7 +1716,7 @@ Per-CLI defaults can be set in `cli_overrides`:
 ```json
 {
   "cli_overrides": {
-    "cline": { "extra_args": ["-y", "--verbose", "--timeout", "1200"] }
+    "cline": { "extra_args": ["-y", "--timeout", "1200"] }
   }
 }
 ```

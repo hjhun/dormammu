@@ -6,7 +6,7 @@
   ],
   "cli_overrides": {
     "cline": {
-      "extra_args": ["-y", "--verbose", "--timeout", "1200"]
+      "extra_args": ["-y", "--timeout", "1200"]
     }
   },
   "token_exhaustion_patterns": [

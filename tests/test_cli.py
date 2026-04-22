@@ -1041,6 +1041,59 @@ class CliTests(unittest.TestCase):
                 stdout_text,
             )
 
+    def test_run_once_only_passes_cline_verbose_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cline_cli(root)
+
+            quiet_stdout = io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(quiet_stdout),
+            ):
+                quiet_exit = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Quiet cline prompt",
+                    ]
+                )
+
+            self.assertEqual(quiet_exit, 0)
+            quiet_payload = json.loads(quiet_stdout.getvalue())
+            quiet_text = Path(quiet_payload["artifacts"]["stdout"]).read_text(encoding="utf-8")
+            self.assertIn("VERBOSE::no", quiet_text)
+            self.assertIn("TIMEOUT::1200", quiet_text)
+
+            verbose_stdout = io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {"DORMAMMU_SESSIONS_DIR": str(root / "sessions")}),
+                contextlib.redirect_stdout(verbose_stdout),
+            ):
+                verbose_exit = main(
+                    [
+                        "run-once",
+                        "--repo-root",
+                        str(root),
+                        "--verbose",
+                        "--agent-cli",
+                        str(fake_cli),
+                        "--prompt",
+                        "Verbose cline prompt",
+                    ]
+                )
+
+            self.assertEqual(verbose_exit, 0)
+            verbose_payload = json.loads(verbose_stdout.getvalue())
+            verbose_text = Path(verbose_payload["artifacts"]["stdout"]).read_text(encoding="utf-8")
+            self.assertIn("VERBOSE::yes", verbose_text)
+            self.assertIn("TIMEOUT::1200", verbose_text)
+
     def test_run_once_defaults_workdir_to_repo_root_when_invoked_elsewhere(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_root = Path(tmpdir)
@@ -1885,6 +1938,64 @@ class CliTests(unittest.TestCase):
 
                     print(f"PROMPT::{{prompt.strip()}}")
                     print(f"TAG::{{tag}}")
+                    return 0
+
+                raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_fake_cline_cli(self, root: Path) -> Path:
+        script = root / "cline"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import sys
+
+                def main() -> int:
+                    args = sys.argv[1:]
+                    if "--help" in args:
+                        print("Usage: cline [prompt] [options]")
+                        print("-y")
+                        print("--verbose")
+                        print("--cwd")
+                        print("--timeout")
+                        return 0
+
+                    cwd = ""
+                    timeout = ""
+                    if "--cwd" in args:
+                        index = args.index("--cwd")
+                        cwd = args[index + 1]
+                    if "--timeout" in args:
+                        index = args.index("--timeout")
+                        timeout = args[index + 1]
+
+                    filtered_args = []
+                    skip_next = False
+                    for arg in args:
+                        if skip_next:
+                            skip_next = False
+                            continue
+                        if arg in {"--cwd", "--timeout"}:
+                            skip_next = True
+                            continue
+                        if arg in {"-y", "--verbose"}:
+                            continue
+                        filtered_args.append(arg)
+
+                    if len(filtered_args) != 1:
+                        print("interactive mode requires a single positional prompt", file=sys.stderr)
+                        return 2
+
+                    print(f"PROMPT::{{filtered_args[0]}}")
+                    print(f"CWD::{{cwd}}")
+                    print(f"VERBOSE::{{'yes' if '--verbose' in args else 'no'}}")
+                    print(f"TIMEOUT::{{timeout}}")
                     return 0
 
                 raise SystemExit(main())

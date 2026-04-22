@@ -434,7 +434,7 @@ Resolved in this order:
     "gemini"
   ],
   "cli_overrides": {
-    "cline": { "extra_args": ["-y", "--verbose", "--timeout", "1200"] }
+    "cline": { "extra_args": ["-y", "--timeout", "1200"] }
   },
   "token_exhaustion_patterns": [
     "usage limit", "quota exceeded", "rate limit exceeded"

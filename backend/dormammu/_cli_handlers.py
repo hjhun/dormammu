@@ -23,6 +23,7 @@ from dormammu.agent.role_config import AgentsConfig, ROLE_NAMES
 from dormammu.agent.models import AgentRunStarted
 from dormammu.config import (
     AppConfig,
+    CliInvocationConfig,
     detect_available_agent_cli,
     set_config_value,
     write_active_agent_cli_config,
@@ -70,6 +71,23 @@ def _live_progress_stream(base_stream: TextIO, *, verbose: bool) -> TextIO:
     if verbose:
         return base_stream
     return ConciseProgressStream(base_stream)
+
+
+def _with_runtime_cline_verbose(config: AppConfig, *, enabled: bool) -> AppConfig:
+    if not enabled:
+        return config
+
+    overrides = dict(config.cli_overrides or {})
+    cline_override = overrides.get("cline") or CliInvocationConfig()
+    normalized_args = {arg.strip().lower() for arg in cline_override.extra_args if arg.strip()}
+    if "--verbose" in normalized_args:
+        return config
+
+    overrides["cline"] = replace(
+        cline_override,
+        extra_args=tuple(cline_override.extra_args) + ("--verbose",),
+    )
+    return config.with_overrides(cli_overrides=overrides)
 
 
 def _pipeline_runtime(
@@ -242,6 +260,10 @@ def _handle_run_once(args: argparse.Namespace) -> int:
         prefer_active_session=True,
     )
     config = _with_guidance_overrides(config, args.guidance_files)
+    config = _with_runtime_cline_verbose(
+        config,
+        enabled=getattr(args, "verbose", False),
+    )
     repository = StateRepository(config, session_id=repository.session_id)
     prompt_text, prompt_source_path = _read_prompt_input(args)
     progress_stream = _live_progress_stream(
@@ -386,6 +408,10 @@ def _handle_run_once(args: argparse.Namespace) -> int:
 def _handle_run_loop(args: argparse.Namespace) -> int:
     config = _load_config(args.repo_root, discover=args.repo_root is not None)
     config = _with_guidance_overrides(config, args.guidance_files)
+    config = _with_runtime_cline_verbose(
+        config,
+        enabled=getattr(args, "verbose", False),
+    )
     prompt_text, prompt_source_path = _read_prompt_input(args)
     progress_stream = _live_progress_stream(
         sys.stderr,
@@ -541,6 +567,10 @@ def _handle_resume_loop(args: argparse.Namespace) -> int:
         prefer_active_session=True,
     )
     config = _with_guidance_overrides(config, args.guidance_files)
+    config = _with_runtime_cline_verbose(
+        config,
+        enabled=getattr(args, "verbose", False),
+    )
     repository = StateRepository(config, session_id=repository.session_id)
     progress_stream = _live_progress_stream(
         sys.stderr,
@@ -666,6 +696,10 @@ def _apply_autonomous_cli_overrides(daemon_config, args: argparse.Namespace):
 
 def _handle_daemonize(args: argparse.Namespace) -> int:
     config = _with_guidance_overrides(_load_config(args.repo_root, discover=args.repo_root is not None), args.guidance_files)
+    config = _with_runtime_cline_verbose(
+        config,
+        enabled=getattr(args, "verbose", False),
+    )
     daemon_config_path = args.config or _default_daemon_config_path(config)
     try:
         daemon_config = load_daemon_config(daemon_config_path, app_config=config)

@@ -125,8 +125,8 @@ KNOWN_CLI_PRESETS: tuple[KnownCliPreset, ...] = (
         help_hints=("-y", "--verbose", "--cwd", "--timeout", "cline"),
         prompt_positional=True,
         workdir_flag="--cwd",
-        default_extra_args=("--verbose", "--timeout", "1200"),
-        suppress_default_extra_args_when_present=("--verbose", "--timeout"),
+        default_extra_args=("--timeout", "1200"),
+        suppress_default_extra_args_when_present=("--timeout",),
         auto_approve_candidates=(
             PresetAutoApproveCandidate(
                 value="-y",
