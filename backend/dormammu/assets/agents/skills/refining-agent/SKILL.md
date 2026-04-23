@@ -1,13 +1,13 @@
 ---
 name: refining-agent
-description: Refines raw user requirements into a structured, unambiguous specification before planning begins. Operates in normalize mode by default; switches to clarify mode only when blocking ambiguity prevents safe planning. Use when a new request, goal, or feature description needs to be converted into an actionable requirements document.
+description: Refines raw user requirements into a structured, unambiguous specification before planning begins. Use when a new request, goal, or feature description needs to be converted into an actionable requirements document, or when an existing request is too vague to plan safely. Operates in normalize mode by default — switches to clarify mode only when blocking ambiguity prevents safe planning.
 ---
 
 # Refining Agent Skill
 
-Use this skill as the first stage of any non-trivial task.  It converts a
-rough user request into a structured requirements document that the planning
-agent can consume without asking follow-up questions about scope or intent.
+Use this skill as the first stage of any non-trivial task. It converts a rough
+user request into a structured requirements document that the planning agent
+can consume without asking follow-up questions about scope or intent.
 
 Related skills:
 
@@ -29,8 +29,6 @@ Related skills:
 
 Use when the request is clear enough to plan safely.
 
-**Do this:**
-
 1. Print `[[Refiner]]` to standard output.
 2. Check `intake.request_class` in `.dev/workflow_state.json`.
 3. Restate the user goal clearly and extract constraints.
@@ -41,12 +39,9 @@ Use when the request is clear enough to plan safely.
 
 ### Mode B — Clarify (only when blocked)
 
-Use when ambiguity cannot be resolved safely from context alone.  A blocking
-ambiguity is one where choosing the wrong interpretation would require
-redoing significant work, or where scope cannot be bounded without a human
-decision.
-
-**Do this:**
+Use when ambiguity cannot be resolved safely from context alone. A blocking
+ambiguity is one where choosing the wrong interpretation would require redoing
+significant work, or where scope cannot be bounded without a human decision.
 
 1. Print `[[Refiner]]` to standard output.
 2. List up to 5 blocking questions.
@@ -55,7 +50,7 @@ decision.
 5. Record `refinement_mode: clarify` and `blocked: true` in state.
 6. Stop. Do not begin planning until questions are answered.
 
-**Do not** ask questions to gather nice-to-have information.  If the request
+Do **not** ask questions to gather nice-to-have information. If the request
 can proceed safely with reasonable assumptions, state the assumptions and
 normalize instead.
 
@@ -113,7 +108,7 @@ normalize instead.
 - Do not invent scope the user did not mention; flag as an open question.
 - Keep each acceptance criterion independent and checkable in isolation.
 - Non-goals are as important as goals — make the scope boundary explicit.
-- **Normalize by default.  Clarify only when blocked.**
+- **Normalize by default. Clarify only when blocked.**
 
 ## State Fields
 

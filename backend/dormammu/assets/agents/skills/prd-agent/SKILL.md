@@ -1,15 +1,19 @@
 ---
 name: prd-agent
-description: Generates a structured Product Requirements Document (PRD) for a new feature or scope. Use when the user asks to plan a feature, create requirements, write a PRD, or convert a rough idea into actionable user stories.
+description: Generates a structured Product Requirements Document (PRD) for a new feature or scope. Use when the user asks to plan a feature, create requirements, write a PRD, or convert a rough idea into actionable user stories. Each story is sized to fit one agent session and sequenced so parallel development tracks can be identified by the planning agent.
 ---
 
 # PRD Agent Skill
 
-Use this skill before planning or development begins on a new feature or significant scope. It converts a rough goal into a structured PRD with user stories that are small enough to implement in a single agent session.
+Use this skill before planning or development begins on a new feature or
+significant scope. It converts a rough goal into a structured PRD with user
+stories that are small enough to implement in a single agent session and
+ordered so the planning agent can identify parallel development opportunities.
 
 Related skills:
 
-- Hand off to `planning-agent` once the PRD is finalized
+- Hand off to `planning-agent` once the PRD is finalized (the planner uses
+  story dependencies to decide whether parallel tracks are appropriate)
 - Use `designing-agent` to convert PRD decisions into implementation interfaces
 
 ## Inputs
@@ -21,17 +25,25 @@ Related skills:
 ## Workflow
 
 1. Print `[[PRD]]` to standard output.
-2. Ask 3–5 clarifying questions to understand scope, acceptance criteria, and non-goals. Offer lettered options (a/b/c) where possible to keep answers quick.
+2. Ask 3–5 clarifying questions to understand scope, acceptance criteria, and
+   non-goals. Offer lettered options (a/b/c) where possible to keep answers
+   quick.
 3. Draft a PRD in `tasks/prd-<feature-name>.md` with these sections:
    - **Overview** — one-paragraph summary of the feature and its purpose
    - **Goals** — 3–5 measurable outcomes this feature achieves
    - **User Stories** — ordered list of implementable stories (see format below)
    - **Non-Goals** — explicit scope exclusions
-   - **Technical Considerations** — key constraints, dependencies, or design decisions
+   - **Technical Considerations** — key constraints, dependencies, or design
+     decisions
    - **Success Metrics** — how to verify the feature is working correctly
-   - **Open Questions** — unresolved decisions that need answers before or during development
+   - **Open Questions** — unresolved decisions that need answers before or
+     during development
 4. Validate each user story against the sizing rules below.
-5. Save the final PRD to `tasks/prd-<feature-name>.md`.
+5. Review story dependencies for potential parallelism: if two or more stories
+   have no shared dependencies, note this explicitly in a "Parallel
+   Opportunities" section so the planning agent can consider splitting into
+   tracks.
+6. Save the final PRD to `tasks/prd-<feature-name>.md`.
 
 ## User Story Format
 
@@ -55,29 +67,42 @@ Related skills:
 
 ## Story Sizing Rules
 
-Each story must be implementable in a single agent context window (one dormammu session):
+Each story must be implementable in a single agent context window (one
+dormammu session):
 
 - Schema or data model changes → one story
 - Backend logic or API endpoint → one story per endpoint
 - UI component or page → one story per view
 - Test coverage for a story → include in same story, not separate
-- If a story feels too large, split it at natural interface boundaries (schema → service → UI)
+- If a story feels too large, split it at natural interface boundaries
+  (schema → service → UI)
 
-Dependency order must flow: schema → backend → UI → integration. Never let a later story depend on an earlier story that has not been listed above it.
+Dependency order must flow: schema → backend → UI → integration. Never let a
+later story depend on an earlier story that has not been listed above it.
 
 ## PRD Writing Rules
 
-- Write for a coding agent, not a human developer — be explicit and unambiguous
-- Each acceptance criterion must be verifiable from the repository state (file exists, test passes, etc.)
-- Avoid acceptance criteria like "works correctly" or "is intuitive" — these cannot be verified automatically
-- Keep each story completable without reading beyond its own section
-- Non-goals are as important as goals — make the scope boundary explicit
+- Write for a coding agent, not a human developer — be explicit and
+  unambiguous.
+- Each acceptance criterion must be verifiable from the repository state (file
+  exists, test passes, etc.).
+- Avoid acceptance criteria like "works correctly" or "is intuitive."
+- Keep each story completable without reading beyond its own section.
+- Non-goals are as important as goals — make the scope boundary explicit.
+- Explicitly note stories that can run in parallel (no shared dependencies) so
+  the planning agent can use this signal when deciding whether to split into
+  parallel development tracks.
 
 ## Expected Outputs
 
 - `tasks/prd-<feature-name>.md` with full PRD content
-- User stories ready to be converted into `.dev/PLAN.md` items by `planning-agent`
+- User stories ready to be converted into `.dev/PLAN.md` items by
+  `planning-agent`
+- A "Parallel Opportunities" note when stories are independent enough to
+  warrant parallel tracks
 
 ## Done Criteria
 
-This skill is complete when a planning agent can read the PRD and immediately derive a PLAN.md checklist without asking follow-up questions about scope or acceptance criteria.
+This skill is complete when a planning agent can read the PRD and immediately
+derive a PLAN.md checklist (and potential parallel track split) without asking
+follow-up questions about scope or acceptance criteria.
