@@ -224,6 +224,12 @@ class OperatorSync:
         root_workflow["session_index"] = workflow_defaults["session_index"]
         root_workflow["current_session"] = workflow_defaults["current_session"]
         root_workflow["sessions"] = list_sessions_fn()
+        for key in ("bootstrap", "intake", "workflow_policy", "roadmap"):
+            value = workflow_state.get(key)
+            if isinstance(value, Mapping):
+                root_workflow[key] = dict(value)
+            elif key in root_workflow:
+                root_workflow.pop(key, None)
         write_json(self.base_dev_dir / "workflow_state.json", root_workflow)
 
         self.sync_root_operator_mirrors(

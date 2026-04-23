@@ -60,6 +60,7 @@ from dormammu.lifecycle import (
     SupervisorHandoffPayload,
 )
 from dormammu.loop_runner import LoopRunResult, LoopRunRequest, LoopRunner
+from dormammu.request_routing import resolve_request_class
 from dormammu.state import StateRepository
 from dormammu.state.models import infer_primary_roadmap_phase_id, summarize_prompt_goal
 
@@ -669,6 +670,10 @@ class DaemonRunner:
             runtime_paths_text=scoped_config.runtime_path_prompt(),
         )
         goal_file_path = self._extract_goal_file_path(prompt_text)
+        request_class = resolve_request_class(
+            prompt_text,
+            workflow_state=session_repository.read_workflow_state(),
+        )
 
         # When an agents config is present, use the full role-based pipeline.
         if scoped_config.agents is not None:
@@ -688,6 +693,20 @@ class DaemonRunner:
                 stem=prompt_path.stem,
                 goal_file_path=goal_file_path,
                 evaluator_config=evaluator_config,
+            )
+
+        if request_class == "direct_response":
+            direct_agents = AgentsConfig()
+            return PipelineRunner(
+                scoped_config.with_overrides(agents=direct_agents),
+                direct_agents,
+                repository=session_repository,
+                progress_stream=self.progress_stream,
+                stop_event=self._shutdown_requested,
+            ).run(
+                enriched_text,
+                stem=prompt_path.stem,
+                goal_file_path=goal_file_path,
             )
 
         # Default: enforce refine -> plan before the single-agent loop.
@@ -904,6 +923,9 @@ class DaemonRunner:
     def _sync_plan_state(self, session_repository: StateRepository) -> tuple[bool | None, str | None]:
         session_repository.sync_operator_state()
         session_state = session_repository.read_session_state()
+        workflow_state = session_repository.read_workflow_state()
+        if resolve_request_class("", workflow_state=workflow_state) == "direct_response":
+            return True, None
         task_sync = session_state.get("task_sync")
         if not isinstance(task_sync, Mapping):
             return None, None

@@ -65,6 +65,7 @@ def _mirror_pipe(
     sink: TextIO,
     *,
     mirror: TextIO | None,
+    mirror_lock: threading.Lock | None = None,
 ) -> None:
     if source is None:
         return
@@ -73,8 +74,13 @@ def _mirror_pipe(
             sink.write(chunk)
             sink.flush()
             if mirror is not None:
-                mirror.write(chunk)
-                mirror.flush()
+                if mirror_lock is None:
+                    mirror.write(chunk)
+                    mirror.flush()
+                else:
+                    with mirror_lock:
+                        mirror.write(chunk)
+                        mirror.flush()
     finally:
         source.close()
 
@@ -273,6 +279,7 @@ class CliAdapter:
             "w",
             encoding="utf-8",
         ) as stderr_file:
+            mirror_lock = threading.Lock()
             process = subprocess.Popen(
                 list(command_plan.argv),
                 cwd=run_cwd,
@@ -287,13 +294,13 @@ class CliAdapter:
             stdout_thread = Thread(
                 target=_mirror_pipe,
                 args=(process.stdout, stdout_file),
-                kwargs={"mirror": self.live_output_stream},
+                kwargs={"mirror": self.live_output_stream, "mirror_lock": mirror_lock},
                 daemon=True,
             )
             stderr_thread = Thread(
                 target=_mirror_pipe,
                 args=(process.stderr, stderr_file),
-                kwargs={"mirror": self.live_output_stream},
+                kwargs={"mirror": self.live_output_stream, "mirror_lock": mirror_lock},
                 daemon=True,
             )
             stdout_thread.start()

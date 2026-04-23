@@ -37,6 +37,7 @@ from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
 from dormammu.progress import ConciseProgressStream
+from dormammu.request_routing import resolve_request_class
 from dormammu.recovery import RecoveryManager
 from dormammu.state import StateRepository
 
@@ -73,6 +74,9 @@ def _live_progress_stream(base_stream: TextIO, *, verbose: bool) -> TextIO:
     return ConciseProgressStream(base_stream)
 
 
+_DEFAULT_MANAGED_PROCESS_TIMEOUT_SECONDS = 600
+
+
 def _with_runtime_cline_verbose(config: AppConfig, *, enabled: bool) -> AppConfig:
     if not enabled:
         return config
@@ -88,6 +92,21 @@ def _with_runtime_cline_verbose(config: AppConfig, *, enabled: bool) -> AppConfi
         extra_args=tuple(cline_override.extra_args) + ("--verbose",),
     )
     return config.with_overrides(cli_overrides=overrides)
+
+
+def _with_managed_process_timeout(config: AppConfig) -> AppConfig:
+    """Apply a bounded timeout for dormammu-managed non-interactive runs.
+
+    Global and repo-local config still win when they set
+    ``process_timeout_seconds`` explicitly. The fallback only prevents managed
+    ``run`` / ``run-once`` / ``daemonize`` executions from waiting forever on
+    a stalled agent CLI subprocess.
+    """
+    if config.process_timeout_seconds is not None:
+        return config
+    return config.with_overrides(
+        process_timeout_seconds=_DEFAULT_MANAGED_PROCESS_TIMEOUT_SECONDS,
+    )
 
 
 def _pipeline_runtime(
@@ -264,6 +283,7 @@ def _handle_run_once(args: argparse.Namespace) -> int:
         config,
         enabled=getattr(args, "verbose", False),
     )
+    config = _with_managed_process_timeout(config)
     repository = StateRepository(config, session_id=repository.session_id)
     prompt_text, prompt_source_path = _read_prompt_input(args)
     progress_stream = _live_progress_stream(
@@ -333,6 +353,26 @@ def _handle_run_once(args: argparse.Namespace) -> int:
 
         # Default: still enforce the refine -> plan prelude, then run the
         # requested single-shot developer execution.
+        request_class = resolve_request_class(
+            enriched_prompt,
+            workflow_state=repository.read_workflow_state(),
+        )
+        if not args.agent_cli and request_class == "direct_response":
+            try:
+                direct_agents = AgentsConfig()
+                result = PipelineRunner(
+                    config.with_overrides(agents=direct_agents),
+                    direct_agents,
+                    repository=repository,
+                    progress_stream=active_progress_stream,
+                ).run(enriched_prompt, stem=stem, date_str=date_str)
+            except (RuntimeError, ValueError, OSError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+
+            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
+            return 0 if result.status == "completed" else 1
+
         try:
             agent_cli = _resolve_agent_cli(config, args.agent_cli)
         except ValueError as exc:
@@ -412,6 +452,7 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
         config,
         enabled=getattr(args, "verbose", False),
     )
+    config = _with_managed_process_timeout(config)
     prompt_text, prompt_source_path = _read_prompt_input(args)
     progress_stream = _live_progress_stream(
         sys.stderr,
@@ -512,6 +553,26 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
                 else (args.run_label or "run")
             )
             date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+            request_class = resolve_request_class(
+                enriched_prompt,
+                workflow_state=repository.read_workflow_state(),
+            )
+            if not args.agent_cli and request_class == "direct_response":
+                try:
+                    direct_agents = AgentsConfig()
+                    result = PipelineRunner(
+                        config.with_overrides(agents=direct_agents),
+                        direct_agents,
+                        repository=repository,
+                        progress_stream=active_progress_stream,
+                    ).run(enriched_prompt, stem=stem, date_str=date_str)
+                except (RuntimeError, ValueError, OSError) as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+
+                print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
+                return 0 if result.status == "completed" else 1
+
             try:
                 _run_mandatory_refine_and_plan(
                     config=config,
@@ -700,6 +761,7 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
         config,
         enabled=getattr(args, "verbose", False),
     )
+    config = _with_managed_process_timeout(config)
     daemon_config_path = args.config or _default_daemon_config_path(config)
     try:
         daemon_config = load_daemon_config(daemon_config_path, app_config=config)

@@ -68,7 +68,11 @@ def _make_runner(
     app = _make_app_config(tmp_path, agents=agents)
     app.active_agent_cli = active_agent_cli  # default None → no fallback CLI
     stream = io.StringIO()
-    return PipelineRunner(app, agents, progress_stream=stream)
+    runner = PipelineRunner(app, agents, progress_stream=stream)
+    runner._repository.read_workflow_state = MagicMock(  # type: ignore[method-assign]
+        return_value={"intake": {"request_class": "full_workflow"}}
+    )
+    return runner
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +299,52 @@ class TestMandatoryPreludeStages:
         mock_refiner.assert_called_once()
         mock_planner.assert_called_once()
         mock_eval.assert_not_called()
+
+    def test_run_refine_and_plan_skips_refiner_for_light_edit(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(
+            refiner=RoleAgentConfig(cli=Path("echo")),
+            planner=RoleAgentConfig(cli=Path("echo")),
+        )
+        runner = _make_runner(tmp_path, agents=agents)
+
+        with (
+            patch.object(runner, "_run_refiner") as mock_refiner,
+            patch.object(runner, "_run_planner", return_value="plan") as mock_planner,
+        ):
+            runner.run_refine_and_plan(
+                "Fix the typo in README.md.",
+                stem="g",
+                date_str="20260412",
+                request_class="light_edit",
+            )
+
+        mock_refiner.assert_not_called()
+        mock_planner.assert_called_once()
+
+    def test_run_refine_and_plan_skips_prelude_for_direct_response(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(
+            refiner=RoleAgentConfig(cli=Path("echo")),
+            planner=RoleAgentConfig(cli=Path("echo")),
+        )
+        runner = _make_runner(tmp_path, agents=agents)
+
+        with (
+            patch.object(runner, "_run_refiner") as mock_refiner,
+            patch.object(runner, "_run_planner") as mock_planner,
+        ):
+            runner.run_refine_and_plan(
+                "Explain the workflow.",
+                stem="g",
+                date_str="20260412",
+                request_class="direct_response",
+            )
+
+        mock_refiner.assert_not_called()
+        mock_planner.assert_not_called()
 
     def test_run_refine_and_plan_raises_after_max_rework(self, tmp_path: Path) -> None:
         agents = AgentsConfig(
@@ -631,6 +681,51 @@ class TestPipelineRun:
             runner.run("goal", stem="s", date_str="20260412")
 
         assert mock_prelude.call_args.kwargs["enable_plan_evaluator"] is False
+
+    def test_direct_response_uses_fast_path_without_pipeline_stages(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(cli=Path("claude")),
+            tester=RoleAgentConfig(cli=Path("claude")),
+            reviewer=RoleAgentConfig(cli=Path("claude")),
+            committer=RoleAgentConfig(cli=Path("claude")),
+        )
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+        runner._repository.read_workflow_state = MagicMock(  # type: ignore[method-assign]
+            return_value={"intake": {"request_class": "direct_response"}}
+        )
+
+        direct_result = LoopRunResult(
+            status="completed",
+            attempts_completed=1,
+            retries_used=0,
+            max_retries=0,
+            max_iterations=1,
+            latest_run_id="run-direct",
+            supervisor_verdict="done",
+            report_path=None,
+            continuation_prompt_path=None,
+        )
+
+        with (
+            patch.object(runner, "run_refine_and_plan") as mock_prelude,
+            patch.object(runner, "_run_direct_response", return_value=direct_result) as mock_direct,
+            patch.object(runner, "_run_developer") as mock_dev,
+            patch.object(runner, "_run_tester") as mock_tester,
+            patch.object(runner, "_run_reviewer") as mock_reviewer,
+            patch.object(runner, "_run_committer") as mock_committer,
+        ):
+            result = runner.run("Explain the workflow.", stem="s", date_str="20260412")
+
+        assert result.status == "completed"
+        mock_direct.assert_called_once()
+        mock_prelude.assert_not_called()
+        mock_dev.assert_not_called()
+        mock_tester.assert_not_called()
+        mock_reviewer.assert_not_called()
+        mock_committer.assert_not_called()
 
     def test_goal_pipeline_run_enables_plan_evaluator(self, tmp_path: Path) -> None:
         agents = AgentsConfig(

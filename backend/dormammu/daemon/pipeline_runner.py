@@ -74,6 +74,7 @@ from dormammu.lifecycle import (
     SupervisorHandoffPayload,
 )
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
+from dormammu.request_routing import resolve_request_class
 from dormammu.results import (
     collect_result_artifacts,
     ResultStatus,
@@ -222,12 +223,21 @@ class PipelineRunner:
         stem: str,
         date_str: str | None = None,
         enable_plan_evaluator: bool = False,
+        request_class: str | None = None,
     ) -> None:
         """Execute the mandatory refine -> plan prelude for a prompt."""
         if date_str is None:
             date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
 
-        self._run_refiner(goal_text, stem=stem, date_str=date_str)
+        request_class = request_class or self._request_class(goal_text)
+        if request_class == "direct_response":
+            self._log("pipeline: direct_response request — skipping refine/plan prelude")
+            return
+
+        if request_class != "light_edit":
+            self._run_refiner(goal_text, stem=stem, date_str=date_str)
+        else:
+            self._log("pipeline: light_edit request — skipping refiner stage")
         self._run_planner(
             goal_text,
             stem=stem,
@@ -235,7 +245,7 @@ class PipelineRunner:
             checkpoint_feedback_text=None,
             attempt=1,
         )
-        if not enable_plan_evaluator:
+        if not enable_plan_evaluator or request_class != "full_workflow":
             self._log("pipeline: plan evaluator disabled for non-goals prompt")
             return
 
@@ -362,6 +372,16 @@ class PipelineRunner:
                 run_id=self._lifecycle.run_id,
                 agent_role="pipeline",
             )
+            request_class = self._request_class(prompt_text)
+            self._log(f"pipeline: request_class={request_class}")
+
+            if request_class == "direct_response":
+                final_result = self._run_direct_response(
+                    prompt_text,
+                    stem=stem,
+                    date_str=date_str,
+                )
+                return self._finalize_pipeline_result(final_result)
 
             # ---- refiner + planner (mandatory) ----------------------------------
             self.run_refine_and_plan(
@@ -572,6 +592,123 @@ class PipelineRunner:
         )
         self._current_stage_results = None
         return final_result
+
+    def _request_class(self, prompt_text: str) -> str:
+        try:
+            workflow_state = self._repository.read_workflow_state()
+        except Exception:
+            workflow_state = None
+        return resolve_request_class(prompt_text, workflow_state=workflow_state)
+
+    def _run_direct_response(
+        self,
+        prompt_text: str,
+        *,
+        stem: str,
+        date_str: str,
+    ) -> LoopRunResult:
+        profile = self._profile_for_role("developer")
+        cli = profile.resolve_cli(self._app_config.active_agent_cli)
+        if cli is None:
+            raise RuntimeError(
+                "No CLI available for direct_response execution. "
+                "Configure active_agent_cli or a developer CLI override."
+            )
+
+        stage_name = "direct_response"
+        self._emit_stage_queued(
+            role="developer",
+            stage_name=stage_name,
+            reason="Request classified as direct_response; running a one-pass fast path.",
+        )
+        self._emit_stage_start(role="developer", stage_name=stage_name)
+        self._log("pipeline: direct_response stage starting")
+
+        adapter = CliAdapter(
+            self._app_config,
+            live_output_stream=self._progress_stream,
+            stop_event=self._stop_event,
+        )
+        direct_prompt = "\n".join(
+            [
+                "Request class: direct_response",
+                "This task should be handled in one pass.",
+                "Do not invent a multi-phase workflow, slice list, or retry plan.",
+                "Do not modify repository files unless the prompt explicitly requires it.",
+                "Answer directly or perform the smallest direct action, then stop.",
+                "",
+                "Original prompt:",
+                prompt_text.strip() or "(empty prompt)",
+                "",
+            ]
+        )
+        request = AgentRunRequest(
+            cli_path=cli,
+            prompt_text=direct_prompt,
+            repo_root=self._app_config.repo_root,
+            extra_args=tuple(_model_args(cli.name, profile.model_override)),
+            run_label=f"pipeline-{stage_name}-{stem}",
+        )
+        self._emit_cli_command(
+            role="developer",
+            args=[str(cli)] + list(_model_args(cli.name, profile.model_override)),
+            cwd=self._app_config.repo_root,
+        )
+        result = adapter.run_once(request)
+        self._repository.record_latest_run(result)
+
+        stdout_text = (
+            result.stdout_path.read_text(encoding="utf-8")
+            if result.stdout_path.exists()
+            else ""
+        )
+        stderr_text = (
+            result.stderr_path.read_text(encoding="utf-8")
+            if result.stderr_path.exists()
+            else ""
+        )
+        self._emit_cli_output(role="developer", stdout_text=stdout_text, stderr_text=stderr_text)
+        output = select_agent_output(stdout_text, stderr_text)
+        stage_status = (
+            ResultStatus.COMPLETED if result.exit_code == 0 else ResultStatus.FAILED
+        )
+        stage_verdict = ResultVerdict.DONE if result.exit_code == 0 else ResultVerdict.FAIL
+        stage = StageResult(
+            role="developer",
+            stage_name=stage_name,
+            status=stage_status,
+            verdict=stage_verdict,
+            output=output,
+            summary=(
+                "Direct-response fast path completed."
+                if result.exit_code == 0
+                else f"Direct-response fast path failed with exit code {result.exit_code}."
+            ),
+            artifacts=tuple(result.artifact_refs),
+            retry=RetryMetadata(attempt=1, retries_used=0, max_retries=0, max_iterations=1),
+            metadata={"latest_run_id": result.run_id},
+        )
+        self._log(
+            "pipeline: direct_response stage completed "
+            f"(status={stage.status}, verdict={stage.verdict})"
+        )
+        self._emit_stage_complete(stage=stage, run_id=result.run_id)
+        self._record_stage_result(stage)
+        return LoopRunResult(
+            status=stage.status,
+            attempts_completed=1,
+            retries_used=0,
+            max_retries=0,
+            max_iterations=1,
+            latest_run_id=result.run_id,
+            supervisor_verdict=stage.verdict,
+            report_path=None,
+            continuation_prompt_path=None,
+            summary=stage.summary,
+            artifacts=tuple(result.artifact_refs),
+            stage_results=(stage,),
+            retry=stage.retry,
+        )
 
     # ------------------------------------------------------------------
     # Refiner stage (one-shot, mandatory)

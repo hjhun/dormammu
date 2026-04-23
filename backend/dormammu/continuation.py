@@ -266,6 +266,18 @@ def build_supervisor_handoff_prompt(
     last_completed = workflow.get("last_completed_phase", "unknown")
     resume_from = workflow.get("resume_from_phase", active_phase)
     supervisor_verdict = supervisor.get("verdict", "unknown")
+    intake = workflow_state.get("intake", {})
+    workflow_policy = workflow_state.get("workflow_policy", {})
+    request_class = (
+        intake.get("request_class", "unknown")
+        if isinstance(intake, Mapping)
+        else "unknown"
+    )
+    required_phases = []
+    if isinstance(workflow_policy, Mapping):
+        raw_required_phases = workflow_policy.get("required_phases")
+        if isinstance(raw_required_phases, list):
+            required_phases = [str(item) for item in raw_required_phases if str(item).strip()]
 
     lines = [
         "Mandatory refine -> plan has already completed for this run.",
@@ -281,6 +293,9 @@ def build_supervisor_handoff_prompt(
         f"Last completed workflow phase: {last_completed}",
         f"Recommended resume phase: {resume_from}",
         f"Latest supervisor verdict: {supervisor_verdict}",
+        f"Request class: {request_class}",
+        "Required workflow phases: "
+        + (", ".join(required_phases) if required_phases else "none"),
         "",
     ]
     if runtime_paths_text and runtime_paths_text.strip():

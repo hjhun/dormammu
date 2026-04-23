@@ -1,0 +1,42 @@
+{
+  "skill_name": "developing-agent",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Implement an optional `--dry-run` flag for `dormammu run-once`. Work in the active implementation phase only. Break the change into the smallest slices, start with argument parsing before runtime plumbing, coordinate unit and integration coverage with `test-authoring-agent`, and keep `.dev` state current after each slice.",
+      "expected_output": "The agent works in small ordered slices, begins with the narrowest observable behavior, coordinates slice-level tests early, and leaves resumable `.dev` updates.",
+      "files": [],
+      "expectations": [
+        "The response decomposes the work into multiple small slices instead of describing one broad implementation step.",
+        "The first slice focuses on a narrow behavior such as parsing or contract plumbing.",
+        "The response explicitly coordinates test ownership with `test-authoring-agent`.",
+        "The response mentions targeted verification or a narrow check after each slice.",
+        "The response preserves `.dev` state and leaves continuation context."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Fix a bug where resumed sessions lose an in-memory retry limit after restart. Implement only the active scoped slice, prefer divide-and-conquer development, and avoid batching a large persistence refactor. Ask for the matching tests early and move to the next slice only after the current one has a clear acceptance signal.",
+      "expected_output": "The agent splits the bug fix into schema or state, read or resume behavior, write path, and edge-case slices rather than attempting a broad rewrite.",
+      "files": [],
+      "expectations": [
+        "The response prefers a slice-based state or persistence plan rather than a sweeping refactor.",
+        "The response defines an acceptance signal for the current slice.",
+        "The response delays later slices until the current slice is stable enough to hand off cleanly.",
+        "The response distinguishes product-code work from authored test work."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Add a new optional agent CLI override field that affects config loading, runtime selection, and diagnostics output. Use the developer workflow only. Start from the smallest verifiable vertical slice, keep behavior changes narrow, and collaborate with the test author so each slice can be closed by unit or integration coverage before expanding.",
+      "expected_output": "The agent chooses a thin vertical slice, avoids broad cross-module rewrites up front, and explicitly coordinates with testing for each slice.",
+      "files": [],
+      "expectations": [
+        "The response chooses a thin vertical slice instead of changing every module at once.",
+        "The response references behavior-first progress across config, runtime, and diagnostics.",
+        "The response ties each slice to concrete unit or integration coverage.",
+        "The response records blockers or remaining slices in resumable form."
+      ]
+    }
+  ]
+}

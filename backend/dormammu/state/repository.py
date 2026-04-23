@@ -359,10 +359,14 @@ class StateRepository:
         self.base_dev_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self._session_mgr.migrate_legacy_root_snapshot(timestamp=timestamp)
+        resolved_goal = goal or summarize_prompt_goal(
+            prompt_text,
+            fallback="Bootstrap dormammu in the current repository.",
+        )
 
         session_repository = self.for_session(next_session_id)
         session_repository._reset_bootstrap_state(
-            goal=goal or "Bootstrap dormammu in the current repository.",
+            goal=resolved_goal,
             prompt_text=prompt_text,
             roadmap_phase_ids=roadmap_phase_ids,
             session_id=next_session_id,

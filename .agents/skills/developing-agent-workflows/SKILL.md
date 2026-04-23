@@ -31,9 +31,13 @@ Related skills:
 ## Development Rules
 
 - Prefer small, verifiable increments.
+- Use adaptive depth: finish genuinely small bounded fixes in one pass, and
+  reserve slice-by-slice divide-and-conquer for larger `full_workflow` scopes.
 - Preserve unrelated user changes.
 - Keep product-code ownership separate from test-code ownership.
 - Do not mark a task complete until the code and state files agree.
+- Do not manufacture extra loop iterations for simple commands or light edits
+  once the requested work and relevant verification are already complete.
 - Keep `DASHBOARD.md` focused on live implementation status rather than a generic summary of the whole repo.
 - Keep `TASKS.md` as a scoped prompt-derived checklist, not a running narrative.
 - If implementation reveals a design gap, pause and route back to the design skill.

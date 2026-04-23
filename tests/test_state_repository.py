@@ -767,6 +767,70 @@ Use this skill in state repository tests.
             self.assertTrue((archived_dir / "continuation_prompt.txt").exists())
             self.assertTrue((config.sessions_dir / "phase7-multi-session" / "PLAN.md").exists())
 
+    def test_start_new_session_uses_prompt_summary_when_goal_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+
+            repository.start_new_session(
+                prompt_text=(
+                    "Create a small casual browser game in this workspace using "
+                    "plain HTML, CSS, and JavaScript."
+                ),
+                active_roadmap_phase_ids=["phase_4"],
+                session_id="prompt-derived-goal",
+            )
+
+            session_state = repository.read_session_state()
+            workflow_state = repository.read_workflow_state()
+            self.assertEqual(
+                session_state["bootstrap"]["goal"],
+                "Create a small casual browser game in this workspace using plain HTML, CSS, and JavaScript.",
+            )
+            self.assertEqual(
+                workflow_state["bootstrap"]["goal"],
+                session_state["bootstrap"]["goal"],
+            )
+
+    def test_start_new_session_root_workflow_index_mirrors_intake_and_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+
+            repository.start_new_session(
+                prompt_text="Implement a small browser game with tests and verification.",
+                active_roadmap_phase_ids=["phase_4"],
+                session_id="mirrored-policy-session",
+            )
+
+            root_workflow = json.loads(
+                (config.base_dev_dir / "workflow_state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                root_workflow["intake"]["request_class"],
+                "full_workflow",
+            )
+            self.assertEqual(
+                root_workflow["workflow_policy"]["request_class"],
+                "full_workflow",
+            )
+            self.assertEqual(
+                root_workflow["bootstrap"]["goal"],
+                "Implement a small browser game with tests and verification.",
+            )
+
     def test_list_sessions_marks_active_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
