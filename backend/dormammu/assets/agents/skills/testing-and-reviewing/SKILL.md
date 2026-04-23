@@ -39,10 +39,14 @@ Related skills:
    of claiming success.
 7. Review the changed files for correctness, regressions, and missing edge
    cases — covering changes from all parallel tracks when applicable.
-8. Record findings first, then summarize residual risks and verification gaps.
-9. Update `.dev/DASHBOARD.md` to reflect the real validation outcome and
-   update `.dev/PLAN.md` when the prompt-derived phase checklist changes
-   because validation is complete or blocked.
+8. **Run the full test suite** at the end of the development phase regardless
+   of which slices or tracks were involved. Slice-level checks during
+   development are not a substitute for a full suite run — the full run is
+   required to catch cross-slice and cross-track regressions before commit.
+9. Record findings first, then summarize residual risks and verification gaps.
+10. Update `.dev/DASHBOARD.md` to reflect the real validation outcome and
+    update `.dev/PLAN.md` when the prompt-derived phase checklist changes
+    because validation is complete or blocked.
 
 ## Review Rules
 
@@ -51,6 +55,8 @@ Related skills:
 - Treat authored tests and executed tests as different evidence levels.
 - When parallel tracks were used, verify that cross-track integration points
   work correctly — not just each track in isolation.
+- Always run the full test suite as the final validation step, even when
+  individual slice checks already passed during development.
 - If no findings are discovered, state that clearly and note remaining risk.
 - Escalate to manual review when confidence depends on unavailable systems or
   credentials.
