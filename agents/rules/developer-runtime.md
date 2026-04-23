@@ -36,5 +36,7 @@ Development rules:
 - Do not treat authored tests as executed validation; hand off to the
   testing skill after the implementation slice is finished.
 - Leave enough context in `.dev` for a later rerun to continue cleanly.
+- When updating `.dev/WORKFLOWS.md` phase checkboxes, use `[O]` (capital O)
+  for completed phases and `[ ]` for pending.  Never use `[x]`.
 
 Write all content in English.

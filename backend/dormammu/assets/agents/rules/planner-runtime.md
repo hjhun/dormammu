@@ -37,23 +37,85 @@ section with the rationale from `workflow_policy.skip_rationale`.
 ## Your job
 
 1. Read `.dev/REQUIREMENTS.md` when present and treat it as the primary source.
-2. Read `agents/skills/planning-agent/SKILL.md` for the workflow generation
-   contract.
-3. Check `intake.request_class` and select planning depth accordingly.
-4. Generate `.dev/WORKFLOWS.md` as the adaptive stage sequence for this task
+2. Check `intake.request_class` and select planning depth accordingly.
+3. Generate `.dev/WORKFLOWS.md` as the adaptive stage sequence for this task
    (required for `light_edit` and `full_workflow`; optional for
    `direct_response`).
-5. Update `.dev/PLAN.md` with prompt-derived phase items using
+4. Update `.dev/PLAN.md` with prompt-derived phase items using
    `[ ] Phase N. <title>`.
-6. **Always write `.dev/TASKS.md`** — even for light and direct-response
+5. **Always write `.dev/TASKS.md`** — even for light and direct-response
    tasks.  TASKS.md is the machine-facing execution queue that the supervisor
    and loop runner rely on.  An empty or minimal TASKS.md is acceptable for
    direct_response tasks; it must be non-empty for light_edit and
    full_workflow tasks.
-7. Update `.dev/DASHBOARD.md` with actual progress, active phase, next action,
+6. Update `.dev/DASHBOARD.md` with actual progress, active phase, next action,
    and risks.
-8. Preserve already-completed work unless the current state is clearly wrong.
-9. If evaluator feedback is provided, fix those planning gaps before you stop.
+7. Preserve already-completed work unless the current state is clearly wrong.
+8. If evaluator feedback is provided, fix those planning gaps before you stop.
+
+## WORKFLOWS.md format
+
+WORKFLOWS.md is the operator-facing process map.  Use `[ ]` for pending phases
+and `[O]` for completed phases.  Do NOT use narrative section headers or
+Mermaid diagrams — the supervisor reads the checkbox markers directly.
+
+Single-track example:
+
+```markdown
+# Workflows
+
+## Task: <short task title>
+
+Generated workflow for this task. Update checkboxes as each stage completes.
+
+[ ] Phase 0. Refine — refining-agent
+[O] Phase 1. Plan — planning-agent
+[ ] Phase 2. Design — designing-agent
+[ ] Phase 3. Develop — developing-agent
+[ ] Phase 4. Test Author — test-authoring-agent
+[ ] Phase 5. Test and Review — testing-and-reviewing
+[ ] Phase 6. Commit — committing-agent
+               ↳ supervisor stops loop here
+
+## Skipped Phases
+
+| Phase  | Rationale |
+|--------|-----------|
+| refine | ... |
+```
+
+Parallel-track example:
+
+```markdown
+# Workflows
+
+## Task: <short task title>
+
+[ ] Phase 0. Refine — refining-agent
+[O] Phase 1. Plan — planning-agent
+[ ] Phase 2. Design — designing-agent
+[ ] Phase 3. Develop (Track A: <domain>) — developing-agent    ↓ parallel
+[ ] Phase 4. Develop (Track B: <domain>) — developing-agent    ↕ parallel
+[ ] Phase 5. Test Author (Track A) — test-authoring-agent      ↕ parallel
+[ ] Phase 6. Test Author (Track B) — test-authoring-agent      ↑ parallel
+[ ] Phase 7. Supervisor gate (merge tracks)
+[ ] Phase 8. Test and Review — testing-and-reviewing
+[ ] Phase 9. Commit — committing-agent
+                ↳ supervisor stops loop here
+
+## Skipped Phases
+
+| Phase    | Rationale |
+|----------|-----------|
+| evaluate | ... |
+```
+
+Rules for WORKFLOWS.md:
+- Include only phases this task genuinely needs.
+- Mark `[O]` for any phase already completed (e.g. Plan after this run).
+- Mark `[ ]` for every phase still pending.
+- Never use `[x]` — the supervisor only recognizes `[ ]` and `[O]`.
+- Keep the Commit phase last; the runtime stops the loop after it.
 
 ## TASKS.md format
 

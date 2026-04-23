@@ -202,7 +202,7 @@ def _parse_workflow_phase_statuses(text: str) -> tuple[list[str], list[str]]:
             line = line[2:].lstrip()
         if line.startswith("[ ] "):
             pending.append(line[4:].strip())
-        elif line.startswith("[O] "):
+        elif line.startswith("[O] ") or line.startswith("[X] ") or line.startswith("[x] "):
             done.append(line[4:].strip())
     return pending, done
 
