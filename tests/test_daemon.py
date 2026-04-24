@@ -24,6 +24,8 @@ from dormammu.daemon.models import DaemonPromptResult
 from dormammu.daemon.runner import DaemonRunner, SessionProgressLogStream
 from dormammu.daemon.watchers import InotifyWatcher
 from dormammu.agent import cli_adapter as cli_adapter_module
+from dormammu.loop_runner import LoopRunResult
+from dormammu.results import StageResult
 from dormammu.state import StateRepository
 
 
@@ -144,6 +146,48 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIn("PLAN complete: `yes`", result_text)
             self.assertIn("Supervisor verdict: `approved`", result_text)
             self.assertEqual((root / ".attempt-count").read_text(encoding="utf-8").strip(), "1")
+            self.assertFalse(prompt_path.exists())
+
+    def test_run_pending_once_preserves_completed_status_when_terminal_stage_evidence_is_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(self._write_daemon_config(root), app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+            loop_result = LoopRunResult(
+                status="completed",
+                attempts_completed=1,
+                retries_used=0,
+                max_retries=1,
+                max_iterations=2,
+                latest_run_id="pipeline-success",
+                supervisor_verdict="committed",
+                report_path=None,
+                continuation_prompt_path=None,
+                stage_results=(
+                    StageResult(role="developer", status="completed", verdict="approved"),
+                    StageResult(role="tester", status="completed", verdict="pass"),
+                    StageResult(role="reviewer", status="completed", verdict="approved"),
+                    StageResult(role="committer", status="completed", verdict="committed"),
+                ),
+            )
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=io.StringIO())
+
+            with (
+                mock.patch.object(runner, "_run_prompt_loop", return_value=loop_result),
+                mock.patch.object(runner, "_sync_plan_state", return_value=(False, None)),
+            ):
+                processed = runner.run_pending_once(watcher_backend="polling")
+
+            self.assertEqual(processed, 1)
+            result_text = (daemon_config.result_path / "001-first_RESULT.md").read_text(encoding="utf-8")
+            self.assertIn("Status: `completed`", result_text)
+            self.assertIn("PLAN complete: `no`", result_text)
+            self.assertNotIn("Loop returned completed but session PLAN.md is not fully complete.", result_text)
             self.assertFalse(prompt_path.exists())
 
     def test_run_pending_once_uses_active_agent_cli_from_dormammu_config(self) -> None:

@@ -93,7 +93,6 @@ _ACTION_PROMPT_PATTERNS = (
 
 _QUESTION_LINE_PATTERNS = (
     r"\?$",
-    r"\bclarif(?:y|ication)\b",
     r"\bwhich\b.{0,80}\?$",
     r"\bwhat\b.{0,80}\?$",
     r"\bwhere\b.{0,80}\?$",
@@ -109,6 +108,32 @@ _QUESTION_LINE_PATTERNS = (
     r"원하시",
     r"필요합니까",
     r"알려주",
+)
+
+_WORKFLOW_STATUS_LINE_RE = re.compile(
+    r"^(?:[-*]\s*)?Status\s*:\s*(?P<status>[A-Za-z_ -]+)\s*$",
+    re.IGNORECASE,
+)
+_WORKFLOW_STAGE_HEADING_RE = re.compile(r"^#{2,6}\s+(?P<title>.+?)\s*$")
+_WORKFLOW_DONE_STATUSES = frozenset({"complete", "completed", "done", "passed", "approved"})
+_WORKFLOW_PENDING_STATUSES = frozenset(
+    {
+        "active",
+        "blocked",
+        "deferred",
+        "failed",
+        "in progress",
+        "in_progress",
+        "manual review needed",
+        "manual_review_needed",
+        "needs work",
+        "needs_work",
+        "pending",
+        "rework",
+        "rework required",
+        "rework_required",
+        "started",
+    }
 )
 
 
@@ -196,14 +221,35 @@ def _prompt_requests_commit(prompt_text: str) -> bool:
 def _parse_workflow_phase_statuses(text: str) -> tuple[list[str], list[str]]:
     pending: list[str] = []
     done: list[str] = []
+    status_pending: list[str] = []
+    status_done: list[str] = []
+    current_stage: str | None = None
     for raw_line in text.splitlines():
         line = raw_line.strip()
+        heading = _WORKFLOW_STAGE_HEADING_RE.match(line)
+        if heading:
+            current_stage = heading.group("title").strip()
+            continue
+
+        status_match = _WORKFLOW_STATUS_LINE_RE.match(line)
+        if status_match:
+            raw_status = status_match.group("status").strip().casefold()
+            normalized_status = raw_status.replace("-", " ").replace("_", " ")
+            stage_label = current_stage or "workflow stage"
+            if raw_status in _WORKFLOW_DONE_STATUSES or normalized_status in _WORKFLOW_DONE_STATUSES:
+                status_done.append(stage_label)
+            elif raw_status in _WORKFLOW_PENDING_STATUSES or normalized_status in _WORKFLOW_PENDING_STATUSES:
+                status_pending.append(f"{stage_label} ({raw_status})")
+            continue
+
         if line.startswith(("- ", "* ")):
             line = line[2:].lstrip()
         if line.startswith("[ ] "):
             pending.append(line[4:].strip())
         elif line.startswith("[O] ") or line.startswith("[X] ") or line.startswith("[x] "):
             done.append(line[4:].strip())
+    if not pending and not done:
+        return status_pending, status_done
     return pending, done
 
 
@@ -468,6 +514,13 @@ class Supervisor:
                 )
                 if isinstance(next_pending_task, str) and next_pending_task.strip():
                     task_completion_details.append(f"next pending task: {next_pending_task}")
+        if (
+            not workflows_all_complete
+            and workflows_pending_commit_only
+            and tasks_complete_ok
+            and not prompt_requests_commit
+        ):
+            workflows_all_complete = True
         checks.append(
             SupervisorCheck(
                 name="plan-completion",

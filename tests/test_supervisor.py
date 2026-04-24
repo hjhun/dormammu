@@ -456,6 +456,27 @@ class SupervisorWorkflowsCompletionSmokeTests(unittest.TestCase):
         )
         repository.state_file("WORKFLOWS.md").write_text(content, encoding="utf-8")
 
+    def _write_status_style_workflows_with_deferred_commit(self, repository: StateRepository) -> None:
+        dev_dir = repository.state_file("WORKFLOWS.md").parent
+        dev_dir.mkdir(parents=True, exist_ok=True)
+        content = (
+            "# WORKFLOWS\n\n"
+            "## Adaptive Phase Sequence\n\n"
+            "### Stage 0. Refine\n\n"
+            "- Status: completed\n\n"
+            "### Stage 1. Plan\n\n"
+            "- Status: completed\n\n"
+            "### Stage 2. Develop\n\n"
+            "- Status: completed\n\n"
+            "### Stage 3. Test And Review\n\n"
+            "- Status: completed\n\n"
+            "### Stage 4. Commit\n\n"
+            "- Status: deferred\n\n"
+            "### Stage 5. Evaluate\n\n"
+            "- Status: completed\n"
+        )
+        repository.state_file("WORKFLOWS.md").write_text(content, encoding="utf-8")
+
     def _mark_plan_complete(self, repository: StateRepository) -> None:
         for name in ("PLAN.md", "TASKS.md"):
             path = repository.state_file(name)
@@ -606,6 +627,37 @@ class SupervisorWorkflowsCompletionSmokeTests(unittest.TestCase):
                     for check in report.checks
                 ),
                 "manual-run approval should describe the pending-commit exception accurately",
+            )
+
+    def test_approved_when_status_style_workflows_complete_and_commit_deferred(self) -> None:
+        """Status-style WORKFLOWS.md should not force rework after PLAN completion."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, repository = self._setup(
+                root,
+                prompt_text="Implement X.",
+                stdout_text=(
+                    "Clarification was required during intake.\n"
+                    "- Exit condition: requirements are explicit enough to plan without a clarification loop.\n"
+                    "Implementation and validation are complete.\n"
+                ),
+            )
+            self._mark_plan_complete(repository)
+            self._write_status_style_workflows_with_deferred_commit(repository)
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(
+                report.verdict,
+                "approved",
+                f"Expected approved but got {report.verdict!r}. "
+                f"Failing checks: {[c.name for c in report.checks if not c.ok]}",
+            )
+            self.assertTrue(
+                any(check.name == "workflows-completion" and check.ok for check in report.checks),
+                "status-style WORKFLOWS.md with only deferred commit should pass",
             )
 
     def test_approved_when_workflows_use_bullet_prefixed_checkboxes(self) -> None:

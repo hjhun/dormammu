@@ -61,6 +61,7 @@ from dormammu.lifecycle import (
 )
 from dormammu.loop_runner import LoopRunResult, LoopRunRequest, LoopRunner
 from dormammu.request_routing import resolve_request_class
+from dormammu.results import ResultStatus, latest_stage_results, stage_result_is_failure
 from dormammu.state import StateRepository
 from dormammu.state.models import infer_primary_roadmap_phase_id, summarize_prompt_goal
 
@@ -557,8 +558,14 @@ class DaemonRunner:
             plan_all_completed, next_pending_task = self._sync_plan_state(session_repository)
             status = loop_result.status
             if status == "completed" and not plan_all_completed:
-                status = "failed"
-                error = "Loop returned completed but session PLAN.md is not fully complete."
+                if self._completed_loop_has_terminal_stage_evidence(loop_result):
+                    self._log(
+                        f"daemon prompt {prompt_path.name}: preserving completed status "
+                        "because terminal stage results completed cleanly despite stale PLAN sync"
+                    )
+                else:
+                    status = "failed"
+                    error = "Loop returned completed but session PLAN.md is not fully complete."
             elif status != "completed":
                 error = self._terminal_error_message(loop_result, next_pending_task)
         except _PromptSkipped:
@@ -934,6 +941,23 @@ class DaemonRunner:
         all_completed = bool(all_completed_raw) if all_completed_raw is not None else None
         next_pending_task = next_pending_raw.strip() if isinstance(next_pending_raw, str) and next_pending_raw.strip() else None
         return all_completed, next_pending_task
+
+    def _completed_loop_has_terminal_stage_evidence(self, loop_result: LoopRunResult) -> bool:
+        """Return True when stage results prove the completed loop reached a clean terminal state.
+
+        Daemon result publication performs a final PLAN.md sync as a defensive
+        guard.  In role-based pipelines that guard can lag behind terminal stage
+        evidence, especially when PLAN/TASKS mirrors are stale.  Do not turn a
+        completed pipeline into a failed Telegram result when the latest result
+        for every stage is clean.
+        """
+        latest = latest_stage_results(loop_result.stage_results)
+        if not latest:
+            return False
+        return all(
+            stage.status == ResultStatus.COMPLETED and not stage_result_is_failure(stage)
+            for stage in latest
+        )
 
     def _existing_result_status(self, result_path: Path) -> str | None:
         try:
