@@ -1327,6 +1327,42 @@ Use this skill in loop runner tests.
             # Loop ran exactly _STAGNATION_WINDOW attempts before detecting stagnation.
             self.assertEqual(result.attempts_completed, _STAGNATION_WINDOW)
 
+    def test_stagnation_allows_retry_when_non_dev_worktree_keeps_changing(self) -> None:
+        """Non-.dev code/worktree changes should reset stagnation detection even when
+        the same checklist heading stays pending across rework passes."""
+        from dormammu import loop_runner as lr_module
+
+        original_cap = lr_module._HARD_ITERATION_CAP
+        try:
+            lr_module._HARD_ITERATION_CAP = 4
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                self._seed_repo(root)
+                progressing_cli = self._write_progressing_stuck_cli(root)
+
+                config = AppConfig.load(
+                    repo_root=root,
+                    env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+                )
+                repository = StateRepository(config)
+                result = LoopRunner(config, repository=repository).run(
+                    LoopRunRequest(
+                        cli_path=progressing_cli,
+                        prompt_text="Create the required marker file.",
+                        repo_root=root,
+                        run_label="progressing-stagnation-test",
+                        max_retries=-1,
+                        required_paths=("done.txt",),
+                        expected_roadmap_phase_id="phase_4",
+                    )
+                )
+
+                self.assertEqual(result.status, "failed")
+                self.assertEqual(result.attempts_completed, lr_module._HARD_ITERATION_CAP)
+        finally:
+            lr_module._HARD_ITERATION_CAP = original_cap
+
     def test_hard_iteration_cap_stops_infinite_retry_mode(self) -> None:
         """max_retries=-1 must not run past _HARD_ITERATION_CAP iterations.
 
@@ -1417,6 +1453,42 @@ Use this skill in loop runner tests.
                     raise SystemExit(0)
 
                 print("Thinking about it...")
+                raise SystemExit(0)
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_progressing_stuck_cli(
+        self,
+        root: Path,
+        *,
+        name: str = "fake-progressing-stuck-agent",
+    ) -> Path:
+        """Fake CLI that keeps changing a non-.dev file while still failing completion.
+
+        Used to prove stagnation does not fire when substantive repository state
+        is still moving between attempts.
+        """
+        script = root / name
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                from pathlib import Path
+                import sys
+
+                args = sys.argv[1:]
+                if "--help" in args:
+                    print("usage: {name} [--prompt-file PATH]")
+                    raise SystemExit(0)
+
+                progress_path = Path(__file__).resolve().parent / "progress.log"
+                existing = progress_path.read_text(encoding="utf-8") if progress_path.exists() else ""
+                progress_path.write_text(existing + "tick\\n", encoding="utf-8")
+                print("Still working, but repository state changed.")
                 raise SystemExit(0)
                 """
             ),

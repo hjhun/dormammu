@@ -322,7 +322,10 @@ class RunResult:
         return payload
 
 
-_TESTER_VERDICT_RE = re.compile(r"OVERALL\s*:\s*(PASS|FAIL)", re.IGNORECASE)
+_TESTER_VERDICT_RE = re.compile(
+    r"OVERALL\s*:\s*(PASS|FAIL|MANUAL[_\s]REVIEW[_\s]NEEDED)",
+    re.IGNORECASE,
+)
 _REVIEWER_VERDICT_RE = re.compile(
     r"VERDICT\s*:\s*(APPROVED|NEEDS[_\s]WORK)",
     re.IGNORECASE,

@@ -1511,7 +1511,8 @@ design document (`.dev/logs/<date>_designer_<stem>.md`). It appends
 sends the developer back for another round.
 
 **Re-entry limit**: after the configured iteration-max rounds in the tester or
-reviewer loop, the pipeline advances unconditionally.
+reviewer loop, the pipeline stops with `manual_review_needed` so an operator
+can inspect the unresolved slice before any later stage runs.
 
 ### CLI assignment per role
 

@@ -180,7 +180,8 @@ as its last output line. A `FAIL` routes the developer back with the report.
 
 **Reviewer**: Code review against the goal and any design document.
 Appends `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK`. After the configured
-iteration-max round-trips, the pipeline advances unconditionally.
+iteration-max round-trips, unresolved review/test loops stop with
+`manual_review_needed` instead of silently advancing.
 
 **Committer**: Stages only the active scope and produces an intentional git
 commit after the reviewer approves.

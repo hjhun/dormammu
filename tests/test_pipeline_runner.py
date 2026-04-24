@@ -21,7 +21,7 @@ from dormammu.daemon.pipeline_runner import (
     _model_args,
 )
 from dormammu.loop_runner import LoopRunResult
-from dormammu.results import ResultStatus
+from dormammu.results import ResultStatus, ResultVerdict
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +486,35 @@ class TestTesterStage:
             stage = runner._run_tester("goal", stem="g", date_str="20260412")
         assert stage is not None and stage.verdict == "fail"
 
+    def test_manual_review_verdict_marks_stage_manual_review_needed(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(tester=RoleAgentConfig(cli=Path("echo")))
+        runner = _make_runner(tmp_path, agents=agents)
+        with patch.object(
+            runner,
+            "_call_once",
+            return_value=(
+                "Executable browser validation was unavailable.\n"
+                "OVERALL: MANUAL_REVIEW_NEEDED"
+            ),
+        ):
+            stage = runner._run_tester("goal", stem="g", date_str="20260412")
+        assert stage is not None
+        assert stage.status == ResultStatus.MANUAL_REVIEW_NEEDED
+        assert stage.verdict == ResultVerdict.MANUAL_REVIEW_NEEDED
+        assert "requested manual review" in (stage.summary or "")
+
+    def test_tester_prompt_prefers_npx_agent_browser_and_manual_review(
+        self, tmp_path: Path
+    ) -> None:
+        runner = _make_runner(tmp_path)
+
+        prompt = runner._tester_prompt("goal", stem="g", date_str="20260412")
+
+        assert "npx -y agent-browser" in prompt
+        assert "OVERALL: MANUAL_REVIEW_NEEDED" in prompt
+
 
 # ---------------------------------------------------------------------------
 # Reviewer stage
@@ -877,7 +906,7 @@ class TestPipelineRun:
         mock_reviewer.assert_not_called()
         mock_committer.assert_not_called()
 
-    def test_tester_fails_max_iterations_continues_to_reviewer(
+    def test_tester_fails_max_iterations_stops_for_manual_review(
         self, tmp_path: Path
     ) -> None:
         agents = AgentsConfig(
@@ -897,18 +926,19 @@ class TestPipelineRun:
                 runner, "_run_tester",
                 return_value=StageResult(role="tester", verdict="fail", output="OVERALL: FAIL"),
             ) as mock_tester,
-            patch.object(runner, "_run_reviewer", return_value=None),
+            patch.object(runner, "_run_reviewer", return_value=None) as mock_reviewer,
             patch.object(runner, "_run_committer", return_value=None),
         ):
             result = runner.run("goal", stem="s", date_str="20260412")
 
-        assert result.status == "completed"
-        assert result.supervisor_verdict == "fail"
-        assert result.summary == "Stage 'tester' concluded with verdict 'fail'."
+        assert result.status == "manual_review_needed"
+        assert result.supervisor_verdict == "manual_review_needed"
+        assert "Tester requested another developer pass" in result.summary
         assert mock_dev.call_count == MAX_STAGE_ITERATIONS
         assert mock_tester.call_count == MAX_STAGE_ITERATIONS
+        mock_reviewer.assert_not_called()
 
-    def test_reviewer_fails_max_iterations_continues_to_committer(
+    def test_reviewer_fails_max_iterations_stops_for_manual_review(
         self, tmp_path: Path
     ) -> None:
         agents = AgentsConfig(
@@ -933,13 +963,13 @@ class TestPipelineRun:
         ):
             result = runner.run("goal", stem="s", date_str="20260412")
 
-        assert result.status == "completed"
-        assert result.supervisor_verdict == "needs_work"
-        assert result.summary == "Stage 'reviewer' concluded with verdict 'needs_work'."
+        assert result.status == "manual_review_needed"
+        assert result.supervisor_verdict == "manual_review_needed"
+        assert "Reviewer still reported NEEDS_WORK" in result.summary
         # developer re-ran MAX_STAGE_ITERATIONS times total
         assert mock_dev.call_count == MAX_STAGE_ITERATIONS
         assert mock_reviewer.call_count == MAX_STAGE_ITERATIONS
-        mock_committer.assert_called_once()
+        mock_committer.assert_not_called()
 
     def test_feedback_appended_to_prompt_on_tester_fail(
         self, tmp_path: Path
@@ -1007,6 +1037,45 @@ class TestPipelineRun:
 
         assert result.status == ResultStatus.FAILED
         assert mock_dev.call_count == 1
+        mock_reviewer.assert_not_called()
+        mock_committer.assert_not_called()
+
+    def test_tester_manual_review_stops_pipeline_without_reentering_developer(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(cli=Path("claude")),
+            tester=RoleAgentConfig(cli=Path("claude")),
+        )
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+
+        with (
+            patch.object(runner, "run_refine_and_plan"),
+            patch.object(
+                runner, "_run_developer", return_value=_make_loop_result("completed")
+            ) as mock_dev,
+            patch.object(
+                runner,
+                "_run_tester",
+                return_value=StageResult(
+                    role="tester",
+                    stage_name="tester",
+                    status=ResultStatus.MANUAL_REVIEW_NEEDED,
+                    verdict=ResultVerdict.MANUAL_REVIEW_NEEDED,
+                    summary="Executable browser validation was unavailable.",
+                ),
+            ) as mock_tester,
+            patch.object(runner, "_run_reviewer", return_value=None) as mock_reviewer,
+            patch.object(runner, "_run_committer", return_value=None) as mock_committer,
+        ):
+            result = runner.run("goal", stem="s", date_str="20260412")
+
+        assert result.status == ResultStatus.MANUAL_REVIEW_NEEDED
+        assert result.supervisor_verdict == ResultVerdict.MANUAL_REVIEW_NEEDED
+        assert result.summary == "Executable browser validation was unavailable."
+        assert mock_dev.call_count == 1
+        assert mock_tester.call_count == 1
         mock_reviewer.assert_not_called()
         mock_committer.assert_not_called()
 

@@ -138,6 +138,9 @@ class PipelineRunner:
     def _profile_for_role(self, role: str) -> AgentProfile:
         return self._app_config.resolve_agent_profile(role)
 
+    def _stage_iteration_limit(self) -> int:
+        return _DEFAULT_MAX_RETRIES + 1
+
     def _expected_roadmap_phase_id(self) -> str:
         try:
             workflow_state = self._repository.read_workflow_state()
@@ -250,7 +253,8 @@ class PipelineRunner:
             return
 
         evaluator_feedback_text: str | None = None
-        for iteration in range(MAX_STAGE_ITERATIONS):
+        stage_iteration_limit = self._stage_iteration_limit()
+        for iteration in range(stage_iteration_limit):
             stage = self._run_plan_evaluator(
                 goal_text,
                 stem=stem,
@@ -262,7 +266,7 @@ class PipelineRunner:
                     f"pipeline: plan evaluator PROCEED (iteration {iteration + 1})"
                 )
                 return
-            if iteration < MAX_STAGE_ITERATIONS - 1:
+            if iteration < stage_iteration_limit - 1:
                 self._log(
                     f"pipeline: plan evaluator REWORK (iteration {iteration + 1}) "
                     "— re-entering planner"
@@ -392,7 +396,8 @@ class PipelineRunner:
             )
 
             # ---- developer → tester loop ----------------------------------------
-            for tester_iter in range(MAX_STAGE_ITERATIONS):
+            stage_iteration_limit = self._stage_iteration_limit()
+            for tester_iter in range(stage_iteration_limit):
                 loop_result = self._run_developer(dev_prompt, stem=stem)
                 self._ensure_stage_result_recorded(
                     self._developer_stage_from_run_result(loop_result)
@@ -415,6 +420,16 @@ class PipelineRunner:
                     # Tester not configured — skip tester stage
                     break
                 self._ensure_stage_result_recorded(tester_stage)
+                if tester_stage.status == ResultStatus.MANUAL_REVIEW_NEEDED:
+                    self._log(
+                        "pipeline: tester requested manual review "
+                        f"(iteration {tester_iter + 1}) — stopping pipeline"
+                    )
+                    final_result = self._manual_review_loop_result_from_stage(
+                        loop_result=loop_result,
+                        stage=tester_stage,
+                    )
+                    break
                 if tester_stage.status != ResultStatus.COMPLETED:
                     self._log(
                         "pipeline: tester stage failed before producing a valid verdict "
@@ -428,7 +443,7 @@ class PipelineRunner:
                 if not stage_result_requests_retry(tester_stage):
                     self._log(f"pipeline: tester PASS (iteration {tester_iter + 1})")
                     break
-                if tester_iter < MAX_STAGE_ITERATIONS - 1:
+                if tester_iter < stage_iteration_limit - 1:
                     self._log(
                         f"pipeline: tester FAIL (iteration {tester_iter + 1}) "
                         "— re-entering developer"
@@ -463,16 +478,39 @@ class PipelineRunner:
                         prompt_text, tester_stage.output, source="tester"
                     )
                 else:
-                    self._log(
-                        f"pipeline: tester FAIL — max iterations ({MAX_STAGE_ITERATIONS}) "
-                        "reached; continuing to reviewer"
+                    exhausted_stage = StageResult(
+                        role="tester",
+                        stage_name=tester_stage.stage_name,
+                        status=ResultStatus.MANUAL_REVIEW_NEEDED,
+                        verdict=ResultVerdict.MANUAL_REVIEW_NEEDED,
+                        output=tester_stage.output,
+                        summary=(
+                            "Tester requested another developer pass after "
+                            f"{stage_iteration_limit} attempts. Manual review is "
+                            "required before the pipeline can continue safely."
+                        ),
+                        report_path=tester_stage.report_path,
+                        artifacts=tester_stage.artifacts,
+                        retry=tester_stage.retry,
+                        timing=tester_stage.timing,
+                        metadata=tester_stage.metadata,
                     )
+                    self._ensure_stage_result_recorded(exhausted_stage)
+                    self._log(
+                        f"pipeline: tester FAIL — max iterations ({stage_iteration_limit}) "
+                        "reached; stopping for manual review"
+                    )
+                    final_result = self._manual_review_loop_result_from_stage(
+                        loop_result=loop_result,
+                        stage=exhausted_stage,
+                    )
+                    break
 
             if final_result is not None:
                 return self._finalize_pipeline_result(final_result)
 
             # ---- developer → reviewer loop --------------------------------------
-            for reviewer_iter in range(MAX_STAGE_ITERATIONS):
+            for reviewer_iter in range(stage_iteration_limit):
                 reviewer_stage = self._run_reviewer(
                     prompt_text,
                     stem=stem,
@@ -496,7 +534,7 @@ class PipelineRunner:
                 if not stage_result_requests_retry(reviewer_stage):
                     self._log(f"pipeline: reviewer APPROVED (iteration {reviewer_iter + 1})")
                     break
-                if reviewer_iter < MAX_STAGE_ITERATIONS - 1:
+                if reviewer_iter < stage_iteration_limit - 1:
                     self._log(
                         f"pipeline: reviewer NEEDS_WORK (iteration {reviewer_iter + 1}) "
                         "— re-entering developer"
@@ -538,10 +576,33 @@ class PipelineRunner:
                         final_result = loop_result
                         break
                 else:
+                    exhausted_stage = StageResult(
+                        role="reviewer",
+                        stage_name=reviewer_stage.stage_name,
+                        status=ResultStatus.MANUAL_REVIEW_NEEDED,
+                        verdict=ResultVerdict.MANUAL_REVIEW_NEEDED,
+                        output=reviewer_stage.output,
+                        summary=(
+                            "Reviewer still reported NEEDS_WORK after "
+                            f"{stage_iteration_limit} attempts. Manual review is "
+                            "required before the pipeline can continue safely."
+                        ),
+                        report_path=reviewer_stage.report_path,
+                        artifacts=reviewer_stage.artifacts,
+                        retry=reviewer_stage.retry,
+                        timing=reviewer_stage.timing,
+                        metadata=reviewer_stage.metadata,
+                    )
+                    self._ensure_stage_result_recorded(exhausted_stage)
                     self._log(
                         f"pipeline: reviewer NEEDS_WORK — max iterations "
-                        f"({MAX_STAGE_ITERATIONS}) reached; continuing to committer"
+                        f"({stage_iteration_limit}) reached; stopping for manual review"
                     )
+                    final_result = self._manual_review_loop_result_from_stage(
+                        loop_result=loop_result,
+                        stage=exhausted_stage,
+                    )
+                    break
 
             if final_result is not None:
                 return self._finalize_pipeline_result(final_result)
@@ -923,7 +984,7 @@ class PipelineRunner:
             input_mode="auto",
             extra_args=tuple(extra_args),
             run_label=f"pipeline-developer-{stem}",
-            max_retries=_DEFAULT_MAX_RETRIES,
+            max_retries=self._stage_iteration_limit() - 1,
             expected_roadmap_phase_id=self._expected_roadmap_phase_id(),
         )
         result = LoopRunner(
@@ -985,10 +1046,21 @@ class PipelineRunner:
         report_ref = self._last_written_artifact_ref
 
         verdict = parse_tester_verdict(output)
+        if verdict == ResultVerdict.MANUAL_REVIEW_NEEDED:
+            status = ResultStatus.MANUAL_REVIEW_NEEDED
+            summary = (
+                "Tester could not complete executable validation and requested manual review."
+            )
+        elif verdict is not None:
+            status = ResultStatus.COMPLETED
+            summary = None
+        else:
+            status = ResultStatus.FAILED
+            summary = "Tester output did not include a valid 'OVERALL:' verdict."
         stage = StageResult(
             role="tester",
             stage_name="tester",
-            status=ResultStatus.COMPLETED if verdict is not None else ResultStatus.FAILED,
+            status=status,
             verdict=verdict,
             output=output,
             report_path=(
@@ -997,11 +1069,7 @@ class PipelineRunner:
                 else self._default_doc_path(role="tester", stem=stem, date_str=date_str)
             ),
             artifacts=(report_ref,) if report_ref is not None else (),
-            summary=(
-                None
-                if verdict is not None
-                else "Tester output did not include a valid 'OVERALL:' verdict."
-            ),
+            summary=summary,
             retry=RetryMetadata(attempt=attempt),
         )
         self._emit_stage_complete(stage=stage)
@@ -1578,6 +1646,28 @@ class PipelineRunner:
             max_iterations=loop_result.max_iterations if loop_result else 1,
             latest_run_id=loop_result.latest_run_id if loop_result else None,
             supervisor_verdict=effective_stage_verdict(stage),
+            report_path=loop_result.report_path if loop_result else None,
+            continuation_prompt_path=(
+                loop_result.continuation_prompt_path if loop_result else None
+            ),
+            summary=stage.summary,
+            stage_results=tuple(self._current_stage_results or ()),
+        )
+
+    def _manual_review_loop_result_from_stage(
+        self,
+        *,
+        loop_result: LoopRunResult | None,
+        stage: StageResult,
+    ) -> LoopRunResult:
+        return LoopRunResult(
+            status=ResultStatus.MANUAL_REVIEW_NEEDED,
+            attempts_completed=loop_result.attempts_completed if loop_result else 0,
+            retries_used=loop_result.retries_used if loop_result else 0,
+            max_retries=loop_result.max_retries if loop_result else 0,
+            max_iterations=loop_result.max_iterations if loop_result else 1,
+            latest_run_id=loop_result.latest_run_id if loop_result else None,
+            supervisor_verdict=ResultVerdict.MANUAL_REVIEW_NEEDED,
             report_path=loop_result.report_path if loop_result else None,
             continuation_prompt_path=(
                 loop_result.continuation_prompt_path if loop_result else None

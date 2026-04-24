@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
 import sys
@@ -61,12 +63,31 @@ _STAGNATION_WINDOW: int = 3
 """Consecutive identical task-state snapshots that trigger a stagnation bail-out."""
 
 
+@dataclass(frozen=True, slots=True)
+class _ProgressSnapshot:
+    """Signals whether a retry loop is substantively changing between attempts.
+
+    The checklist summary alone is too coarse: the same top-level pending task
+    can remain active across multiple productive rework passes. We therefore
+    track both operator state and a non-.dev worktree fingerprint so repeated
+    reviewer/tester-driven code changes do not get mislabeled as stagnation.
+    """
+
+    pending_tasks: int
+    completed_tasks: int
+    next_pending_task: str | None
+    supervisor_verdict: str | None
+    supervisor_summary: str | None
+    worktree_fingerprint: str | None
+
+
 class _StagnationDetector:
     """Sliding-window detector that identifies when a loop makes no forward progress.
 
     Stagnation is defined as the same ``(pending_tasks, next_pending_task)``
-    snapshot repeating :attr:`window_size` consecutive iterations with at
-    least one pending task remaining.
+    snapshot, supervisor outcome, and non-.dev worktree fingerprint repeating
+    :attr:`window_size` consecutive iterations with at least one pending task
+    remaining.
 
     Create one instance per :meth:`LoopRunner.run` call so each run starts
     with a clean window and resumed loops don't inherit stale state.
@@ -74,18 +95,19 @@ class _StagnationDetector:
 
     def __init__(self, window_size: int = _STAGNATION_WINDOW) -> None:
         self._window_size = window_size
-        self._window: list[tuple[int, str | None]] = []
+        self._window: list[_ProgressSnapshot] = []
 
-    def record(self, pending_tasks: int, next_pending_task: str | None) -> None:
+    def record(self, snapshot: _ProgressSnapshot) -> None:
         """Record the current task-state snapshot, evicting the oldest entry."""
-        self._window.append((pending_tasks, next_pending_task))
+        self._window.append(snapshot)
         if len(self._window) > self._window_size:
             self._window.pop(0)
 
-    def is_stagnant(self, pending_tasks: int) -> bool:
+    def is_stagnant(self) -> bool:
         """Return True when the window is full and every snapshot is identical."""
         return (
-            pending_tasks > 0
+            bool(self._window)
+            and self._window[-1].pending_tasks > 0
             and len(self._window) >= self._window_size
             and len(set(self._window)) == 1
         )
@@ -180,6 +202,111 @@ class LoopRunner:
 
     def resolve_agent_profile(self, request: LoopRunRequest) -> AgentProfile:
         return self.config.resolve_agent_profile(request.agent_role)
+
+    def _worktree_progress_fingerprint(self, repo_root: Path) -> str | None:
+        """Return a stable hash of substantive non-.dev worktree changes.
+
+        We intentionally ignore `.dev/` so retry loops are not treated as
+        progressing just because operator-facing state files were rewritten.
+        """
+
+        pathspecs = [".", ":(exclude).dev"]
+        try:
+            relative_sessions_dir = self.config.sessions_dir.resolve().relative_to(
+                repo_root.resolve()
+            )
+        except ValueError:
+            relative_sessions_dir = None
+        if relative_sessions_dir is not None and str(relative_sessions_dir) not in {"", "."}:
+            pathspecs.append(f":(exclude){relative_sessions_dir.as_posix()}")
+
+        status = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "status",
+                "--short",
+                "--untracked-files=all",
+                "--",
+                *pathspecs,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if status.returncode != 0:
+            return None
+
+        unstaged = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "diff",
+                "--no-ext-diff",
+                "--binary",
+                "--",
+                *pathspecs,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if unstaged.returncode != 0:
+            return None
+
+        staged = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--binary",
+                "--",
+                *pathspecs,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if staged.returncode != 0:
+            return None
+
+        untracked = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+                *pathspecs,
+            ],
+            capture_output=True,
+            text=False,
+            check=False,
+        )
+        if untracked.returncode != 0:
+            return None
+
+        pieces: list[str] = [status.stdout, unstaged.stdout, staged.stdout]
+        for raw_path in [item for item in untracked.stdout.split(b"\0") if item]:
+            rel_path = raw_path.decode("utf-8", errors="surrogateescape")
+            file_path = repo_root / rel_path
+            try:
+                stat_result = file_path.stat()
+            except OSError:
+                pieces.append(f"missing:{rel_path}")
+                continue
+            pieces.append(f"untracked:{rel_path}:{stat_result.st_size}:{stat_result.st_mtime_ns}")
+
+        digest = hashlib.sha1("".join(pieces).encode("utf-8", errors="surrogateescape")).hexdigest()
+        return digest
 
     def _managed_worktree_requested(
         self,
@@ -1124,14 +1251,31 @@ class LoopRunner:
 
             # ── Stagnation detection ──────────────────────────────────────────
             _pending_now = int(task_sync_now.get("pending_tasks", 0) or 0)
-            stagnation.record(_pending_now, next_task)
-            if stagnation.is_stagnant(_pending_now):
+            _completed_now = int(task_sync_now.get("completed_tasks", 0) or 0)
+            stagnation.record(
+                _ProgressSnapshot(
+                    pending_tasks=_pending_now,
+                    completed_tasks=_completed_now,
+                    next_pending_task=(
+                        str(next_task).strip()
+                        if isinstance(next_task, str) and next_task.strip()
+                        else None
+                    ),
+                    supervisor_verdict=report.verdict,
+                    supervisor_summary=report.summary,
+                    worktree_fingerprint=self._worktree_progress_fingerprint(
+                        request.repo_root
+                    ),
+                )
+            )
+            if stagnation.is_stagnant():
                 stagnation_msg = (
                     f"Loop stagnated: the same {_pending_now} pending task(s) "
                     f"persisted unchanged across {stagnation._window_size} consecutive "
-                    "iterations with no forward progress. "
-                    "Verify that the agent can write to PLAN.md and TASKS.md, "
-                    "or increase the task scope before resuming."
+                    "iterations with no substantive change in supervisor outcome "
+                    "or non-.dev repository state. Verify that the agent can "
+                    "write to PLAN.md and TASKS.md, or increase the task scope "
+                    "before resuming."
                 )
                 self._write_progress([
                     "=== dormammu stagnation ===",

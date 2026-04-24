@@ -237,6 +237,10 @@ def test_run_result_serializes_stage_results_and_retry_metadata() -> None:
 
 def test_verdict_parsers_return_normalized_values() -> None:
     assert parse_tester_verdict("OVERALL: FAIL") == ResultVerdict.FAIL
+    assert (
+        parse_tester_verdict("OVERALL: MANUAL_REVIEW_NEEDED")
+        == ResultVerdict.MANUAL_REVIEW_NEEDED
+    )
     assert parse_reviewer_verdict("VERDICT: NEEDS_WORK") == ResultVerdict.NEEDS_WORK
     assert parse_plan_evaluator_verdict("DECISION: PROCEED") == ResultVerdict.PROCEED
     assert parse_final_evaluator_verdict("VERDICT: partial") == ResultVerdict.PARTIAL

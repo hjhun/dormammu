@@ -100,7 +100,8 @@ output line must be `VERDICT: APPROVED` or `VERDICT: NEEDS_WORK`.
 
 **Re-entry limit**: `MAX_STAGE_ITERATIONS` is derived from the active
 iteration-max budget. After that many rounds in either the tester or reviewer
-loop, the pipeline advances unconditionally.
+loop, the pipeline stops with `manual_review_needed` so an operator can review
+the unresolved slice before downstream stages continue.
 
 Each role writes its output to `.dev/logs/<date>_<role>_<stem>.md`.
 Mid-pipeline evaluator checkpoints write to
