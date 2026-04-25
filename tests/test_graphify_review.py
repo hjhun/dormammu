@@ -59,12 +59,3 @@ def test_render_markdown_separates_demoted_symbols() -> None:
     assert "`path()`" in markdown
     assert "## Architecture Review Candidates" in markdown
     assert "`AppConfig`" in markdown
-
-
-def test_analysis_tooling_runbook_documents_filter_command() -> None:
-    text = (ROOT / "docs" / "analysis-tooling.md").read_text(encoding="utf-8")
-
-    assert "graphify update /home/hjhun/samba/github/dormammu" in text
-    assert "scripts/graphify_review.py" in text
-    assert "--graph graphify-out/graph.json" in text
-    assert "docs/graphify-review.md" in text

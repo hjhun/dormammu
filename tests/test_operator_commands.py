@@ -53,10 +53,3 @@ def test_operator_command_matrix_defines_service_and_state_transition() -> None:
         assert item.domain
         assert item.service
         assert item.state_transition in {"read", "write"}
-
-
-def test_operator_entrypoint_docs_reference_matrix_commands() -> None:
-    docs_text = (ROOT / "docs" / "operator-entrypoints.md").read_text(encoding="utf-8")
-
-    for command in ("show-config", "set-config", "/daemon enqueue", "/goals", "/shutdown"):
-        assert command in docs_text

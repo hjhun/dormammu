@@ -132,8 +132,6 @@ dormammu shell
 `daemonize` 자체는 계속 워커 지향 큐 처리기로 남습니다. 인터랙티브 셸은
 `/daemon enqueue`, `/daemon logs`, `/daemon status` 같은 명령으로 이 워커를
 조작하는 운영자 제어면입니다.
-공유 명령 matrix와 서비스 소유 경계는
-[Operator Entry Points](../operator-entrypoints.md)에 정리되어 있습니다.
 
 ---
 
@@ -178,7 +176,7 @@ python3 -m venv .venv
 pip install -e .
 ```
 
-Python `3.10+`이 필요합니다. Ubuntu 설정은 [docs/ko/UBUNTU_PYTHON_310_PLUS.md](UBUNTU_PYTHON_310_PLUS.md)를 참고하세요.
+Python `3.10+`이 필요합니다.
 
 ---
 

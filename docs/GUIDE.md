@@ -148,8 +148,6 @@ Core shell commands:
 `daemonize` itself remains a worker-oriented queue processor. The shell is the
 operator control plane for that worker: `/daemon enqueue` writes prompt files,
 and `/daemon logs` or `/daemon status` reads daemon output and metadata.
-The shared command matrix and service ownership boundary are documented in
-[Operator Entry Points](operator-entrypoints.md).
 
 ---
 
@@ -237,8 +235,7 @@ python3 -m venv .venv
 pip install -e .
 ```
 
-Requires Python `3.10+`. See [docs/ko/UBUNTU_PYTHON_310_PLUS.md](ko/UBUNTU_PYTHON_310_PLUS.md)
-for Ubuntu setup notes.
+Requires Python `3.10+`.
 
 ---
 
@@ -558,8 +555,7 @@ back to `active_agent_cli` when their role-specific CLI is not set. `designer`
 is not an interactive runtime stage, though reviewer prompts can read a
 goals-generated designer document when one exists. `evaluator` is mandatory
 for goals-scheduler prompts and is skipped for interactive `run` and
-`run-once`. See [Role Taxonomy](role-taxonomy.md) for the canonical role
-contract.
+`run-once`.
 
 #### Managed worktree config
 
@@ -1488,8 +1484,7 @@ flowchart LR
 ```
 
 The role namespace is shared by runtime, goals prelude, and goals checkpoint
-configuration. See [Role Taxonomy](role-taxonomy.md) for the canonical table.
-In short, `analyzer` is goals/autonomous-only, `designer` is goals-prelude-only,
+configuration. In short, `analyzer` is goals/autonomous-only, `designer` is goals-prelude-only,
 and `planner` is the shared role used by both goals prompt synthesis and the
 mandatory runtime planning stage. `architect` is not a supported compatibility
 alias.

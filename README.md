@@ -157,8 +157,8 @@ flowchart TD
     planeval -- "DECISION: PROCEED" --> developer
 ```
 
-See [Role Taxonomy](docs/role-taxonomy.md) for the canonical distinction
-between runtime roles, goals-only roles, and autonomous-only roles.
+The runtime role contract distinguishes mandatory runtime roles, goals-only
+roles, and autonomous-only roles.
 
 **Refiner** (mandatory): Converts the raw goal into a structured
 `.dev/REQUIREMENTS.md` — clarifying scope, acceptance criteria, constraints,
@@ -354,8 +354,6 @@ for a starting config.
 | `restore-session` | — | Restore an older session into the active `.dev/` view |
 
 Full reference: `dormammu --help` or `dormammu <command> --help`.
-The tested operator command matrix is documented in
-[docs/operator-entrypoints.md](docs/operator-entrypoints.md).
 
 ### Interactive Shell Commands
 
@@ -596,9 +594,8 @@ Before handing off a completed phase, run the full baseline:
 scripts/verify-baseline.sh full
 ```
 
-See `docs/BASELINE.md` for the guarded areas and CI candidates. Use
-`docs/analysis-tooling.md` for graphify reruns and generic-symbol filtering
-before turning graph centrality into remediation priority.
+Keep the quick and full baseline commands as the release gate for roadmap
+refactors.
 
 ## Release
 
