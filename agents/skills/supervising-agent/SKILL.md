@@ -1,135 +1,87 @@
 ---
 name: supervising-agent
-description: Orchestrates planning, design, development, test authoring, build, validation, and commit phases for this project. Use when the user asks to monitor or supervise multi-step delivery, resume interrupted work, manage parallel development tracks, or decide the next workflow skill to apply.
+description: Orchestrates planning, design, development, test authoring, testing, review, and commit phases for Dormammu. Use when a task spans refiner, planner, architect, developer, tester, reviewer, committer, or resume behavior; when state files need consistency checks; or when a failed/weak stage must be routed back for rework.
 ---
 
 # Supervising Agent Skill
 
-Use this skill as the top-level controller for the project. It decides which
-workflow skill should act next, verifies state transitions, coordinates
-parallel development tracks, and resumes interrupted runs safely.
+Use this skill as the controller for multi-step Dormammu work. The supervisor
+checks each completed stage, decides whether the next stage may proceed, and
+routes rework when evidence is weak.
 
 ## Inputs
 
-- The user goal
-- [PROJECT.md](../../../.dev/PROJECT.md)
-- Existing `.dev/DASHBOARD.md`, `.dev/PLAN.md`, `.dev/WORKFLOWS.md`, and
-  `.dev/workflow_state.json`
-- Current repository and git state
+- User goal and current prompt workspace.
+- `.dev/DASHBOARD.md`, `.dev/PLAN.md`, `.dev/WORKFLOWS.md`,
+  `.dev/TASKS.md`, and `.dev/workflow_state.json`.
+- Stage reports, validation output, review findings, and git status.
 
-## Orchestration Order
+## Workspace Persistence
 
-1. Planning
-2. Designing
-3. Developing (and Test Authoring — parallel tracks when defined)
-4. Building and deploying (when packaging is needed)
-5. Testing and reviewing
-6. Final verification
-7. Committing
+Treat `.dev/...` paths as relative to the active prompt workspace from runtime
+path guidance:
 
-Re-enter earlier phases whenever later work exposes missing design, failed
-validation, or incomplete planning.
+```text
+~/.dormammu/workspace/<home-relative-repo-path>/<date_with_time>_<prompt_name>/
+```
+
+The supervisor keeps that workspace authoritative for the current prompt. It
+must keep dashboard, plan, tasks, workflows, logs, and machine state aligned.
+
+## Stage Order
+
+The supervisor manages these stages when the planner includes them:
+
+1. Refiner
+2. Planner
+3. Architect / Designer
+4. Developer
+5. Test Author
+6. Tester
+7. Reviewer
+8. Committer
+
+After each stage, verify evidence before advancing. If evidence is missing,
+incorrect, or low-confidence, route back to the responsible stage.
 
 ## Workflow
 
-1. Print `[[Supervisor]]` to standard output.
-2. Load the current `.dev` state and detect whether this is a new run or a resume.
-3. Verify that the dashboard's actual-progress view, the task checklist, and
-   machine state are consistent enough to continue.
-4. Read `.dev/WORKFLOWS.md` to determine whether parallel development tracks
-   are defined for the current task.
-5. Choose the next skill based on the active phase, blockers, and completion
-   evidence:
-   - **No parallel tracks**: advance through the standard single-track sequence.
-   - **Parallel tracks defined**: coordinate track-level agents independently.
-     Each track's develop + test-author pair runs without waiting for the other
-     track. Advance to the merge supervisor gate only when all tracks are
-     complete and verified.
-6. Gate each transition with evidence:
-   - planning → tasks and WORKFLOWS.md exist; next action is clear
-   - design → interfaces or decisions exist for the active scope
-   - development → product-code changes exist in the intended files for each
-     active track
-   - test authoring → unit and integration tests exist for the active scope,
-     plus system tests when explicitly requested
-   - build/deploy → requested artifacts or scripts exist
-   - test/review → executed validation has a clear outcome after development
-     is complete for all tracks
-   - final verification → the completed slice passes one last operation-focused
-     gate before commit preparation
-   - commit → diff scope and validation both support versioning
-7. Do not advance from test authoring to test/review on authored tests alone;
-   require executed evidence.
-8. At the merge supervisor gate (after parallel tracks complete): confirm that
-   no track left unresolved cross-track conflicts or incomplete interfaces
-   before allowing test/review to start.
-9. If final verification fails, identify the cause and route back to
-   development in the affected track when implementation changes are needed.
-10. On interruption, preserve the last safe checkpoint and resume from the
-    earliest uncertain step (or earliest uncertain track).
-11. After each stage completes successfully, mark the corresponding phase in
-    `.dev/PLAN.md` as `[O]` and update `.dev/WORKFLOWS.md` to reflect the
-    same. This keeps both files in sync so the runtime can detect completion.
-12. Update `.dev/DASHBOARD.md` with the real current phase, active track
-    status, verdict, next action, escalation status, and other live context
-    that matters for resuming work.
+1. Print `[[Supervisor]]`.
+2. Read current `.dev` state and detect new run vs resume.
+3. Identify the earliest uncertain stage in `.dev/WORKFLOWS.md`.
+4. Check the latest stage output against its done criteria.
+5. Confirm state files agree with actual progress.
+6. Route the next action:
+   - back to refiner if requirements are incomplete
+   - back to planner if workflow or tasks are unsafe
+   - back to architect if design contracts are missing
+   - back to developer if implementation or tests fail
+   - back to tester if validation evidence is incomplete
+   - back to reviewer if code review was not decisive
+   - to committer only after final verification passes
+7. Update dashboard, plan, workflows, and machine state.
 
-## Parallel Track Coordination
+## Gate Evidence
 
-When `.dev/WORKFLOWS.md` lists parallel development tracks:
+- Refiner complete: `.dev/REQUIREMENTS.md` has clear, verifiable criteria.
+- Planner complete: workflow, plan, and task files exist and align.
+- Architect complete: implementation contracts and quality tradeoffs are clear.
+- Developer complete: code changes match requirements and tests exist.
+- Tester complete: unit, integration, smoke, and user-scenario evidence is
+  recorded; failures include reproduction steps.
+- Reviewer complete: findings are resolved or explicitly accepted.
+- Committer ready: diff scope, cleanup, validation, and review all support a
+  local commit.
 
-- Treat each track as an independent sub-pipeline with its own develop and
-  test-author phases.
-- A track is "complete" when its developer has finished all track tasks and
-  its test-author has authored the corresponding test code.
-- Do not block Track B on Track A unless an explicit inter-track dependency
-  is listed in `.dev/TASKS.md`.
-- At the merge gate, verify:
-  - All tracks are individually complete and have no open blockers.
-  - Cross-track interfaces match (types, contracts, shared state files).
-  - No file conflicts between tracks remain unresolved.
-- Only after the merge gate passes does the single test/review phase run
-  across the combined changes.
+## Rules
 
-## Supervisor Rules
-
-- Treat `.dev/workflow_state.json` as machine truth and Markdown as
-  operator-facing state.
-- Expect `.dev/DASHBOARD.md` to describe actual in-progress work for the
-  active scope, including per-track status when tracks are active.
-- Expect `.dev/PLAN.md` to list prompt-derived phase items in ordered checklist
-  form.
-- Prefer deterministic checks before semantic judgment.
-- Do not advance phases on optimism alone.
-- If state is inconsistent, record the mismatch and either repair it or require
-  manual review.
-- Keep the system resumable: every decision should leave enough context for
-  the next run.
-
-## Escalation Outcomes
-
-- `approved`
-- `rework_required`
-- `blocked`
-- `manual_review_needed`
-
-## Loop Completion Signal
-
-After the commit phase succeeds, check whether this run was triggered by the
-goals-scheduler:
-
-- **Not goals-scheduler** (normal manual run): the committing-agent will emit
-  `<promise>COMPLETE</promise>` as its final output line. The dormammu runtime
-  detects this and stops the loop. Do not advance to any further stage.
-- **Goals-scheduler run**: omit the signal. Route to the final
-  `evaluating-agent` step as listed in `.dev/WORKFLOWS.md`.
-
-A goals-scheduler run is identified by the presence of an automated goal file
-passed in the session context (e.g. a `.goals/` entry) rather than a direct
-user request at the terminal.
+- Prefer deterministic evidence before semantic judgment.
+- Do not advance stages on optimism.
+- Do not treat authored tests as executed validation.
+- Preserve resumability after every decision.
+- Keep the active prompt workspace as the source of operational truth.
 
 ## Done Criteria
 
-This skill is complete when the next correct phase is explicit, all active
-tracks are accounted for, the state is synchronized, and the project can
-continue without ambiguity.
+The skill is complete when the next correct stage is explicit, state files are
+consistent, and any rework path is assigned to the responsible role.

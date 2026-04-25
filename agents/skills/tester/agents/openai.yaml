@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tester Workflows"
+  short_description: "Runs authored tests and user scenarios, then reports pass/fail evidence."
+  default_prompt: "Validate the active Dormammu work through tests and user scenarios, then end with the required OVERALL verdict."

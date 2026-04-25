@@ -1,76 +1,52 @@
 ---
 name: test-authoring-agent
-description: Writes and maintains dedicated automated tests for the active scope. Use after design to author unit tests and integration tests alongside development — including when operating as one of several parallel test-authoring tracks defined by the planning agent. Adds system tests only when the user or prompt explicitly requires system-test-level coverage on real device environments.
+description: Authors automated tests for the active Dormammu scope. Use after design and alongside development whenever unit, integration, smoke, or explicitly requested system tests need to be written. This skill owns test code and coverage design; tester owns execution against user scenarios.
 ---
 
 # Test Authoring Agent Skill
 
-Use this skill after design when the active scope needs test code, not just
-test execution. When operating inside a parallel development track, write tests
-only for the tasks assigned to this track.
-
-Related skills:
-
-- Coordinate slice-level test seams with `developing-agent` (same track)
-- Hand authored tests to `testing-and-reviewing` for execution
+Use this skill to write test code that supports TDD and validates the active
+requirements.
 
 ## Inputs
 
-- The approved plan and design decisions
-- `.dev/TASKS.md` — read the track assignment for this invocation before
-  starting (single-track: cover all tasks; parallel-track: cover only the
-  assigned track section)
-- The active implementation scope and expected behaviors
-- Existing test layout, helpers, and `.dev/` state
+- Refined requirements and acceptance criteria.
+- Planner tasks and workflow.
+- Architect/design contracts when present.
+- Developer slice expectations and changed behaviors.
+- Existing test layout and helper patterns.
+
+## Workspace Persistence
+
+Treat `.dev/...` paths as relative to the active prompt workspace from the
+runtime path guidance:
+
+```text
+~/.dormammu/workspace/<home-relative-repo-path>/<date_with_time>_<prompt_name>/
+```
+
+Record authored coverage, gaps, and blockers in that workspace.
 
 ## Workflow
 
-1. Print `[[TestAuthor]]` to standard output. If in a named track, print
-   `[[TestAuthor — Track <label>]]` instead.
-2. Read `.dev/TASKS.md` and identify the track assignment for this invocation.
-3. Read the active tasks, design notes, and validation expectations before
-   writing tests.
-4. Own the test-code slice while the development agent owns product code for
-   the same track.
-5. Write unit tests for isolated logic and integration tests for cross-module
-   or CLI flows by default.
-6. Add system tests only when the user, prompt, or acceptance criteria
-   explicitly call for system-test-level coverage.
-7. When system tests are required, target the closest real device or
-   device-like environment available and record any environment dependency
-   clearly.
-8. Update `.dev/DASHBOARD.md` with authored test coverage, gaps, and blockers
-   (scoped to this track when in a parallel track). Update `.dev/PLAN.md` only
-   when the prompt-derived phase checklist changes.
+1. Print `[[TestAuthor]]`.
+2. Read requirements, plan, tasks, design, and developer slice notes.
+3. Map each behavior to a unit, integration, smoke, or optional system test.
+4. Write tests before or alongside product code when practical.
+5. Keep test changes scoped to the active slice or track.
+6. Prefer deterministic assertions over broad snapshot checks.
+7. Update `.dev/DASHBOARD.md` with authored coverage and gaps.
 
-## Test Authoring Rules
+## Coverage Rules
 
-- Prefer small, deterministic tests that map directly to the designed
-  behaviors.
-- Keep test ownership separate from product-code ownership even when both
-  tracks progress in parallel.
-- When operating in a parallel track, write tests only for the behavior changes
-  owned by this track. Do not duplicate test coverage authored by another
-  track.
-- Default coverage is unit plus integration.
-- Treat system tests as opt-in work that needs an explicit requirement and an
-  executable environment.
-- If a required real device environment is unavailable, stop short of claiming
-  coverage and escalate that gap for later execution.
-- If implementation changes invalidate the planned test shape, route back
-  through design or coordinate with development before broad rewrites.
-- Keep `DASHBOARD.md` as the operator-facing description of what test work is
-  actually in progress or blocked, including per-track status.
-
-## Expected Outputs
-
-- New or updated unit tests for the active logic (track-scoped when in a
-  parallel track)
-- New or updated integration tests for the active workflow paths
-- Optional system tests when explicitly requested
-- Updated `.dev` state showing authored coverage and any environment gaps
+- Unit tests cover isolated logic and edge cases.
+- Integration tests cover cross-module, CLI, persistence, or runtime behavior.
+- Smoke tests cover the primary user-visible workflow with minimal depth.
+- System tests require explicit prompt or acceptance-criteria demand and a real
+  or equivalent executable environment.
 
 ## Done Criteria
 
-This skill is complete when the active scope (or track scope) has the intended
-automated test code in place and any unimplemented coverage is explicit.
+The skill is complete when the active scope has appropriate test code and any
+missing coverage is explicitly recorded for developer, tester, or supervisor
+action.

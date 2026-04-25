@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reviewer Workflows"
+  short_description: "Reviews code for correctness, quality risks, and missing validation."
+  default_prompt: "Review the active Dormammu changes against requirements and design, then end with the required VERDICT line."

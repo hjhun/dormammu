@@ -1,78 +1,105 @@
 ---
 name: designing-agent
-description: Produces implementation-ready designs, interfaces, schemas, and technical decisions for this project. Use when the user asks for architecture, component design, state models, file layout, or design artifacts before coding — and when parallel development tracks are planned, design must define the cross-track interface contracts before track agents begin.
+description: Performs the architect stage for Dormammu work. Use when the planner decides architecture is needed, when OOAD/design documents are requested, or when functional and non-functional requirements must be translated into modules, interfaces, contracts, state models, quality-attribute tradeoffs, and implementation-ready design.
 ---
 
-# Designing Agent Skill
+# Designing / Architect Agent Skill
 
-Use this skill after planning and before broad implementation, or when the
-current phase is blocked on technical decisions.
-
-When the planning agent has defined parallel development tracks, the designer
-must produce explicit interface contracts between tracks before either track
-starts. This prevents cross-track conflicts during implementation.
+Use this skill after planning when design decisions are needed before safe
+development. The runtime role may be named `designer` for compatibility, but
+the responsibility is the architect role described by the workflow.
 
 Related skills:
 
-- Consume the track layout from `planning-agent` via `.dev/TASKS.md` and
-  `.dev/WORKFLOWS.md`
-- Hand off product-code implementation to `developing-agent` (per track)
-- Hand off automated test-code implementation to `test-authoring-agent` (per
-  track)
+- Consume `.dev/REQUIREMENTS.md`, `.dev/WORKFLOWS.md`, `.dev/PLAN.md`, and
+  `.dev/TASKS.md`.
+- Hand implementation to `developing-agent`.
+- Hand validation expectations to `test-authoring-agent`, `tester`, and
+  `reviewer`.
 
 ## Inputs
 
-- The approved plan and active tasks
-- `.dev/TASKS.md` — check for parallel track definitions and inter-track
-  dependency notes
-- [PROJECT.md](../../../.dev/PROJECT.md)
-- Existing source files and `.dev/` state
+- Original prompt and refined requirements.
+- Planner output and active task list.
+- Existing code, module boundaries, state files, and tests.
+- Any ISO-style quality attributes implied by the requirements.
+
+## Workspace Persistence
+
+Treat `.dev/...` paths as relative to the active prompt workspace from the
+runtime path guidance:
+
+```text
+~/.dormammu/workspace/<home-relative-repo-path>/<date_with_time>_<prompt_name>/
+```
+
+Write architecture notes, design documents, and status updates inside that
+workspace. Stage reports belong in `.dev/logs/`.
 
 ## Workflow
 
-1. Print `[[Designer]]` to standard output.
-2. Read the active tasks and identify the design decisions that unblock them.
-3. When parallel tracks are defined in `.dev/TASKS.md`:
-   - Identify the shared interfaces, types, or contracts that cross track
-     boundaries.
-   - Define those cross-track contracts first so each track can implement
-     independently without waiting for the other.
-   - Document which files or modules each track owns to avoid conflicts.
-4. Define boundaries: modules, interfaces, data contracts, state files, failure
-   handling, and test seams.
-5. Prefer designs that support resumability, idempotent reruns, and supervisor
-   verification.
-6. Capture the chosen design in concise project documentation or artifact
-   files.
-7. Reflect real design progress in `.dev/DASHBOARD.md` and mark finished
-   prompt-derived design phase items in `.dev/PLAN.md`.
+1. Print `[[Designer]]` or `[[Architect]]` according to the runtime contract.
+2. Read the original prompt, refined requirements, plan, tasks, and workflow.
+3. Identify functional requirements and their owning modules/classes.
+4. Identify non-functional requirements and quality attributes.
+5. Produce an OOAD-oriented design:
+   - responsibilities and collaborations
+   - interfaces and data contracts
+   - state transitions and persistence rules
+   - error handling and recovery behavior
+   - test seams and observability points
+6. Evaluate quality attributes such as reliability, maintainability,
+   performance, security, compatibility, usability, portability, and
+   operability.
+7. Define file ownership and cross-track contracts when work is parallel.
+8. Record assumptions, tradeoffs, rejected alternatives, and design risks.
+9. Update `.dev/DASHBOARD.md` and `.dev/PLAN.md` only for real progress.
 
-## Design Rules
+## Design Document Format
 
-- Optimize for operational clarity over novelty.
-- Keep abstractions minimal for the current milestone.
-- When parallel tracks are planned, explicitly state which files each track
-  owns — this is the most important output for preventing merge conflicts.
-- Document only the decisions that affect implementation, recovery, test
-  authoring, testing, or deployment.
-- Call out assumptions, open questions, and explicit tradeoffs.
-- If a design choice changes an earlier plan, update the dashboard and tasks
-  together.
-- Keep `DASHBOARD.md` focused on what design work is actively unblocking the
-  scope right now.
+```markdown
+# Architecture Design
 
-## Expected Outputs
+## Context
+<original and refined requirement summary>
 
-- Implementation-ready architecture notes
-- Clear contracts for modules, files, or APIs
-- Cross-track interface contracts and file ownership map (when parallel tracks
-  are defined)
-- Clear expectations for unit, integration, and optional system-test coverage
-- Updated `.dev` status showing what is now unblocked
+## Functional Design
+- <module/class/component responsibility>
+
+## Non-Functional Design
+- <quality attribute and design response>
+
+## OOAD Model
+- <objects, responsibilities, collaborations, and boundaries>
+
+## Interfaces And Contracts
+- <API, function, file, schema, CLI, or state contract>
+
+## State And Recovery
+- <state files, resumability, idempotency, failure handling>
+
+## Validation Strategy
+- <unit, integration, smoke, and optional system test expectations>
+
+## File Ownership
+- <files or modules owned by each track or agent>
+
+## Risks And Tradeoffs
+- <risk, mitigation, and explicit tradeoff>
+```
+
+## Rules
+
+- Design only enough to unblock implementation safely.
+- Do not invent architecture unrelated to the active requirements.
+- Treat quality attributes as design constraints, not review afterthoughts.
+- Make contracts specific enough for TDD and review.
+- If requirements are incomplete, route back to `refining-agent`.
+- If the plan is unsafe or missing a needed stage, route back to
+  `planning-agent`.
 
 ## Done Criteria
 
-This skill is complete when a development agent can implement the active work
-without inventing missing architecture, and when parallel track developers can
-each start independently without ambiguity about file ownership or interface
-contracts.
+The skill is complete when developers can implement without inventing module
+contracts, testers can derive user scenarios, and reviewers can compare code
+against explicit design decisions.

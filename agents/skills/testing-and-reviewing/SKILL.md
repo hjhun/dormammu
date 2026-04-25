@@ -1,75 +1,53 @@
 ---
 name: testing-and-reviewing
-description: Validates changes through executed tests, checks, and review-oriented analysis for this project. Use after development is complete — including after all parallel development tracks have merged — when the user asks to test work, review implementation quality, verify a phase, or produce findings before release or commit.
+description: Runs validation and review-oriented checks after development. Use when the active implementation must be tested through unit, integration, smoke, user-scenario, lint, build, or review checks before final verification or commit. Prefer the dedicated `tester` and `reviewer` skills when those stages are split.
 ---
 
-# Testing and Reviewing Skill
+# Testing And Reviewing Skill
 
-Use this skill when the active phase is validation or when a supervisor needs
-proof that completed work is actually correct. When parallel development tracks
-were used, this skill runs after the merge supervisor gate confirms all tracks
-are individually complete.
-
-Related skills:
-
-- Expect automated test code from `test-authoring-agent` (across all tracks
-  when parallel tracks were used)
-- Start only after `developing-agent` has finished the active implementation
-  slice (or all track slices)
+Use this combined skill when the workflow has a single validation/review phase.
+When the workflow separates roles, use `tester` for executable scenario
+validation and `reviewer` for code review.
 
 ## Inputs
 
-- The current implementation or artifact under review (all tracks combined
-  when parallel tracks were used)
-- Relevant test commands and project scripts
-- `.dev` status and task state
+- Completed implementation and authored tests.
+- Requirements, plan, tasks, and design documents.
+- Changed files and relevant project test commands.
+
+## Workspace Persistence
+
+Treat `.dev/...` paths as relative to the active prompt workspace from the
+runtime path guidance:
+
+```text
+~/.dormammu/workspace/<home-relative-repo-path>/<date_with_time>_<prompt_name>/
+```
+
+Write validation reports, review findings, and status updates inside that
+workspace.
 
 ## Workflow
 
-1. Print `[[Tester]]` to standard output.
-2. Confirm that the active development slice (and all parallel track slices,
-   if applicable) is complete before executing validation.
-3. Identify the most relevant validations for the active scope.
-4. Run unit tests and integration tests by default, then add linters, builds,
-   or smoke checks as appropriate.
-5. Run system tests only when the user, prompt, or acceptance criteria
-   explicitly require system-test-level validation.
-6. For required system tests, use a real device or equivalent executable
-   environment when available; otherwise record the gap and escalate instead
-   of claiming success.
-7. Review the changed files for correctness, regressions, and missing edge
-   cases — covering changes from all parallel tracks when applicable.
-8. **Run the full test suite** at the end of the development phase regardless
-   of which slices or tracks were involved. Slice-level checks during
-   development are not a substitute for a full suite run — the full run is
-   required to catch cross-slice and cross-track regressions before commit.
-9. Record findings first, then summarize residual risks and verification gaps.
-10. Update `.dev/DASHBOARD.md` to reflect the real validation outcome and
-    update `.dev/PLAN.md` when the prompt-derived phase checklist changes
-    because validation is complete or blocked.
+1. Print `[[Tester]]` or `[[Reviewer]]` according to the active stage.
+2. Confirm development and test authoring are complete enough to validate.
+3. Run relevant unit tests, integration tests, and smoke checks.
+4. Add lint, build, or packaging checks when touched files justify them.
+5. Execute user-scenario checks from requirements.
+6. Review changed files for correctness, regressions, missed edges, memory
+   risks, performance risks, and maintainability issues.
+7. Record findings first; if none, state that clearly.
+8. Update `.dev/DASHBOARD.md` and `.dev/PLAN.md` with the real outcome.
 
-## Review Rules
+## Rules
 
-- Prioritize bugs, regressions, and missing validation over style commentary.
-- Do not claim success for checks that were not actually run.
-- Treat authored tests and executed tests as different evidence levels.
-- When parallel tracks were used, verify that cross-track integration points
-  work correctly — not just each track in isolation.
-- Always run the full test suite as the final validation step, even when
-  individual slice checks already passed during development.
-- If no findings are discovered, state that clearly and note remaining risk.
-- Escalate to manual review when confidence depends on unavailable systems or
-  credentials.
-- Keep `DASHBOARD.md` as the primary operator view for pass, fail, blocked,
-  and residual-risk status.
-
-## Expected Outputs
-
-- Test and review results tied to the active scope (all tracks combined)
-- Concrete findings or explicit confirmation that none were found
-- Updated `.dev` validation status
+- Do not claim checks passed unless they were actually run.
+- Treat authored tests and executed validation as different evidence.
+- If validation fails, route back to developer with reproduction evidence.
+- If review finds issues, request developer changes before commit.
+- Record unavailable environment, credentials, or tools as residual risk.
 
 ## Done Criteria
 
-This skill is complete when the current phase has a clear validation outcome
-and any remaining risk is visible in `.dev`.
+The skill is complete when validation and review have a clear pass, fail,
+needs-work, blocked, or manual-review outcome in `.dev`.

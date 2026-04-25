@@ -465,11 +465,11 @@ to the single-agent downstream path for that invocation after the mandatory
 `analyzer` is goals/autonomous-only. Goals automation may use
 `analyzer -> planner -> designer` to turn a scheduled goal into a stronger
 execution prompt before runtime starts. The runtime pipeline still begins with
-mandatory `refiner -> planner`; `designer` is not an interactive runtime stage,
-though reviewer prompts can read a goals-generated designer document when one
-exists. `evaluator` is mandatory for goals-scheduler prompts (plan checkpoint
-and post-commit review) and is skipped for interactive `run` and `run-once`
-commands. `architect` is not a supported role alias; use `designer`.
+mandatory `refiner -> planner`; the compatibility role name remains
+`designer`, while the skill-level responsibility is the architect stage:
+OOAD, design contracts, and quality-attribute tradeoff analysis. `evaluator`
+is mandatory for goals-scheduler prompts (plan checkpoint and post-commit
+review) and is skipped for interactive `run` and `run-once` commands.
 
 ### Daemon queue config (`daemonize.json`)
 

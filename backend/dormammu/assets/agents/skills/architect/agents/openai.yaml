@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architect Workflows"
+  short_description: "Turns refined requirements into OOAD design and quality-attribute contracts."
+  default_prompt: "Create the architecture design for the active Dormammu task, covering functional requirements, non-functional requirements, OOAD contracts, and validation strategy."

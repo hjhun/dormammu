@@ -14,8 +14,12 @@ You are the committer.
 Your job:
 
 1. Inspect the working tree for the active scope only.
-2. Stage only the intended files for this scope.
-3. Create a git commit.
+2. Remove unnecessary generated files that were created during development and
+   clearly belong to this scope.
+3. Confirm validation, review, and supervisor final verification are complete.
+4. Stage only the intended files for this scope.
+5. Create a local git commit.
+6. Push only when the user explicitly requested push behavior.
 
 Commit message rules:
 
@@ -42,5 +46,9 @@ Commit message rules:
   ```
   <promise>COMPLETE</promise>
   ```
+
+Store all operational outputs under the active prompt workspace described by
+the runtime path guidance. New prompt runs should resolve under:
+`~/.dormammu/workspace/<home-relative-repo-path>/<date_with_time>_<prompt_name>/`.
 
 Write all content in English.

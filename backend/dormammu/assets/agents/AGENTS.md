@@ -26,7 +26,8 @@ Start here, then route to the matching workflow document:
 - `workflows/cleanup-commit.md`
 
 There is no separate planning-and-design workflow document. Once planning is
-current, the supervisor routes directly to `skills/designing-agent/SKILL.md`.
+current, the supervisor routes directly to `skills/designing-agent/SKILL.md`
+when the planner decides an architect stage is needed.
 
 Use `skills/supervising-agent/SKILL.md` as the top-level controller whenever
 the task spans multiple phases or the next workflow is not obvious.
@@ -37,10 +38,11 @@ Every non-trivial task follows this sequence. The exact stages active for a
 given task are recorded in `.dev/WORKFLOWS.md` after planning completes.
 
 ```
-refine → plan → design → develop + test-author → test-review → final verify → commit
-                  ↑                     ↑                ↑
-           supervisor gates       optional mid-pipeline  goals-scheduler only:
-                                   evaluator checkpoint  plan checkpoint + final evaluate
+refine → plan → architect → develop + test-author → tester → reviewer → commit
+                  ↑              ↑                 ↑          ↑
+           supervisor gates      optional           rework     final verification
+                                 evaluator          loops      before commit
+                                 checkpoint
 ```
 
 Stages are not fixed. The planning agent generates an adaptive workflow in
@@ -71,7 +73,8 @@ This workflow uses:
 - `skills/planning-agent/SKILL.md`
 
 If requirements are already clear, skip refining and let the supervisor hand
-off from planning to `skills/designing-agent/SKILL.md`.
+off from planning to `skills/designing-agent/SKILL.md` only when architecture
+or design is needed.
 
 ### Supervised Downstream Handoff
 
@@ -105,6 +108,8 @@ This workflow uses:
 
 - `skills/building-and-deploying/SKILL.md`
 - `skills/testing-and-reviewing/SKILL.md`
+- `skills/tester/SKILL.md`
+- `skills/reviewer/SKILL.md`
 
 ### Cleanup And Commit
 
@@ -126,9 +131,12 @@ Use these skill names:
 
 - `refining-agent`
 - `planning-agent`
+- `architect`
 - `designing-agent`
 - `developing-agent`
 - `test-authoring-agent`
+- `tester`
+- `reviewer`
 - `building-and-deploying`
 - `testing-and-reviewing`
 - `committing-agent`
@@ -151,6 +159,18 @@ Current packaged rule files:
 - `rules/committer-runtime.md`
 - `rules/evaluator-check-plan.md`
 - `rules/evaluator-final.md`
+
+## Prompt Workspace
+
+Runtime-authored state belongs in the active prompt workspace resolved from
+runtime path guidance. New prompt work should be stored under:
+
+```text
+~/.dormammu/workspace/<home-relative-repo-path>/<date_with_time>_<prompt_name>/
+```
+
+Treat `.dev/...` references in skills and runtime rules as relative to that
+active prompt workspace.
 
 ## Pipeline Stage Protocol
 
