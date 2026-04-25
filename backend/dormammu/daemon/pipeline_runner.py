@@ -392,6 +392,13 @@ class PipelineRunner:
                 enable_plan_evaluator=goal_file_path is not None,
             )
 
+            if request_class == "planning_only":
+                self._log(
+                    "pipeline: planning_only deep_thinking request — stopping after refine/plan"
+                )
+                final_result = self._planning_only_result()
+                return self._finalize_pipeline_result(final_result)
+
             # ---- developer → tester loop ----------------------------------------
             stage_iteration_limit = self._stage_iteration_limit()
             for tester_iter in range(stage_iteration_limit):
@@ -766,6 +773,42 @@ class PipelineRunner:
             artifacts=tuple(result.artifact_refs),
             stage_results=(stage,),
             retry=stage.retry,
+        )
+
+    def _planning_only_result(self) -> LoopRunResult:
+        stage_results = tuple(self._current_stage_results or ())
+        latest_stage = stage_results[-1] if stage_results else None
+        latest_run_id = None
+        if latest_stage is not None:
+            candidate = latest_stage.metadata.get("latest_run_id")
+            if isinstance(candidate, str) and candidate.strip():
+                latest_run_id = candidate
+        retry = RetryMetadata(
+            attempt=1,
+            retries_used=0,
+            max_retries=0,
+            max_iterations=1,
+        )
+        return LoopRunResult(
+            status=ResultStatus.COMPLETED,
+            attempts_completed=1,
+            retries_used=0,
+            max_retries=0,
+            max_iterations=1,
+            latest_run_id=latest_run_id,
+            supervisor_verdict=ResultVerdict.DONE,
+            report_path=None,
+            continuation_prompt_path=None,
+            summary=(
+                "Planning-only deep_thinking pipeline completed after "
+                "refine/plan; developer and tester stages were skipped."
+            ),
+            stage_results=stage_results,
+            retry=retry,
+            metadata={
+                "request_class": "planning_only",
+                "execution_mode": "deep_thinking",
+            },
         )
 
     # ------------------------------------------------------------------

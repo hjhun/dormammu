@@ -385,6 +385,25 @@ def _handle_run_once(args: argparse.Namespace) -> int:
             workdir=workdir,
         )
 
+        if request_class == "planning_only":
+            try:
+                planning_agents = AgentsConfig()
+                result = PipelineRunner(
+                    config.with_overrides(
+                        active_agent_cli=agent_cli,
+                        agents=planning_agents,
+                    ),
+                    planning_agents,
+                    repository=repository,
+                    progress_stream=active_progress_stream,
+                ).run(enriched_prompt, stem=stem, date_str=date_str)
+            except (RuntimeError, ValueError, OSError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+
+            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
+            return 0 if result.status == "completed" else 1
+
         try:
             _run_mandatory_refine_and_plan(
                 config=config,
@@ -562,6 +581,26 @@ def _handle_run_loop(args: argparse.Namespace) -> int:
                     result = PipelineRunner(
                         config.with_overrides(agents=direct_agents),
                         direct_agents,
+                        repository=repository,
+                        progress_stream=active_progress_stream,
+                    ).run(enriched_prompt, stem=stem, date_str=date_str)
+                except (RuntimeError, ValueError, OSError) as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+
+                print(json.dumps(result.to_dict(), indent=2, ensure_ascii=True))
+                return 0 if result.status == "completed" else 1
+
+            if request_class == "planning_only":
+                try:
+                    agent_cli = _resolve_agent_cli(config, args.agent_cli)
+                    planning_agents = AgentsConfig()
+                    result = PipelineRunner(
+                        config.with_overrides(
+                            active_agent_cli=agent_cli,
+                            agents=planning_agents,
+                        ),
+                        planning_agents,
                         repository=repository,
                         progress_stream=active_progress_stream,
                     ).run(enriched_prompt, stem=stem, date_str=date_str)

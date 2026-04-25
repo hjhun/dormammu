@@ -169,6 +169,9 @@ configured and otherwise falls back to `active_agent_cli`.
 an adaptive, task-specific stage checklist (`[ ] Phase N. Role — agent`).
 Also updates `PLAN.md`, `TASKS.md`, and `DASHBOARD.md`. It uses `agents.planner.cli` when
 configured and otherwise falls back to `active_agent_cli`.
+Structure or workflow-deliberation prompts are classified as `planning_only`;
+for those runs DORMAMMU uses `deep_thinking` mode, stops after refine/plan, and
+skips developer, tester, reviewer, committer, and retry loops.
 
 **Plan Evaluator** (goals-scheduler prompts only): Runs after planning for
 scheduled goals. It can return `DECISION: PROCEED` or `DECISION: REWORK`,

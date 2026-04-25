@@ -373,7 +373,7 @@ class TestGoalsSchedulerMultiAgentRegression:
         self, tmp_path: Path
     ) -> None:
         sched, goals_dir, prompt_path = _make_scheduler(tmp_path, agents_cfg=_agents())
-        (goals_dir / "feature.md").write_text("목표: 시스템 개선", encoding="utf-8")
+        (goals_dir / "feature.md").write_text("Objetivo: improve the system", encoding="utf-8")
 
         with self._patch_run_once(tmp_path):
             with self._mock_datetime() as mock_dt:

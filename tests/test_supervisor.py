@@ -621,7 +621,7 @@ class SupervisorWorkflowsCompletionSmokeTests(unittest.TestCase):
             root = Path(tmpdir)
             config, repository = self._setup(
                 root,
-                prompt_text="구현을 정비해주세요.",
+                prompt_text="Improve the implementation.",
                 stdout_text="All phases complete. No further action needed.\n",
             )
             self._mark_plan_complete(repository)
@@ -653,8 +653,8 @@ class SupervisorWorkflowsCompletionSmokeTests(unittest.TestCase):
             root = Path(tmpdir)
             config, repository = self._setup(
                 root,
-                prompt_text="구현을 정비해주세요.",
-                stdout_text="어떻게 진행할까요?\n",
+                prompt_text="Improve the implementation.",
+                stdout_text="How should I proceed?\n",
             )
             self._mark_plan_complete(repository)
             self._write_workflows(repository, all_complete=True)

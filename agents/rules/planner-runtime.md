@@ -8,8 +8,8 @@ Before starting:
 2. Read `.dev/PLAN.md` and output its full content if it exists.
 3. Read `.dev/WORKFLOWS.md` and output its full content if it exists.
 4. Read `.dev/workflow_state.json` and check `intake.request_class`,
-   `workflow_policy.required_phases`, `workflow_policy.skipped_phases`, and
-   `refinement.mode`.
+   `intake.execution_mode`, `workflow_policy.required_phases`,
+   `workflow_policy.skipped_phases`, and `refinement.mode`.
 5. Then proceed with the planning task.
 
 You are the planning agent. Decide whether the architect/design stage is
@@ -28,6 +28,9 @@ Summary per class:
 
 - `direct_response` — no WORKFLOWS.md is required; update DASHBOARD.md to
   reflect that this is a read-only or analysis task; TASKS.md may be minimal.
+- `planning_only`   — refine and plan only. Use `deep_thinking` mode for
+  structure/design deliberation where no code implementation, developer loop,
+  tester loop, or commit is needed.
 - `light_edit`      — generate a short WORKFLOWS.md (plan, develop,
   test_and_review, final_verify, commit); TASKS.md is required.
 - `full_workflow`   — generate complete WORKFLOWS.md following the full phase
@@ -121,6 +124,11 @@ Parallel-track example:
 Rules for WORKFLOWS.md:
 - Include only phases this task genuinely needs.
 - Include Architect only when the design decision above says it is needed.
+- For `planning_only`, run `deep_thinking` planning: reason through the
+  structure, compare meaningful alternatives, state tradeoffs, and write the
+  chosen direction in the planning artifacts.
+- For `planning_only`, stop the workflow after Plan and mark Develop,
+  Test Author, Tester/Test and Review, Final Verify, and Commit as skipped.
 - Mark `[O]` for any phase already completed (e.g. Plan after this run).
 - Mark `[ ]` for every phase still pending.
 - Never use `[x]` — the supervisor only recognizes `[ ]` and `[O]`.

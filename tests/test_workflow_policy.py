@@ -98,6 +98,39 @@ class TestDirectResponsePolicy:
 
 
 # ---------------------------------------------------------------------------
+# planning_only policy
+# ---------------------------------------------------------------------------
+
+
+class TestPlanningOnlyPolicy:
+    """planning_only: refine and plan are required; implementation loops are skipped."""
+
+    def test_returns_policy_instance(self) -> None:
+        assert isinstance(_policy("planning_only"), WorkflowPolicy)
+
+    def test_request_class_preserved(self) -> None:
+        assert _policy("planning_only").request_class == "planning_only"
+
+    def test_refine_and_plan_are_required(self) -> None:
+        p = _policy("planning_only")
+        assert p.is_phase_required("refine")
+        assert p.is_phase_required("plan")
+
+    def test_develop_and_test_are_skipped(self) -> None:
+        p = _policy("planning_only")
+        assert p.is_phase_skipped("develop")
+        assert p.is_phase_skipped("test_author")
+        assert p.is_phase_skipped("test_and_review")
+
+    def test_commit_is_skipped(self) -> None:
+        p = _policy("planning_only")
+        assert p.is_phase_skipped("commit")
+
+    def test_minimal_workflow_stops_after_plan(self) -> None:
+        assert MINIMAL_WORKFLOWS["planning_only"] == ["refine", "plan"]
+
+
+# ---------------------------------------------------------------------------
 # light_edit policy
 # ---------------------------------------------------------------------------
 
@@ -250,7 +283,9 @@ class TestFullWorkflowPolicy:
 class TestPolicyInvariants:
     """Structural invariants that must hold for all request classes."""
 
-    @pytest.mark.parametrize("rc", ["direct_response", "light_edit", "full_workflow"])
+    @pytest.mark.parametrize(
+        "rc", ["direct_response", "planning_only", "light_edit", "full_workflow"]
+    )
     def test_every_phase_is_either_required_or_skipped(self, rc: str) -> None:
         p = _policy(rc)
         all_known = set(ALL_PHASES)
@@ -260,13 +295,17 @@ class TestPolicyInvariants:
             f"[{rc}] Phases not accounted for: {all_known - required - skipped}"
         )
 
-    @pytest.mark.parametrize("rc", ["direct_response", "light_edit", "full_workflow"])
+    @pytest.mark.parametrize(
+        "rc", ["direct_response", "planning_only", "light_edit", "full_workflow"]
+    )
     def test_required_and_skipped_are_disjoint(self, rc: str) -> None:
         p = _policy(rc)
         overlap = set(p.required_phases) & set(p.skipped_phases)
         assert not overlap, f"[{rc}] Phases in both required and skipped: {overlap}"
 
-    @pytest.mark.parametrize("rc", ["direct_response", "light_edit", "full_workflow"])
+    @pytest.mark.parametrize(
+        "rc", ["direct_response", "planning_only", "light_edit", "full_workflow"]
+    )
     def test_skipped_phases_all_have_rationale(self, rc: str) -> None:
         p = _policy(rc)
         for phase in p.skipped_phases:
@@ -275,7 +314,9 @@ class TestPolicyInvariants:
                 f"[{rc}] Skipped phase {phase!r} has empty rationale"
             )
 
-    @pytest.mark.parametrize("rc", ["direct_response", "light_edit", "full_workflow"])
+    @pytest.mark.parametrize(
+        "rc", ["direct_response", "planning_only", "light_edit", "full_workflow"]
+    )
     def test_to_dict_has_required_keys(self, rc: str) -> None:
         p = _policy(rc)
         d = p.to_dict()
@@ -293,6 +334,12 @@ class TestPolicyInvariants:
         light = _policy("light_edit")
         direct = _policy("direct_response")
         assert len(light.required_phases) > len(direct.required_phases)
+
+    def test_planning_only_has_no_developer_or_tester_phases(self) -> None:
+        planning = _policy("planning_only")
+        assert "develop" not in planning.required_phases
+        assert "test_author" not in planning.required_phases
+        assert "test_and_review" not in planning.required_phases
 
     def test_invalid_request_class_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="Unknown request_class"):

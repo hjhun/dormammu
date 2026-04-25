@@ -623,6 +623,7 @@ def default_intake_state(prompt_text: str | None) -> dict[str, Any]:
         "rationale": "No prompt provided at bootstrap; defaulting to direct_response.",
         "has_interface_risk": False,
         "requires_test_strategy": False,
+        "execution_mode": "standard",
     }
 
 
@@ -638,7 +639,7 @@ def default_workflow_policy_state(request_class: str) -> dict[str, Any]:
         default_workflow_policy_state as _policy_state,
     )
 
-    valid = ("direct_response", "light_edit", "full_workflow")
+    valid = ("direct_response", "planning_only", "light_edit", "full_workflow")
     if request_class not in valid:
         request_class = "direct_response"
     return _policy_state(request_class)  # type: ignore[arg-type]

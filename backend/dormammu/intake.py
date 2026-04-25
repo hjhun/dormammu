@@ -1,9 +1,10 @@
 """Request intake classifier for dormammu.
 
-Classifies incoming prompts into one of three execution classes before any
+Classifies incoming prompts into one of four execution classes before any
 workflow state is generated:
 
     direct_response  — analysis, explanation, review, report (no code edits)
+    planning_only    — structure/design deliberation that needs planning but no code
     light_edit       — single-file edits, config fixes, doc updates
     full_workflow    — multi-file changes, new features, interface changes
 
@@ -11,7 +12,8 @@ The classifier uses lightweight heuristic rules over the prompt text.  It does
 not call an LLM and must be fast enough to run synchronously at intake.
 
 Classification result is stored in ``workflow_state.json`` under
-``intake.request_class`` so every later stage can branch on it.
+``intake.request_class`` and ``intake.execution_mode`` so every later stage can
+branch on it.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-RequestClass = Literal["direct_response", "light_edit", "full_workflow"]
+RequestClass = Literal["direct_response", "planning_only", "light_edit", "full_workflow"]
 
 # ── Token sets ───────────────────────────────────────────────────────────────
 
@@ -120,6 +122,64 @@ _FULL_WORKFLOW_SIGNALS: frozenset[str] = frozenset(
     }
 )
 
+# Markers for structure/design deliberation where the user is asking the agent
+# to think through direction or workflow shape, not implement code.
+_PLANNING_ONLY_SUBJECTS: frozenset[str] = frozenset(
+    {
+        "architecture",
+        "architectural",
+        "structure",
+        "structural",
+        "system design",
+        "module boundary",
+        "module boundaries",
+        "workflow design",
+        "technical direction",
+        "design approach",
+        "runtime structure",
+        "execution mode",
+        "run mode",
+        "daemon mode",
+        "pipeline shape",
+        "workflow shape",
+        "structural concern",
+    }
+)
+
+_PLANNING_ONLY_INTENT: frozenset[str] = frozenset(
+    {
+        "consider",
+        "think through",
+        "discuss",
+        "evaluate",
+        "review",
+        "analyze",
+        "analyse",
+        "reason about",
+        "think deeply",
+        "deep thinking",
+        "deliberate",
+        "weigh options",
+        "propose direction",
+    }
+)
+
+_IMPLEMENTATION_INTENT: frozenset[str] = frozenset(
+    {
+        "implement",
+        "add",
+        "build",
+        "create",
+        "introduce",
+        "develop",
+        "fix",
+        "update",
+        "refactor",
+        "migrate",
+        "rewrite",
+    }
+)
+
 # High-risk markers that push any ambiguous classification to full_workflow.
 _INTERFACE_RISK_MARKERS: frozenset[str] = frozenset(
     {
@@ -189,8 +249,8 @@ class IntakeClassification:
     """Result of classifying a single incoming prompt.
 
     Attributes:
-        request_class:  One of ``direct_response``, ``light_edit``, or
-                        ``full_workflow``.
+        request_class:  One of ``direct_response``, ``planning_only``,
+                        ``light_edit``, or ``full_workflow``.
         confidence:     Float in [0, 1] indicating classifier certainty.
                         Values below 0.5 suggest the classification is a
                         best-guess rather than a high-confidence determination.
@@ -204,6 +264,10 @@ class IntakeClassification:
                         True when the prompt contains explicit testing
                         language, implying a test strategy should be planned
                         before implementation.
+        execution_mode:
+                        ``deep_thinking`` for structure/design deliberation
+                        prompts that stop after refine/plan; otherwise
+                        ``standard``.
     """
 
     request_class: RequestClass
@@ -211,6 +275,7 @@ class IntakeClassification:
     rationale: str
     has_interface_risk: bool
     requires_test_strategy: bool
+    execution_mode: str = "standard"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -219,6 +284,7 @@ class IntakeClassification:
             "rationale": self.rationale,
             "has_interface_risk": self.has_interface_risk,
             "requires_test_strategy": self.requires_test_strategy,
+            "execution_mode": self.execution_mode,
         }
 
 
@@ -243,31 +309,57 @@ def classify_request(prompt_text: str) -> IntakeClassification:
             rationale="Empty or blank prompt; defaulting to direct_response.",
             has_interface_risk=False,
             requires_test_strategy=False,
+            execution_mode="standard",
         )
 
     normalized = _tokens(prompt_text)
 
     direct_score = _count_matches(normalized, _DIRECT_RESPONSE_SIGNALS)
+    planning_score = (
+        _count_matches(normalized, _PLANNING_ONLY_SUBJECTS)
+        + _count_matches(normalized, _PLANNING_ONLY_INTENT)
+    )
     light_score = _count_matches(normalized, _LIGHT_EDIT_SIGNALS)
     full_score = _count_matches(normalized, _FULL_WORKFLOW_SIGNALS)
+    implementation_intent = _count_matches(normalized, _IMPLEMENTATION_INTENT) > 0
 
     has_interface_risk = _count_matches(normalized, _INTERFACE_RISK_MARKERS) > 0
     requires_test_strategy = _count_matches(normalized, _TESTING_MARKERS) > 0
 
     estimated_file_count = _estimate_file_count(prompt_text)
 
-    # Interface risk or broad file scope upgrades to full_workflow.
+    planning_only = (
+        planning_score >= 2
+        and not implementation_intent
+        and estimated_file_count < 3
+        and not requires_test_strategy
+    )
+
+    # Interface risk or broad file scope upgrades to full_workflow unless the
+    # prompt is explicitly only asking for structure/design deliberation.
     if has_interface_risk or estimated_file_count >= 3:
-        full_score += 2
+        if planning_only:
+            planning_score += 2
+        else:
+            full_score += 2
 
     # Explicit test requirements mean we need planning and test authoring.
     if requires_test_strategy:
         full_score += 1
 
-    # Resolve ties: full > light > direct (conservative default for ambiguity).
-    total = direct_score + light_score + full_score or 1  # avoid div-by-zero
+    # Resolve ties: full > light > direct unless the dedicated planning-only
+    # guard above proves this is structure deliberation without implementation.
+    total = direct_score + planning_score + light_score + full_score or 1
 
-    if full_score > light_score and full_score > direct_score:
+    if planning_only and planning_score >= full_score:
+        chosen = "planning_only"
+        confidence = planning_score / total
+        rationale = (
+            f"Matched {planning_score} planning-only structure/design signal(s). "
+            "No implementation intent detected, so deep_thinking mode will stop "
+            "after refine/plan without developer or tester stages."
+        )
+    elif full_score > light_score and full_score > direct_score:
         chosen: RequestClass = "full_workflow"
         confidence = full_score / total
         rationale = (
@@ -305,4 +397,5 @@ def classify_request(prompt_text: str) -> IntakeClassification:
         rationale=rationale.strip(),
         has_interface_risk=has_interface_risk,
         requires_test_strategy=requires_test_strategy,
+        execution_mode="deep_thinking" if chosen == "planning_only" else "standard",
     )

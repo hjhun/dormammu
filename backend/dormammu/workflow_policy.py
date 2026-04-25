@@ -1,6 +1,7 @@
 """Workflow simplification policy for dormammu.
 
-Given a request class (``direct_response``, ``light_edit``, ``full_workflow``),
+Given a request class (``direct_response``, ``planning_only``, ``light_edit``,
+``full_workflow``),
 returns the minimal set of pipeline stages that must run, the stages that are
 eligible to be skipped, and the rationale for each skip decision.
 
@@ -105,6 +106,44 @@ _DIRECT_SKIP: dict[str, str] = {
     ),
 }
 
+_PLANNING_ONLY_SKIP: dict[str, str] = {
+    "refine": "",
+    "plan": "",
+    "evaluator_check": (
+        "planning_only tasks need a planner decision, but not the goals-style "
+        "post-plan evaluator checkpoint unless explicitly scheduled."
+    ),
+    "design": (
+        "deep_thinking structure deliberation is captured by the planner output "
+        "for this request class; no separate implementation design stage is "
+        "required."
+    ),
+    "develop": (
+        "planning_only tasks are about structure or workflow direction; no "
+        "product-code implementation is expected."
+    ),
+    "test_author": (
+        "no product-code implementation means no new automated test code is "
+        "required."
+    ),
+    "test_and_review": (
+        "developer and tester loops are skipped because there is no executable "
+        "implementation to validate."
+    ),
+    "final_verify": (
+        "planner output is the terminal artifact for planning_only tasks; "
+        "there is no downstream implementation slice to verify."
+    ),
+    "commit": (
+        "planning_only runs normally produce planning artifacts only and do not "
+        "require a source commit unless the user explicitly asks."
+    ),
+    "evaluate": (
+        "goals-scheduler post-commit evaluation; not applicable for "
+        "planning_only tasks."
+    ),
+}
+
 _LIGHT_SKIP: dict[str, str] = {
     "refine": (
         "light_edit tasks use normalize mode (no clarifying questions); "
@@ -151,6 +190,7 @@ _FULL_SKIP: dict[str, str] = {
 
 SKIP_POLICY: dict[str, dict[str, str]] = {
     "direct_response": _DIRECT_SKIP,
+    "planning_only": _PLANNING_ONLY_SKIP,
     "light_edit": _LIGHT_SKIP,
     "full_workflow": _FULL_SKIP,
 }
@@ -165,6 +205,10 @@ MINIMAL_WORKFLOWS: dict[str, list[str]] = {
         # No structured phases — execute inline and optionally record to memory.
         # We represent this as an empty stage list so supervisors know not to
         # require plan/develop/commit evidence.
+    ],
+    "planning_only": [
+        "refine",
+        "plan",
     ],
     "light_edit": [
         "plan",
@@ -254,8 +298,8 @@ def resolve_workflow_policy(request_class: RequestClass) -> WorkflowPolicy:
     """Return the :class:`WorkflowPolicy` for *request_class*.
 
     Args:
-        request_class: One of ``direct_response``, ``light_edit``, or
-            ``full_workflow``.
+        request_class: One of ``direct_response``, ``planning_only``,
+            ``light_edit``, or ``full_workflow``.
 
     Returns:
         A :class:`WorkflowPolicy` encoding the required phases, skipped

@@ -716,6 +716,24 @@ class DaemonRunner:
                 goal_file_path=goal_file_path,
             )
 
+        if request_class == "planning_only":
+            planning_agents = AgentsConfig()
+            agent_cli = self._resolve_agent_cli(scoped_config)
+            return PipelineRunner(
+                scoped_config.with_overrides(
+                    active_agent_cli=agent_cli,
+                    agents=planning_agents,
+                ),
+                planning_agents,
+                repository=session_repository,
+                progress_stream=self.progress_stream,
+                stop_event=self._shutdown_requested,
+            ).run(
+                enriched_text,
+                stem=prompt_path.stem,
+                goal_file_path=goal_file_path,
+            )
+
         # Default: enforce refine -> plan before the single-agent loop.
         agent_cli = self._resolve_agent_cli(scoped_config)
         prelude_agents = AgentsConfig()

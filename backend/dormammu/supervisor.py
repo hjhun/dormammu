@@ -178,16 +178,6 @@ _ACTION_PROMPT_PATTERNS = (
     r"\brename\b",
     r"\bwire\b",
     r"\bpatch\b",
-    r"구현",
-    r"수정",
-    r"추가",
-    r"변경",
-    r"작성",
-    r"만들",
-    r"개선",
-    r"리팩터",
-    r"삭제",
-    r"고쳐",
 )
 
 _QUESTION_LINE_PATTERNS = (
@@ -201,12 +191,6 @@ _QUESTION_LINE_PATTERNS = (
     r"\bplease provide\b",
     r"\bneed (?:more|additional) (?:context|details|information)\b",
     r"\bI need\b.{0,80}\?$",
-    r"어떻게",
-    r"무엇",
-    r"어떤",
-    r"원하시",
-    r"필요합니까",
-    r"알려주",
 )
 
 _WORKFLOW_STATUS_LINE_RE = re.compile(
@@ -309,9 +293,6 @@ def _prompt_requests_commit(prompt_text: str) -> bool:
         r"\bsubmit\b",
         r"\bcommit preparation\b",
         r"\bcommit prep\b",
-        r"커밋",
-        r"푸시",
-        r"머지",
         r"\bPR\b",
     )
     return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in commit_patterns)

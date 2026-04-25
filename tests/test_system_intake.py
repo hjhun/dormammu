@@ -4,6 +4,7 @@ Validates the end-to-end path from raw prompt → classification → workflow
 depth selection:
 
 - Simple prompts (direct_response) avoid heavy workflow state generation.
+- Structure/planning prompts (planning_only) avoid developer/tester loops.
 - Light prompts (light_edit) produce a minimal plan without full workflow.
 - Complex prompts (full_workflow) receive full workflow treatment.
 - Classification result is persisted in workflow_state.json under ``intake``.
@@ -63,6 +64,17 @@ _ROUTING_CASES: list[tuple[str, str, str]] = [
         "compare",
         "Compare the ralph loop model to the dormammu supervisor approach.",
         "direct_response",
+    ),
+    # planning_only
+    (
+        "runtime_structure_deliberation",
+        "Think deeply about the dormammu run, run-once, and daemonize runtime structure.",
+        "planning_only",
+    ),
+    (
+        "architecture_options",
+        "Review the pipeline architecture and discuss workflow options.",
+        "planning_only",
     ),
     # light_edit
     (
@@ -257,6 +269,12 @@ class TestStateRoundTrip:
         assert isinstance(recovered["intake"]["has_interface_risk"], bool)
         assert isinstance(recovered["intake"]["requires_test_strategy"], bool)
 
+    def test_json_round_trip_preserves_execution_mode(self) -> None:
+        state = self._build_state("Think deeply about the runtime structure.")
+        serialized = json.dumps(state)
+        recovered = json.loads(serialized)
+        assert recovered["intake"]["execution_mode"] == "deep_thinking"
+
     def test_intake_block_written_to_disk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "workflow_state.json"
@@ -266,6 +284,7 @@ class TestStateRoundTrip:
             assert "intake" in loaded
             assert loaded["intake"]["request_class"] in {
                 "direct_response",
+                "planning_only",
                 "light_edit",
                 "full_workflow",
             }

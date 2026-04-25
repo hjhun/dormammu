@@ -8,6 +8,7 @@ from dormammu.intake import RequestClass, classify_request
 
 _VALID_REQUEST_CLASSES: tuple[RequestClass, ...] = (
     "direct_response",
+    "planning_only",
     "light_edit",
     "full_workflow",
 )

@@ -1,7 +1,7 @@
 """Unit tests for the request intake classifier (dormammu.intake).
 
 Validates:
-- Classification of direct_response, light_edit, full_workflow prompts
+- Classification of direct_response, planning_only, light_edit, full_workflow prompts
 - Confidence and rationale fields are populated
 - Interface risk and test-strategy markers are detected
 - Edge cases: empty input, single-word prompts, mixed signals
@@ -79,6 +79,31 @@ class TestDirectResponseClassification:
     def test_no_test_strategy_required(self) -> None:
         result = _classify("Analyze the log output.")
         assert result.requires_test_strategy is False
+
+
+# ---------------------------------------------------------------------------
+# Planning-only classification
+# ---------------------------------------------------------------------------
+
+
+class TestPlanningOnlyClassification:
+    """Structure/design deliberation should stop after planning."""
+
+    def test_structure_deliberation_prompt(self) -> None:
+        result = _classify("Think deeply about the dormammu runtime structure.")
+        assert result.request_class == "planning_only"
+        assert result.execution_mode == "deep_thinking"
+
+    def test_architecture_review_without_implementation(self) -> None:
+        result = _classify("Review the workflow architecture and discuss options.")
+        assert result.request_class == "planning_only"
+        assert result.execution_mode == "deep_thinking"
+
+    def test_planning_only_does_not_require_test_strategy(self) -> None:
+        result = _classify("Review the workflow structure and propose a direction.")
+        assert result.request_class == "planning_only"
+        assert result.requires_test_strategy is False
+        assert result.execution_mode == "deep_thinking"
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +266,7 @@ class TestEdgeCases:
         assert "rationale" in d
         assert "has_interface_risk" in d
         assert "requires_test_strategy" in d
+        assert "execution_mode" in d
 
     def test_confidence_is_between_0_and_1(self) -> None:
         prompts = [
@@ -255,7 +281,12 @@ class TestEdgeCases:
             )
 
     def test_request_class_is_valid_literal(self) -> None:
-        valid: set[RequestClass] = {"direct_response", "light_edit", "full_workflow"}
+        valid: set[RequestClass] = {
+            "direct_response",
+            "planning_only",
+            "light_edit",
+            "full_workflow",
+        }
         for prompt in ["Summarize.", "Fix typo.", "Implement feature."]:
             result = _classify(prompt)
             assert result.request_class in valid
@@ -276,10 +307,12 @@ class TestStateIntegration:
         assert "rationale" in state
         assert "has_interface_risk" in state
         assert "requires_test_strategy" in state
+        assert "execution_mode" in state
 
     def test_default_intake_state_with_none_prompt(self) -> None:
         state = default_intake_state(None)
         assert state["request_class"] == "direct_response"
+        assert state["execution_mode"] == "standard"
 
     def test_default_intake_state_classifies_full_workflow(self) -> None:
         state = default_intake_state("Implement the adaptive intake system with tests.")
@@ -300,6 +333,7 @@ class TestStateIntegration:
         assert "intake" in state
         assert state["intake"]["request_class"] in {
             "direct_response",
+            "planning_only",
             "light_edit",
             "full_workflow",
         }

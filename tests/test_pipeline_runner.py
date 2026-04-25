@@ -756,6 +756,43 @@ class TestPipelineRun:
         mock_reviewer.assert_not_called()
         mock_committer.assert_not_called()
 
+    def test_planning_only_stops_after_refine_and_plan(self, tmp_path: Path) -> None:
+        agents = AgentsConfig(
+            refiner=RoleAgentConfig(cli=Path("claude")),
+            planner=RoleAgentConfig(cli=Path("claude")),
+            developer=RoleAgentConfig(cli=Path("claude")),
+            tester=RoleAgentConfig(cli=Path("claude")),
+            reviewer=RoleAgentConfig(cli=Path("claude")),
+            committer=RoleAgentConfig(cli=Path("claude")),
+        )
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+        runner._repository.read_workflow_state = MagicMock(  # type: ignore[method-assign]
+            return_value={"intake": {"request_class": "planning_only"}}
+        )
+
+        with (
+            patch.object(runner, "run_refine_and_plan") as mock_prelude,
+            patch.object(runner, "_run_developer") as mock_dev,
+            patch.object(runner, "_run_tester") as mock_tester,
+            patch.object(runner, "_run_reviewer") as mock_reviewer,
+            patch.object(runner, "_run_committer") as mock_committer,
+        ):
+            result = runner.run(
+                "Think deeply about the dormammu runtime structure.",
+                stem="s",
+                date_str="20260412",
+            )
+
+        assert result.status == "completed"
+        assert result.metadata["request_class"] == "planning_only"
+        assert result.metadata["execution_mode"] == "deep_thinking"
+        mock_prelude.assert_called_once()
+        mock_dev.assert_not_called()
+        mock_tester.assert_not_called()
+        mock_reviewer.assert_not_called()
+        mock_committer.assert_not_called()
+
     def test_goal_pipeline_run_enables_plan_evaluator(self, tmp_path: Path) -> None:
         agents = AgentsConfig(
             developer=RoleAgentConfig(cli=Path("claude")),
