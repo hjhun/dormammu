@@ -354,6 +354,8 @@ for a starting config.
 | `restore-session` | — | Restore an older session into the active `.dev/` view |
 
 Full reference: `dormammu --help` or `dormammu <command> --help`.
+The tested operator command matrix is documented in
+[docs/operator-entrypoints.md](docs/operator-entrypoints.md).
 
 ### Interactive Shell Commands
 
@@ -594,8 +596,9 @@ Before handing off a completed phase, run the full baseline:
 scripts/verify-baseline.sh full
 ```
 
-See `docs/BASELINE.md` for the guarded areas, CI candidates, and graphify
-analysis notes.
+See `docs/BASELINE.md` for the guarded areas and CI candidates. Use
+`docs/analysis-tooling.md` for graphify reruns and generic-symbol filtering
+before turning graph centrality into remediation priority.
 
 ## Release
 

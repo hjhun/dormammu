@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from dormammu.operator_services import GoalsOperatorService
+
 _log = logging.getLogger(__name__)
 
 
@@ -974,14 +976,10 @@ class TelegramBot:
 
     def _goals_path(self) -> Path | None:
         """Return the configured goals directory, or None if not configured."""
-        goals_cfg = getattr(self._daemon_config, "goals", None)
-        return goals_cfg.path if goals_cfg is not None else None
+        return GoalsOperatorService(self._daemon_config).goals_path
 
     def _list_goal_files(self) -> list[Path]:
-        path = self._goals_path()
-        if path is None or not path.exists():
-            return []
-        return sorted(p for p in path.iterdir() if p.is_file() and p.suffix == ".md")
+        return list(GoalsOperatorService(self._daemon_config).list_goals())
 
     async def _cmd_goals(self, update: Any, context: Any) -> None:
         if not await self._guard(update):
@@ -1082,7 +1080,7 @@ class TelegramBot:
         target = self._pending_goal_choices[idx]
         self._pending_goal_choices = []
         try:
-            target.unlink(missing_ok=True)
+            GoalsOperatorService(self._daemon_config).delete_goal(target)
             await self._reply(update, f"🗑️ Deleted goal: {target.stem}")
         except OSError as exc:
             await self._reply(update, f"❌ Failed to delete {target.name}: {exc}")
@@ -1104,8 +1102,8 @@ class TelegramBot:
         chat_id = update.effective_chat.id
         self._goals_pending.pop(chat_id, None)
 
-        goals_path = self._goals_path()
-        if goals_path is None:
+        service = GoalsOperatorService(self._daemon_config)
+        if service.goals_path is None:
             return
 
         text = self._command_text(update)
@@ -1113,20 +1111,8 @@ class TelegramBot:
             await self._reply(update, "❌ Goal content cannot be empty.")
             return
 
-        # Derive filename stem from the first line.
-        import re as _re
-        first_line = text.splitlines()[0].strip()
-        stem = _re.sub(r"[^\w\s-]", "", first_line.lower())
-        stem = _re.sub(r"[\s_]+", "-", stem).strip("-") or "goal"
-
-        from datetime import datetime, timezone as _tz
-        date_str = datetime.now(_tz.utc).strftime("%Y%m%d")
-        filename = f"{date_str}_{stem}.md"
-        dest = goals_path / filename
-
         try:
-            goals_path.mkdir(parents=True, exist_ok=True)
-            dest.write_text(text, encoding="utf-8")
-            await self._reply(update, f"✅ Goal saved: {filename}")
-        except OSError as exc:
+            dest = service.save_goal(text)
+            await self._reply(update, f"✅ Goal saved: {dest.name}")
+        except (OSError, RuntimeError) as exc:
             await self._reply(update, f"❌ Failed to save goal: {exc}")

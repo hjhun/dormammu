@@ -4,28 +4,21 @@ import json
 import os
 from pathlib import Path
 import shlex
-import signal
 import subprocess
 import sys
-import time
 from typing import Callable, Sequence, TextIO
 
-from dormammu.config import AppConfig, set_config_value
-from dormammu.daemon.config import load_daemon_config
-from dormammu.daemon.queue import is_prompt_candidate, prompt_sort_key
+from dormammu.config import AppConfig
+from dormammu.operator_services import (
+    ConfigOperatorService,
+    DaemonOperatorService,
+    default_daemon_config_path,
+    nested_get,
+)
 
 
 def _default_daemon_config_path(config: AppConfig) -> Path:
-    return (config.home_dir / ".dormammu" / "daemonize.json").expanduser().resolve()
-
-
-def _nested_get(payload: dict[str, object], dotted_key: str) -> object | None:
-    current: object = payload
-    for part in dotted_key.split("."):
-        if not isinstance(current, dict) or part not in current:
-            return None
-        current = current[part]
-    return current
+    return default_daemon_config_path(config)
 
 
 class InteractiveShellRunner:
@@ -132,8 +125,9 @@ class InteractiveShellRunner:
         return False
 
     def _handle_config_command(self, args: list[str]) -> None:
+        service = ConfigOperatorService(self._config)
         if not args:
-            payload = self._config.to_dict()
+            payload = service.resolved_config()
             self._write_line(json.dumps(payload, indent=2, ensure_ascii=True))
             return
         action = args[0]
@@ -141,7 +135,7 @@ class InteractiveShellRunner:
             if len(args) != 2:
                 self._write_line("usage: /config get <key>")
                 return
-            value = _nested_get(self._config.to_dict(), args[1])
+            value = nested_get(self._config.to_dict(), args[1])
             self._write_line(json.dumps(value, ensure_ascii=True))
             return
         if action not in {"set", "add", "remove", "unset"}:
@@ -152,22 +146,22 @@ class InteractiveShellRunner:
                 if len(args) < 3:
                     self._write_line("usage: /config set <key> <value>")
                     return
-                path = set_config_value(self._config, args[1], value=" ".join(args[2:]))
+                path = service.set_value(args[1], value=" ".join(args[2:]))
             elif action == "add":
                 if len(args) < 3:
                     self._write_line("usage: /config add <key> <value>")
                     return
-                path = set_config_value(self._config, args[1], add=" ".join(args[2:]))
+                path = service.set_value(args[1], add=" ".join(args[2:]))
             elif action == "remove":
                 if len(args) < 3:
                     self._write_line("usage: /config remove <key> <value>")
                     return
-                path = set_config_value(self._config, args[1], remove=" ".join(args[2:]))
+                path = service.set_value(args[1], remove=" ".join(args[2:]))
             else:
                 if len(args) != 2:
                     self._write_line("usage: /config unset <key>")
                     return
-                path = set_config_value(self._config, args[1], unset=True)
+                path = service.set_value(args[1], unset=True)
         except ValueError as exc:
             self._write_line(str(exc))
             return
@@ -211,13 +205,15 @@ class InteractiveShellRunner:
     def _reload_config(self) -> None:
         self._config = AppConfig.load(env=self.env, repo_root=self._config.repo_root, discover=False)
 
-    def _load_daemon_config(self):
-        path = _default_daemon_config_path(self._config)
-        return load_daemon_config(path, app_config=self._config)
+    def _daemon_service(self) -> DaemonOperatorService:
+        return DaemonOperatorService(
+            self._config,
+            daemon_config_path=_default_daemon_config_path(self._config),
+        )
 
     def _daemon_start(self) -> None:
         try:
-            daemon_config = self._load_daemon_config()
+            daemon_config = self._daemon_service().load_config()
         except (RuntimeError, ValueError, OSError) as exc:
             self._write_line(str(exc))
             return
@@ -259,110 +255,62 @@ class InteractiveShellRunner:
 
     def _daemon_stop(self) -> None:
         try:
-            daemon_config = self._load_daemon_config()
+            service = self._daemon_service()
+            service.load_config()
         except (RuntimeError, ValueError, OSError) as exc:
             self._write_line(str(exc))
             return
-        pid_path = daemon_config.result_path.parent / "daemon.pid"
-        if not pid_path.exists():
-            self._write_line("daemon is not running")
-            return
         try:
-            pid = int(pid_path.read_text(encoding="utf-8").strip())
-        except (OSError, ValueError) as exc:
-            self._write_line(f"failed to read daemon pid: {exc}")
-            return
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError as exc:
-            self._write_line(f"failed to stop daemon pid {pid}: {exc}")
+            pid = service.request_stop()
+        except RuntimeError as exc:
+            self._write_line(str(exc))
             return
         self._write_line(f"daemon stop requested: pid={pid}")
 
     def _daemon_status(self) -> None:
         try:
-            daemon_config = self._load_daemon_config()
+            status = self._daemon_service().status()
         except (RuntimeError, ValueError, OSError) as exc:
             self._write_line(str(exc))
             return
-        base = daemon_config.result_path.parent
-        pid_path = base / "daemon.pid"
-        heartbeat_path = base / "daemon_heartbeat.json"
-        self._write_line(f"daemon config: {daemon_config.config_path}")
-        self._write_line(f"prompt path: {daemon_config.prompt_path}")
-        self._write_line(f"result path: {daemon_config.result_path}")
-        self._write_line(f"pid file: {pid_path} ({'present' if pid_path.exists() else 'missing'})")
-        self._write_line(f"heartbeat: {heartbeat_path} ({'present' if heartbeat_path.exists() else 'missing'})")
-        if heartbeat_path.exists():
-            try:
-                payload = json.loads(heartbeat_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                self._write_line(f"heartbeat read failed: {exc}")
-            else:
-                self._write_line(json.dumps(payload, indent=2, ensure_ascii=True))
-        queued = sorted(
-            (
-                path
-                for path in daemon_config.prompt_path.iterdir()
-                if is_prompt_candidate(path, daemon_config.queue)
-            ),
-            key=lambda item: prompt_sort_key(item.name),
-        ) if daemon_config.prompt_path.exists() else []
-        self._write_line(f"queue depth: {len(queued)}")
+        self._write_line(f"daemon config: {status.config_path}")
+        self._write_line(f"prompt path: {status.prompt_path}")
+        self._write_line(f"result path: {status.result_path}")
+        self._write_line(f"pid file: {status.pid_path} ({'present' if status.pid_present else 'missing'})")
+        self._write_line(f"heartbeat: {status.heartbeat_path} ({'present' if status.heartbeat_present else 'missing'})")
+        if status.heartbeat_payload is not None:
+            self._write_line(json.dumps(status.heartbeat_payload, indent=2, ensure_ascii=True))
+        elif status.heartbeat_error is not None:
+            self._write_line(f"heartbeat read failed: {status.heartbeat_error}")
+        self._write_line(f"queue depth: {status.queue_depth}")
 
     def _daemon_logs(self) -> None:
         try:
-            daemon_config = self._load_daemon_config()
+            tail = self._daemon_service().latest_log_tail()
         except (RuntimeError, ValueError, OSError) as exc:
             self._write_line(str(exc))
             return
-        base = daemon_config.result_path.parent
-        progress_dir = base / "progress"
-        candidates: list[Path] = []
-        if progress_dir.exists():
-            candidates.extend(sorted(progress_dir.glob("*.log"), key=lambda path: path.stat().st_mtime))
-        daemon_log = base / "daemon.shell.log"
-        if daemon_log.exists():
-            candidates.append(daemon_log)
-        if not candidates:
+        if tail is None:
             self._write_line("no daemon logs found")
             return
-        target = candidates[-1]
-        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
-        tail = lines[-40:] if len(lines) > 40 else lines
-        self._write_line(f"daemon log: {target}")
-        for line in tail:
+        self._write_line(f"daemon log: {tail.path}")
+        for line in tail.lines:
             self._write_line(line)
 
     def _daemon_enqueue(self, prompt: str) -> None:
         try:
-            daemon_config = self._load_daemon_config()
+            prompt_path = self._daemon_service().enqueue_prompt(prompt, source="shell")
         except (RuntimeError, ValueError, OSError) as exc:
             self._write_line(str(exc))
             return
-        daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
-        stem = f"shell-{os.getpid()}-{len(prompt)}-{int(time.time())}"
-        prompt_path = daemon_config.prompt_path / f"{stem}.md"
-        prompt_path.write_text(prompt.rstrip() + "\n", encoding="utf-8")
         self._write_line(f"daemon prompt queued: {prompt_path}")
 
     def _daemon_queue(self) -> None:
         try:
-            daemon_config = self._load_daemon_config()
+            queued = self._daemon_service().list_queue()
         except (RuntimeError, ValueError, OSError) as exc:
             self._write_line(str(exc))
             return
-        if not daemon_config.prompt_path.exists():
-            self._write_line("daemon queue is empty")
-            return
-        queued = sorted(
-            (
-                path
-                for path in daemon_config.prompt_path.iterdir()
-                if is_prompt_candidate(path, daemon_config.queue)
-            ),
-            key=lambda item: prompt_sort_key(item.name),
-        )
         if not queued:
             self._write_line("daemon queue is empty")
             return

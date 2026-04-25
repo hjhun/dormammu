@@ -25,7 +25,6 @@ from dormammu.config import (
     AppConfig,
     CliInvocationConfig,
     detect_available_agent_cli,
-    set_config_value,
     write_active_agent_cli_config,
 )
 from dormammu.continuation import build_supervisor_handoff_prompt_for_repository
@@ -36,6 +35,7 @@ from dormammu.telegram.stream import TelegramProgressStream
 from dormammu.doctor import run_doctor
 from dormammu.guidance import build_guidance_prompt
 from dormammu.loop_runner import LoopRunRequest, LoopRunner
+from dormammu.operator_services import ConfigOperatorService, default_daemon_config_path
 from dormammu.progress import ConciseProgressStream
 from dormammu.request_routing import resolve_request_class
 from dormammu.recovery import RecoveryManager
@@ -65,7 +65,7 @@ from dormammu._cli_utils import (
 
 
 def _default_daemon_config_path(config: AppConfig) -> Path:
-    return (config.home_dir / ".dormammu" / "daemonize.json").expanduser().resolve()
+    return default_daemon_config_path(config)
 
 
 def _live_progress_stream(base_stream: TextIO, *, verbose: bool) -> TextIO:
@@ -166,15 +166,14 @@ def _run_mandatory_refine_and_plan(
 
 def _handle_show_config(args: argparse.Namespace) -> int:
     config = _with_guidance_overrides(_load_config(args.repo_root), args.guidance_files)
-    print(json.dumps(config.to_dict(), indent=2, ensure_ascii=True))
+    print(json.dumps(ConfigOperatorService(config).resolved_config(), indent=2, ensure_ascii=True))
     return 0
 
 
 def _handle_set_config(args: argparse.Namespace) -> int:
     config = _load_config(args.repo_root)
     try:
-        config_path = set_config_value(
-            config,
+        config_path = ConfigOperatorService(config).set_value(
             args.key,
             value=args.value,
             add=args.add,

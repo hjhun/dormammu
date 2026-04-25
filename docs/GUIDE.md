@@ -148,6 +148,8 @@ Core shell commands:
 `daemonize` itself remains a worker-oriented queue processor. The shell is the
 operator control plane for that worker: `/daemon enqueue` writes prompt files,
 and `/daemon logs` or `/daemon status` reads daemon output and metadata.
+The shared command matrix and service ownership boundary are documented in
+[Operator Entry Points](operator-entrypoints.md).
 
 ---
 
