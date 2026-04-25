@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 telegram_error = pytest.importorskip("telegram.error")
+BadRequest = telegram_error.BadRequest
 TimedOut = telegram_error.TimedOut
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +87,26 @@ def test_reply_swallows_transient_timeout_after_retry_budget(
 
     assert message.reply_text.await_count == 3
     assert "telegram command reply failed after 3 attempt(s)" in caplog.text
+
+
+def test_reply_retries_without_markup_after_telegram_markup_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bot = _make_bot()
+    message = MagicMock()
+    message.reply_text = AsyncMock(side_effect=[BadRequest("button data invalid"), None])
+    update = _make_update(message)
+    reply_markup = object()
+
+    with caplog.at_level(logging.WARNING):
+        _run(bot._reply(update, "hello", reply_markup=reply_markup))
+
+    assert message.reply_text.await_count == 2
+    first = message.reply_text.await_args_list[0]
+    second = message.reply_text.await_args_list[1]
+    assert first.kwargs["reply_markup"] is reply_markup
+    assert "reply_markup" not in second.kwargs
+    assert "retrying without reply markup" in caplog.text
 
 
 def test_reply_raises_non_network_errors() -> None:

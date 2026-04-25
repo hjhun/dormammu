@@ -572,6 +572,22 @@ class ChannelCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("investigate telegram channel failure", prompt_files[0].read_text(encoding="utf-8"))
             self.assertIn("Queued", _last_reply(update))
 
+    async def test_channel_help_command_replies_without_inline_keyboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/help")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            reply = _last_reply(update)
+            kwargs = _last_reply_kwargs(update)
+            self.assertIn("dormammu bot commands", reply)
+            self.assertNotIn("reply_markup", kwargs)
+            update.channel_post.reply_text.assert_called_once()
+
     async def test_channel_command_ignores_other_bot_mentions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

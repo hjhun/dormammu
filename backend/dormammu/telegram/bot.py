@@ -501,6 +501,10 @@ class TelegramBot:
         return InlineKeyboardMarkup(keyboard)
 
     @staticmethod
+    def _is_channel_post_update(update: Any) -> bool:
+        return getattr(update, "channel_post", None) is not None and getattr(update, "message", None) is None
+
+    @staticmethod
     def _retry_delay_seconds(exc: BaseException, fallback: float) -> float:
         retry_after = getattr(exc, "retry_after", None)
         if retry_after is None:
@@ -519,7 +523,7 @@ class TelegramBot:
         action: str,
     ) -> Any | None:
         try:
-            from telegram.error import NetworkError, RetryAfter, TimedOut
+            from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
         except ImportError:
             return await send()
 
@@ -528,6 +532,8 @@ class TelegramBot:
         for attempt in range(1, max_attempts + 1):
             try:
                 return await send()
+            except BadRequest:
+                raise
             except (TimedOut, NetworkError, RetryAfter) as exc:
                 last_exc = exc
                 if attempt >= max_attempts:
@@ -551,10 +557,31 @@ class TelegramBot:
         return None
 
     async def _reply_text(self, message: Any, text: str, *, action: str, **kwargs: Any) -> Any | None:
-        return await self._perform_telegram_request(
-            lambda: message.reply_text(text, **kwargs),
-            action=action,
-        )
+        try:
+            return await self._perform_telegram_request(
+                lambda: message.reply_text(text, **kwargs),
+                action=action,
+            )
+        except Exception as exc:
+            if "reply_markup" not in kwargs:
+                raise
+            try:
+                from telegram.error import TelegramError
+            except ImportError:
+                raise
+            if not isinstance(exc, TelegramError):
+                raise
+            fallback_kwargs = dict(kwargs)
+            fallback_kwargs.pop("reply_markup", None)
+            _log.warning(
+                "%s failed with Telegram reply markup error: %s; retrying without reply markup",
+                action,
+                exc,
+            )
+            return await self._perform_telegram_request(
+                lambda: message.reply_text(text, **fallback_kwargs),
+                action=f"{action} without reply markup",
+            )
 
     async def _handle_application_error(self, update: object, context: Any) -> None:
         error = getattr(context, "error", None)
@@ -582,7 +609,7 @@ class TelegramBot:
         await self._reply(
             update,
             _HELP_TEXT,
-            reply_markup=self._build_menu_markup(),
+            reply_markup=None if self._is_channel_post_update(update) else self._build_menu_markup(),
         )
 
     async def _reply(
