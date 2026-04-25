@@ -575,6 +575,23 @@ scripts/     Install and developer convenience scripts
 tests/       Runtime, adapter, and workflow validation
 ```
 
+## Development Baseline
+
+Before starting roadmap refactors, run the quick baseline:
+
+```bash
+scripts/verify-baseline.sh quick
+```
+
+Before handing off a completed phase, run the full baseline:
+
+```bash
+scripts/verify-baseline.sh full
+```
+
+See `docs/BASELINE.md` for the guarded areas, CI candidates, and graphify
+analysis notes.
+
 ## Release
 
 `v*` tag pushes and manual workflow dispatches build wheel and sdist artifacts
