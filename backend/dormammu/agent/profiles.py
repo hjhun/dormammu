@@ -11,6 +11,7 @@ from dormammu.agent.permissions import (
     merge_permission_policy,
 )
 from dormammu.agent.role_config import ROLE_NAMES, AgentsConfig, RoleAgentConfig
+from dormammu.agent.role_taxonomy import ROLE_TAXONOMY
 
 if TYPE_CHECKING:
     from dormammu.agent.manifest_loader import LoadedAgentDefinition
@@ -58,15 +59,7 @@ class AgentProfile:
 
 
 _ROLE_DESCRIPTIONS: dict[str, str] = {
-    "refiner": "Refines the raw request into explicit implementation requirements.",
-    "analyzer": "Analyzes a goals-scheduler prompt before planning begins.",
-    "planner": "Plans the task and updates the operator-facing workflow state.",
-    "designer": "Defines module boundaries, interfaces, and validation strategy for the slice.",
-    "developer": "Implements the active product-code slice under supervisor control.",
-    "tester": "Runs black-box validation against the observable behavior of the slice.",
-    "reviewer": "Reviews changed code for regressions, bugs, and missing coverage.",
-    "committer": "Prepares validated changes for version-control handoff.",
-    "evaluator": "Evaluates checkpoint or final goal completion when configured.",
+    entry.name: entry.description for entry in ROLE_TAXONOMY
 }
 
 ROLE_TO_PROFILE_NAME: dict[str, str] = {role: role for role in ROLE_NAMES}

@@ -76,14 +76,10 @@ from dormammu.lifecycle import (
 from dormammu.loop_runner import LoopRunRequest, LoopRunResult, LoopRunner
 from dormammu.request_routing import resolve_request_class
 from dormammu.results import (
-    collect_result_artifacts,
     ResultStatus,
     ResultVerdict,
     RetryMetadata,
     StageResult,
-    aggregate_run_summary,
-    aggregate_run_status,
-    aggregate_run_verdict,
     effective_stage_verdict,
     parse_plan_evaluator_verdict,
     parse_reviewer_verdict,
@@ -91,6 +87,7 @@ from dormammu.results import (
     stage_result_is_failure,
     stage_result_requests_retry,
 )
+from dormammu.runner_results import finalize_loop_run_result, terminal_loop_result
 from dormammu.runtime_hooks import RuntimeHookBlocked, RuntimeHookController
 from dormammu.skills import runtime_skill_summary
 from dormammu.state import StateRepository
@@ -1449,7 +1446,7 @@ class PipelineRunner:
             runtime_paths_text=self._app_config.runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
-                ("Architect Design", design_text),
+                ("Designer Document", design_text),
                 ("Expected Output Path", str(report_path)),
             ),
         )
@@ -1617,18 +1614,10 @@ class PipelineRunner:
         )
 
     def _blocked_loop_result(self, loop_result: LoopRunResult | None) -> LoopRunResult:
-        return LoopRunResult(
+        return terminal_loop_result(
+            loop_result,
             status=ResultStatus.BLOCKED,
-            attempts_completed=loop_result.attempts_completed if loop_result else 0,
-            retries_used=loop_result.retries_used if loop_result else 0,
-            max_retries=loop_result.max_retries if loop_result else 0,
-            max_iterations=loop_result.max_iterations if loop_result else 1,
-            latest_run_id=loop_result.latest_run_id if loop_result else None,
             supervisor_verdict=ResultVerdict.BLOCKED,
-            report_path=loop_result.report_path if loop_result else None,
-            continuation_prompt_path=(
-                loop_result.continuation_prompt_path if loop_result else None
-            ),
             stage_results=tuple(self._current_stage_results or ()),
         )
 
@@ -1638,19 +1627,11 @@ class PipelineRunner:
         loop_result: LoopRunResult | None,
         stage: StageResult,
     ) -> LoopRunResult:
-        return LoopRunResult(
+        return terminal_loop_result(
+            loop_result,
             status=ResultStatus.FAILED,
-            attempts_completed=loop_result.attempts_completed if loop_result else 0,
-            retries_used=loop_result.retries_used if loop_result else 0,
-            max_retries=loop_result.max_retries if loop_result else 0,
-            max_iterations=loop_result.max_iterations if loop_result else 1,
-            latest_run_id=loop_result.latest_run_id if loop_result else None,
             supervisor_verdict=effective_stage_verdict(stage),
-            report_path=loop_result.report_path if loop_result else None,
-            continuation_prompt_path=(
-                loop_result.continuation_prompt_path if loop_result else None
-            ),
-            summary=stage.summary,
+            stage=stage,
             stage_results=tuple(self._current_stage_results or ()),
         )
 
@@ -1660,19 +1641,11 @@ class PipelineRunner:
         loop_result: LoopRunResult | None,
         stage: StageResult,
     ) -> LoopRunResult:
-        return LoopRunResult(
+        return terminal_loop_result(
+            loop_result,
             status=ResultStatus.MANUAL_REVIEW_NEEDED,
-            attempts_completed=loop_result.attempts_completed if loop_result else 0,
-            retries_used=loop_result.retries_used if loop_result else 0,
-            max_retries=loop_result.max_retries if loop_result else 0,
-            max_iterations=loop_result.max_iterations if loop_result else 1,
-            latest_run_id=loop_result.latest_run_id if loop_result else None,
             supervisor_verdict=ResultVerdict.MANUAL_REVIEW_NEEDED,
-            report_path=loop_result.report_path if loop_result else None,
-            continuation_prompt_path=(
-                loop_result.continuation_prompt_path if loop_result else None
-            ),
-            summary=stage.summary,
+            stage=stage,
             stage_results=tuple(self._current_stage_results or ()),
         )
 
@@ -1721,35 +1694,10 @@ class PipelineRunner:
     ) -> LoopRunResult:
         session_id = self._session_id()
         stage_results = tuple(self._current_stage_results or result.stage_results)
-        final_status = aggregate_run_status(
-            stage_results,
-            default=result.status,
-        )
-        final_verdict = aggregate_run_verdict(
-            stage_results,
-            default=result.supervisor_verdict,
-        )
-        final_summary = aggregate_run_summary(
-            stage_results,
-            default=result.summary or terminal_error,
-        )
-        final_result = LoopRunResult(
-            status=final_status,
-            attempts_completed=result.attempts_completed,
-            retries_used=result.retries_used,
-            max_retries=result.max_retries,
-            max_iterations=result.max_iterations,
-            latest_run_id=result.latest_run_id,
-            supervisor_verdict=final_verdict,
-            report_path=result.report_path,
-            continuation_prompt_path=result.continuation_prompt_path,
-            summary=final_summary,
-            output=result.output,
+        final_result = finalize_loop_run_result(
+            result,
             stage_results=stage_results,
-            artifacts=collect_result_artifacts(stage_results, result.artifacts),
-            retry=result.retry,
-            timing=result.timing,
-            metadata=result.metadata,
+            terminal_error=terminal_error,
         )
         pipeline_run_id = self._lifecycle.run_id if self._lifecycle is not None else result.latest_run_id
         try:
@@ -1764,16 +1712,10 @@ class PipelineRunner:
             self._log(f"pipeline: session-end hook blocked exit: {exc}")
             if terminal_error is None or result.status == "completed":
                 terminal_error = str(exc)
-            final_result = LoopRunResult(
+            final_result = finalize_loop_run_result(
+                result,
                 status=ResultStatus.BLOCKED,
-                attempts_completed=result.attempts_completed,
-                retries_used=result.retries_used,
-                max_retries=result.max_retries,
-                max_iterations=result.max_iterations,
-                latest_run_id=result.latest_run_id,
                 supervisor_verdict=ResultVerdict.BLOCKED,
-                report_path=result.report_path,
-                continuation_prompt_path=result.continuation_prompt_path,
                 summary=terminal_error,
                 stage_results=tuple(self._current_stage_results or result.stage_results),
             )

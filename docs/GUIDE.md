@@ -549,11 +549,15 @@ Full example:
 | `worktree` | Optional managed worktree settings for isolated stage execution |
 
 When `agents` is configured, all run modes use the role-based pipeline.
-`analyzer`, `planner` (goals prelude), and `designer` are used by goals
-automation to strengthen the queued prompt before runtime starts. `refiner`
-and `planner` are mandatory runtime stages and fall back to `active_agent_cli`
-when their role-specific CLI is not set. `evaluator` is mandatory for
-goals-scheduler prompts and is skipped for interactive `run` and `run-once`.
+`analyzer` is goals/autonomous-only. Goals automation may use
+`analyzer -> planner -> designer` to strengthen the queued prompt before
+runtime starts. `refiner` and `planner` are mandatory runtime stages and fall
+back to `active_agent_cli` when their role-specific CLI is not set. `designer`
+is not an interactive runtime stage, though reviewer prompts can read a
+goals-generated designer document when one exists. `evaluator` is mandatory
+for goals-scheduler prompts and is skipped for interactive `run` and
+`run-once`. See [Role Taxonomy](role-taxonomy.md) for the canonical role
+contract.
 
 #### Managed worktree config
 
@@ -1193,6 +1197,10 @@ The runtime pipeline still begins with `refine -> plan` after the prompt is
 queued; analyzer output strengthens the queued prompt rather than replacing the
 runtime refiner.
 
+`analyzer` is not a runtime pipeline stage. It is used only by goals automation
+and autonomous scheduling before a prompt enters the normal `refine -> plan`
+contract.
+
 ### Supervising Agent
 
 **Path:** `agents/skills/supervising-agent/SKILL.md`
@@ -1477,6 +1485,13 @@ flowchart LR
     committer --> done([Done])
 ```
 
+The role namespace is shared by runtime, goals prelude, and goals checkpoint
+configuration. See [Role Taxonomy](role-taxonomy.md) for the canonical table.
+In short, `analyzer` is goals/autonomous-only, `designer` is goals-prelude-only,
+and `planner` is the shared role used by both goals prompt synthesis and the
+mandatory runtime planning stage. `architect` is not a supported compatibility
+alias.
+
 ### Roles
 
 | Role | Output | Verdict | Re-entry trigger |
@@ -1489,6 +1504,7 @@ flowchart LR
 | tester | `.dev/logs/<date>_tester_<stem>.md` | `OVERALL: PASS` / `OVERALL: FAIL` | — |
 | reviewer | `.dev/logs/<date>_reviewer_<stem>.md` | `VERDICT: APPROVED` / `VERDICT: NEEDS_WORK` | — |
 | committer | `.dev/logs/<date>_committer_<stem>.md` | — | — |
+| evaluator | `.dev/logs/<date>_evaluator_<stem>.md` | `VERDICT: goal_achieved` / `VERDICT: partial` / `VERDICT: not_achieved` | goals-scheduler prompts only |
 
 **Refiner** (mandatory): Reads the runtime prompt and writes
 `.dev/REQUIREMENTS.md` with structured scope, acceptance criteria, and risk
@@ -1540,9 +1556,9 @@ Before the prompt is queued, goals automation can run an expert prelude:
 - `planner` turns that brief into an authoritative execution plan
 - `designer` can add technical design context when configured
 
-The queued prompt then instructs the runtime pipeline to start with mandatory
-`refine -> plan`, and to let the planner decide the downstream stages via
-`.dev/WORKFLOWS.md`.
+This prelude is prompt synthesis only. The queued prompt then instructs the
+runtime pipeline to start with mandatory `refine -> plan`, and to let the
+runtime planner decide downstream stages via `.dev/WORKFLOWS.md`.
 
 When an **Evaluating Agent** is configured, it runs after the committer stage
 and can generate a follow-up goal — enabling fully continuous, self-scheduling

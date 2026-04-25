@@ -18,7 +18,10 @@ from dormammu.results import (
     parse_plan_evaluator_verdict,
     parse_reviewer_verdict,
     parse_tester_verdict,
+    run_result_has_clean_terminal_stage_evidence,
+    stage_results_have_clean_terminal_evidence,
 )
+from dormammu.runner_results import finalize_loop_run_result, terminal_loop_result
 
 
 def test_stage_result_separates_status_from_verdict_and_attaches_report_artifact(
@@ -124,6 +127,42 @@ def test_latest_stage_results_preserve_chronology_of_latest_attempts() -> None:
     latest = latest_stage_results(stage_results)
 
     assert [stage.role for stage in latest] == ["developer", "reviewer"]
+
+
+def test_clean_terminal_stage_evidence_uses_latest_attempts_only() -> None:
+    stage_results = (
+        StageResult(role="tester", stage_name="tester", verdict="fail"),
+        StageResult(role="tester", stage_name="tester", verdict="pass"),
+        StageResult(role="reviewer", stage_name="reviewer", verdict="approved"),
+    )
+
+    assert stage_results_have_clean_terminal_evidence(stage_results)
+
+
+def test_clean_terminal_stage_evidence_rejects_latest_failure_verdict() -> None:
+    stage_results = (
+        StageResult(role="tester", stage_name="tester", verdict="pass"),
+        StageResult(role="reviewer", stage_name="reviewer", verdict="needs_work"),
+    )
+
+    assert not stage_results_have_clean_terminal_evidence(stage_results)
+
+
+def test_run_result_clean_terminal_stage_evidence_requires_completed_run() -> None:
+    result = RunResult(
+        status="failed",
+        attempts_completed=1,
+        retries_used=0,
+        max_retries=0,
+        max_iterations=1,
+        latest_run_id="run-123",
+        supervisor_verdict="approved",
+        report_path=None,
+        continuation_prompt_path=None,
+        stage_results=(StageResult(role="developer", verdict="approved"),),
+    )
+
+    assert not run_result_has_clean_terminal_stage_evidence(result)
 
 
 def test_collect_result_artifacts_uses_only_latest_stage_attempt_per_key(
@@ -233,6 +272,73 @@ def test_run_result_serializes_stage_results_and_retry_metadata() -> None:
     assert payload["supervisor_verdict"] == "approved"
     assert payload["retry"]["attempt"] == 2
     assert payload["stage_results"][0]["role"] == "developer"
+
+
+def test_finalize_loop_run_result_aggregates_latest_stage_verdict_and_artifacts(
+    tmp_path: Path,
+) -> None:
+    latest_artifact = ArtifactRef.from_path(
+        kind="stage_report",
+        path=tmp_path / "review.md",
+        label="reviewer_report",
+        content_type="text/markdown",
+        role="reviewer",
+        stage_name="reviewer",
+    )
+    base = RunResult(
+        status="completed",
+        attempts_completed=1,
+        retries_used=0,
+        max_retries=1,
+        max_iterations=2,
+        latest_run_id="run-1",
+        supervisor_verdict="approved",
+        report_path=None,
+        continuation_prompt_path=None,
+        stage_results=(
+            StageResult(role="reviewer", stage_name="reviewer", verdict="approved"),
+        ),
+    )
+
+    result = finalize_loop_run_result(
+        base,
+        stage_results=(
+            StageResult(role="tester", stage_name="tester", verdict="pass"),
+            StageResult(
+                role="reviewer",
+                stage_name="reviewer",
+                verdict="needs_work",
+                artifacts=(latest_artifact,),
+            ),
+        ),
+    )
+
+    assert result.status == ResultStatus.COMPLETED
+    assert result.supervisor_verdict == ResultVerdict.NEEDS_WORK
+    assert result.artifacts == (latest_artifact,)
+    assert result.summary == "Stage 'reviewer' concluded with verdict 'needs_work'."
+
+
+def test_terminal_loop_result_standardizes_manual_review_from_stage() -> None:
+    stage = StageResult(
+        role="reviewer",
+        stage_name="reviewer",
+        verdict="manual_review_needed",
+        summary="Iteration limit reached.",
+    )
+
+    result = terminal_loop_result(
+        None,
+        status="manual_review_needed",
+        supervisor_verdict="manual_review_needed",
+        stage=stage,
+        stage_results=(stage,),
+    )
+
+    assert result.status == ResultStatus.MANUAL_REVIEW_NEEDED
+    assert result.supervisor_verdict == ResultVerdict.MANUAL_REVIEW_NEEDED
+    assert result.summary == "Iteration limit reached."
+    assert result.stage_results == (stage,)
 
 
 def test_verdict_parsers_return_normalized_values() -> None:

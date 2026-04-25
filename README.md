@@ -57,7 +57,7 @@ automation alike.
 | **Multi-CLI adapter** | Drive `codex`, `claude`, `gemini`, and `cline` through a unified runtime with preset-aware command building |
 | **Refine & Plan stages** | A refining agent converts raw goals into `REQUIREMENTS.md`; a planning agent generates an adaptive `WORKFLOWS.md` checklist |
 | **Role-based pipeline** | Route goals through `refiner → planner → developer → tester → reviewer → committer` with automated feedback loops |
-| **Goals analysis experts** | Use `analyzer → planner → designer` to turn scheduled goals into stronger execution prompts before runtime starts |
+| **Goals analysis experts** | Use `analyzer → planner → designer` to turn scheduled goals into stronger execution prompts before the normal runtime pipeline starts |
 | **Daemonize mode** | Watch a prompt directory, queue incoming files in deterministic order, and run each through the supervised pipeline |
 | **Goals automation** | Schedule periodic goals that are automatically promoted into the daemon queue; manageable via Telegram |
 | **Fallback CLIs** | Automatically switch to a backup agent CLI when the primary hits quota or token exhaustion |
@@ -156,6 +156,9 @@ flowchart TD
     planeval -- "DECISION: REWORK" --> planner
     planeval -- "DECISION: PROCEED" --> developer
 ```
+
+See [Role Taxonomy](docs/role-taxonomy.md) for the canonical distinction
+between runtime roles, goals-only roles, and autonomous-only roles.
 
 **Refiner** (mandatory): Converts the raw goal into a structured
 `.dev/REQUIREMENTS.md` — clarifying scope, acceptance criteria, constraints,
@@ -459,12 +462,14 @@ use the role-based pipeline. Providing `--agent-cli` on the command line reverts
 to the single-agent downstream path for that invocation after the mandatory
 `refine -> plan` prelude completes.
 
-`analyzer`, `planner`, and `designer` are used by goals automation to turn a
-scheduled goal into a stronger execution prompt before runtime starts.
-`refiner` and `planner` are mandatory runtime stages and fall back to
-`active_agent_cli` when no role-specific CLI is configured. `evaluator` is
-mandatory for goals-scheduler prompts (plan checkpoint and post-commit review)
-and is skipped for interactive `run` and `run-once` commands.
+`analyzer` is goals/autonomous-only. Goals automation may use
+`analyzer -> planner -> designer` to turn a scheduled goal into a stronger
+execution prompt before runtime starts. The runtime pipeline still begins with
+mandatory `refiner -> planner`; `designer` is not an interactive runtime stage,
+though reviewer prompts can read a goals-generated designer document when one
+exists. `evaluator` is mandatory for goals-scheduler prompts (plan checkpoint
+and post-commit review) and is skipped for interactive `run` and `run-once`
+commands. `architect` is not a supported role alias; use `designer`.
 
 ### Daemon queue config (`daemonize.json`)
 

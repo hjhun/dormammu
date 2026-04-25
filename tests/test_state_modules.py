@@ -14,6 +14,13 @@ import unittest
 from pathlib import Path
 
 from dormammu.config import AppConfig
+from dormammu.results import RunResult, StageResult
+from dormammu.state.execution_projection import (
+    mutable_execution_block,
+    project_lifecycle_execution_fact,
+    project_run_result,
+    project_stage_result,
+)
 from dormammu.state.persistence import (
     deep_merge,
     ensure_json_file,
@@ -29,6 +36,102 @@ def _seed_repo(root: Path) -> None:
     (root / "templates" / "dev").mkdir(parents=True, exist_ok=True)
     for tmpl in ("dashboard.md.tmpl", "plan.md.tmpl", "tasks.md.tmpl", "patterns.md.tmpl"):
         (root / "templates" / "dev" / tmpl).write_text(f"# {tmpl}\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# execution_projection.py
+# ---------------------------------------------------------------------------
+
+
+class ExecutionProjectionTests(unittest.TestCase):
+    def test_mutable_execution_block_normalizes_stage_results(self) -> None:
+        state = {
+            "execution": {
+                "stage_results": {
+                    "tester": {"role": "tester", "verdict": "pass"},
+                    42: {"role": "invalid"},
+                    "bad": "not-a-mapping",
+                }
+            }
+        }
+
+        execution = mutable_execution_block(state)
+
+        self.assertEqual(
+            execution["stage_results"],
+            {"tester": {"role": "tester", "verdict": "pass"}},
+        )
+
+    def test_project_stage_result_updates_latest_stage_without_touching_other_blocks(self) -> None:
+        state = {"bootstrap": {"goal": "keep"}}
+        stage = StageResult(role="tester", stage_name="tester", verdict="pass")
+
+        project_stage_result(
+            state,
+            stage=stage,
+            run_id="run-1",
+            timestamp="2026-04-25T00:00:00+00:00",
+        )
+
+        self.assertEqual(state["bootstrap"], {"goal": "keep"})
+        self.assertEqual(state["updated_at"], "2026-04-25T00:00:00+00:00")
+        execution = state["execution"]
+        self.assertEqual(execution["latest_run_id"], "run-1")
+        self.assertEqual(execution["latest_stage_result"]["stage_name"], "tester")
+        self.assertEqual(execution["stage_results"]["tester"]["verdict"], "pass")
+
+    def test_project_run_result_uses_latest_stage_result_per_key(self) -> None:
+        state: dict[str, object] = {}
+        result = RunResult(
+            status="completed",
+            attempts_completed=2,
+            retries_used=1,
+            max_retries=3,
+            max_iterations=4,
+            latest_run_id="agent-run-1",
+            supervisor_verdict="approved",
+            report_path=None,
+            continuation_prompt_path=None,
+            stage_results=(
+                StageResult(role="tester", stage_name="tester", verdict="fail"),
+                StageResult(role="tester", stage_name="tester", verdict="pass"),
+            ),
+        )
+
+        project_run_result(
+            state,
+            result=result,
+            run_id="pipeline-run-1",
+            timestamp="2026-04-25T00:00:00+00:00",
+        )
+
+        execution = state["execution"]
+        self.assertIsNone(execution["current_run"])
+        self.assertEqual(execution["latest_run"]["run_id"], "pipeline-run-1")
+        self.assertEqual(execution["latest_run"]["latest_run_id"], "agent-run-1")
+        self.assertEqual(execution["stage_results"]["tester"]["verdict"], "pass")
+
+    def test_project_lifecycle_execution_fact_projects_stage_event(self) -> None:
+        state: dict[str, object] = {}
+
+        project_lifecycle_execution_fact(
+            state,
+            event_payload={
+                "event_type": "stage.failed",
+                "run_id": "run-1",
+                "role": "reviewer",
+                "stage": "reviewer",
+                "status": "completed",
+                "payload": {"verdict": "needs_work", "reason": "review failed"},
+                "artifact_refs": [{"kind": "stage_report", "path": "/tmp/review.md"}],
+            },
+            timestamp="2026-04-25T00:00:00+00:00",
+        )
+
+        execution = state["execution"]
+        self.assertEqual(execution["latest_run_id"], "run-1")
+        self.assertEqual(execution["latest_stage_result"]["stage_name"], "reviewer")
+        self.assertEqual(execution["latest_stage_result"]["verdict"], "needs_work")
 
 
 # ---------------------------------------------------------------------------

@@ -9,17 +9,13 @@ from dormammu.agent.permissions import (
     merge_permission_policy_override,
     parse_permission_policy_override,
 )
-
-ROLE_NAMES: tuple[str, ...] = (
-    "refiner",
-    "analyzer",   # goals-scheduler path only (not used in the interactive pipeline)
-    "planner",
-    "designer",   # aligns with designing-agent skill and designer-runtime.md rule
-    "developer",
-    "tester",
-    "reviewer",
-    "committer",
-    "evaluator",
+from dormammu.agent.role_taxonomy import (
+    GOALS_OR_AUTONOMOUS_ONLY_ROLE_NAMES,
+    GOALS_PRELUDE_ROLE_NAMES,
+    ROLE_NAMES,
+    ROLE_TAXONOMY,
+    ROLE_TAXONOMY_BY_NAME,
+    RUNTIME_PIPELINE_ROLE_NAMES,
 )
 
 

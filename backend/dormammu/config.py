@@ -8,6 +8,12 @@ import shutil
 import tempfile
 from typing import TYPE_CHECKING, Any, Mapping
 
+from dormammu.config_resolvers import (
+    ConfigAgentProfileResolver,
+    ConfigAssetResolver,
+    ConfigMcpAccessResolver,
+    ConfigRuntimePathResolver,
+)
 from dormammu.hooks import HookCatalog, load_hook_config_layer, resolve_hook_catalog
 from dormammu.mcp import (
     EffectiveMcpServer,
@@ -18,7 +24,7 @@ from dormammu.mcp import (
 )
 from dormammu.telegram.config import TelegramConfig, parse_telegram_config
 from dormammu.worktree import WorktreeServiceConfig
-from dormammu.workspace import WorkspacePaths, resolve_workspace_paths
+from dormammu.workspace import resolve_workspace_paths
 
 if TYPE_CHECKING:
     from dormammu.agent.manifest_loader import AgentManifestLoadResult
@@ -30,8 +36,6 @@ REPO_MARKERS = ("pyproject.toml", "AGENTS.md", ".dev")
 DEFAULT_CONFIG_FILENAME = "dormammu.json"
 DEFAULT_GLOBAL_HOME_DIRNAME = ".dormammu"
 DEFAULT_GLOBAL_CONFIG_FILENAME = "config"
-PROJECT_AGENT_MANIFESTS_SUBDIR = Path(".dormammu") / "agent-manifests"
-USER_AGENT_MANIFESTS_DIRNAME = "agent-manifests"
 VALID_INPUT_MODES = {"auto", "file", "arg", "stdin", "positional"}
 DEFAULT_FALLBACK_AGENT_CLIS = ("codex", "claude", "gemini")
 DEFAULT_ACTIVE_AGENT_CLI_PRIORITY = ("codex", "claude", "gemini", "cline")
@@ -83,27 +87,27 @@ def _default_global_config_path(global_home_dir: Path) -> Path:
 
 
 def _project_agent_manifests_dir(root: Path) -> Path:
-    return (root / PROJECT_AGENT_MANIFESTS_SUBDIR).resolve()
+    return ConfigAssetResolver.project_agent_manifests_dir(root)
 
 
 def _user_agent_manifests_dir(global_home_dir: Path) -> Path:
-    return (global_home_dir / USER_AGENT_MANIFESTS_DIRNAME).resolve()
+    return ConfigAssetResolver.user_agent_manifests_dir(global_home_dir)
 
 
 def _project_agents_dir(root: Path) -> Path:
-    return (root / "agents").resolve()
+    return ConfigAssetResolver.project_agents_dir(root)
 
 
 def _user_agents_dir(global_home_dir: Path) -> Path:
-    return (global_home_dir / "agents").resolve()
+    return ConfigAssetResolver.user_agents_dir(global_home_dir)
 
 
 def _built_in_agents_dir() -> Path:
-    return (Path(__file__).resolve().parent / "assets" / "agents").resolve()
+    return ConfigAssetResolver.built_in_agents_dir()
 
 
 def _skills_dir(agents_dir: Path) -> Path:
-    return (agents_dir / "skills").resolve()
+    return ConfigAssetResolver.skills_dir(agents_dir)
 
 
 def _resolve_path_override(
@@ -487,53 +491,6 @@ def _parse_active_agent_cli(
     return _resolve_cli_path(value, config_dir=config_dir)
 
 
-def _discover_asset_root(root: Path, env: Mapping[str, str]) -> Path:
-    explicit_root = env.get("DORMAMMU_ASSET_ROOT")
-    if explicit_root:
-        candidate = Path(explicit_root).expanduser()
-        if not candidate.is_absolute():
-            candidate = (root / candidate).resolve()
-        return candidate
-
-    source_root = Path(__file__).resolve().parents[2]
-    if (source_root / "templates").exists():
-        return source_root
-
-    packaged_asset_root = Path(__file__).resolve().parent / "assets"
-    if (packaged_asset_root / "templates").exists():
-        return packaged_asset_root
-    return root
-
-
-def _discover_agents_dir(
-    root: Path,
-    env: Mapping[str, str],
-    asset_root: Path,
-    *,
-    global_home_dir: Path,
-) -> Path:
-    explicit_dir = env.get("DORMAMMU_AGENTS_DIR")
-    if explicit_dir:
-        candidate = Path(explicit_dir).expanduser()
-        if not candidate.is_absolute():
-            candidate = (root / candidate).resolve()
-        return candidate
-
-    global_agents_dir = global_home_dir / "agents"
-    if (global_agents_dir / "AGENTS.md").exists():
-        return global_agents_dir
-
-    repo_agents_dir = _project_agents_dir(root)
-    if (repo_agents_dir / "AGENTS.md").exists():
-        return repo_agents_dir
-
-    packaged_agents_dir = asset_root / "agents"
-    if (packaged_agents_dir / "AGENTS.md").exists():
-        return packaged_agents_dir
-
-    return repo_agents_dir
-
-
 def _coerce_string_list(
     value: Any,
     *,
@@ -742,13 +699,11 @@ class AppConfig:
             home_dir=home_dir,
             global_home_dir=global_home_dir,
         )
-        asset_root = _discover_asset_root(root, values)
-        agents_dir = _discover_agents_dir(
-            root,
-            values,
-            asset_root,
+        asset_layout = ConfigAssetResolver(
+            root=root,
+            env=values,
             global_home_dir=global_home_dir,
-        )
+        ).resolve_layout()
         config_file = _resolve_config_file(root, values, global_home_dir=global_home_dir)
         explicit_config_file = config_file if values.get("DORMAMMU_CONFIG_PATH") else None
         config_payload = _load_config_payload(config_file)
@@ -791,16 +746,16 @@ class AppConfig:
             ),
             logs_dir=workspace_paths.logs_dir,
             worktree=parsed_config_fields["worktree"],
-            templates_dir=asset_root / "templates",
-            agents_dir=agents_dir,
-            project_agents_dir=_project_agents_dir(root),
-            user_agents_dir=_user_agents_dir(global_home_dir),
-            built_in_agents_dir=_built_in_agents_dir(),
-            project_skills_dir=_skills_dir(_project_agents_dir(root)),
-            user_skills_dir=_skills_dir(_user_agents_dir(global_home_dir)),
-            built_in_skills_dir=_skills_dir(_built_in_agents_dir()),
-            project_agent_manifests_dir=_project_agent_manifests_dir(root),
-            user_agent_manifests_dir=_user_agent_manifests_dir(global_home_dir),
+            templates_dir=asset_layout.templates_dir,
+            agents_dir=asset_layout.agents_dir,
+            project_agents_dir=asset_layout.project_agents_dir,
+            user_agents_dir=asset_layout.user_agents_dir,
+            built_in_agents_dir=asset_layout.built_in_agents_dir,
+            project_skills_dir=asset_layout.project_skills_dir,
+            user_skills_dir=asset_layout.user_skills_dir,
+            built_in_skills_dir=asset_layout.built_in_skills_dir,
+            project_agent_manifests_dir=asset_layout.project_agent_manifests_dir,
+            user_agent_manifests_dir=asset_layout.user_agent_manifests_dir,
             config_file=config_file,
             config_file_is_explicit=explicit_config_file is not None,
             hooks=hooks,
@@ -809,7 +764,7 @@ class AppConfig:
             fallback_agent_clis=parsed_config_fields["fallback_agent_clis"],
             cli_overrides=parsed_config_fields["cli_overrides"],
             token_exhaustion_patterns=parsed_config_fields["token_exhaustion_patterns"],
-            default_guidance_files=((agents_dir / "AGENTS.md",) if (agents_dir / "AGENTS.md").exists() else ()),
+            default_guidance_files=asset_layout.default_guidance_files,
             telegram_config=parsed_config_fields["telegram_config"],
             agents=agents_config,
             agent_profiles=None,
@@ -948,38 +903,29 @@ class AppConfig:
         )
 
     def resolve_agent_profile(self, role: str) -> "AgentProfile":
-        from dormammu.agent.profiles import resolve_agent_profile  # noqa: PLC0415
-
-        return resolve_agent_profile(
-            role,
-            agents_config=self.agents,
-            normalized_profiles=self.agent_profiles,
-        )
+        return ConfigAgentProfileResolver(self).resolve_profile(role)
 
     def resolve_mcp_profile_access(
         self,
         profile: "AgentProfile | str",
     ) -> McpProfileResolution:
-        catalog = self.mcp or McpCatalog()
-        return catalog.resolve_profile_access(profile)
+        return ConfigMcpAccessResolver(self).resolve_profile_access(profile)
 
     def resolve_mcp_servers_for_profile(
         self,
         profile: "AgentProfile | str",
     ) -> tuple[EffectiveMcpServer, ...]:
-        return self.resolve_mcp_profile_access(profile).visible_servers
+        return ConfigMcpAccessResolver(self).servers_for_profile(profile)
 
     def resolve_mcp_servers_for_role(self, role: str) -> tuple[EffectiveMcpServer, ...]:
-        return self.resolve_mcp_servers_for_profile(self.resolve_agent_profile(role))
+        return ConfigMcpAccessResolver(self).servers_for_role(role)
 
     def load_agent_manifest_definitions(
         self,
         *,
         names: tuple[str, ...] | None = None,
     ) -> "AgentManifestLoadResult":
-        from dormammu.agent.manifest_loader import load_agent_manifest_definitions  # noqa: PLC0415
-
-        return load_agent_manifest_definitions(self, names=names)
+        return ConfigAgentProfileResolver(self).load_manifest_definitions(names=names)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -1034,21 +980,7 @@ class AppConfig:
         }
 
     def runtime_path_prompt(self) -> str:
-        paths = WorkspacePaths(
-            repo_root=self.repo_root,
-            repo_dev_dir=self.repo_dev_dir,
-            home_dir=self.home_dir,
-            global_home_dir=self.global_home_dir,
-            workspace_root=self.workspace_root,
-            workspace_project_root=self.workspace_project_root,
-            base_dev_dir=self.base_dev_dir,
-            dev_dir=self.dev_dir,
-            logs_dir=self.logs_dir,
-            sessions_dir=self.sessions_dir,
-            tmp_dir=self.workspace_tmp_dir,
-            results_dir=self.results_dir,
-        )
-        return paths.runtime_path_prompt()
+        return ConfigRuntimePathResolver(self).runtime_path_prompt()
 
 
 def _parse_agents_config(
@@ -1174,60 +1106,20 @@ def _load_effective_mcp_catalog(
     return resolve_mcp_catalog(layers)
 
 
-def _normalize_agent_profiles(
-    *,
-    agents_config: "AgentsConfig | None",
-    manifest_definitions: "tuple[Any, ...]" = (),
-) -> "dict[str, AgentProfile]":
-    from dormammu.agent.profiles import normalize_agent_profiles  # noqa: PLC0415
-
-    return normalize_agent_profiles(
-        agents_config=agents_config,
-        manifest_definitions=manifest_definitions,
-    )
-
-
 def _normalize_loaded_agent_profiles(
     *,
     config: AppConfig,
     agents_config: "AgentsConfig | None",
 ) -> "dict[str, AgentProfile]":
-    manifest_definitions = ()
-    requested_names = _requested_manifest_profile_names(agents_config)
-    if requested_names:
-        manifest_definitions = config.load_agent_manifest_definitions(
-            names=requested_names,
-        ).definitions
-    return _normalize_agent_profiles(
+    return ConfigAgentProfileResolver(config).normalize_loaded_profiles(
         agents_config=agents_config,
-        manifest_definitions=manifest_definitions,
     )
 
 
 def _requested_manifest_profile_names(
     agents_config: "AgentsConfig | None",
 ) -> tuple[str, ...]:
-    if agents_config is None:
-        return ()
-
-    from dormammu.agent.profiles import (  # noqa: PLC0415
-        profile_name_for_role,
-        role_requires_manifest_resolution,
-    )
-    from dormammu.agent.role_config import ROLE_NAMES  # noqa: PLC0415
-
-    names: list[str] = []
-    seen: set[str] = set()
-    for role in ROLE_NAMES:
-        if not role_requires_manifest_resolution(role, agents_config=agents_config):
-            continue
-        role_config = agents_config.for_role(role)
-        profile_name = profile_name_for_role(role, role_config)
-        if profile_name in seen:
-            continue
-        seen.add(profile_name)
-        names.append(profile_name)
-    return tuple(names)
+    return ConfigAgentProfileResolver.requested_manifest_profile_names(agents_config)
 
 
 def _effective_profile_names(

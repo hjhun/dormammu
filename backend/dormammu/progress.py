@@ -13,7 +13,6 @@ _ROLE_SKILL_LABELS = {
     "evaluator": "evaluating-agent",
     "plan_evaluator": "evaluating-agent",
     "designer": "designing-agent",
-    "architect": "designing-agent",
     "developer": "developing-agent",
     "tester": "tester",
     "reviewer": "testing-and-reviewing",

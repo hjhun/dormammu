@@ -89,6 +89,9 @@ The shared helpers now aggregate more than operational status:
 - `aggregate_run_status()` reports whether the run completed, failed, blocked, or needs manual review
 - `aggregate_run_verdict()` derives the operator-facing verdict from the latest stage results instead of preserving a stale developer-loop verdict
 - `aggregate_run_summary()` prefers the latest failing-stage summary and synthesizes a short failure summary when a retry-exhausted stage has no explicit summary text
+- `stage_results_have_clean_terminal_evidence()` and
+  `run_result_has_clean_terminal_stage_evidence()` provide the shared clean
+  terminal-stage check used by supervisor and daemon result publication
 
 This means a pipeline can remain operationally `completed` while still surfacing a reviewer `needs_work` or tester `fail` verdict at the run level.
 
@@ -109,6 +112,9 @@ particular:
 - `status` answers whether execution completed cleanly
 - `verdict` answers what the stage concluded
 - `artifacts` and event `artifact_refs` answer where durable evidence lives
+- supervisor reports include `decision_basis`, which records whether the
+  verdict came from current structured stage results or from legacy
+  operator-state fallback evidence
 
 That distinction is what prevents ad hoc status handling from re-entering loop,
 pipeline, daemon, or dashboard code.

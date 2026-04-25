@@ -15,6 +15,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from dormammu.config import AppConfig
+from dormammu.results import StageResult
 from dormammu.state import StateRepository
 from dormammu.supervisor import Supervisor, SupervisorRequest
 
@@ -198,6 +199,95 @@ class SupervisorTests(unittest.TestCase):
             )
             self.assertIn("Recommended next phase: develop", report.to_markdown())
 
+    def test_validate_prefers_clean_stage_results_over_stale_plan_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(
+                active_roadmap_phase_ids=["phase_4"],
+                prompt_text="Implement the missing retry loop handling.",
+            )
+            self._seed_latest_run(
+                root,
+                repository,
+                prompt_text="Implement the missing retry loop handling.\n",
+                stdout_text="Implemented and validated the retry loop handling.\n",
+            )
+            self._seed_execution_stage_results(
+                repository,
+                (
+                    StageResult(role="developer", stage_name="developer", verdict="approved"),
+                    StageResult(role="tester", stage_name="tester", verdict="pass"),
+                    StageResult(role="reviewer", stage_name="reviewer", verdict="approved"),
+                ),
+            )
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "approved")
+            self.assertEqual(
+                report.to_dict()["decision_basis"]["decision_source"],
+                "structured_stage_results",
+            )
+            self.assertTrue(
+                any(check.name == "plan-completion" and not check.ok for check in report.checks)
+            )
+            self.assertTrue(
+                any(
+                    check.name == "structured-stage-evidence" and check.ok
+                    for check in report.checks
+                )
+            )
+
+    def test_validate_rejects_negative_stage_results_even_when_markdown_is_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+
+            config = AppConfig.load(repo_root=root)
+            repository = StateRepository(config)
+            repository.ensure_bootstrap_state(
+                active_roadmap_phase_ids=["phase_4"],
+                prompt_text="Implement the missing retry loop handling.",
+            )
+            self._seed_latest_run(
+                root,
+                repository,
+                prompt_text="Implement the missing retry loop handling.\n",
+                stdout_text="All checklist items are complete.\n",
+            )
+            self._mark_plan_complete(repository)
+            self._write_workflows_md(repository, all_complete=True)
+            self._seed_execution_stage_results(
+                repository,
+                (
+                    StageResult(role="developer", stage_name="developer", verdict="approved"),
+                    StageResult(role="tester", stage_name="tester", verdict="pass"),
+                    StageResult(role="reviewer", stage_name="reviewer", verdict="needs_work"),
+                ),
+            )
+
+            report = Supervisor(config, repository=repository).validate(
+                SupervisorRequest(expected_roadmap_phase_id="phase_4")
+            )
+
+            self.assertEqual(report.verdict, "rework_required")
+            self.assertEqual(
+                report.to_dict()["decision_basis"]["primary_evidence"],
+                "structured_stage_results",
+            )
+            self.assertTrue(
+                any(
+                    check.name == "structured-stage-evidence" and not check.ok
+                    for check in report.checks
+                )
+            )
+
     def _seed_latest_run(
         self,
         root: Path,
@@ -251,6 +341,38 @@ class SupervisorTests(unittest.TestCase):
         workflow_state["latest_run"] = payload
         repository.write_session_state(session_state)
         repository.write_workflow_state(workflow_state)
+
+    def _seed_execution_stage_results(
+        self,
+        repository: StateRepository,
+        stage_results: tuple[StageResult, ...],
+        *,
+        status: str = "completed",
+    ) -> None:
+        stage_payloads = [stage.to_dict(include_output=False) for stage in stage_results]
+        latest_by_stage = {stage.key: stage.to_dict(include_output=False) for stage in stage_results}
+        execution = {
+            "latest_run_id": "structured-run",
+            "latest_execution_id": "structured-run",
+            "current_run": None,
+            "latest_run": {
+                "run_id": "structured-run",
+                "execution_run_id": "structured-run",
+                "latest_run_id": "seed-run",
+                "status": status,
+                "stage_results": stage_payloads,
+            },
+            "stage_results": latest_by_stage,
+            "latest_stage_result": stage_payloads[-1] if stage_payloads else None,
+        }
+        session_state = repository.read_session_state()
+        workflow_state = repository.read_workflow_state()
+        session_state["execution"] = execution
+        workflow_state["execution"] = execution
+        repository.write_state_pair(
+            session_payload=session_state,
+            workflow_payload=workflow_state,
+        )
 
     def _seed_repo(self, root: Path) -> None:
         subprocess.run(["git", "init", "-q", str(root)], check=True)

@@ -97,6 +97,7 @@ pytest -q tests/test_pipeline_runner.py tests/test_loop_runner.py tests/test_dae
 - guidance/path/package asset resolution을 작은 resolver로 분리한다.
 - 기존 public API compatibility를 유지하기 위한 forwarding method를
   한시적으로 둔다.
+- resolver별 소유 경계는 `docs/config-resolvers.md`에 기록한다.
 
 ### 완료 조건
 
@@ -129,6 +130,8 @@ state의 책임을 명확히 나눈다.
 - `StateRepository`에서 write-path별 service를 추출한다.
 - session state와 workflow state 동시 쓰기 규칙을 helper로 집중시킨다.
 - stale operator state 보정 로직의 허용 조건을 테스트로 고정한다.
+- root mirror와 execution projection 경계는 `docs/state-projection.md`에
+  기록한다.
 
 ### 완료 조건
 
@@ -160,6 +163,7 @@ stage execution service와 result aggregation helper로 모은다.
 - `LoopRunner`의 stagnation/retry/continuation 판단을 helper로 나눈다.
 - `DaemonRunner`의 result publication과 prompt lifecycle 처리를 분리한다.
 - runner별 manual_review_needed 처리 차이를 표준화한다.
+- runner result 집계 경계는 `docs/runner-results.md`에 기록한다.
 
 ### 완료 조건
 
@@ -193,6 +197,7 @@ config, runtime profile 이름을 같은 계약으로 맞춘다.
   같은 taxonomy에 맞춘다.
 - `GoalsScheduler`가 main refine/plan/pipeline 계약과 어떻게 연결되는지
   문서화한다.
+- canonical taxonomy와 goals 연결 계약은 `docs/role-taxonomy.md`에 기록한다.
 
 ### 완료 조건
 

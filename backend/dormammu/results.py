@@ -439,6 +439,27 @@ def latest_stage_results(stage_results: Sequence[StageResult]) -> tuple[StageRes
     return tuple(reversed(latest_reversed))
 
 
+def stage_results_have_clean_terminal_evidence(
+    stage_results: Sequence[StageResult],
+) -> bool:
+    """Return True when latest stage results prove a clean terminal outcome."""
+    latest = latest_stage_results(stage_results)
+    if not latest:
+        return False
+    return all(
+        stage.status == ResultStatus.COMPLETED and not stage_result_is_failure(stage)
+        for stage in latest
+    )
+
+
+def run_result_has_clean_terminal_stage_evidence(result: RunResult) -> bool:
+    """Return True when a completed run has clean latest stage results."""
+    return (
+        result.status == ResultStatus.COMPLETED
+        and stage_results_have_clean_terminal_evidence(result.stage_results)
+    )
+
+
 def aggregate_run_verdict(
     stage_results: Sequence[StageResult],
     *,

@@ -7,8 +7,13 @@ import pytest
 
 from dormammu.agent.role_config import (
     AgentsConfig,
+    GOALS_OR_AUTONOMOUS_ONLY_ROLE_NAMES,
+    GOALS_PRELUDE_ROLE_NAMES,
     ROLE_NAMES,
+    ROLE_TAXONOMY,
+    ROLE_TAXONOMY_BY_NAME,
     RoleAgentConfig,
+    RUNTIME_PIPELINE_ROLE_NAMES,
     parse_agents_config,
 )
 
@@ -76,6 +81,42 @@ class TestAgentsConfig:
         cfg = AgentsConfig()
         d = cfg.to_dict()
         assert set(d.keys()) == set(ROLE_NAMES)
+
+
+# ---------------------------------------------------------------------------
+# Role taxonomy
+# ---------------------------------------------------------------------------
+
+
+class TestRoleTaxonomy:
+    def test_taxonomy_defines_role_names_once(self) -> None:
+        assert tuple(entry.name for entry in ROLE_TAXONOMY) == ROLE_NAMES
+        assert set(ROLE_TAXONOMY_BY_NAME) == set(ROLE_NAMES)
+
+    def test_runtime_and_goals_role_boundaries_are_explicit(self) -> None:
+        assert RUNTIME_PIPELINE_ROLE_NAMES == (
+            "refiner",
+            "planner",
+            "developer",
+            "tester",
+            "reviewer",
+            "committer",
+        )
+        assert GOALS_PRELUDE_ROLE_NAMES == ("analyzer", "planner", "designer")
+        assert set(GOALS_OR_AUTONOMOUS_ONLY_ROLE_NAMES) == {
+            "analyzer",
+            "designer",
+            "evaluator",
+        }
+
+    def test_analyzer_designer_and_planner_have_distinct_scopes(self) -> None:
+        assert ROLE_TAXONOMY_BY_NAME["analyzer"].scope == "goals_autonomous_only"
+        assert ROLE_TAXONOMY_BY_NAME["designer"].scope == "goals_prelude_only"
+        assert ROLE_TAXONOMY_BY_NAME["planner"].scope == "runtime_and_goals_prelude"
+
+    def test_architect_is_not_a_compatibility_alias(self) -> None:
+        assert "architect" not in ROLE_NAMES
+        assert "architect" not in ROLE_TAXONOMY_BY_NAME
 
 
 # ---------------------------------------------------------------------------

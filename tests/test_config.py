@@ -16,6 +16,12 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from dormammu.config import AppConfig, discover_repo_root, set_config_value
+from dormammu.config_resolvers import (
+    ConfigAgentProfileResolver,
+    ConfigAssetResolver,
+    ConfigMcpAccessResolver,
+    ConfigRuntimePathResolver,
+)
 from dormammu.agent.manifest_loader import AgentManifestLoadError
 from dormammu.agent.permissions import PermissionDecision
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
@@ -1514,6 +1520,57 @@ class ConfigTests(unittest.TestCase):
                 ["developer-visible"],
             )
 
+    def test_config_resolvers_match_app_config_forwarding_methods(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            home_dir.mkdir(parents=True, exist_ok=True)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "mcp": {
+                            "servers": [
+                                {
+                                    "id": "developer-visible",
+                                    "transport": {
+                                        "kind": "stdio",
+                                        "command": "uvx",
+                                        "args": ["mcp-developer-visible"],
+                                    },
+                                    "access": {"profiles": ["developer"]},
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = AppConfig.load(
+                repo_root=root,
+                env={
+                    "HOME": str(home_dir),
+                    **{key: value for key, value in os.environ.items() if key != "HOME"},
+                },
+            )
+
+            profile_resolver = ConfigAgentProfileResolver(config)
+            mcp_resolver = ConfigMcpAccessResolver(config)
+            path_resolver = ConfigRuntimePathResolver(config)
+
+            self.assertEqual(
+                profile_resolver.resolve_profile("developer"),
+                config.resolve_agent_profile("developer"),
+            )
+            self.assertEqual(
+                mcp_resolver.servers_for_role("developer"),
+                config.resolve_mcp_servers_for_role("developer"),
+            )
+            self.assertEqual(
+                path_resolver.runtime_path_prompt(),
+                config.runtime_path_prompt(),
+            )
+
     def test_with_overrides_preserves_env_derived_app_name_when_config_file_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "repo"
@@ -1615,6 +1672,31 @@ class ConfigTests(unittest.TestCase):
                 (home_dir / ".dormammu" / "agent-manifests").resolve(),
             )
             self.assertNotEqual(config.user_agent_manifests_dir.parent, config.agents_dir)
+
+    def test_asset_resolver_owns_guidance_layout_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            root.mkdir(parents=True, exist_ok=True)
+            home_dir = Path(tmpdir) / "home"
+            global_home_dir = home_dir / ".dormammu"
+            agents_dir = global_home_dir / "agents"
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            guidance_path = agents_dir / "AGENTS.md"
+            guidance_path.write_text("global guidance\n", encoding="utf-8")
+            env = {
+                "HOME": str(home_dir),
+                **{key: value for key, value in os.environ.items() if key != "HOME"},
+            }
+
+            layout = ConfigAssetResolver(
+                root=root,
+                env=env,
+                global_home_dir=global_home_dir,
+            ).resolve_layout()
+
+            self.assertEqual(layout.agents_dir, agents_dir)
+            self.assertEqual(layout.default_guidance_files, (guidance_path,))
+            self.assertEqual(layout.user_skills_dir, (agents_dir / "skills").resolve())
 
 
 class SetConfigValueTests(unittest.TestCase):

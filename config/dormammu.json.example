@@ -29,6 +29,10 @@
       "cli": "claude",
       "model": "claude-sonnet-4-6"
     },
+    "designer": {
+      "cli": "claude",
+      "model": "claude-sonnet-4-6"
+    },
     "developer": {
       "cli": "claude",
       "model": "claude-opus-4-6"

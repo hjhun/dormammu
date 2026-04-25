@@ -10,6 +10,13 @@ from typing import Any, Mapping, Sequence
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.config import AppConfig
+from dormammu.results import (
+    ResultStatus,
+    StageResult,
+    latest_stage_results,
+    stage_result_is_failure,
+    stage_results_have_clean_terminal_evidence,
+)
 from dormammu.state import StateRepository
 
 
@@ -51,6 +58,98 @@ def _normalize_execution_run(payload: Mapping[str, Any] | None) -> dict[str, Any
         "supervisor_verdict": payload.get("supervisor_verdict"),
         "outcome": payload.get("outcome"),
     }
+
+
+def _execution_latest_run_status(state: Mapping[str, Any]) -> str | None:
+    execution = state.get("execution")
+    if not isinstance(execution, Mapping):
+        return None
+    latest_run = execution.get("latest_run")
+    if not isinstance(latest_run, Mapping):
+        return None
+    status = latest_run.get("status")
+    return str(status) if status is not None else None
+
+
+def _execution_latest_run_references(
+    state: Mapping[str, Any],
+    latest_run_id: str | None,
+) -> bool:
+    if latest_run_id is None:
+        return False
+    execution = state.get("execution")
+    if not isinstance(execution, Mapping):
+        return False
+    latest_run = execution.get("latest_run")
+    if not isinstance(latest_run, Mapping):
+        return False
+    candidates = {
+        latest_run.get("run_id"),
+        latest_run.get("execution_run_id"),
+        latest_run.get("latest_run_id"),
+    }
+    return latest_run_id in {str(item) for item in candidates if item is not None}
+
+
+def _execution_stage_result_payloads(state: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    execution = state.get("execution")
+    if not isinstance(execution, Mapping):
+        return ()
+    latest_run = execution.get("latest_run")
+    if isinstance(latest_run, Mapping):
+        raw_stage_results = latest_run.get("stage_results")
+        if isinstance(raw_stage_results, list):
+            return tuple(item for item in raw_stage_results if isinstance(item, Mapping))
+    stage_results = execution.get("stage_results")
+    if isinstance(stage_results, Mapping):
+        return tuple(item for item in stage_results.values() if isinstance(item, Mapping))
+    return ()
+
+
+def _stage_result_from_payload(payload: Mapping[str, Any]) -> StageResult | None:
+    role = payload.get("role") or payload.get("stage_name") or "stage"
+    if not isinstance(role, str) or not role.strip():
+        role = "stage"
+    stage_name = payload.get("stage_name")
+    try:
+        return StageResult(
+            role=role,
+            stage_name=(
+                stage_name
+                if isinstance(stage_name, str) and stage_name.strip()
+                else None
+            ),
+            status=payload.get("status") or ResultStatus.COMPLETED,
+            verdict=payload.get("verdict"),
+            summary=payload.get("summary") if isinstance(payload.get("summary"), str) else None,
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _execution_stage_results(state: Mapping[str, Any]) -> tuple[StageResult, ...]:
+    return tuple(
+        stage
+        for payload in _execution_stage_result_payloads(state)
+        if (stage := _stage_result_from_payload(payload)) is not None
+    )
+
+
+def _normalize_stage_results_for_compare(
+    stage_results: Sequence[StageResult],
+) -> tuple[dict[str, Any], ...]:
+    normalized: list[dict[str, Any]] = []
+    for stage in latest_stage_results(stage_results):
+        normalized.append(
+            {
+                "role": stage.role,
+                "stage_name": stage.stage_name,
+                "status": stage.status.value if stage.status is not None else None,
+                "verdict": stage.verdict.value if stage.verdict is not None else None,
+                "summary": stage.summary,
+            }
+        )
+    return tuple(normalized)
 
 
 def _resolve_path(repo_root: Path, value: str) -> Path:
@@ -327,6 +426,7 @@ class SupervisorReport:
     required_paths: Sequence[str]
     recommended_next_phase: str | None = None
     report_path: Path | None = None
+    decision_basis: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -340,6 +440,7 @@ class SupervisorReport:
             "required_paths": list(self.required_paths),
             "recommended_next_phase": self.recommended_next_phase,
             "report_path": str(self.report_path) if self.report_path else None,
+            "decision_basis": dict(self.decision_basis or {}),
         }
 
     def with_report_path(self, report_path: Path) -> SupervisorReport:
@@ -354,6 +455,7 @@ class SupervisorReport:
             required_paths=self.required_paths,
             recommended_next_phase=self.recommended_next_phase,
             report_path=report_path,
+            decision_basis=self.decision_basis,
         )
 
     def to_markdown(self) -> str:
@@ -366,6 +468,7 @@ class SupervisorReport:
             f"- Summary: {self.summary}",
             f"- Latest run id: {self.latest_run_id or 'none'}",
             f"- Recommended next phase: {self.recommended_next_phase or 'none'}",
+            f"- Decision source: `{(self.decision_basis or {}).get('decision_source', 'unknown')}`",
             "",
             "## Checks",
             "",
@@ -615,12 +718,96 @@ class Supervisor:
             )
         )
 
+        latest_run_id: str | None = None
+        if isinstance(workflow_run, Mapping):
+            raw_latest_run_id = workflow_run.get("run_id")
+            latest_run_id = str(raw_latest_run_id) if raw_latest_run_id is not None else None
+        session_structured_stages = _execution_stage_results(session_state)
+        workflow_structured_stages = _execution_stage_results(workflow_state)
+        raw_structured_stage_evidence_present = bool(
+            session_structured_stages or workflow_structured_stages
+        )
+        structured_stage_evidence_current = (
+            raw_structured_stage_evidence_present
+            and _execution_latest_run_references(session_state, latest_run_id)
+            and _execution_latest_run_references(workflow_state, latest_run_id)
+        )
+        structured_stage_evidence_present = (
+            raw_structured_stage_evidence_present and structured_stage_evidence_current
+        )
+        structured_stage_evidence_match = (
+            _normalize_stage_results_for_compare(session_structured_stages)
+            == _normalize_stage_results_for_compare(workflow_structured_stages)
+        )
+        structured_stages = (
+            (workflow_structured_stages or session_structured_stages)
+            if structured_stage_evidence_current
+            else ()
+        )
+        latest_structured_stages = latest_stage_results(structured_stages)
+        structured_stage_evidence_failed = any(
+            stage_result_is_failure(stage) for stage in latest_structured_stages
+        )
+        latest_execution_run_completed = (
+            _execution_latest_run_status(session_state) == ResultStatus.COMPLETED.value
+            and _execution_latest_run_status(workflow_state) == ResultStatus.COMPLETED.value
+        )
+        structured_stage_evidence_clean = (
+            structured_stage_evidence_present
+            and structured_stage_evidence_match
+            and latest_execution_run_completed
+            and stage_results_have_clean_terminal_evidence(structured_stages)
+        )
+        structured_stage_evidence_ok = (
+            not structured_stage_evidence_present or structured_stage_evidence_clean
+        )
+        structured_stage_details: list[str] = []
+        if structured_stage_evidence_present:
+            structured_stage_details.append(
+                "latest stages: "
+                + ", ".join(
+                    f"{stage.key}={stage.status.value if stage.status else 'unknown'}"
+                    f"/{stage.verdict.value if stage.verdict else 'n/a'}"
+                    for stage in latest_structured_stages
+                )
+            )
+            if not structured_stage_evidence_match:
+                structured_stage_details.append(
+                    "Session and workflow stage result projections differ."
+                )
+            if not latest_execution_run_completed:
+                structured_stage_details.append(
+                    "Explicit latest execution run is not completed in both state files."
+                )
+        elif raw_structured_stage_evidence_present:
+            structured_stage_details.append(
+                "Explicit StageResult projection belongs to an earlier run; using fallback evidence."
+            )
+        else:
+            structured_stage_details.append(
+                "No explicit StageResult projection exists; falling back to legacy run artifacts and operator state."
+            )
+        checks.append(
+            SupervisorCheck(
+                name="structured-stage-evidence",
+                ok=structured_stage_evidence_ok,
+                summary=(
+                    "Explicit StageResult evidence proves a clean terminal run."
+                    if structured_stage_evidence_clean
+                    else (
+                        "Explicit StageResult evidence is negative or incomplete."
+                        if structured_stage_evidence_present
+                        else "Explicit StageResult evidence is absent; using fallback evidence."
+                    )
+                ),
+                details=structured_stage_details,
+            )
+        )
+
         artifact_ok = False
         artifact_details: list[str] = []
         exit_code_ok = False
-        latest_run_id: str | None = None
         if latest_run_ok and isinstance(workflow_run, Mapping):
-            latest_run_id = str(workflow_run.get("run_id"))
             artifacts = workflow_run.get("artifacts", {})
             expected_artifacts = {
                 "prompt": artifacts.get("prompt"),
@@ -795,7 +982,11 @@ class Supervisor:
         )
 
         final_verification_details: list[str] = []
-        if not tasks_complete_ok and not workflows_all_complete:
+        if (
+            not structured_stage_evidence_clean
+            and not tasks_complete_ok
+            and not workflows_all_complete
+        ):
             # Accept WORKFLOWS.md as an alternative completion signal when the
             # task-sync counters have not yet been updated.
             final_verification_details.append("Prompt-derived PLAN work is not complete yet.")
@@ -809,7 +1000,11 @@ class Supervisor:
         # complete.  Once all checklist items are done, trust the checklist over
         # this heuristic to prevent false rework loops caused by .dev/-only changes.
         plan_or_workflows_done = tasks_complete_ok or workflows_all_complete
-        if not prompt_alignment_ok and not plan_or_workflows_done:
+        if (
+            not structured_stage_evidence_clean
+            and not prompt_alignment_ok
+            and not plan_or_workflows_done
+        ):
             final_verification_details.append("Prompt outcome did not match the expected completion shape.")
         final_verification_ok = not final_verification_details
         checks.append(
@@ -829,16 +1024,42 @@ class Supervisor:
             )
         )
 
-        verdict, escalation, summary = self._resolve_outcome(
+        verdict, escalation, summary, decision_source = self._resolve_outcome(
             checks=checks,
             latest_run_present=latest_run_present,
             artifact_ok=artifact_ok,
             git_ok=git_ok,
+            structured_stage_evidence_present=structured_stage_evidence_present,
+            structured_stage_evidence_clean=structured_stage_evidence_clean,
+            structured_stage_evidence_failed=structured_stage_evidence_failed,
             workflows_all_complete=workflows_all_complete,
             tasks_complete_ok=tasks_complete_ok,
             has_unresolved_questions=bool(question_lines),
             prompt_requests_commit=prompt_requests_commit,
         )
+        decision_basis = {
+            "decision_source": decision_source,
+            "primary_evidence": (
+                "structured_stage_results"
+                if structured_stage_evidence_present
+                else "operator_state_fallback"
+            ),
+            "structured_stage_evidence": {
+                "present": structured_stage_evidence_present,
+                "clean": structured_stage_evidence_clean,
+                "failed": structured_stage_evidence_failed,
+                "session_workflow_match": structured_stage_evidence_match,
+                "latest_run_completed": latest_execution_run_completed,
+            },
+            "fallback_evidence": {
+                "tasks_complete": tasks_complete_ok,
+                "workflows_complete": workflows_all_complete,
+                "latest_run_artifacts_clean": artifact_ok and exit_code_ok,
+                "required_paths_ok": not missing_required_paths,
+                "prompt_outcome_alignment_ok": prompt_alignment_ok,
+                "has_unresolved_questions": bool(question_lines),
+            },
+        }
         recommended_next_phase = self._recommend_next_phase(checks=checks, verdict=verdict)
         return SupervisorReport(
             generated_at=_iso_now(),
@@ -850,6 +1071,7 @@ class Supervisor:
             changed_files=tuple(changed_files),
             required_paths=tuple(required_paths),
             recommended_next_phase=recommended_next_phase,
+            decision_basis=decision_basis,
         )
 
     def _collect_committed_files_since(self, started_at: str, completed_at: str | None = None) -> list[str]:
@@ -915,11 +1137,14 @@ class Supervisor:
         latest_run_present: bool,
         artifact_ok: bool,
         git_ok: bool,
+        structured_stage_evidence_present: bool = False,
+        structured_stage_evidence_clean: bool = False,
+        structured_stage_evidence_failed: bool = False,
         workflows_all_complete: bool = False,
         tasks_complete_ok: bool = False,
         has_unresolved_questions: bool = False,
         prompt_requests_commit: bool = False,
-    ) -> tuple[str, str, str]:
+    ) -> tuple[str, str, str, str]:
         checks_by_name = {check.name: check for check in checks}
         if (
             not checks_by_name["bootstrap-files"].ok
@@ -933,12 +1158,32 @@ class Supervisor:
                 "blocked",
                 "blocked",
                 "Critical .dev state or latest-run artifacts are missing, so safe continuation is blocked.",
+                "critical_state",
             )
         if not git_ok:
             return (
                 "manual_review_needed",
                 "manual_review_needed",
                 "Git diff evidence could not be collected deterministically.",
+                "git_diff",
+            )
+
+        if structured_stage_evidence_failed:
+            return (
+                "rework_required",
+                "rework_required",
+                "Explicit StageResult evidence contains a failed or negative terminal verdict.",
+                "structured_stage_results",
+            )
+
+        artifacts_clean = checks_by_name["latest-run-artifacts"].ok
+        paths_ok = checks_by_name["required-paths"].ok
+        if structured_stage_evidence_clean and artifacts_clean and paths_ok:
+            return (
+                "approved",
+                "approved",
+                "All required work is complete — explicit StageResult evidence proves a clean terminal run.",
+                "structured_stage_results",
             )
 
         # Early approval path: when the operator-facing process map (WORKFLOWS.md)
@@ -957,13 +1202,18 @@ class Supervisor:
         plan_or_workflows_done = workflows_all_complete or (
             tasks_complete_ok and not prompt_requests_commit
         )
-        artifacts_clean = checks_by_name["latest-run-artifacts"].ok
-        paths_ok = checks_by_name["required-paths"].ok
-        if plan_or_workflows_done and artifacts_clean and paths_ok and not has_unresolved_questions:
+        if (
+            not structured_stage_evidence_present
+            and plan_or_workflows_done
+            and artifacts_clean
+            and paths_ok
+            and not has_unresolved_questions
+        ):
             return (
                 "approved",
                 "approved",
                 "All required work is complete — WORKFLOWS.md/PLAN.md fully checked off and artifacts are clean.",
+                "operator_state_fallback",
             )
 
         failing_checks = [check for check in checks if not check.ok]
@@ -972,11 +1222,13 @@ class Supervisor:
                 "rework_required",
                 "rework_required",
                 failing_checks[0].summary,
+                failing_checks[0].name,
             )
         return (
             "approved",
             "approved",
             "All deterministic supervisor checks passed.",
+            "deterministic_checks",
         )
 
     def _recommend_next_phase(
