@@ -516,6 +516,11 @@ class TelegramBot:
         ]
         return InlineKeyboardMarkup(keyboard)
 
+    def _menu_markup_for_update(self, update: Any) -> Any:
+        if self._is_channel_post_update(update):
+            return None
+        return self._build_menu_markup()
+
     @staticmethod
     def _is_channel_post_update(update: Any) -> bool:
         return getattr(update, "channel_post", None) is not None and getattr(update, "message", None) is None
@@ -636,7 +641,7 @@ class TelegramBot:
         await self._reply(
             update,
             _HELP_TEXT,
-            reply_markup=self._build_menu_markup(),
+            reply_markup=self._menu_markup_for_update(update),
         )
 
     async def _reply(
@@ -812,7 +817,7 @@ class TelegramBot:
                 update,
                 f"📡 Tail is currently {state}.\n"
                 "Use /tail on to start or /tail off to stop.",
-                reply_markup=self._build_menu_markup(),
+                reply_markup=self._menu_markup_for_update(update),
             )
             return
         if mode == "off":
@@ -820,7 +825,7 @@ class TelegramBot:
             await self._reply(
                 update,
                 "📡 Tail OFF — streaming stopped.",
-                reply_markup=self._build_menu_markup(),
+                reply_markup=self._menu_markup_for_update(update),
             )
         else:
             # Any value other than "off" enables streaming.
@@ -830,7 +835,7 @@ class TelegramBot:
                 "📡 Tail ON — streaming prompt and stage updates.\n"
                 "Shows the active prompt and the current stage only.\n"
                 "Use /tail off or tap the Tail button to stop.",
-                reply_markup=self._build_menu_markup(),
+                reply_markup=self._menu_markup_for_update(update),
             )
 
     async def _cmd_result(self, update: Any, context: Any) -> None:
