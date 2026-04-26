@@ -24,6 +24,11 @@ from typing import Literal
 
 
 RequestClass = Literal["direct_response", "planning_only", "light_edit", "full_workflow"]
+_REQUEST_CLASS_DIRECTIVE_RE = re.compile(
+    r"^\s*DORMAMMU_REQUEST_CLASS\s*:\s*"
+    r"(direct_response|planning_only|light_edit|full_workflow)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 # ── Token sets ───────────────────────────────────────────────────────────────
 
@@ -54,6 +59,17 @@ _DIRECT_RESPONSE_SIGNALS: frozenset[str] = frozenset(
         "inspect",
         "diagnose",
         "document",  # when not paired with "write" — handled by ordering
+        "분석",
+        "설명",
+        "요약",
+        "검토",
+        "확인",
+        "파악",
+        "원인",
+        "왜",
+        "어떻게",
+        "알려",
+        "찾아",
     }
 )
 
@@ -85,6 +101,11 @@ _LIGHT_EDIT_SIGNALS: frozenset[str] = frozenset(
         "dependencies",
         "upgrade",
         "downgrade",
+        "수정",
+        "고쳐",
+        "개선",
+        "변경",
+        "설정",
     }
 )
 
@@ -119,6 +140,13 @@ _FULL_WORKFLOW_SIGNALS: frozenset[str] = frozenset(
         "end to end",
         "multi-file",
         "multi file",
+        "구현",
+        "추가",
+        "개발",
+        "설계",
+        "통합",
+        "리팩터",
+        "리팩토링",
     }
 )
 
@@ -302,6 +330,20 @@ def classify_request(prompt_text: str) -> IntakeClassification:
     Returns:
         An :class:`IntakeClassification` with the selected class and metadata.
     """
+    directive = _REQUEST_CLASS_DIRECTIVE_RE.search(prompt_text or "")
+    if directive is not None:
+        request_class = directive.group(1).lower()
+        return IntakeClassification(
+            request_class=request_class,  # type: ignore[arg-type]
+            confidence=1.0,
+            rationale=(
+                f"Explicit DORMAMMU_REQUEST_CLASS directive selected {request_class}."
+            ),
+            has_interface_risk=False,
+            requires_test_strategy=False,
+            execution_mode="deep_thinking" if request_class == "planning_only" else "standard",
+        )
+
     if not prompt_text or not prompt_text.strip():
         return IntakeClassification(
             request_class="direct_response",

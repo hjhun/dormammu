@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import sys
 from pathlib import Path
@@ -52,7 +53,25 @@ def test_reply_retries_after_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     _run(bot._reply(update, "hello"))
 
     assert message.reply_text.await_count == 2
-    assert delays == [bot._SEND_RETRY_DELAYS_S[0]]
+    assert delays == [bot._COMMAND_REPLY_RETRY_DELAYS_S[0]]
+
+
+def test_reply_uses_short_command_timeouts() -> None:
+    bot = _make_bot()
+    message = MagicMock()
+    message.reply_text = AsyncMock(return_value=None)
+    update = _make_update(message)
+
+    _run(bot._reply(update, "hello"))
+
+    _args, kwargs = message.reply_text.await_args
+    assert kwargs["connect_timeout"] == bot._COMMAND_REPLY_TIMEOUT_S
+    assert kwargs["read_timeout"] == bot._COMMAND_REPLY_TIMEOUT_S
+    assert kwargs["write_timeout"] == bot._COMMAND_REPLY_TIMEOUT_S
+    assert kwargs["pool_timeout"] == min(
+        bot._REQUEST_POOL_TIMEOUT_S,
+        bot._COMMAND_REPLY_TIMEOUT_S,
+    )
 
 
 def test_reply_omits_parse_mode_when_none() -> None:
@@ -74,7 +93,7 @@ def test_reply_swallows_transient_timeout_after_retry_budget(
 ) -> None:
     bot = _make_bot()
     message = MagicMock()
-    message.reply_text = AsyncMock(side_effect=[TimedOut("connect timed out")] * 3)
+    message.reply_text = AsyncMock(side_effect=[TimedOut("connect timed out")] * 2)
     update = _make_update(message)
 
     async def _fake_sleep(delay: float) -> None:
@@ -85,8 +104,8 @@ def test_reply_swallows_transient_timeout_after_retry_budget(
     with caplog.at_level(logging.WARNING):
         _run(bot._reply(update, "hello"))
 
-    assert message.reply_text.await_count == 3
-    assert "telegram command reply failed after 3 attempt(s)" in caplog.text
+    assert message.reply_text.await_count == 2
+    assert "telegram command reply failed after 2 attempt(s)" in caplog.text
 
 
 def test_reply_retries_without_markup_after_telegram_markup_error(
@@ -130,3 +149,9 @@ def test_application_error_handler_logs_transient_network_error(
         _run(bot._handle_application_error(object(), context))
 
     assert "telegram update handler network error" in caplog.text
+
+
+def test_telegram_application_enables_limited_concurrent_updates() -> None:
+    source = inspect.getsource(TelegramBot._async_run)
+
+    assert ".concurrent_updates(self._CONCURRENT_UPDATES)" in source

@@ -26,7 +26,9 @@ if TYPE_CHECKING:
 _HELP_TEXT = (
     "dormammu bot commands\n\n"
     "📊 /status — daemon status and active prompt\n"
-    "▶️ /run <prompt> — queue a new prompt for execution\n"
+    "⚡ /ask <prompt> — fast one-pass answer or inspection\n"
+    "⚡ /run_fast <prompt> — fast one-pass answer or inspection\n"
+    "▶️ /run <prompt> — queue a full workflow prompt for execution\n"
     "📋 /queue — list pending prompts\n"
     "📡 /tail [on|off] — stream prompt and stage updates only\n"
     "📄 /result [name] — last (or named) result file content\n"
@@ -53,6 +55,8 @@ _MENU_KEYBOARD_BASE = [
         {"text": "🔌 Shutdown", "callback_data": "shutdown"},
     ],
 ]
+
+_FAST_REQUEST_DIRECTIVE = "DORMAMMU_REQUEST_CLASS: direct_response"
 
 
 class TelegramBot:
@@ -83,8 +87,13 @@ class TelegramBot:
     _REQUEST_READ_TIMEOUT_S: float = 20.0
     _REQUEST_WRITE_TIMEOUT_S: float = 20.0
     _REQUEST_POOL_TIMEOUT_S: float = 5.0
-    # Retry direct reply/send operations a small number of times before giving up.
+    # Retry background/broadcast send operations a small number of times before giving up.
     _SEND_RETRY_DELAYS_S: tuple[float, ...] = (1.0, 3.0)
+    # Command replies should fail fast so transient Telegram API timeouts do not
+    # make the bot feel unresponsive or block following updates for up to a minute.
+    _COMMAND_REPLY_TIMEOUT_S: float = 5.0
+    _COMMAND_REPLY_RETRY_DELAYS_S: tuple[float, ...] = (0.5,)
+    _CONCURRENT_UPDATES: int = 8
 
     def __init__(
         self,
@@ -312,11 +321,14 @@ class TelegramBot:
             .get_updates_read_timeout(self._REQUEST_READ_TIMEOUT_S)
             .get_updates_write_timeout(self._REQUEST_WRITE_TIMEOUT_S)
             .get_updates_pool_timeout(self._REQUEST_POOL_TIMEOUT_S)
+            .concurrent_updates(self._CONCURRENT_UPDATES)
         )
         self._app = builder.build()
         self._app.add_handler(CommandHandler("start", self._cmd_help))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
         self._app.add_handler(CommandHandler("status", self._cmd_status))
+        self._app.add_handler(CommandHandler("ask", self._cmd_ask))
+        self._app.add_handler(CommandHandler("run_fast", self._cmd_run_fast))
         self._app.add_handler(CommandHandler("run", self._cmd_run))
         self._app.add_handler(CommandHandler("queue", self._cmd_queue))
         self._app.add_handler(CommandHandler("tail", self._cmd_tail))
@@ -348,7 +360,9 @@ class TelegramBot:
         async with self._app:
             await self._app.bot.set_my_commands([
                 BotCommand("status", "📊 daemon status"),
-                BotCommand("run", "▶️ run a prompt"),
+                BotCommand("ask", "⚡ fast one-pass answer"),
+                BotCommand("run_fast", "⚡ fast one-pass run"),
+                BotCommand("run", "▶️ full workflow prompt"),
                 BotCommand("queue", "📋 pending prompts"),
                 BotCommand("tail", "📡 prompt/stage updates (on/off)"),
                 BotCommand("result", "📄 last result"),
@@ -460,6 +474,8 @@ class TelegramBot:
             "start": self._cmd_help,
             "help": self._cmd_help,
             "status": self._cmd_status,
+            "ask": self._cmd_ask,
+            "run_fast": self._cmd_run_fast,
             "run": self._cmd_run,
             "queue": self._cmd_queue,
             "tail": self._cmd_tail,
@@ -521,13 +537,15 @@ class TelegramBot:
         send: Callable[[], Awaitable[Any]],
         *,
         action: str,
+        retry_delays: tuple[float, ...] | None = None,
     ) -> Any | None:
         try:
             from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
         except ImportError:
             return await send()
 
-        max_attempts = len(self._SEND_RETRY_DELAYS_S) + 1
+        delays = self._SEND_RETRY_DELAYS_S if retry_delays is None else retry_delays
+        max_attempts = len(delays) + 1
         last_exc: BaseException | None = None
         for attempt in range(1, max_attempts + 1):
             try:
@@ -538,7 +556,7 @@ class TelegramBot:
                 last_exc = exc
                 if attempt >= max_attempts:
                     break
-                delay = self._retry_delay_seconds(exc, self._SEND_RETRY_DELAYS_S[attempt - 1])
+                delay = self._retry_delay_seconds(exc, delays[attempt - 1])
                 _log.warning(
                     "%s failed with transient Telegram network error (%s/%s): %s; retrying in %.1fs",
                     action,
@@ -557,13 +575,21 @@ class TelegramBot:
         return None
 
     async def _reply_text(self, message: Any, text: str, *, action: str, **kwargs: Any) -> Any | None:
+        request_kwargs = {
+            "connect_timeout": self._COMMAND_REPLY_TIMEOUT_S,
+            "read_timeout": self._COMMAND_REPLY_TIMEOUT_S,
+            "write_timeout": self._COMMAND_REPLY_TIMEOUT_S,
+            "pool_timeout": min(self._REQUEST_POOL_TIMEOUT_S, self._COMMAND_REPLY_TIMEOUT_S),
+        }
+        merged_kwargs = {**request_kwargs, **kwargs}
         try:
             return await self._perform_telegram_request(
-                lambda: message.reply_text(text, **kwargs),
+                lambda: message.reply_text(text, **merged_kwargs),
                 action=action,
+                retry_delays=self._COMMAND_REPLY_RETRY_DELAYS_S,
             )
         except Exception as exc:
-            if "reply_markup" not in kwargs:
+            if "reply_markup" not in merged_kwargs:
                 raise
             try:
                 from telegram.error import TelegramError
@@ -571,7 +597,7 @@ class TelegramBot:
                 raise
             if not isinstance(exc, TelegramError):
                 raise
-            fallback_kwargs = dict(kwargs)
+            fallback_kwargs = dict(merged_kwargs)
             fallback_kwargs.pop("reply_markup", None)
             _log.warning(
                 "%s failed with Telegram reply markup error: %s; retrying without reply markup",
@@ -581,6 +607,7 @@ class TelegramBot:
             return await self._perform_telegram_request(
                 lambda: message.reply_text(text, **fallback_kwargs),
                 action=f"{action} without reply markup",
+                retry_delays=self._COMMAND_REPLY_RETRY_DELAYS_S,
             )
 
     async def _handle_application_error(self, update: object, context: Any) -> None:
@@ -703,12 +730,49 @@ class TelegramBot:
         if not context.args:
             await self._reply(update, "Usage: /run <prompt text>")
             return
-        prompt_text = " ".join(context.args)
+        await self._enqueue_prompt(
+            update,
+            " ".join(context.args),
+            fast=False,
+        )
+
+    async def _cmd_ask(self, update: Any, context: Any) -> None:
+        if not await self._guard(update):
+            return
+        if not context.args:
+            await self._reply(update, "Usage: /ask <prompt text>")
+            return
+        await self._enqueue_prompt(
+            update,
+            " ".join(context.args),
+            fast=True,
+        )
+
+    async def _cmd_run_fast(self, update: Any, context: Any) -> None:
+        if not await self._guard(update):
+            return
+        if not context.args:
+            await self._reply(update, "Usage: /run_fast <prompt text>")
+            return
+        await self._enqueue_prompt(
+            update,
+            " ".join(context.args),
+            fast=True,
+        )
+
+    async def _enqueue_prompt(self, update: Any, prompt_text: str, *, fast: bool) -> None:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        prompt_path = self._daemon_config.prompt_path / f"tg_{ts}.md"
+        prefix = "tg_fast" if fast else "tg"
+        prompt_path = self._daemon_config.prompt_path / f"{prefix}_{ts}.md"
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
-        prompt_path.write_text(prompt_text, encoding="utf-8")
-        await self._reply(update, f"▶️ Queued: {prompt_path.name}")
+        content = (
+            f"{_FAST_REQUEST_DIRECTIVE}\n\n{prompt_text}"
+            if fast
+            else prompt_text
+        )
+        prompt_path.write_text(content, encoding="utf-8")
+        label = "⚡ Queued fast path" if fast else "▶️ Queued full workflow"
+        await self._reply(update, f"{label}: {prompt_path.name}")
 
     async def _cmd_queue(self, update: Any, context: Any) -> None:
         if not await self._guard(update):

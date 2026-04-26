@@ -64,6 +64,18 @@ class TestDirectResponseClassification:
         result = _classify("How does the state repository bootstrap work?")
         assert result.request_class == "direct_response"
 
+    def test_korean_cause_analysis_prompt(self) -> None:
+        result = _classify("telegram channel의 반응 속도가 안좋습니다. 원인을 파악해주세요.")
+        assert result.request_class == "direct_response"
+
+    def test_explicit_direct_response_directive(self) -> None:
+        result = _classify(
+            "DORMAMMU_REQUEST_CLASS: direct_response\n\n"
+            "Implementing is not requested; explain what is happening."
+        )
+        assert result.request_class == "direct_response"
+        assert result.confidence == 1.0
+
     def test_confidence_above_zero(self) -> None:
         result = _classify("Describe the workflow state schema.")
         assert result.confidence > 0

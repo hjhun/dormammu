@@ -519,6 +519,11 @@ class RepoAndClearSessionsRegistrationTests(unittest.TestCase):
         self.assertIn("clear", _HELP_TEXT.lower())
         self.assertIn("sessions", _HELP_TEXT.lower())
 
+    def test_fast_commands_in_help_text(self) -> None:
+        from dormammu.telegram.bot import _HELP_TEXT
+        self.assertIn("/ask", _HELP_TEXT)
+        self.assertIn("/run_fast", _HELP_TEXT)
+
     def test_repo_in_menu_keyboard(self) -> None:
         from dormammu.telegram.bot import _MENU_KEYBOARD_BASE
         all_callbacks = [btn["callback_data"] for row in _MENU_KEYBOARD_BASE for btn in row]
@@ -616,6 +621,40 @@ class ChannelCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("investigate telegram channel failure", prompt_files[0].read_text(encoding="utf-8"))
             self.assertIn("Queued", _last_reply(update))
 
+    async def test_channel_ask_command_queues_fast_direct_response_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/ask why is telegram slow")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            prompt_files = sorted(bot._daemon_config.prompt_path.glob("tg_fast_*.md"))
+            self.assertEqual(len(prompt_files), 1)
+            content = prompt_files[0].read_text(encoding="utf-8")
+            self.assertIn("DORMAMMU_REQUEST_CLASS: direct_response", content)
+            self.assertIn("why is telegram slow", content)
+            self.assertIn("Queued fast path", _last_reply(update))
+
+    async def test_channel_run_fast_command_queues_fast_direct_response_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/run_fast summarize queue state")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            prompt_files = sorted(bot._daemon_config.prompt_path.glob("tg_fast_*.md"))
+            self.assertEqual(len(prompt_files), 1)
+            content = prompt_files[0].read_text(encoding="utf-8")
+            self.assertIn("DORMAMMU_REQUEST_CLASS: direct_response", content)
+            self.assertIn("summarize queue state", content)
+            self.assertIn("Queued fast path", _last_reply(update))
+
     async def test_channel_run_command_without_args_replies_with_usage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -627,6 +666,20 @@ class ChannelCommandTests(unittest.IsolatedAsyncioTestCase):
             await bot._cmd_channel_post_command(update, context)
 
             self._assert_channel_reply_without_markup(update, "Usage: /run")
+
+    async def test_channel_fast_commands_without_args_reply_with_usage(self) -> None:
+        for command in ["/ask", "/run_fast"]:
+            with self.subTest(command=command):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    root = Path(tmpdir)
+                    bot, _, _ = _make_bot(root)
+                    update = _make_channel_update(command)
+                    context = mock.MagicMock()
+                    context.args = []
+
+                    await bot._cmd_channel_post_command(update, context)
+
+                    self._assert_channel_reply_without_markup(update, f"Usage: {command}")
 
     async def test_channel_tail_commands_reply_without_inline_keyboard(self) -> None:
         for command, expected in [
