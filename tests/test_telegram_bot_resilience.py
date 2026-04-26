@@ -38,6 +38,20 @@ def _make_update(message: MagicMock) -> MagicMock:
     return update
 
 
+def _make_channel_update(text: str, chat_id: int = 42) -> MagicMock:
+    message = MagicMock()
+    message.text = text
+    message.caption = None
+    message.reply_text = AsyncMock(return_value=None)
+    update = MagicMock()
+    update.callback_query = None
+    update.effective_chat.id = chat_id
+    update.message = None
+    update.channel_post = message
+    update.effective_message = message
+    return update
+
+
 def test_reply_retries_after_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     bot = _make_bot()
     message = MagicMock()
@@ -151,7 +165,73 @@ def test_application_error_handler_logs_transient_network_error(
     assert "telegram update handler network error" in caplog.text
 
 
+def test_channel_post_command_logs_input_to_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bot = _make_bot()
+    update = _make_channel_update("/unknown hello")
+    context = MagicMock()
+    context.args = []
+
+    _run(bot._cmd_channel_post_command(update, context))
+
+    assert (
+        "telegram channel input: chat_id=42 text=/unknown hello"
+        in capsys.readouterr().err
+    )
+    update.channel_post.reply_text.assert_not_awaited()
+
+
+def test_channel_post_reply_logs_output_to_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bot = _make_bot()
+    update = _make_channel_update("/status")
+
+    _run(bot._reply(update, "status line 1\nstatus line 2"))
+
+    assert (
+        "telegram channel output: chat_id=42 text=status line 1\\nstatus line 2"
+        in capsys.readouterr().err
+    )
+    update.channel_post.reply_text.assert_awaited_once()
+
+
+def test_notify_started_queues_broadcasts_without_blocking_on_futures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = _make_bot()
+    bot._loop = MagicMock()
+    bot._app = MagicMock()
+    bot._outgoing_queue = MagicMock()
+    bot._app_config = MagicMock()
+    bot._app_config.repo_root = Path("/repo")
+    bot._broadcast_targets = MagicMock(return_value=[1, 2])
+    bot._send_message_sync = MagicMock()
+    run_threadsafe = MagicMock()
+    monkeypatch.setattr(telegram_bot_module.asyncio, "run_coroutine_threadsafe", run_threadsafe)
+
+    bot.notify_started()
+
+    assert bot._send_message_sync.call_count == 2
+    run_threadsafe.assert_not_called()
+
+
 def test_telegram_application_enables_limited_concurrent_updates() -> None:
     source = inspect.getsource(TelegramBot._async_run)
 
     assert ".concurrent_updates(self._CONCURRENT_UPDATES)" in source
+
+
+def test_telegram_polling_explicitly_subscribes_to_channel_posts() -> None:
+    source = inspect.getsource(TelegramBot._async_run)
+
+    assert "allowed_updates=list(self._ALLOWED_UPDATES)" in source
+    assert '"channel_post"' in inspect.getsource(TelegramBot)
+
+
+def test_telegram_polling_uses_short_long_poll_timeout() -> None:
+    source = inspect.getsource(TelegramBot._async_run)
+
+    assert "timeout=self._GET_UPDATES_POLL_TIMEOUT_S" in source
+    assert TelegramBot._GET_UPDATES_POLL_TIMEOUT_S == 1

@@ -453,6 +453,35 @@ class BotShutdownRegistrationTests(unittest.TestCase):
 class WatcherShutdownResponsivenessTests(unittest.TestCase):
     """Verify that both watchers unblock quickly when the stop_event fires."""
 
+    def test_polling_watcher_returns_early_on_explicit_wake(self) -> None:
+        """PollingWatcher should return promptly when a prompt producer wakes it."""
+        import tempfile
+        from dormammu.daemon.models import WatchConfig
+        from dormammu.daemon.watchers import PollingWatcher
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            watch_config = WatchConfig(backend="polling", poll_interval_seconds=60)
+            watcher = PollingWatcher(Path(tmpdir), watch_config)
+            watcher.start()
+
+            results: list[float] = []
+
+            def _run() -> None:
+                t0 = time.monotonic()
+                watcher.wait_for_changes()
+                results.append(time.monotonic() - t0)
+
+            t = threading.Thread(target=_run)
+            t.start()
+            time.sleep(0.05)
+            watcher.wake_up()
+            t.join(timeout=2.0)
+            watcher.close()
+
+            self.assertFalse(t.is_alive(), "watcher thread is still blocked after wake_up")
+            self.assertTrue(results, "wait_for_changes() did not return")
+            self.assertLess(results[0], 2.0, f"wait_for_changes() took too long: {results[0]:.2f}s")
+
     def test_polling_watcher_returns_early_on_stop_event(self) -> None:
         """PollingWatcher with a long interval must return within ~1 s when
         the stop_event is set."""
@@ -520,6 +549,39 @@ class WatcherShutdownResponsivenessTests(unittest.TestCase):
 
             self.assertFalse(t.is_alive())
             self.assertLess(results[0], 2.0)
+
+    def test_notify_prompt_enqueued_wakes_active_polling_watcher(self) -> None:
+        """Telegram enqueue notifications should wake a polling daemon promptly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _seed_repo(root)
+            runner = _make_runner(root)
+
+            from dormammu.daemon.models import WatchConfig
+            from dormammu.daemon.watchers import PollingWatcher
+
+            watch_config = WatchConfig(backend="polling", poll_interval_seconds=60)
+            watcher = PollingWatcher(runner.daemon_config.prompt_path, watch_config)
+            runner._active_watcher = watcher
+            watcher.start()
+
+            results: list[float] = []
+
+            def _run() -> None:
+                t0 = time.monotonic()
+                watcher.wait_for_changes()
+                results.append(time.monotonic() - t0)
+
+            t = threading.Thread(target=_run)
+            t.start()
+            time.sleep(0.05)
+            runner.notify_prompt_enqueued()
+            t.join(timeout=2.0)
+            watcher.close()
+
+            self.assertFalse(t.is_alive(), "watcher thread is still blocked after enqueue notification")
+            self.assertTrue(results, "wait_for_changes() did not return")
+            self.assertLess(results[0], 2.0, f"wait_for_changes() took too long: {results[0]:.2f}s")
 
 
 if __name__ == "__main__":

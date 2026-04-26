@@ -15,6 +15,7 @@ from dormammu.daemon.models import WatchConfig
 
 
 EFFECTIVE_POLL_INTERVAL_SECONDS: Final[int] = 60
+POLLING_WAKE_CHECK_SECONDS: Final[float] = 0.1
 
 
 class PromptWatcher(Protocol):
@@ -25,6 +26,8 @@ class PromptWatcher(Protocol):
     def close(self) -> None: ...
 
     def wait_for_changes(self) -> list[Path]: ...
+
+    def wake_up(self) -> None: ...
 
 
 class PollingWatcher:
@@ -42,6 +45,7 @@ class PollingWatcher:
         self.watch_config = watch_config
         self._event_logger = event_logger
         self._stop_event = stop_event
+        self._wake_event = threading.Event()
 
     def start(self) -> None:
         return None
@@ -49,18 +53,31 @@ class PollingWatcher:
     def close(self) -> None:
         return None
 
+    def wake_up(self) -> None:
+        self._wake_event.set()
+
     def wait_for_changes(self) -> list[Path]:
-        if self._stop_event is not None:
-            # Block until the poll interval elapses OR the stop event fires,
-            # whichever comes first.  This makes /shutdown respond immediately.
-            self._stop_event.wait(timeout=self.watch_config.poll_interval_seconds)
-        else:
-            time.sleep(self.watch_config.poll_interval_seconds)
+        deadline = time.monotonic() + self.watch_config.poll_interval_seconds
+        woke_explicitly = self._wake_event.is_set()
+        while not woke_explicitly:
+            if self._stop_event is not None and self._stop_event.is_set():
+                return []
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            woke_explicitly = self._wake_event.wait(
+                timeout=min(remaining, POLLING_WAKE_CHECK_SECONDS)
+            )
+        self._wake_event.clear()
+        if self._stop_event is not None and self._stop_event.is_set():
+            return []
         paths = list(self.prompt_dir.iterdir()) if self.prompt_dir.exists() else []
         if self._event_logger is not None:
+            wake_reason = "wake" if woke_explicitly else "interval"
             self._event_logger(
                 "daemon watcher event: backend=polling "
                 f"interval={self.watch_config.poll_interval_seconds}s "
+                f"reason={wake_reason} "
                 f"candidates={len(paths)}"
             )
         return paths
@@ -133,13 +150,16 @@ class InotifyWatcher:
             f"watching={self.prompt_dir} mask={self._format_mask(self._WATCH_MASK)}"
         )
 
-    def _wake_up(self) -> None:
+    def wake_up(self) -> None:
         """Write a single byte to the wake-up pipe to unblock select()."""
         if self._wake_w is not None:
             try:
                 os.write(self._wake_w, b"\x00")
             except OSError:
                 pass
+
+    def _wake_up(self) -> None:
+        self.wake_up()
 
     def close(self) -> None:
         if self._fd is not None:

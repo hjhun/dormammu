@@ -5,6 +5,7 @@ import contextlib
 import json
 import logging
 import re
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,6 +58,7 @@ _MENU_KEYBOARD_BASE = [
 ]
 
 _FAST_REQUEST_DIRECTIVE = "DORMAMMU_REQUEST_CLASS: direct_response"
+_TELEGRAM_IO_LOG_LIMIT = 1200
 
 
 class TelegramBot:
@@ -94,6 +96,12 @@ class TelegramBot:
     _COMMAND_REPLY_TIMEOUT_S: float = 5.0
     _COMMAND_REPLY_RETRY_DELAYS_S: tuple[float, ...] = (0.5,)
     _CONCURRENT_UPDATES: int = 8
+    _GET_UPDATES_POLL_TIMEOUT_S: int = 1
+    _ALLOWED_UPDATES: tuple[str, ...] = (
+        "message",
+        "channel_post",
+        "callback_query",
+    )
 
     def __init__(
         self,
@@ -122,6 +130,7 @@ class TelegramBot:
         # API (30 msg/s limit) and delay incoming command responses.
         self._outgoing_queue: asyncio.Queue[tuple[int, str]] | None = None
         self._send_task: asyncio.Task[None] | None = None
+        self._commands_task: asyncio.Task[None] | None = None
         # Ephemeral list of repo paths shown in the last /repo inline keyboard.
         # Indexed by callback_data "repo_pick:<i>".  Lives only in the asyncio
         # event-loop thread so no lock is required.
@@ -196,7 +205,7 @@ class TelegramBot:
 
     def notify_started(self) -> None:
         """Broadcast a startup message to all target chat IDs."""
-        if self._loop is None or self._app is None:
+        if self._loop is None or self._app is None or self._outgoing_queue is None:
             return
         targets = self._broadcast_targets()
         if not targets:
@@ -204,20 +213,7 @@ class TelegramBot:
         repo = str(self._app_config.repo_root)
         message = f"dormammu daemon started.\nRepo: {repo}"
         for chat_id in targets:
-            try:
-                future = asyncio.run_coroutine_threadsafe(
-                    self._perform_telegram_request(
-                        lambda chat_id=chat_id: self._app.bot.send_message(
-                            chat_id=chat_id,
-                            text=message,
-                        ),
-                        action=f"startup notification to chat {chat_id}",
-                    ),
-                    self._loop,
-                )
-                future.result(timeout=10)
-            except Exception as exc:
-                _log.warning("notify_started: failed to send startup message to chat %s: %s", chat_id, exc)
+            self._send_message_sync(chat_id, message)
 
     def _send_message_sync(self, chat_id: int, text: str) -> None:
         """Thread-safe: enqueue a Telegram message from any thread.
@@ -358,28 +354,22 @@ class TelegramBot:
         self._app.add_error_handler(self._handle_application_error)
 
         async with self._app:
-            await self._app.bot.set_my_commands([
-                BotCommand("status", "📊 daemon status"),
-                BotCommand("ask", "⚡ fast one-pass answer"),
-                BotCommand("run_fast", "⚡ fast one-pass run"),
-                BotCommand("run", "▶️ full workflow prompt"),
-                BotCommand("queue", "📋 pending prompts"),
-                BotCommand("tail", "📡 prompt/stage updates (on/off)"),
-                BotCommand("result", "📄 last result"),
-                BotCommand("sessions", "🗂️ session list"),
-                BotCommand("repo", "🗂️ switch working repo"),
-                BotCommand("clear_sessions", "🗑️ clear session data"),
-                BotCommand("goals", "🎯 list/add/delete goals"),
-                BotCommand("shutdown", "🔌 graceful daemon shutdown"),
-                BotCommand("help", "❓ help"),
-            ])
             await self._app.start()
-            await self._app.updater.start_polling(drop_pending_updates=True)
+            await self._app.updater.start_polling(
+                poll_interval=0.0,
+                timeout=self._GET_UPDATES_POLL_TIMEOUT_S,
+                allowed_updates=list(self._ALLOWED_UPDATES),
+                drop_pending_updates=True,
+            )
             # Start the rate-limited outgoing message drainer before signalling
             # readiness so that _send_message_sync can be called immediately.
             self._outgoing_queue = asyncio.Queue(maxsize=self._SEND_QUEUE_MAXSIZE)
             self._send_task = asyncio.create_task(
                 self._drain_outgoing_queue(), name="dormammu-telegram-sender"
+            )
+            self._commands_task = asyncio.create_task(
+                self._set_bot_commands_background(BotCommand),
+                name="dormammu-telegram-commands",
             )
             self._ready.set()  # signal successful startup
             try:
@@ -391,8 +381,43 @@ class TelegramBot:
                     self._send_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await self._send_task
+                if self._commands_task is not None:
+                    self._commands_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await self._commands_task
                 await self._app.updater.stop()
                 await self._app.stop()
+
+    async def _set_bot_commands_background(self, bot_command_cls: Any) -> None:
+        """Best-effort Telegram command menu registration.
+
+        Registering the menu is useful but not required for receiving updates.
+        Keeping it out of the startup path prevents slow Telegram API responses
+        from delaying daemon initialization.
+        """
+        if self._app is None:
+            return
+        try:
+            await self._perform_telegram_request(
+                lambda: self._app.bot.set_my_commands([
+                    bot_command_cls("status", "📊 daemon status"),
+                    bot_command_cls("ask", "⚡ fast one-pass answer"),
+                    bot_command_cls("run_fast", "⚡ fast one-pass run"),
+                    bot_command_cls("run", "▶️ full workflow prompt"),
+                    bot_command_cls("queue", "📋 pending prompts"),
+                    bot_command_cls("tail", "📡 prompt/stage updates (on/off)"),
+                    bot_command_cls("result", "📄 last result"),
+                    bot_command_cls("sessions", "🗂️ session list"),
+                    bot_command_cls("repo", "🗂️ switch working repo"),
+                    bot_command_cls("clear_sessions", "🗑️ clear session data"),
+                    bot_command_cls("goals", "🎯 list/add/delete goals"),
+                    bot_command_cls("shutdown", "🔌 graceful daemon shutdown"),
+                    bot_command_cls("help", "❓ help"),
+                ]),
+                action="Telegram command menu registration",
+            )
+        except Exception as exc:
+            _log.warning("Telegram command menu registration failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Auth
@@ -451,6 +476,25 @@ class TelegramBot:
             return ""
         return (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
 
+    @staticmethod
+    def _telegram_io_log_text(text: str) -> str:
+        text = text.replace("\r", "\\r").replace("\n", "\\n")
+        if len(text) <= _TELEGRAM_IO_LOG_LIMIT:
+            return text
+        return text[:_TELEGRAM_IO_LOG_LIMIT] + "...(truncated)"
+
+    def _log_channel_io(self, update: Any, direction: str, text: str) -> None:
+        if not self._is_channel_post_update(update):
+            return
+        chat = getattr(update, "effective_chat", None)
+        chat_id = getattr(chat, "id", "unknown")
+        logged_text = self._telegram_io_log_text(text)
+        print(
+            f"telegram channel {direction}: chat_id={chat_id} text={logged_text}",
+            file=sys.stderr,
+            flush=True,
+        )
+
     def _parse_command(self, text: str) -> tuple[str, list[str]] | None:
         match = re.match(r"^/([A-Za-z0-9_]+)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$", text)
         if match is None:
@@ -466,7 +510,9 @@ class TelegramBot:
         return command, args
 
     async def _cmd_channel_post_command(self, update: Any, context: Any) -> None:
-        parsed = self._parse_command(self._command_text(update))
+        command_text = self._command_text(update)
+        self._log_channel_io(update, "input", command_text)
+        parsed = self._parse_command(command_text)
         if parsed is None:
             return
         command, args = parsed
@@ -659,6 +705,7 @@ class TelegramBot:
             kwargs["reply_markup"] = reply_markup
         message = self._target_message(update)
         if message is not None:
+            self._log_channel_io(update, "output", text)
             await self._reply_text(message, text, action="telegram command reply", **kwargs)
 
     async def _cmd_callback(self, update: Any, context: Any) -> None:
@@ -776,6 +823,8 @@ class TelegramBot:
             else prompt_text
         )
         prompt_path.write_text(content, encoding="utf-8")
+        if hasattr(self._runner, "notify_prompt_enqueued"):
+            self._runner.notify_prompt_enqueued()
         label = "⚡ Queued fast path" if fast else "▶️ Queued full workflow"
         await self._reply(update, f"{label}: {prompt_path.name}")
 

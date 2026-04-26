@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import sys
 import threading
-import time
 from typing import Generator, Mapping, TextIO
 
 from dormammu.agent.role_config import AgentsConfig
@@ -175,9 +174,24 @@ class DaemonRunner:
         InotifyWatcher.wait_for_changes() returns without delay.
         """
         self._shutdown_requested.set()
-        # Wake up the inotify watcher if it's currently blocking in select().
+        # Wake up any active watcher currently blocked between queue scans.
         watcher = getattr(self, "_active_watcher", None)
-        if watcher is not None and hasattr(watcher, "_wake_up"):
+        if watcher is not None and hasattr(watcher, "wake_up"):
+            watcher.wake_up()
+        elif watcher is not None and hasattr(watcher, "_wake_up"):
+            watcher._wake_up()
+
+    def notify_prompt_enqueued(self) -> None:
+        """Wake the active watcher after an external producer writes a prompt.
+
+        Telegram commands write directly into the prompt directory from a
+        background thread.  Polling watchers would otherwise wait until the next
+        poll interval before the daemon notices the new file.
+        """
+        watcher = getattr(self, "_active_watcher", None)
+        if watcher is not None and hasattr(watcher, "wake_up"):
+            watcher.wake_up()
+        elif watcher is not None and hasattr(watcher, "_wake_up"):
             watcher._wake_up()
 
     @property

@@ -621,6 +621,21 @@ class ChannelCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("investigate telegram channel failure", prompt_files[0].read_text(encoding="utf-8"))
             self.assertIn("Queued", _last_reply(update))
 
+    async def test_channel_run_command_wakes_daemon_after_queue_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = mock.MagicMock()
+            runner.shutdown_requested = False
+            runner.in_progress_snapshot.return_value = frozenset()
+            bot, runner, _ = _make_bot(root, mock_runner=runner)
+            update = _make_channel_update("/run investigate queue latency")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            runner.notify_prompt_enqueued.assert_called_once()
+
     async def test_channel_ask_command_queues_fast_direct_response_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
