@@ -15,6 +15,7 @@ from dormammu.config_resolvers import (
     ConfigRuntimePathResolver,
 )
 from dormammu.hooks import HookCatalog, load_hook_config_layer, resolve_hook_catalog
+from dormammu.llm import LlmConfig, parse_llm_config
 from dormammu.mcp import (
     EffectiveMcpServer,
     McpCatalog,
@@ -325,6 +326,10 @@ def _parse_config_payload_fields(
             config_payload.get("telegram"),
             config_path=config_file,
         ),
+        "llm_config": parse_llm_config(
+            config_payload.get("ai"),
+            config_path=config_file,
+        ),
         "process_timeout_seconds": (
             int(config_payload["process_timeout_seconds"])
             if "process_timeout_seconds" in config_payload
@@ -336,6 +341,14 @@ def _parse_config_payload_fields(
 
 SETTABLE_SCALAR_KEYS: frozenset[str] = frozenset({
     "active_agent_cli",
+    "ai.auth.api_key",
+    "ai.auth.api_key_env",
+    "ai.auth.oauth_token",
+    "ai.auth.oauth_token_env",
+    "ai.auth.type",
+    "ai.base_url",
+    "ai.model",
+    "ai.provider",
     "telegram.bot_token",
 })
 SETTABLE_LIST_KEYS: frozenset[str] = frozenset({
@@ -676,6 +689,7 @@ class AppConfig:
     guidance_files: tuple[Path, ...] = ()
     default_guidance_files: tuple[Path, ...] = ()
     telegram_config: TelegramConfig | None = None
+    llm_config: LlmConfig | None = None
     agents: AgentsConfig | None = None
     agent_profiles: dict[str, AgentProfile] | None = None
     process_timeout_seconds: int | None = None
@@ -766,6 +780,7 @@ class AppConfig:
             token_exhaustion_patterns=parsed_config_fields["token_exhaustion_patterns"],
             default_guidance_files=asset_layout.default_guidance_files,
             telegram_config=parsed_config_fields["telegram_config"],
+            llm_config=parsed_config_fields["llm_config"],
             agents=agents_config,
             agent_profiles=None,
             process_timeout_seconds=parsed_config_fields["process_timeout_seconds"],
@@ -966,6 +981,7 @@ class AppConfig:
             "guidance_files": [str(path) for path in self.guidance_files],
             "default_guidance_files": [str(path) for path in self.default_guidance_files],
             "telegram_config": self.telegram_config.to_dict() if self.telegram_config else None,
+            "ai": self.llm_config.to_dict() if self.llm_config else None,
             "agents": self.agents.to_dict() if self.agents else None,
             "agent_profiles": (
                 {

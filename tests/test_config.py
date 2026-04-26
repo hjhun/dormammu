@@ -183,6 +183,55 @@ class ConfigTests(unittest.TestCase):
                 ("usage limit exceeded", "quota exhausted"),
             )
 
+    def test_load_reads_ai_config_and_redacts_secret_in_config_dump(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "dormammu.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "ai": {
+                            "provider": "openai",
+                            "model": "gpt-4.1-mini",
+                            "auth": {
+                                "type": "api_key",
+                                "api_key": "sk-secret",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=root)
+
+            self.assertIsNotNone(config.llm_config)
+            self.assertEqual(config.llm_config.provider, "openai")
+            self.assertEqual(config.llm_config.auth.api_key, "sk-secret")
+            self.assertEqual(config.to_dict()["ai"]["auth"]["api_key"], "***")
+
+    def test_load_rejects_non_openai_oauth_ai_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "ai": {
+                            "provider": "gemini",
+                            "model": "gemini-2.0-flash",
+                            "auth": {
+                                "type": "oauth",
+                                "oauth_token_env": "GEMINI_OAUTH_TOKEN",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "oauth.*openai"):
+                AppConfig.load(repo_root=root)
+
     def test_load_reads_global_config_from_home_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "repo"

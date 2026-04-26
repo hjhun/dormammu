@@ -75,6 +75,7 @@ def _live_progress_stream(base_stream: TextIO, *, verbose: bool) -> TextIO:
 
 
 _DEFAULT_MANAGED_PROCESS_TIMEOUT_SECONDS = 600
+_DAEMON_DIRECT_RESPONSE_DIRECTIVE = "DORMAMMU_REQUEST_CLASS: direct_response"
 
 
 def _with_runtime_cline_verbose(config: AppConfig, *, enabled: bool) -> AppConfig:
@@ -793,6 +794,29 @@ def _apply_autonomous_cli_overrides(daemon_config, args: argparse.Namespace):
     return _replace(daemon_config, autonomous=new_autonomous)
 
 
+def _enqueue_stdin_prompt_if_requested(args: argparse.Namespace, daemon_config) -> Path | None:
+    if not getattr(args, "stdin_prompt", False):
+        return None
+    prompt_text = sys.stdin.read()
+    if not prompt_text.strip():
+        print("daemonize stdin: empty input; no LLM prompt enqueued.", file=sys.stderr)
+        return None
+    from datetime import datetime, timezone
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    queue_config = getattr(daemon_config, "queue", None)
+    allowed_extensions = tuple(getattr(queue_config, "allowed_extensions", ()) or ())
+    extension = ".md" if not allowed_extensions or ".md" in allowed_extensions else allowed_extensions[0]
+    prompt_path = daemon_config.prompt_path / f"stdin_fast_{ts}{extension}"
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(
+        f"{_DAEMON_DIRECT_RESPONSE_DIRECTIVE}\n\n{prompt_text.strip()}\n",
+        encoding="utf-8",
+    )
+    print(f"daemonize stdin: queued direct-response prompt {prompt_path.name}", file=sys.stderr)
+    return prompt_path
+
+
 def _handle_daemonize(args: argparse.Namespace) -> int:
     config = _with_guidance_overrides(_load_config(args.repo_root, discover=args.repo_root is not None), args.guidance_files)
     config = _with_runtime_cline_verbose(
@@ -837,6 +861,7 @@ def _handle_daemonize(args: argparse.Namespace) -> int:
             tg_stream = None
 
         runner = DaemonRunner(config, daemon_config, progress_stream=progress_stream)
+        _enqueue_stdin_prompt_if_requested(args, daemon_config)
 
         if tg_stream is not None and config.telegram_config is not None:
             from dormammu.telegram.bot import TelegramBot

@@ -514,6 +514,10 @@ class TelegramBot:
         self._log_channel_io(update, "input", command_text)
         parsed = self._parse_command(command_text)
         if parsed is None:
+            if command_text and not command_text.startswith("/"):
+                if not await self._guard(update):
+                    return
+                await self._enqueue_prompt(update, command_text, fast=True)
             return
         command, args = parsed
         handlers = {

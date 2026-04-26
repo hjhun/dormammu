@@ -407,7 +407,7 @@ Full reference: `dormammu --help` or `dormammu <command> --help`.
 
 | Option | Description |
 |--------|-------------|
-| `key` | Config key to set (e.g. `active_agent_cli`) |
+| `key` | Config key to set (for example `active_agent_cli`, `ai.provider`, `ai.model`, `ai.auth.type`, `ai.auth.api_key_env`) |
 | `value` | Value to assign |
 | `--add` | Append value to a list field |
 | `--remove` | Remove value from a list field |
@@ -420,6 +420,7 @@ Full reference: `dormammu --help` or `dormammu <command> --help`.
 |--------|-------------|
 | `--repo-root` | Repository root directory |
 | `--config` | Path to the daemon queue config file. Defaults to `~/.dormammu/daemonize.json` |
+| `--stdin` | Read stdin once and enqueue non-empty text as a direct-response prompt; empty stdin is ignored |
 | `--guidance-file` | Additional guidance files (repeatable) |
 | `--debug` | Write per-prompt progress logs under `result_path/../progress/` |
 
@@ -446,6 +447,14 @@ Resolved in this order:
   "token_exhaustion_patterns": [
     "usage limit", "quota exceeded", "rate limit exceeded"
   ],
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-4.1-mini",
+    "auth": {
+      "type": "api_key",
+      "api_key_env": "OPENAI_API_KEY"
+    }
+  },
   "agents": {
     "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
     "analyzer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
@@ -459,6 +468,18 @@ Resolved in this order:
   }
 }
 ```
+
+The optional `ai` block lets daemon direct-response prompts call an LLM API
+instead of an agent CLI. API key auth is supported for `openai`, `gemini`, and
+`claude`; OAuth bearer token auth is supported for `openai` only. Prefer
+`*_env` fields such as `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+`ANTHROPIC_API_KEY`, or `OPENAI_OAUTH_TOKEN`; inline secrets are redacted from
+`show-config`.
+
+With `ai` configured, `dormammu daemonize --stdin` converts non-empty stdin into
+a direct-response prompt and skips empty stdin without contacting an LLM.
+Telegram channel posts that do not start with a slash command are also queued
+as direct-response prompts.
 
 When `agents` is configured, all run modes (`run`, `run-once`, `daemonize`)
 use the role-based pipeline. Providing `--agent-cli` on the command line reverts

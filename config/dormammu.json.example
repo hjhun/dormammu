@@ -16,6 +16,50 @@
     "token limit",
     "insufficient credits"
   ],
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-4.1-mini",
+    "auth": {
+      "type": "api_key",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "timeout_seconds": 60,
+    "max_output_tokens": 1024
+  },
+  "ai_provider_examples": {
+    "openai_api_key": {
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "auth": {
+        "type": "api_key",
+        "api_key_env": "OPENAI_API_KEY"
+      }
+    },
+    "openai_oauth": {
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "auth": {
+        "type": "oauth",
+        "oauth_token_env": "OPENAI_OAUTH_TOKEN"
+      }
+    },
+    "gemini_api_key": {
+      "provider": "gemini",
+      "model": "gemini-2.0-flash",
+      "auth": {
+        "type": "api_key",
+        "api_key_env": "GEMINI_API_KEY"
+      }
+    },
+    "claude_api_key": {
+      "provider": "claude",
+      "model": "claude-sonnet-4-5",
+      "auth": {
+        "type": "api_key",
+        "api_key_env": "ANTHROPIC_API_KEY"
+      }
+    }
+  },
   "agents": {
     "refiner": {
       "cli": "claude",

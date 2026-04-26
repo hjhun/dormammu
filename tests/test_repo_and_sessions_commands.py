@@ -653,6 +653,24 @@ class ChannelCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("why is telegram slow", content)
             self.assertIn("Queued fast path", _last_reply(update))
 
+    async def test_channel_plain_text_queues_fast_direct_response_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, _ = _make_bot(root)
+            update = _make_channel_update("summarize this channel request")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            prompt_files = sorted(bot._daemon_config.prompt_path.glob("tg_fast_*.md"))
+            self.assertEqual(len(prompt_files), 1)
+            content = prompt_files[0].read_text(encoding="utf-8")
+            self.assertIn("DORMAMMU_REQUEST_CLASS: direct_response", content)
+            self.assertIn("summarize this channel request", content)
+            self.assertIn("Queued fast path", _last_reply(update))
+            runner.notify_prompt_enqueued.assert_called_once()
+
     async def test_channel_run_fast_command_queues_fast_direct_response_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
