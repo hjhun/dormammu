@@ -29,6 +29,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -543,6 +544,37 @@ class RepoAndClearSessionsRegistrationTests(unittest.TestCase):
 
 class ChannelCommandTests(unittest.IsolatedAsyncioTestCase):
 
+    def _assert_channel_reply_without_markup(self, update: mock.MagicMock, expected: str) -> None:
+        reply = _last_reply(update)
+        kwargs = _last_reply_kwargs(update)
+        self.assertIn(expected, reply)
+        self.assertNotIn("reply_markup", kwargs)
+        update.channel_post.reply_text.assert_called_once()
+
+    async def test_channel_start_command_replies_without_inline_keyboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/start")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            self._assert_channel_reply_without_markup(update, "dormammu bot commands")
+
+    async def test_channel_help_command_replies_without_inline_keyboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/help")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            self._assert_channel_reply_without_markup(update, "dormammu bot commands")
+
     async def test_channel_status_command_uses_channel_post_reply(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -556,6 +588,18 @@ class ChannelCommandTests(unittest.IsolatedAsyncioTestCase):
             reply = _last_reply(update)
             self.assertIn("daemon status", reply.lower())
             update.channel_post.reply_text.assert_called_once()
+
+    async def test_channel_queue_command_replies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/queue")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            self._assert_channel_reply_without_markup(update, "Prompt queue")
 
     async def test_channel_run_command_queues_prompt_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -572,21 +616,126 @@ class ChannelCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("investigate telegram channel failure", prompt_files[0].read_text(encoding="utf-8"))
             self.assertIn("Queued", _last_reply(update))
 
-    async def test_channel_help_command_replies_without_inline_keyboard(self) -> None:
+    async def test_channel_run_command_without_args_replies_with_usage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             bot, _, _ = _make_bot(root)
-            update = _make_channel_update("/help")
+            update = _make_channel_update("/run")
             context = mock.MagicMock()
             context.args = []
 
             await bot._cmd_channel_post_command(update, context)
 
-            reply = _last_reply(update)
-            kwargs = _last_reply_kwargs(update)
-            self.assertIn("dormammu bot commands", reply)
-            self.assertNotIn("reply_markup", kwargs)
-            update.channel_post.reply_text.assert_called_once()
+            self._assert_channel_reply_without_markup(update, "Usage: /run")
+
+    async def test_channel_tail_commands_reply_without_inline_keyboard(self) -> None:
+        for command, expected in [
+            ("/tail", "Tail is currently"),
+            ("/tail on", "Tail ON"),
+            ("/tail off", "Tail OFF"),
+        ]:
+            with self.subTest(command=command):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    root = Path(tmpdir)
+                    bot, _, _ = _make_bot(root)
+                    update = _make_channel_update(command)
+                    context = mock.MagicMock()
+                    context.args = []
+
+                    await bot._cmd_channel_post_command(update, context)
+
+                    self._assert_channel_reply_without_markup(update, expected)
+
+    async def test_channel_result_command_replies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/result")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            self._assert_channel_reply_without_markup(update, "No results")
+
+    async def test_channel_sessions_command_replies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/sessions")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            self._assert_channel_reply_without_markup(update, "No sessions")
+
+    async def test_channel_repo_command_replies_without_inline_keyboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            current_repo = parent / "repo-a"
+            sibling_repo = parent / "repo-b"
+            current_repo.mkdir()
+            sibling_repo.mkdir()
+            (sibling_repo / "AGENTS.md").write_text("x", encoding="utf-8")
+            import subprocess
+            subprocess.run(["git", "init"], cwd=sibling_repo, capture_output=True, check=True)
+            bot, _, _ = _make_bot(current_repo)
+            update = _make_channel_update("/repo")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            self._assert_channel_reply_without_markup(update, "Select repository")
+            self.assertIn("repo-b", _last_reply(update))
+
+    async def test_channel_clear_sessions_command_replies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_channel_update("/clear_sessions")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            self._assert_channel_reply_without_markup(update, "nothing to clear")
+
+    async def test_channel_goals_command_replies_without_inline_keyboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            goals_dir = root / "goals"
+            goals_dir.mkdir()
+            (goals_dir / "sample-goal.md").write_text("goal", encoding="utf-8")
+            from dormammu.daemon.goals_config import GoalsConfig
+
+            bot, _, _ = _make_bot(root)
+            bot._daemon_config = replace(
+                bot._daemon_config,
+                goals=GoalsConfig(path=goals_dir, interval_minutes=60),
+            )
+            update = _make_channel_update("/goals")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            self._assert_channel_reply_without_markup(update, "Goals")
+            self.assertIn("sample-goal", _last_reply(update))
+
+    async def test_channel_shutdown_command_replies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, _ = _make_bot(root)
+            update = _make_channel_update("/shutdown")
+            context = mock.MagicMock()
+            context.args = []
+
+            await bot._cmd_channel_post_command(update, context)
+
+            runner.request_shutdown.assert_called_once()
+            self._assert_channel_reply_without_markup(update, "Graceful shutdown requested")
 
     async def test_channel_command_ignores_other_bot_mentions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

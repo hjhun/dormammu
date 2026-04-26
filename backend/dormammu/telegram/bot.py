@@ -67,7 +67,7 @@ class TelegramBot:
     is not configured.
 
     Outgoing progress messages are funnelled through an asyncio queue drained
-    by ``_drain_send_queue`` at a maximum of ~20 messages/second (50 ms
+    by ``_drain_outgoing_queue`` at a maximum of ~20 messages/second (50 ms
     interval).  This keeps the bot's event loop responsive to incoming commands
     even during heavy log streaming, and stays safely under Telegram's 30 msg/s
     per-bot API limit.
@@ -108,10 +108,10 @@ class TelegramBot:
         self._known_chats: set[int] = self._load_known_chats()
         self._known_chats_lock = threading.Lock()
         self._startup_error: BaseException | None = None
-        # Outgoing message queue — drained by _drain_send_queue at a controlled
+        # Outgoing message queue — drained by _drain_outgoing_queue at a controlled
         # rate so that heavy progress streaming cannot saturate the Telegram Bot
         # API (30 msg/s limit) and delay incoming command responses.
-        self._send_queue: asyncio.Queue[tuple[int, str]] | None = None
+        self._outgoing_queue: asyncio.Queue[tuple[int, str]] | None = None
         self._send_task: asyncio.Task[None] | None = None
         # Ephemeral list of repo paths shown in the last /repo inline keyboard.
         # Indexed by callback_data "repo_pick:<i>".  Lives only in the asyncio
@@ -213,43 +213,43 @@ class TelegramBot:
     def _send_message_sync(self, chat_id: int, text: str) -> None:
         """Thread-safe: enqueue a Telegram message from any thread.
 
-        The message is placed into ``_send_queue`` via
+        The message is placed into ``_outgoing_queue`` via
         ``loop.call_soon_threadsafe`` so that the asyncio event loop drains it
         at a controlled rate (``_SEND_INTERVAL_S``).  This prevents heavy
         progress streaming from flooding the API or starving incoming command
         handlers.
         """
-        if self._loop is None or self._send_queue is None:
+        if self._loop is None or self._outgoing_queue is None:
             return
         try:
-            self._loop.call_soon_threadsafe(self._put_to_send_queue, chat_id, text)
+            self._loop.call_soon_threadsafe(self._put_to_outgoing_queue, chat_id, text)
         except Exception as exc:
             _log.debug("_send_message_sync: could not schedule message (loop closed?): %s", exc)
 
-    def _put_to_send_queue(self, chat_id: int, text: str) -> None:
+    def _put_to_outgoing_queue(self, chat_id: int, text: str) -> None:
         """Called from within the event loop (via call_soon_threadsafe).
 
         Drops the message silently if the queue is full so that a burst of
         progress output cannot cause unbounded memory growth.
         """
-        if self._send_queue is None:
+        if self._outgoing_queue is None:
             return
         try:
-            self._send_queue.put_nowait((chat_id, text))
+            self._outgoing_queue.put_nowait((chat_id, text))
         except asyncio.QueueFull:
-            _log.debug("_put_to_send_queue: outgoing queue full; dropping message to chat %s", chat_id)
+            _log.debug("_put_to_outgoing_queue: outgoing queue full; dropping message to chat %s", chat_id)
 
-    async def _drain_send_queue(self) -> None:
+    async def _drain_outgoing_queue(self) -> None:
         """Background asyncio task: send queued messages at a controlled rate.
 
         Yielding ``asyncio.sleep(_SEND_INTERVAL_S)`` after every send lets the
         event loop process incoming Telegram updates (e.g. /status)
         between outgoing messages, keeping the bot responsive during long runs.
         """
-        assert self._send_queue is not None
+        assert self._outgoing_queue is not None
         while True:
             try:
-                chat_id, text = await self._send_queue.get()
+                chat_id, text = await self._outgoing_queue.get()
             except asyncio.CancelledError:
                 break
             try:
@@ -262,9 +262,9 @@ class TelegramBot:
                         action=f"queued Telegram send to chat {chat_id}",
                     )
             except Exception as exc:
-                _log.warning("_drain_send_queue: send to chat %s failed: %s", chat_id, exc)
+                _log.warning("_drain_outgoing_queue: send to chat %s failed: %s", chat_id, exc)
             finally:
-                self._send_queue.task_done()
+                self._outgoing_queue.task_done()
             # Yield control so incoming command handlers can run between sends.
             try:
                 await asyncio.sleep(self._SEND_INTERVAL_S)
@@ -363,9 +363,9 @@ class TelegramBot:
             await self._app.updater.start_polling(drop_pending_updates=True)
             # Start the rate-limited outgoing message drainer before signalling
             # readiness so that _send_message_sync can be called immediately.
-            self._send_queue = asyncio.Queue(maxsize=self._SEND_QUEUE_MAXSIZE)
+            self._outgoing_queue = asyncio.Queue(maxsize=self._SEND_QUEUE_MAXSIZE)
             self._send_task = asyncio.create_task(
-                self._drain_send_queue(), name="dormammu-telegram-sender"
+                self._drain_outgoing_queue(), name="dormammu-telegram-sender"
             )
             self._ready.set()  # signal successful startup
             try:
@@ -609,7 +609,7 @@ class TelegramBot:
         await self._reply(
             update,
             _HELP_TEXT,
-            reply_markup=None if self._is_channel_post_update(update) else self._build_menu_markup(),
+            reply_markup=self._build_menu_markup(),
         )
 
     async def _reply(
@@ -623,7 +623,7 @@ class TelegramBot:
         kwargs: dict[str, Any] = {}
         if parse_mode is not None:
             kwargs["parse_mode"] = parse_mode
-        if reply_markup is not None:
+        if reply_markup is not None and not self._is_channel_post_update(update):
             kwargs["reply_markup"] = reply_markup
         message = self._target_message(update)
         if message is not None:
