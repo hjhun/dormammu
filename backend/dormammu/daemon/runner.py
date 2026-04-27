@@ -59,9 +59,7 @@ from dormammu.lifecycle import (
     SupervisorHandoffPayload,
 )
 from dormammu.loop_runner import LoopRunResult, LoopRunRequest, LoopRunner
-from dormammu.llm import LlmClient
 from dormammu.request_routing import resolve_request_class
-from dormammu.results import ResultStatus, ResultVerdict, StageResult, TimingMetadata
 from dormammu.results import run_result_has_clean_terminal_stage_evidence
 from dormammu.state import StateRepository
 from dormammu.state.models import infer_primary_roadmap_phase_id, summarize_prompt_goal
@@ -698,15 +696,6 @@ class DaemonRunner:
             workflow_state=session_repository.read_workflow_state(),
         )
 
-        if scoped_config.llm_config is not None and request_class == "direct_response":
-            return self._run_llm_direct_response(
-                scoped_config=scoped_config,
-                session_repository=session_repository,
-                prompt_path=prompt_path,
-                prompt_text=prompt_text,
-                lifecycle=lifecycle,
-            )
-
         # When an agents config is present, use the full role-based pipeline.
         if scoped_config.agents is not None:
             evaluator_config = (
@@ -815,115 +804,6 @@ class DaemonRunner:
             ),
             progress_stream=self.progress_stream,
         ).run(request)
-
-    def _run_llm_direct_response(
-        self,
-        *,
-        scoped_config: AppConfig,
-        session_repository: StateRepository,
-        prompt_path: Path,
-        prompt_text: str,
-        lifecycle: LifecycleRecorder | None = None,
-    ) -> LoopRunResult:
-        if scoped_config.llm_config is None:
-            raise RuntimeError("LLM direct response requested without ai config.")
-        llm_prompt = self._strip_request_class_directive(prompt_text).strip()
-        if not llm_prompt:
-            raise RuntimeError("LLM direct response prompt is empty.")
-
-        started_at = _iso_now()
-        if lifecycle is not None:
-            lifecycle.emit(
-                event_type=LifecycleEventType.RUN_STARTED,
-                role="llm",
-                stage="direct_response",
-                status="started",
-                payload=RunEventPayload(
-                    source="llm_client",
-                    entrypoint="DaemonRunner._run_llm_direct_response",
-                    trigger="daemon_direct_response",
-                ),
-            )
-        response = LlmClient(scoped_config.llm_config).generate(llm_prompt)
-        completed_at = _iso_now()
-        report_path = session_repository.logs_dir / f"{prompt_path.stem}_llm_response.md"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            self._render_llm_response_report(response.text),
-            encoding="utf-8",
-        )
-        stage = StageResult(
-            role="llm",
-            stage_name="direct_response",
-            status=ResultStatus.COMPLETED,
-            verdict=ResultVerdict.DONE,
-            output=response.text,
-            summary=f"LLM direct response completed with {response.provider}:{response.model}.",
-            report_path=report_path,
-            timing=TimingMetadata(started_at=started_at, completed_at=completed_at),
-            metadata={
-                "provider": response.provider,
-                "model": response.model,
-                "request_id": response.request_id,
-            },
-        )
-        if lifecycle is not None:
-            lifecycle.emit(
-                event_type=LifecycleEventType.RUN_FINISHED,
-                role="llm",
-                stage="direct_response",
-                status="completed",
-                payload=RunEventPayload(
-                    source="llm_client",
-                    entrypoint="DaemonRunner._run_llm_direct_response",
-                    outcome="completed",
-                ),
-                artifact_refs=(
-                    ArtifactRef.from_path(
-                        kind="llm_response",
-                        path=report_path,
-                        label="llm_response",
-                        content_type="text/markdown",
-                        role="llm",
-                        stage_name="direct_response",
-                    ),
-                ),
-            )
-        return LoopRunResult(
-            status=ResultStatus.COMPLETED,
-            attempts_completed=1,
-            retries_used=0,
-            max_retries=0,
-            max_iterations=1,
-            latest_run_id=lifecycle.run_id if lifecycle is not None else None,
-            supervisor_verdict=ResultVerdict.DONE,
-            report_path=report_path,
-            continuation_prompt_path=None,
-            summary=stage.summary,
-            output=response.text,
-            stage_results=(stage,),
-            artifacts=stage.artifacts,
-            timing=TimingMetadata(started_at=started_at, completed_at=completed_at),
-            metadata={
-                "provider": response.provider,
-                "model": response.model,
-                "request_id": response.request_id,
-                "auth_type": scoped_config.llm_config.auth.type,
-            },
-        )
-
-    @staticmethod
-    def _strip_request_class_directive(prompt_text: str) -> str:
-        lines = []
-        for line in prompt_text.splitlines():
-            if line.strip().lower().startswith("dormammu_request_class:"):
-                continue
-            lines.append(line)
-        return "\n".join(lines)
-
-    @staticmethod
-    def _render_llm_response_report(text: str) -> str:
-        return "# LLM Response\n\n" + text.strip() + "\n"
 
     def _expected_roadmap_phase_id(self, repository: StateRepository) -> str:
         workflow_state = repository.read_workflow_state()

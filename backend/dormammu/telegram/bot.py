@@ -7,10 +7,14 @@ import logging
 import re
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from dormammu.agent import CliAdapter
+from dormammu.agent.models import AgentRunRequest
+from dormammu.daemon.cli_output import model_args, select_agent_output
 from dormammu.operator_services import GoalsOperatorService
 
 _log = logging.getLogger(__name__)
@@ -91,10 +95,12 @@ class TelegramBot:
     _REQUEST_POOL_TIMEOUT_S: float = 5.0
     # Retry background/broadcast send operations a small number of times before giving up.
     _SEND_RETRY_DELAYS_S: tuple[float, ...] = (1.0, 3.0)
-    # Command replies should fail fast so transient Telegram API timeouts do not
-    # make the bot feel unresponsive or block following updates for up to a minute.
+    # Command replies should tolerate modest Telegram API/network stalls. The
+    # handler concurrency keeps other updates moving while one send is waiting.
     _COMMAND_REPLY_TIMEOUT_S: float = 5.0
     _COMMAND_REPLY_RETRY_DELAYS_S: tuple[float, ...] = (0.5,)
+    _IMPORTANT_REPLY_TIMEOUT_S: float = 20.0
+    _IMPORTANT_REPLY_RETRY_DELAYS_S: tuple[float, ...] = (1.0, 3.0, 8.0)
     _CONCURRENT_UPDATES: int = 8
     _GET_UPDATES_POLL_TIMEOUT_S: int = 1
     _ALLOWED_UPDATES: tuple[str, ...] = (
@@ -131,6 +137,7 @@ class TelegramBot:
         self._outgoing_queue: asyncio.Queue[tuple[int, str]] | None = None
         self._send_task: asyncio.Task[None] | None = None
         self._commands_task: asyncio.Task[None] | None = None
+        self._direct_response_tasks: set[asyncio.Task[None]] = set()
         # Ephemeral list of repo paths shown in the last /repo inline keyboard.
         # Indexed by callback_data "repo_pick:<i>".  Lives only in the asyncio
         # event-loop thread so no lock is required.
@@ -385,6 +392,13 @@ class TelegramBot:
                     self._commands_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await self._commands_task
+                for task in tuple(self._direct_response_tasks):
+                    task.cancel()
+                if self._direct_response_tasks:
+                    await asyncio.gather(
+                        *tuple(self._direct_response_tasks),
+                        return_exceptions=True,
+                    )
                 await self._app.updater.stop()
                 await self._app.stop()
 
@@ -429,6 +443,7 @@ class TelegramBot:
         return chat_id in self._config.allowed_chat_ids
 
     async def _guard(self, update: Any) -> bool:
+        self._log_telegram_input_once(update)
         chat = update.effective_chat
         chat_id = chat.id if chat else None
         if chat_id is None or not self._is_allowed(chat_id):
@@ -483,17 +498,40 @@ class TelegramBot:
             return text
         return text[:_TELEGRAM_IO_LOG_LIMIT] + "...(truncated)"
 
-    def _log_channel_io(self, update: Any, direction: str, text: str) -> None:
-        if not self._is_channel_post_update(update):
-            return
+    def _log_telegram_io(self, update: Any, direction: str, text: str) -> None:
         chat = getattr(update, "effective_chat", None)
         chat_id = getattr(chat, "id", "unknown")
+        message = self._target_message(update)
+        user = getattr(update, "effective_user", None)
+        user_id = getattr(user, "id", "unknown")
+        message_id = getattr(message, "message_id", "unknown")
+        update_kind = "channel_post" if self._is_channel_post_update(update) else "message"
+        if getattr(update, "callback_query", None) is not None:
+            update_kind = "callback_query"
         logged_text = self._telegram_io_log_text(text)
         print(
-            f"telegram channel {direction}: chat_id={chat_id} text={logged_text}",
+            (
+                f"telegram {direction}: kind={update_kind} chat_id={chat_id} "
+                f"user_id={user_id} message_id={message_id} chars={len(text)} text={logged_text}"
+            ),
             file=sys.stderr,
             flush=True,
         )
+
+    def _log_telegram_input_once(self, update: Any) -> None:
+        if getattr(update, "_dormammu_input_logged", False) is True:
+            return
+        try:
+            setattr(update, "_dormammu_input_logged", True)
+        except Exception:
+            pass
+        callback_query = getattr(update, "callback_query", None)
+        if callback_query is not None:
+            self._log_telegram_io(update, "input", getattr(callback_query, "data", "") or "")
+            return
+        text = self._command_text(update)
+        if text:
+            self._log_telegram_io(update, "input", text)
 
     def _parse_command(self, text: str) -> tuple[str, list[str]] | None:
         match = re.match(r"^/([A-Za-z0-9_]+)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$", text)
@@ -511,13 +549,13 @@ class TelegramBot:
 
     async def _cmd_channel_post_command(self, update: Any, context: Any) -> None:
         command_text = self._command_text(update)
-        self._log_channel_io(update, "input", command_text)
+        self._log_telegram_input_once(update)
         parsed = self._parse_command(command_text)
         if parsed is None:
             if command_text and not command_text.startswith("/"):
                 if not await self._guard(update):
                     return
-                await self._enqueue_prompt(update, command_text, fast=True)
+                await self._reply_cli_response(update, command_text)
             return
         command, args = parsed
         handlers = {
@@ -629,19 +667,32 @@ class TelegramBot:
         )
         return None
 
-    async def _reply_text(self, message: Any, text: str, *, action: str, **kwargs: Any) -> Any | None:
+    async def _reply_text(
+        self,
+        message: Any,
+        text: str,
+        *,
+        action: str,
+        timeout_seconds: float | None = None,
+        retry_delays: tuple[float, ...] | None = None,
+        **kwargs: Any,
+    ) -> Any | None:
+        timeout = timeout_seconds if timeout_seconds is not None else self._COMMAND_REPLY_TIMEOUT_S
         request_kwargs = {
-            "connect_timeout": self._COMMAND_REPLY_TIMEOUT_S,
-            "read_timeout": self._COMMAND_REPLY_TIMEOUT_S,
-            "write_timeout": self._COMMAND_REPLY_TIMEOUT_S,
-            "pool_timeout": min(self._REQUEST_POOL_TIMEOUT_S, self._COMMAND_REPLY_TIMEOUT_S),
+            "connect_timeout": timeout,
+            "read_timeout": timeout,
+            "write_timeout": timeout,
+            "pool_timeout": min(self._REQUEST_POOL_TIMEOUT_S, timeout),
         }
         merged_kwargs = {**request_kwargs, **kwargs}
+        effective_retry_delays = (
+            retry_delays if retry_delays is not None else self._COMMAND_REPLY_RETRY_DELAYS_S
+        )
         try:
             return await self._perform_telegram_request(
                 lambda: message.reply_text(text, **merged_kwargs),
                 action=action,
-                retry_delays=self._COMMAND_REPLY_RETRY_DELAYS_S,
+                retry_delays=effective_retry_delays,
             )
         except Exception as exc:
             if "reply_markup" not in merged_kwargs:
@@ -662,8 +713,36 @@ class TelegramBot:
             return await self._perform_telegram_request(
                 lambda: message.reply_text(text, **fallback_kwargs),
                 action=f"{action} without reply markup",
-                retry_delays=self._COMMAND_REPLY_RETRY_DELAYS_S,
+                retry_delays=effective_retry_delays,
             )
+
+    async def _send_message_fallback(
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        action: str,
+        timeout_seconds: float,
+        retry_delays: tuple[float, ...],
+        parse_mode: str | None = None,
+    ) -> Any | None:
+        if self._app is None:
+            return None
+        kwargs: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+            "connect_timeout": timeout_seconds,
+            "read_timeout": timeout_seconds,
+            "write_timeout": timeout_seconds,
+            "pool_timeout": min(self._REQUEST_POOL_TIMEOUT_S, timeout_seconds),
+        }
+        if parse_mode is not None:
+            kwargs["parse_mode"] = parse_mode
+        return await self._perform_telegram_request(
+            lambda: self._app.bot.send_message(**kwargs),
+            action=action,
+            retry_delays=retry_delays,
+        )
 
     async def _handle_application_error(self, update: object, context: Any) -> None:
         error = getattr(context, "error", None)
@@ -700,6 +779,10 @@ class TelegramBot:
         text: str,
         parse_mode: str | None = None,
         reply_markup: Any = None,
+        action: str = "telegram command reply",
+        timeout_seconds: float | None = None,
+        retry_delays: tuple[float, ...] | None = None,
+        fallback_to_send_message: bool = True,
     ) -> None:
         """Send a reply whether the update came from a message or a callback query."""
         kwargs: dict[str, Any] = {}
@@ -709,8 +792,30 @@ class TelegramBot:
             kwargs["reply_markup"] = reply_markup
         message = self._target_message(update)
         if message is not None:
-            self._log_channel_io(update, "output", text)
-            await self._reply_text(message, text, action="telegram command reply", **kwargs)
+            self._log_telegram_io(update, "output", text)
+            sent = await self._reply_text(
+                message,
+                text,
+                action=action,
+                timeout_seconds=timeout_seconds,
+                retry_delays=retry_delays,
+                **kwargs,
+            )
+            if sent is not None or not fallback_to_send_message:
+                return
+            chat = getattr(update, "effective_chat", None)
+            chat_id = getattr(chat, "id", None)
+            if chat_id is None:
+                return
+            _log.warning("%s exhausted reply_text attempts; falling back to send_message", action)
+            await self._send_message_fallback(
+                chat_id=chat_id,
+                text=text,
+                action=f"{action} send_message fallback",
+                timeout_seconds=timeout_seconds or self._IMPORTANT_REPLY_TIMEOUT_S,
+                retry_delays=retry_delays or self._IMPORTANT_REPLY_RETRY_DELAYS_S,
+                parse_mode=parse_mode,
+            )
 
     async def _cmd_callback(self, update: Any, context: Any) -> None:
         query = update.callback_query
@@ -814,6 +919,134 @@ class TelegramBot:
             update,
             " ".join(context.args),
             fast=True,
+        )
+
+    def _track_direct_response_task(self, task: asyncio.Task[None]) -> None:
+        if not hasattr(self, "_direct_response_tasks"):
+            self._direct_response_tasks = set()
+        self._direct_response_tasks.add(task)
+
+        def _discard(completed: asyncio.Task[None]) -> None:
+            self._direct_response_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            exc = completed.exception()
+            if exc is not None:
+                _log.exception("telegram CLI direct-response task failed", exc_info=(type(exc), exc, exc.__traceback__))
+
+        task.add_done_callback(_discard)
+
+    async def _reply_cli_response(self, update: Any, prompt_text: str) -> None:
+        role_config = self._app_config.agents.developer if self._app_config.agents is not None else None
+        cli = (
+            role_config.resolve_cli(self._app_config.active_agent_cli)
+            if role_config is not None
+            else self._app_config.active_agent_cli
+        )
+        if cli is None:
+            await self._reply(
+                update,
+                "No CLI is configured. Set active_agent_cli or agents.developer.cli.",
+            )
+            return
+        model = role_config.model if role_config is not None else None
+        await self._reply(
+            update,
+            f"CLI request started: {cli.name}",
+        )
+        task = asyncio.create_task(
+            self._complete_cli_response(update, prompt_text, cli, model),
+            name="dormammu-telegram-cli-response",
+        )
+        self._track_direct_response_task(task)
+
+    async def _complete_cli_response(
+        self,
+        update: Any,
+        prompt_text: str,
+        cli: Path,
+        model: str | None,
+    ) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+
+            def _generate() -> str:
+                started = time.monotonic()
+                print(
+                    (
+                        "telegram cli request started: "
+                        f"cli={cli} model={model or 'default'} prompt_chars={len(prompt_text)}"
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                direct_prompt = "\n".join(
+                    [
+                        "Request class: direct_response",
+                        "This Telegram message should be handled in one pass.",
+                        "Do not invent a multi-phase workflow, slice list, or retry plan.",
+                        "Do not modify repository files unless the message explicitly asks for it.",
+                        "Answer directly, then stop.",
+                        "",
+                        "Message:",
+                        prompt_text.strip() or "(empty message)",
+                        "",
+                    ]
+                )
+                adapter = CliAdapter(
+                    self._app_config,
+                    live_output_stream=sys.stderr,
+                )
+                result = adapter.run_once(
+                    AgentRunRequest(
+                        cli_path=cli,
+                        prompt_text=direct_prompt,
+                        repo_root=self._app_config.repo_root,
+                        workdir=self._app_config.repo_root,
+                        extra_args=tuple(model_args(cli.name, model)),
+                        run_label=f"telegram-direct-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+                    )
+                )
+                stdout_text = result.stdout_path.read_text(encoding="utf-8") if result.stdout_path.exists() else ""
+                stderr_text = result.stderr_path.read_text(encoding="utf-8") if result.stderr_path.exists() else ""
+                output = select_agent_output(stdout_text, stderr_text).strip()
+                if result.exit_code != 0:
+                    raise RuntimeError(
+                        f"CLI request failed with exit code {result.exit_code}: "
+                        f"{output or '(no output)'}"
+                    )
+                elapsed = time.monotonic() - started
+                print(
+                    (
+                        "telegram cli request completed: "
+                        f"cli={cli} model={model or 'default'} "
+                        f"response_chars={len(output)} elapsed={elapsed:.2f}s"
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return output or "(empty response)"
+
+            response_text = await loop.run_in_executor(None, _generate)
+        except Exception as exc:
+            print(f"telegram cli request failed: {exc}", file=sys.stderr, flush=True)
+            await self._reply(
+                update,
+                f"CLI request failed: {exc}",
+                action="telegram cli failure reply",
+                timeout_seconds=self._IMPORTANT_REPLY_TIMEOUT_S,
+                retry_delays=self._IMPORTANT_REPLY_RETRY_DELAYS_S,
+            )
+            return
+        max_chars = 3800
+        if len(response_text) > max_chars:
+            response_text = response_text[:max_chars] + "\n...(truncated)"
+        await self._reply(
+            update,
+            response_text,
+            action="telegram cli response reply",
+            timeout_seconds=self._IMPORTANT_REPLY_TIMEOUT_S,
+            retry_delays=self._IMPORTANT_REPLY_RETRY_DELAYS_S,
         )
 
     async def _enqueue_prompt(self, update: Any, prompt_text: str, *, fast: bool) -> None:
@@ -1236,6 +1469,9 @@ class TelegramBot:
 
     async def _handle_text_input(self, update: Any, context: Any) -> None:
         """Process free-text input during active conversation flows (e.g. goals_add)."""
+        self._log_telegram_input_once(update)
+        if self._is_channel_post_update(update):
+            return
         chat = update.effective_chat
         if chat is None:
             return
@@ -1246,6 +1482,11 @@ class TelegramBot:
         pending = self._goals_pending.get(chat_id)
         if pending == "add_waiting":
             await self._handle_goals_add_content(update, context)
+            return
+
+        prompt_text = self._command_text(update)
+        if prompt_text:
+            await self._reply_cli_response(update, prompt_text)
 
     async def _handle_goals_add_content(self, update: Any, context: Any) -> None:
         chat_id = update.effective_chat.id

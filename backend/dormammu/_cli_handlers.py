@@ -799,7 +799,7 @@ def _enqueue_stdin_prompt_if_requested(args: argparse.Namespace, daemon_config) 
         return None
     prompt_text = sys.stdin.read()
     if not prompt_text.strip():
-        print("daemonize stdin: empty input; no LLM prompt enqueued.", file=sys.stderr)
+        print("daemonize stdin: empty input; no direct-response prompt enqueued.", file=sys.stderr)
         return None
     from datetime import datetime, timezone
 

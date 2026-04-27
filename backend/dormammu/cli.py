@@ -148,8 +148,6 @@ def build_parser() -> argparse.ArgumentParser:
             "Settable keys:\n"
             "  Scalar: active_agent_cli, telegram.bot_token\n"
             "  List:   token_exhaustion_patterns, fallback_agent_clis, telegram.allowed_chat_ids\n"
-            "  AI:     ai.provider, ai.model, ai.auth.type, ai.auth.api_key_env,\n"
-            "          ai.auth.oauth_token_env, ai.base_url\n"
         ),
         epilog=(
             "Examples:\n"
@@ -162,10 +160,6 @@ def build_parser() -> argparse.ArgumentParser:
             "  dormammu set-config telegram.bot_token 123456:ABC-DEF...\n"
             "  dormammu set-config telegram.allowed_chat_ids --add 987654321\n"
             "  dormammu set-config telegram.bot_token --unset\n"
-            "  dormammu set-config ai.provider openai\n"
-            "  dormammu set-config ai.model gpt-4.1-mini\n"
-            "  dormammu set-config ai.auth.type api_key\n"
-            "  dormammu set-config ai.auth.api_key_env OPENAI_API_KEY\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

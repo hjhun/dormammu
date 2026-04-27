@@ -23,7 +23,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import io
 import os
 import shutil
 import sys
@@ -31,6 +33,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,6 +123,15 @@ def _make_update(chat_id: int = 42) -> mock.MagicMock:
     return upd
 
 
+def _make_text_update(text: str, chat_id: int = 42) -> mock.MagicMock:
+    upd = _make_update(chat_id=chat_id)
+    upd.message.text = text
+    upd.message.caption = None
+    upd.message.reply_text = mock.AsyncMock()
+    upd.effective_message = upd.message
+    return upd
+
+
 def _last_reply(update: mock.MagicMock) -> str:
     message = getattr(update, "effective_message", None) or update.message
     return message.reply_text.call_args[0][0]
@@ -128,6 +140,12 @@ def _last_reply(update: mock.MagicMock) -> str:
 def _last_reply_kwargs(update: mock.MagicMock) -> dict:
     message = getattr(update, "effective_message", None) or update.message
     return message.reply_text.call_args[1]
+
+
+async def _wait_direct_response_tasks(bot) -> None:
+    tasks = tuple(getattr(bot, "_direct_response_tasks", ()) or ())
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 def _make_channel_update(text: str, chat_id: int = 42) -> mock.MagicMock:
@@ -653,23 +671,261 @@ class ChannelCommandTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("why is telegram slow", content)
             self.assertIn("Queued fast path", _last_reply(update))
 
-    async def test_channel_plain_text_queues_fast_direct_response_prompt(self) -> None:
+    async def test_channel_plain_text_replies_with_cli_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             bot, runner, _ = _make_bot(root)
+            bot._app_config = bot._app_config.with_overrides(
+                active_agent_cli=Path("codex"),
+            )
+            update = _make_channel_update("summarize this channel request")
+            context = mock.MagicMock()
+            context.args = []
+
+            def fake_run_once(request):
+                stdout_path = root / "stdout.txt"
+                stderr_path = root / "stderr.txt"
+                stdout_path.write_text("direct CLI reply", encoding="utf-8")
+                stderr_path.write_text("", encoding="utf-8")
+                return SimpleNamespace(stdout_path=stdout_path, stderr_path=stderr_path, exit_code=0)
+
+            with mock.patch("dormammu.telegram.bot.CliAdapter") as adapter_cls:
+                adapter_cls.return_value.run_once.side_effect = fake_run_once
+                await bot._cmd_channel_post_command(update, context)
+                await _wait_direct_response_tasks(bot)
+
+            prompt_files = sorted(bot._daemon_config.prompt_path.glob("tg_fast_*.md"))
+            self.assertEqual(prompt_files, [])
+            replies = [call.args[0] for call in update.channel_post.reply_text.call_args_list]
+            self.assertIn("CLI request started: codex", replies[0])
+            self.assertIn("direct CLI reply", _last_reply(update))
+            runner.notify_prompt_enqueued.assert_not_called()
+            request = adapter_cls.return_value.run_once.call_args.args[0]
+            self.assertIn("summarize this channel request", request.prompt_text)
+
+    async def test_channel_plain_text_schedules_cli_response_in_background(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            bot._app_config = bot._app_config.with_overrides(
+                active_agent_cli=Path("codex"),
+            )
+            update = _make_channel_update("slow request")
+            context = mock.MagicMock()
+            context.args = []
+            release = asyncio.Event()
+
+            async def fake_complete(*args):
+                await release.wait()
+
+            bot._complete_cli_response = mock.AsyncMock(side_effect=fake_complete)
+
+            await bot._cmd_channel_post_command(update, context)
+            await asyncio.sleep(0)
+
+            self.assertIn("CLI request started: codex", _last_reply(update))
+            self.assertTrue(bot._direct_response_tasks)
+            bot._complete_cli_response.assert_called_once()
+
+            release.set()
+            await _wait_direct_response_tasks(bot)
+
+    async def test_channel_plain_text_start_reply_omits_model_name(self) -> None:
+        from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            bot._app_config = bot._app_config.with_overrides(
+                active_agent_cli=Path("codex"),
+                agents=AgentsConfig(developer=RoleAgentConfig(model="gpt-5.5")),
+            )
+            update = _make_channel_update("slow request")
+            context = mock.MagicMock()
+            context.args = []
+            release = asyncio.Event()
+
+            async def fake_complete(*args):
+                await release.wait()
+
+            bot._complete_cli_response = mock.AsyncMock(side_effect=fake_complete)
+
+            await bot._cmd_channel_post_command(update, context)
+            await asyncio.sleep(0)
+
+            self.assertEqual(_last_reply(update), "CLI request started: codex")
+            self.assertNotIn("gpt-5.5", _last_reply(update))
+
+            release.set()
+            await _wait_direct_response_tasks(bot)
+
+    async def test_reply_falls_back_to_send_message_when_reply_text_exhausts_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            update = _make_text_update("hello")
+            bot._reply_text = mock.AsyncMock(return_value=None)
+            bot._send_message_fallback = mock.AsyncMock(return_value=object())
+
+            await bot._reply(
+                update,
+                "final answer",
+                action="telegram cli response reply",
+                timeout_seconds=20.0,
+                retry_delays=(1.0, 3.0, 8.0),
+            )
+
+            bot._reply_text.assert_awaited_once()
+            bot._send_message_fallback.assert_awaited_once_with(
+                chat_id=42,
+                text="final answer",
+                action="telegram cli response reply send_message fallback",
+                timeout_seconds=20.0,
+                retry_delays=(1.0, 3.0, 8.0),
+                parse_mode=None,
+            )
+
+    async def test_cli_response_uses_longer_telegram_send_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            bot._app_config = bot._app_config.with_overrides(
+                active_agent_cli=Path("codex"),
+            )
+            update = _make_channel_update("summarize this channel request")
+            context = mock.MagicMock()
+            context.args = []
+
+            def fake_run_once(request):
+                stdout_path = root / "stdout.txt"
+                stderr_path = root / "stderr.txt"
+                stdout_path.write_text("direct CLI reply", encoding="utf-8")
+                stderr_path.write_text("", encoding="utf-8")
+                return SimpleNamespace(stdout_path=stdout_path, stderr_path=stderr_path, exit_code=0)
+
+            with mock.patch("dormammu.telegram.bot.CliAdapter") as adapter_cls:
+                adapter_cls.return_value.run_once.side_effect = fake_run_once
+                original_reply = bot._reply
+                bot._reply = mock.AsyncMock(side_effect=original_reply)
+                await bot._cmd_channel_post_command(update, context)
+                await _wait_direct_response_tasks(bot)
+
+            final_reply = bot._reply.await_args_list[-1]
+            self.assertEqual(final_reply.args[1], "direct CLI reply")
+            self.assertEqual(final_reply.kwargs["action"], "telegram cli response reply")
+            self.assertEqual(final_reply.kwargs["timeout_seconds"], bot._IMPORTANT_REPLY_TIMEOUT_S)
+            self.assertEqual(final_reply.kwargs["retry_delays"], bot._IMPORTANT_REPLY_RETRY_DELAYS_S)
+
+    async def test_channel_plain_text_logs_input_output_and_cli_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            bot._app_config = bot._app_config.with_overrides(
+                active_agent_cli=Path("codex"),
+            )
+            update = _make_channel_update("summarize this channel request")
+            context = mock.MagicMock()
+            context.args = []
+
+            def fake_run_once(request):
+                stdout_path = root / "stdout.txt"
+                stderr_path = root / "stderr.txt"
+                stdout_path.write_text("direct CLI reply", encoding="utf-8")
+                stderr_path.write_text("", encoding="utf-8")
+                return SimpleNamespace(stdout_path=stdout_path, stderr_path=stderr_path, exit_code=0)
+
+            with mock.patch("dormammu.telegram.bot.CliAdapter") as adapter_cls, mock.patch("sys.stderr", io.StringIO()) as stderr:
+                adapter_cls.return_value.run_once.side_effect = fake_run_once
+                await bot._cmd_channel_post_command(update, context)
+                await _wait_direct_response_tasks(bot)
+
+            logs = stderr.getvalue()
+            self.assertIn("telegram input: kind=channel_post", logs)
+            self.assertIn("telegram output: kind=channel_post", logs)
+            self.assertIn("telegram cli request started: cli=codex", logs)
+            self.assertIn("telegram cli request completed: cli=codex", logs)
+
+    async def test_channel_plain_text_without_cli_config_replies_with_setup_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, _ = _make_bot(root)
+            bot._app_config = bot._app_config.with_overrides(active_agent_cli=None, agents=None)
             update = _make_channel_update("summarize this channel request")
             context = mock.MagicMock()
             context.args = []
 
             await bot._cmd_channel_post_command(update, context)
 
+            self.assertEqual(list(bot._daemon_config.prompt_path.glob("tg_fast_*.md")), [])
+            self.assertIn("No CLI is configured", _last_reply(update))
+            runner.notify_prompt_enqueued.assert_not_called()
+
+    async def test_plain_text_message_replies_with_cli_response(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, runner, _ = _make_bot(root)
+            bot._app_config = bot._app_config.with_overrides(
+                active_agent_cli=Path("codex"),
+            )
+            update = _make_text_update("summarize this user message")
+            context = mock.MagicMock()
+            context.args = []
+
+            def fake_run_once(request):
+                stdout_path = root / "stdout.txt"
+                stderr_path = root / "stderr.txt"
+                stdout_path.write_text("direct message CLI reply", encoding="utf-8")
+                stderr_path.write_text("", encoding="utf-8")
+                return SimpleNamespace(stdout_path=stdout_path, stderr_path=stderr_path, exit_code=0)
+
+            with mock.patch("dormammu.telegram.bot.CliAdapter") as adapter_cls:
+                adapter_cls.return_value.run_once.side_effect = fake_run_once
+                await bot._handle_text_input(update, context)
+                await _wait_direct_response_tasks(bot)
+
             prompt_files = sorted(bot._daemon_config.prompt_path.glob("tg_fast_*.md"))
-            self.assertEqual(len(prompt_files), 1)
-            content = prompt_files[0].read_text(encoding="utf-8")
-            self.assertIn("DORMAMMU_REQUEST_CLASS: direct_response", content)
-            self.assertIn("summarize this channel request", content)
-            self.assertIn("Queued fast path", _last_reply(update))
-            runner.notify_prompt_enqueued.assert_called_once()
+            self.assertEqual(prompt_files, [])
+            replies = [call.args[0] for call in update.message.reply_text.call_args_list]
+            self.assertIn("CLI request started: codex", replies[0])
+            self.assertIn("direct message CLI reply", _last_reply(update))
+            runner.notify_prompt_enqueued.assert_not_called()
+            request = adapter_cls.return_value.run_once.call_args.args[0]
+            self.assertIn("summarize this user message", request.prompt_text)
+
+    async def test_plain_text_message_keeps_goals_add_flow_before_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            bot._app_config = bot._app_config.with_overrides(
+                active_agent_cli=Path("codex"),
+            )
+            update = _make_text_update("Investigate queue latency")
+            context = mock.MagicMock()
+            context.args = []
+            bot._goals_pending[42] = "add_waiting"
+
+            with mock.patch("dormammu.telegram.bot.CliAdapter") as adapter_cls:
+                await bot._handle_text_input(update, context)
+
+            adapter_cls.assert_not_called()
+            self.assertNotIn(42, bot._goals_pending)
+
+    async def test_channel_plain_text_is_not_processed_twice_by_plain_text_handler(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bot, _, _ = _make_bot(root)
+            bot._app_config = bot._app_config.with_overrides(
+                active_agent_cli=Path("codex"),
+            )
+            update = _make_channel_update("summarize this channel request")
+            context = mock.MagicMock()
+            context.args = []
+
+            with mock.patch("dormammu.telegram.bot.CliAdapter") as adapter_cls:
+                await bot._handle_text_input(update, context)
+
+            adapter_cls.assert_not_called()
+            update.channel_post.reply_text.assert_not_called()
 
     async def test_channel_run_fast_command_queues_fast_direct_response_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

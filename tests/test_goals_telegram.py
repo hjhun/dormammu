@@ -43,6 +43,8 @@ def _make_bot(tmp_path: Path, *, goals_path: Path | None = None) -> Any:
     daemon_cfg = _make_daemon_config(goals_path)
     app_cfg = MagicMock()
     app_cfg.repo_root = tmp_path
+    app_cfg.active_agent_cli = None
+    app_cfg.agents = None
     runner = MagicMock()
     runner.in_progress_snapshot.return_value = frozenset()
 
@@ -56,6 +58,7 @@ def _make_bot(tmp_path: Path, *, goals_path: Path | None = None) -> Any:
     bot._pending_repo_choices = []
     bot._goals_pending = {}
     bot._pending_goal_choices = []
+    bot._direct_response_tasks = set()
     return bot
 
 
@@ -249,7 +252,7 @@ class TestGoalsAddFlow:
 
         bot._handle_goals_add_content.assert_called_once()
 
-    def test_handle_text_input_ignores_when_no_pending(self, tmp_path: Path) -> None:
+    def test_handle_text_input_without_pending_routes_to_cli_fallback(self, tmp_path: Path) -> None:
         bot = _make_bot(tmp_path)
         bot._is_allowed = lambda cid: True
         bot._handle_goals_add_content = AsyncMock()
@@ -258,6 +261,7 @@ class TestGoalsAddFlow:
         _run(bot._handle_text_input(update, _make_context()))
 
         bot._handle_goals_add_content.assert_not_called()
+        assert "No CLI is configured" in update.message.reply_text.call_args[0][0]
 
     def test_stem_derived_from_first_line(self, tmp_path: Path) -> None:
         goals_dir = tmp_path / "goals"

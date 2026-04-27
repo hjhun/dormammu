@@ -393,11 +393,6 @@ dormammu set-config fallback_agent_clis gemini --remove
 # Write to global config instead of project config
 dormammu set-config active_agent_cli codex --global
 
-# Configure daemon direct-response LLM auth through environment variables
-dormammu set-config ai.provider openai
-dormammu set-config ai.model gpt-4.1-mini
-dormammu set-config ai.auth.type api_key
-dormammu set-config ai.auth.api_key_env OPENAI_API_KEY
 ```
 
 ### `dormammu inspect-cli`
@@ -500,7 +495,7 @@ direct-response prompt:
 printf 'Summarize the current daemon queue' | dormammu daemonize --repo-root . --stdin
 ```
 
-Empty or whitespace-only stdin is ignored and does not call the configured LLM.
+Empty or whitespace-only stdin is ignored and does not enqueue work.
 
 ---
 
@@ -535,16 +530,6 @@ Full example:
     "token limit",
     "insufficient credits"
   ],
-  "ai": {
-    "provider": "openai",
-    "model": "gpt-4.1-mini",
-    "auth": {
-      "type": "api_key",
-      "api_key_env": "OPENAI_API_KEY"
-    },
-    "timeout_seconds": 60,
-    "max_output_tokens": 1024
-  },
   "agents": {
     "analyzer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
     "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
@@ -567,19 +552,17 @@ Full example:
 | `fallback_agent_clis` | Ordered list of fallback CLIs for quota/token exhaustion |
 | `cli_overrides` | Per-CLI extra arguments and settings |
 | `token_exhaustion_patterns` | Patterns in agent output that trigger CLI fallback |
-| `ai` | Optional LLM provider settings for daemon direct-response prompts |
 | `hooks` | Optional lifecycle hook definitions for policy, auditing, and annotations |
 | `mcp` | Optional MCP server catalog, profile allowlists, and per-server transport metadata |
 | `agents` | Role-based pipeline CLI and model assignments |
 | `worktree` | Optional managed worktree settings for isolated stage execution |
 
-`ai.provider` supports `openai`, `gemini`, and `claude`. API key auth is
-supported for all three through `ai.auth.type: "api_key"` plus either
-`ai.auth.api_key` or `ai.auth.api_key_env`. OAuth bearer token auth is supported
-only for OpenAI through `ai.auth.type: "oauth"` plus either
-`ai.auth.oauth_token` or `ai.auth.oauth_token_env`. Prefer environment-variable
-references; inline `api_key` and `oauth_token` values are redacted from
-`show-config`.
+DORMAMMU does not store provider LLM credentials or call provider LLM APIs
+directly. Direct-response prompts are handled through the configured agent CLI,
+so provider login, model selection, and token refresh remain the CLI's
+responsibility. Configure `active_agent_cli`, `cli_overrides`, and role
+`agents.*.model` values when you need to control which CLI handles immediate
+Telegram or daemon direct-response work.
 
 When `agents` is configured, all run modes use the role-based pipeline.
 `analyzer` is goals/autonomous-only. Goals automation may use
@@ -1460,12 +1443,12 @@ supervised pipeline, and writes a result report to `result_path`.
 dormammu daemonize --repo-root . --config daemonize.json
 ```
 
-When runtime `ai` config is present, direct-response prompts can be answered
-through the configured LLM provider. `daemonize --stdin` converts non-empty
-stdin into a direct-response prompt; empty stdin is skipped. Telegram channel
-posts without a slash command are also queued as direct-response prompts, while
-existing channel commands such as `/run`, `/ask`, `/status`, and `/goals`
-keep their current behavior.
+Direct-response prompts are handled through the configured agent CLI.
+`daemonize --stdin` converts non-empty stdin into a direct-response prompt;
+empty stdin is skipped. Telegram channel posts without a slash command are
+answered immediately through the configured CLI, while existing channel
+commands such as `/run`, `/ask`, `/status`, and `/goals` keep their current
+behavior.
 
 ### Queue ordering
 
