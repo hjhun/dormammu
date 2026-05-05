@@ -466,8 +466,15 @@ handled through the configured agent CLI, so the CLI owns provider login,
 model selection, and token refresh. `dormammu daemonize --stdin` converts
 non-empty stdin into a direct-response prompt and skips empty stdin. Telegram
 channel posts that do not start with a slash command are answered immediately
-by running the configured CLI; slash commands such as `/run`, `/ask`, and
-`/status` keep their existing queue/control behavior.
+by running the configured CLI with persistent conversation context. That
+context is stored under
+`~/.dormammu/workspace/<repo path from home>/.sessions/<session id>` and is
+automatically compacted as it approaches the 256 KiB prompt budget. This stores
+Telegram conversation text on local disk until the session is cleared. Use
+`/clearSession` or `/clear_session` in Telegram to clear the current
+conversation only; `/clear_sessions` still deletes operational workflow session
+data for the current repo. Slash commands such as `/run`, `/ask`, and `/status`
+keep their existing queue/control behavior.
 
 When `agents` is configured, all run modes (`run`, `run-once`, `daemonize`)
 use the role-based pipeline. Providing `--agent-cli` on the command line reverts

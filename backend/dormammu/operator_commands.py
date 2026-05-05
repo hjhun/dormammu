@@ -48,6 +48,7 @@ COMMAND_MATRIX: tuple[OperatorCommandSpec, ...] = (
     OperatorCommandSpec("telegram", "/result", "daemon", "DaemonRunner", "read", "Show result report content."),
     OperatorCommandSpec("telegram", "/sessions", "session", "StateRepository", "read", "Show recent session list."),
     OperatorCommandSpec("telegram", "/repo", "session", "StateRepository", "write", "Switch active repository context."),
+    OperatorCommandSpec("telegram", "/clearSession", "conversation", "TelegramConversationSessionStore", "write", "Clear current Telegram conversation session."),
     OperatorCommandSpec("telegram", "/clear_sessions", "session", "StateRepository", "write", "Delete current repo session data."),
     OperatorCommandSpec("telegram", "/goals", "goals", "GoalsOperatorService", "write", "List, add, or delete goal files."),
     OperatorCommandSpec("telegram", "/shutdown", "daemon", "DaemonRunner", "write", "Request daemon shutdown."),

@@ -16,6 +16,10 @@ from dormammu.agent import CliAdapter
 from dormammu.agent.models import AgentRunRequest
 from dormammu.daemon.cli_output import model_args, select_agent_output
 from dormammu.operator_services import GoalsOperatorService
+from dormammu.telegram.session_store import (
+    ConversationIdentity,
+    TelegramConversationSessionStore,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -39,6 +43,7 @@ _HELP_TEXT = (
     "📄 /result [name] — last (or named) result file content\n"
     "🗂️ /sessions — recent session list\n"
     "🗂️ /repo [path] — switch working repo (or pick from sibling list)\n"
+    "🧹 /clearSession — clear the current Telegram conversation session\n"
     "🗑️ /clear_sessions — delete all session data for the current repo\n"
     "🎯 /goals — list, add, or delete goal files\n"
     "🔌 /shutdown — finish current prompt then stop the daemon\n"
@@ -57,6 +62,7 @@ _MENU_KEYBOARD_BASE = [
     ],
     [
         {"text": "🗑️ Clear Sessions", "callback_data": "clear_sessions"},
+        {"text": "🧹 Clear Chat", "callback_data": "clear_session"},
         {"text": "🔌 Shutdown", "callback_data": "shutdown"},
     ],
 ]
@@ -138,6 +144,7 @@ class TelegramBot:
         self._send_task: asyncio.Task[None] | None = None
         self._commands_task: asyncio.Task[None] | None = None
         self._direct_response_tasks: set[asyncio.Task[None]] = set()
+        self._conversation_session_locks: dict[str, asyncio.Lock] = {}
         # Ephemeral list of repo paths shown in the last /repo inline keyboard.
         # Indexed by callback_data "repo_pick:<i>".  Lives only in the asyncio
         # event-loop thread so no lock is required.
@@ -338,6 +345,8 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("result", self._cmd_result))
         self._app.add_handler(CommandHandler("sessions", self._cmd_sessions))
         self._app.add_handler(CommandHandler("repo", self._cmd_repo))
+        self._app.add_handler(CommandHandler("clearSession", self._cmd_clear_session))
+        self._app.add_handler(CommandHandler("clear_session", self._cmd_clear_session))
         self._app.add_handler(CommandHandler("clear_sessions", self._cmd_clear_sessions))
         self._app.add_handler(CommandHandler("goals", self._cmd_goals))
         self._app.add_handler(CommandHandler("shutdown", self._cmd_shutdown))
@@ -423,6 +432,7 @@ class TelegramBot:
                     bot_command_cls("result", "📄 last result"),
                     bot_command_cls("sessions", "🗂️ session list"),
                     bot_command_cls("repo", "🗂️ switch working repo"),
+                    bot_command_cls("clear_session", "🧹 clear conversation session"),
                     bot_command_cls("clear_sessions", "🗑️ clear session data"),
                     bot_command_cls("goals", "🎯 list/add/delete goals"),
                     bot_command_cls("shutdown", "🔌 graceful daemon shutdown"),
@@ -570,6 +580,8 @@ class TelegramBot:
             "result": self._cmd_result,
             "sessions": self._cmd_sessions,
             "repo": self._cmd_repo,
+            "clearsession": self._cmd_clear_session,
+            "clear_session": self._cmd_clear_session,
             "clear_sessions": self._cmd_clear_sessions,
             "goals": self._cmd_goals,
             "shutdown": self._cmd_shutdown,
@@ -841,6 +853,8 @@ class TelegramBot:
             await self._send_repo(update, context)
         elif data == "clear_sessions":
             await self._send_clear_sessions(update, context)
+        elif data == "clear_session":
+            await self._send_clear_session(update, context)
         elif data.startswith("repo_pick:"):
             await self._handle_repo_pick(update, data[len("repo_pick:"):])
         elif data == "goals":
@@ -936,6 +950,21 @@ class TelegramBot:
 
         task.add_done_callback(_discard)
 
+    def _conversation_session_store(self) -> TelegramConversationSessionStore:
+        return TelegramConversationSessionStore(self._app_config)
+
+    def _conversation_session_identity(self, update: Any) -> ConversationIdentity:
+        return TelegramConversationSessionStore.identity_from_update(update)
+
+    def _conversation_session_lock(self, session_id: str) -> asyncio.Lock:
+        if not hasattr(self, "_conversation_session_locks"):
+            self._conversation_session_locks = {}
+        lock = self._conversation_session_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._conversation_session_locks[session_id] = lock
+        return lock
+
     async def _reply_cli_response(self, update: Any, prompt_text: str) -> None:
         role_config = self._app_config.agents.developer if self._app_config.agents is not None else None
         cli = (
@@ -967,69 +996,68 @@ class TelegramBot:
         cli: Path,
         model: str | None,
     ) -> None:
+        store = self._conversation_session_store()
+        identity = self._conversation_session_identity(update)
+        lock = self._conversation_session_lock(identity.session_id)
         try:
-            loop = asyncio.get_running_loop()
+            async with lock:
+                loop = asyncio.get_running_loop()
+                snapshot = store.compact_if_needed(identity, current_message=prompt_text)
+                direct_prompt = store.build_prompt(snapshot, prompt_text)
 
-            def _generate() -> str:
-                started = time.monotonic()
-                print(
-                    (
-                        "telegram cli request started: "
-                        f"cli={cli} model={model or 'default'} prompt_chars={len(prompt_text)}"
-                    ),
-                    file=sys.stderr,
-                    flush=True,
-                )
-                direct_prompt = "\n".join(
-                    [
-                        "Request class: direct_response",
-                        "This Telegram message should be handled in one pass.",
-                        "Do not invent a multi-phase workflow, slice list, or retry plan.",
-                        "Do not modify repository files unless the message explicitly asks for it.",
-                        "Answer directly, then stop.",
-                        "",
-                        "Message:",
-                        prompt_text.strip() or "(empty message)",
-                        "",
-                    ]
-                )
-                adapter = CliAdapter(
-                    self._app_config,
-                    live_output_stream=sys.stderr,
-                )
-                result = adapter.run_once(
-                    AgentRunRequest(
-                        cli_path=cli,
-                        prompt_text=direct_prompt,
-                        repo_root=self._app_config.repo_root,
-                        workdir=self._app_config.repo_root,
-                        extra_args=tuple(model_args(cli.name, model)),
-                        run_label=f"telegram-direct-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+                def _generate() -> str:
+                    started = time.monotonic()
+                    print(
+                        (
+                            "telegram cli request started: "
+                            f"cli={cli} model={model or 'default'} "
+                            f"prompt_chars={len(direct_prompt)} session_id={identity.session_id}"
+                        ),
+                        file=sys.stderr,
+                        flush=True,
                     )
-                )
-                stdout_text = result.stdout_path.read_text(encoding="utf-8") if result.stdout_path.exists() else ""
-                stderr_text = result.stderr_path.read_text(encoding="utf-8") if result.stderr_path.exists() else ""
-                output = select_agent_output(stdout_text, stderr_text).strip()
-                if result.exit_code != 0:
-                    raise RuntimeError(
-                        f"CLI request failed with exit code {result.exit_code}: "
-                        f"{output or '(no output)'}"
+                    adapter = CliAdapter(
+                        self._app_config,
+                        live_output_stream=sys.stderr,
                     )
-                elapsed = time.monotonic() - started
-                print(
-                    (
-                        "telegram cli request completed: "
-                        f"cli={cli} model={model or 'default'} "
-                        f"response_chars={len(output)} elapsed={elapsed:.2f}s"
-                    ),
-                    file=sys.stderr,
-                    flush=True,
-                )
-                return output or "(empty response)"
+                    result = adapter.run_once(
+                        AgentRunRequest(
+                            cli_path=cli,
+                            prompt_text=direct_prompt,
+                            repo_root=self._app_config.repo_root,
+                            workdir=self._app_config.repo_root,
+                            extra_args=tuple(model_args(cli.name, model)),
+                            run_label=f"telegram-direct-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+                        )
+                    )
+                    stdout_text = result.stdout_path.read_text(encoding="utf-8") if result.stdout_path.exists() else ""
+                    stderr_text = result.stderr_path.read_text(encoding="utf-8") if result.stderr_path.exists() else ""
+                    output = select_agent_output(stdout_text, stderr_text).strip()
+                    if result.exit_code != 0:
+                        raise RuntimeError(
+                            f"CLI request failed with exit code {result.exit_code}: "
+                            f"{output or '(no output)'}"
+                        )
+                    elapsed = time.monotonic() - started
+                    print(
+                        (
+                            "telegram cli request completed: "
+                            f"cli={cli} model={model or 'default'} "
+                            f"response_chars={len(output)} elapsed={elapsed:.2f}s "
+                            f"session_id={identity.session_id}"
+                        ),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return output or "(empty response)"
 
-            response_text = await loop.run_in_executor(None, _generate)
+                response_text = await loop.run_in_executor(None, _generate)
+                store.append_turn(identity, role="user", text=prompt_text)
+                store.append_turn(identity, role="assistant", text=response_text)
         except Exception as exc:
             print(f"telegram cli request failed: {exc}", file=sys.stderr, flush=True)
+            store.append_turn(identity, role="user", text=prompt_text)
+            store.append_turn(identity, role="error", kind="cli_error", text=str(exc))
             await self._reply(
                 update,
                 f"CLI request failed: {exc}",
@@ -1300,6 +1328,27 @@ class TelegramBot:
         if not await self._guard(update):
             return
         await self._send_clear_sessions(update, context)
+
+    async def _cmd_clear_session(self, update: Any, context: Any) -> None:
+        if not await self._guard(update):
+            return
+        await self._send_clear_session(update, context)
+
+    async def _send_clear_session(self, update: Any, context: Any) -> None:
+        """Clear the current Telegram conversation session only."""
+        identity = self._conversation_session_identity(update)
+        async with self._conversation_session_lock(identity.session_id):
+            removed = self._conversation_session_store().clear(identity)
+        if removed:
+            await self._reply(
+                update,
+                f"🧹 Cleared conversation session: {identity.session_id}",
+            )
+        else:
+            await self._reply(
+                update,
+                f"🧹 No conversation session found: {identity.session_id}",
+            )
 
     async def _send_clear_sessions(self, update: Any, context: Any) -> None:
         """Delete all session subdirectories under the current sessions directory."""

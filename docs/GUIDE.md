@@ -1446,9 +1446,16 @@ dormammu daemonize --repo-root . --config daemonize.json
 Direct-response prompts are handled through the configured agent CLI.
 `daemonize --stdin` converts non-empty stdin into a direct-response prompt;
 empty stdin is skipped. Telegram channel posts without a slash command are
-answered immediately through the configured CLI, while existing channel
-commands such as `/run`, `/ask`, `/status`, and `/goals` keep their current
-behavior.
+answered immediately through the configured CLI with persistent conversation
+context. Conversation sessions are stored per repository and Telegram chat
+under `~/.dormammu/workspace/<repo path from home>/.sessions/<session id>`.
+DORMAMMU automatically compacts older turns as the context approaches the
+256 KiB prompt budget, keeping a rolling summary plus recent turns. This stores
+Telegram conversation text on local disk until the session is cleared. Use
+`/clearSession` or `/clear_session` to clear the current Telegram conversation
+session. `/clear_sessions` is separate and still deletes operational workflow
+session data for the current repo. Existing channel commands such as `/run`,
+`/ask`, `/status`, and `/goals` keep their current behavior.
 
 ### Queue ordering
 
