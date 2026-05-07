@@ -1,6 +1,6 @@
 ---
 name: test-authoring-agent
-description: Authors automated tests for the active Dormammu scope. Use after design and alongside development whenever unit, integration, smoke, or explicitly requested system tests need to be written. This skill owns test code and coverage design; tester owns execution against user scenarios.
+description: Authors automated tests for the active Dormammu scope. Use after design and alongside development whenever unit, integration, smoke, or explicitly requested system tests need to be written. This skill owns test code and coverage design; tester owns executable scenario validation.
 ---
 
 # Test Authoring Agent Skill
@@ -41,7 +41,7 @@ Record authored coverage, gaps, and blockers in that workspace.
 
 - Unit tests cover isolated logic and edge cases.
 - Integration tests cover cross-module, CLI, persistence, or runtime behavior.
-- Smoke tests cover the primary user-visible workflow with minimal depth.
+- Smoke tests cover the primary CLI or operator-visible workflow with minimal depth.
 - System tests require explicit prompt or acceptance-criteria demand and a real
   or equivalent executable environment.
 

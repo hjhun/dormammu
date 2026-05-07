@@ -36,7 +36,7 @@ instead of dropping straight back to the raw user prompt.
    run — print the loop-completion signal as the very last line of output so
    the dormammu runtime stops the loop.  The signal is the XML tag
    `promise` wrapping the word `COMPLETE` (no spaces, own line, no other
-   text on that line).  See `skills/committing-agent/SKILL.md` for the exact
+   text on that line).  See `skills/committer/SKILL.md` for the exact
    format.
 
 ## Expected Outcome

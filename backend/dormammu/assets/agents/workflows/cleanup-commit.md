@@ -9,13 +9,13 @@ Use this workflow when the active scope has already passed final verification an
 
 ## Skills To Use
 
-- `skills/committing-agent/SKILL.md`
+- `skills/committer/SKILL.md`
 
 ## Sequence
 
 1. Review the working tree and remove files that are unnecessary for the validated scope.
 2. Confirm `.dev` reflects the real completion state before staging.
-3. Use `skills/committing-agent/SKILL.md` to stage only the intended files and create the commit.
+3. Use `skills/committer/SKILL.md` to stage only the intended files and create the commit.
 4. If validation or final-verification evidence is missing, route back to `workflows/build-deploy-test-review.md` instead of forcing the commit.
 
 ## Outputs

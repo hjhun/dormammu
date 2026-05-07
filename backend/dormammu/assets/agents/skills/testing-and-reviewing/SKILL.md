@@ -1,6 +1,6 @@
 ---
 name: testing-and-reviewing
-description: Runs validation and review-oriented checks after development. Use when the active implementation must be tested through unit, integration, smoke, user-scenario, lint, build, or review checks before final verification or commit. Prefer the dedicated `tester` and `reviewer` skills when those stages are split.
+description: Runs validation and review-oriented checks after development. Use when the active implementation must be tested through unit, integration, smoke, CLI scenario, lint, build, or review checks before final verification or commit. Prefer the dedicated `tester` and `reviewer` skills when those stages are split.
 ---
 
 # Testing And Reviewing Skill
@@ -33,7 +33,7 @@ workspace.
 2. Confirm development and test authoring are complete enough to validate.
 3. Run relevant unit tests, integration tests, and smoke checks.
 4. Add lint, build, or packaging checks when touched files justify them.
-5. Execute user-scenario checks from requirements.
+5. Execute CLI and operator scenario checks from requirements.
 6. Review changed files for correctness, regressions, missed edges, memory
    risks, performance risks, and maintainability issues.
 7. Record findings first; if none, state that clearly.

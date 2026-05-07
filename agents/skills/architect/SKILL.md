@@ -1,19 +1,26 @@
 ---
 name: architect
-description: Produces architecture and OOAD design documents when the planner decides design is needed. Use for Dormammu architect-stage work, functional/non-functional requirement analysis, ISO-style quality attributes, module boundaries, interfaces, data contracts, state models, recovery behavior, and implementation-ready design handoff.
+description: Produce architecture and OOAD design documents when the planner includes an architect stage. Use for Dormammu functional and non-functional requirement analysis, ISO-style quality attributes, module boundaries, interfaces, data contracts, state models, recovery behavior, validation strategy, and implementation-ready design handoff.
 ---
 
 # Architect Skill
 
 Use this skill as the explicit architect-stage skill. In the built-in runtime,
-the compatibility role may still be called `designer`; the responsibilities
-are the same as the architect stage.
+the compatibility role may still be called `designer`, and the legacy packaged
+skill `designing-agent` remains valid. The responsibilities are the same as the
+architect stage.
+
+Run this skill only when `.dev/WORKFLOWS.md` includes Architect or when the
+user explicitly asks for design work. If implementation exposes a missing
+design decision, route back here from developer, tester, reviewer, or
+coding-workflow.
 
 ## Workflow
 
 1. Print `[[Architect]]` unless the runtime contract requires `[[Designer]]`.
 2. Read original and refined requirements.
-3. Read the planner output and active tasks.
+3. Read `.dev/WORKFLOWS.md`, `.dev/PLAN.md`, `.dev/TASKS.md`, and dashboard
+   state produced by planner.
 4. Analyze functional and non-functional requirements.
 5. Produce OOAD design with responsibilities, collaborations, interfaces, and
    state behavior.
@@ -21,8 +28,8 @@ are the same as the architect stage.
    security, compatibility, operability, portability, and usability.
 7. Define validation expectations for unit, integration, smoke, and optional
    system tests.
-8. Store the design in the active prompt workspace under `.dev/logs/` or the
-   planner-specified design path.
+8. Store the design in `.dev/DESIGN.md`, `.dev/logs/`, or the
+   planner-specified design path inside the active prompt workspace.
 
 ## Output
 

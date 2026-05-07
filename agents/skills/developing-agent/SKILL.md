@@ -56,7 +56,7 @@ root unless the runtime worktree guidance says otherwise.
 
 - Unit tests for isolated logic.
 - Integration tests for cross-module, CLI, state, or persistence behavior.
-- Smoke tests for the user-visible path or command-level workflow.
+- Smoke tests for the CLI-visible path or command-level workflow.
 - System tests only when explicitly required by the prompt or acceptance
   criteria.
 

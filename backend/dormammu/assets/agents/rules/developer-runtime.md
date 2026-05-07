@@ -34,8 +34,8 @@ Development rules:
 
 - Prefer small, verifiable increments.
 - Use TDD where feasible: unit tests for isolated logic, integration tests for
-  cross-module/runtime behavior, and smoke tests for the primary user-visible
-  path.
+  cross-module/runtime behavior, and smoke tests for the primary CLI or
+  operator-visible path.
 - Preserve unrelated user changes.
 - Keep product-code ownership separate from test-code ownership.
 - Do not mark a task complete until the code and state files agree.

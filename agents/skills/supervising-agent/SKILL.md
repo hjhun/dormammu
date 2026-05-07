@@ -67,7 +67,7 @@ incorrect, or low-confidence, route back to the responsible stage.
 - Planner complete: workflow, plan, and task files exist and align.
 - Architect complete: implementation contracts and quality tradeoffs are clear.
 - Developer complete: code changes match requirements and tests exist.
-- Tester complete: unit, integration, smoke, and user-scenario evidence is
+- Tester complete: unit, integration, smoke, and executable scenario evidence is
   recorded; failures include reproduction steps.
 - Reviewer complete: findings are resolved or explicitly accepted.
 - Committer ready: diff scope, cleanup, validation, and review all support a

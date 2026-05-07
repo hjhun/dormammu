@@ -101,5 +101,5 @@ workspace. Stage reports belong in `.dev/logs/`.
 ## Done Criteria
 
 The skill is complete when developers can implement without inventing module
-contracts, testers can derive user scenarios, and reviewers can compare code
+contracts, testers can derive executable scenarios, and reviewers can compare code
 against explicit design decisions.

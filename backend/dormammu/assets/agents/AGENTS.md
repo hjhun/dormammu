@@ -26,11 +26,13 @@ Start here, then route to the matching workflow document:
 - `workflows/cleanup-commit.md`
 
 There is no separate planning-and-design workflow document. Once planning is
-current, the supervisor routes directly to `skills/designing-agent/SKILL.md`
-when the planner decides an architect stage is needed.
+current, the supervisor routes directly to `skills/architect/SKILL.md` when the
+planner decides an architect stage is needed.
 
-Use `skills/supervising-agent/SKILL.md` as the top-level controller whenever
-the task spans multiple phases or the next workflow is not obvious.
+Use `skills/coding-workflow/SKILL.md` for end-to-end coding lifecycle
+coordination. Use `skills/supervising-agent/SKILL.md` as the lower-level
+controller when a running workflow needs state consistency checks, resume
+routing, or rework routing.
 
 ## Pipeline Overview
 
@@ -45,15 +47,17 @@ refine → plan → architect → develop + test-author → tester → reviewer 
                                  checkpoint
 ```
 
-Stages are not fixed. The planning agent generates an adaptive workflow in
-`.dev/WORKFLOWS.md` that includes only the stages the task actually needs and
-inserts evaluator checkpoints where complexity or risk warrants them.
+Stages are not fixed. The `planner` skill is the point where workflows are
+decided. It generates `.dev/WORKFLOWS.md` with only the stages the task needs
+and inserts evaluator checkpoints where complexity or risk warrants them.
+Downstream stages follow that file and route back to `planner` if the workflow
+must change.
 
 The mandatory prelude is `refine -> plan`. The post-plan evaluator checkpoint
 runs **only for goals-scheduler prompts**, not for interactive `run` or
 `run-once` execution. The post-commit final evaluator is also goals-scheduler
 only. Mid-pipeline evaluator checkpoints are optional and inserted by the
-planning agent when warranted.
+planner when warranted.
 
 ## Workflow Routing
 
@@ -69,11 +73,11 @@ Use `workflows/refine-plan.md` when:
 
 This workflow uses:
 
-- `skills/refining-agent/SKILL.md`
-- `skills/planning-agent/SKILL.md`
+- `skills/refiner/SKILL.md`
+- `skills/planner/SKILL.md`
 
 If requirements are already clear, skip refining and let the supervisor hand
-off from planning to `skills/designing-agent/SKILL.md` only when architecture
+off from planning to `skills/architect/SKILL.md` only when architecture
 or design is needed.
 
 ### Supervised Downstream Handoff
@@ -93,7 +97,7 @@ Use `workflows/develop-test-authoring.md` when:
 
 This workflow uses:
 
-- `skills/developing-agent/SKILL.md`
+- `skills/developer/SKILL.md`
 - `skills/test-authoring-agent/SKILL.md`
 
 ### Build Deploy And Test Review
@@ -120,28 +124,35 @@ Use `workflows/cleanup-commit.md` when:
 
 This workflow uses:
 
-- `skills/committing-agent/SKILL.md`
+- `skills/committer/SKILL.md`
 
 ## Naming Convention
 
-The distributable skill names under `skills/` do not use the old
-`-workflows` postfix.
+The canonical role skill names under `skills/` match the runtime roles.
 
 Use these skill names:
 
-- `refining-agent`
-- `planning-agent`
+- `refiner`
+- `planner`
 - `architect`
-- `designing-agent`
-- `developing-agent`
+- `developer`
 - `test-authoring-agent`
 - `tester`
 - `reviewer`
 - `building-and-deploying`
 - `testing-and-reviewing`
-- `committing-agent`
+- `committer`
+- `coding-workflow`
 - `supervising-agent`
 - `evaluating-agent`
+
+Legacy compatibility names remain packaged for older prompts and manifests:
+
+- `refining-agent` aliases `refiner`
+- `planning-agent` aliases `planner`
+- `designing-agent` aliases `architect`
+- `developing-agent` aliases `developer`
+- `committing-agent` aliases `committer`
 
 ## Runtime Rules
 
@@ -198,6 +209,14 @@ supervisor must:
 4. If `DECISION: PROCEED` — advance to the next stage.
 5. If `DECISION: REWORK` — route back to the stage indicated in the report.
 
+## Planner-Owned Workflow Decision
+
+`planner` owns the initial workflow decision for each task. It writes
+`.dev/WORKFLOWS.md`, `.dev/PLAN.md`, `.dev/TASKS.md`, and dashboard status in
+the active prompt workspace. Other skills may mark phase progress, but they
+should not materially change the selected stage sequence unless they route back
+to `planner`.
+
 ## Notes
 
 - Keep workflow paths and skill paths relative to `agents/`.
@@ -213,6 +232,6 @@ supervisor must:
   maps. `AGENTS.md` files are guidance, `workflows/*.md` files define stage
   sequences, and `skills/*/SKILL.md` files are the packaged built-in skill
   documents that may also participate in runtime skill discovery.
-- `.dev/WORKFLOWS.md` is generated per task by the planning agent. It is the
+- `.dev/WORKFLOWS.md` is generated per task by the `planner` skill. It is the
   authoritative process map for what stages will run and where evaluator
   checkpoints are placed.
