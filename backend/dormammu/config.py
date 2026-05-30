@@ -325,6 +325,11 @@ def _parse_config_payload_fields(
             config_payload.get("telegram"),
             config_path=config_file,
         ),
+        "web_config": _parse_web_config(
+            config_payload.get("web"),
+            root=root,
+            config_path=config_file,
+        ),
         "process_timeout_seconds": (
             int(config_payload["process_timeout_seconds"])
             if "process_timeout_seconds" in config_payload
@@ -602,6 +607,93 @@ def _default_fallback_agent_clis() -> tuple[FallbackCliConfig, ...]:
     return tuple(FallbackCliConfig(path=Path(name)) for name in DEFAULT_FALLBACK_AGENT_CLIS)
 
 
+@dataclass(frozen=True, slots=True)
+class WebConfig:
+    allowed_roots: tuple[Path, ...]
+    host: str | None = None
+    port: int | None = None
+    password_hash: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "allowed_roots": [str(path) for path in self.allowed_roots],
+            "host": self.host,
+            "port": self.port,
+            "password_configured": bool(self.password_hash),
+        }
+
+
+def _parse_web_allowed_roots(
+    value: Any,
+    *,
+    root: Path,
+    config_path: Path | None,
+) -> tuple[Path, ...]:
+    raw_roots = [str(root)] if value is None else value
+    source = str(config_path) if config_path is not None else DEFAULT_CONFIG_FILENAME
+    if not isinstance(raw_roots, list) or any(not isinstance(item, str) or not item.strip() for item in raw_roots):
+        raise RuntimeError(f"web.allowed_roots must be a JSON array of non-empty strings in {source}")
+    resolved: list[Path] = []
+    for raw in raw_roots:
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        resolved_path = candidate.resolve()
+        if resolved_path not in resolved:
+            resolved.append(resolved_path)
+    return tuple(resolved)
+
+
+def _parse_web_config(
+    value: Any,
+    *,
+    root: Path,
+    config_path: Path | None,
+) -> WebConfig:
+    source = str(config_path) if config_path is not None else DEFAULT_CONFIG_FILENAME
+    if value is None:
+        payload: Mapping[str, Any] = {}
+    elif isinstance(value, Mapping):
+        payload = value
+    else:
+        raise RuntimeError(f"web must be a JSON object in {source}")
+
+    host_raw = payload.get("host")
+    host: str | None = None
+    if host_raw is not None:
+        if not isinstance(host_raw, str) or not host_raw.strip():
+            raise RuntimeError(f"web.host must be a non-empty string in {source}")
+        host = host_raw.strip()
+
+    port_raw = payload.get("port")
+    port: int | None = None
+    if port_raw is not None:
+        try:
+            port = int(port_raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"web.port must be an integer in {source}") from exc
+        if port < 1 or port > 65535:
+            raise RuntimeError(f"web.port must be between 1 and 65535 in {source}")
+
+    password_hash_raw = payload.get("password_hash")
+    password_hash: str | None = None
+    if password_hash_raw is not None:
+        if not isinstance(password_hash_raw, str) or not password_hash_raw.strip():
+            raise RuntimeError(f"web.password_hash must be a non-empty string in {source}")
+        password_hash = password_hash_raw.strip()
+
+    return WebConfig(
+        allowed_roots=_parse_web_allowed_roots(
+            payload.get("allowed_roots"),
+            root=root,
+            config_path=config_path,
+        ),
+        host=host,
+        port=port,
+        password_hash=password_hash,
+    )
+
+
 def _normalize_cli_override_key(raw_key: str, *, config_dir: Path | None) -> str:
     candidate = Path(raw_key).expanduser()
     if candidate.is_absolute() or "/" in raw_key or raw_key.startswith("."):
@@ -676,6 +768,7 @@ class AppConfig:
     guidance_files: tuple[Path, ...] = ()
     default_guidance_files: tuple[Path, ...] = ()
     telegram_config: TelegramConfig | None = None
+    web_config: WebConfig = WebConfig(allowed_roots=())
     agents: AgentsConfig | None = None
     agent_profiles: dict[str, AgentProfile] | None = None
     process_timeout_seconds: int | None = None
@@ -766,6 +859,7 @@ class AppConfig:
             token_exhaustion_patterns=parsed_config_fields["token_exhaustion_patterns"],
             default_guidance_files=asset_layout.default_guidance_files,
             telegram_config=parsed_config_fields["telegram_config"],
+            web_config=parsed_config_fields["web_config"],
             agents=agents_config,
             agent_profiles=None,
             process_timeout_seconds=parsed_config_fields["process_timeout_seconds"],
@@ -966,6 +1060,7 @@ class AppConfig:
             "guidance_files": [str(path) for path in self.guidance_files],
             "default_guidance_files": [str(path) for path in self.default_guidance_files],
             "telegram_config": self.telegram_config.to_dict() if self.telegram_config else None,
+            "web_config": self.web_config.to_dict(),
             "agents": self.agents.to_dict() if self.agents else None,
             "agent_profiles": (
                 {

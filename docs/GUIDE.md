@@ -221,11 +221,20 @@ Each stage writes its output to `.dev/logs/`:
 curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
 ```
 
+Pass setup options after `bash -s --`, for example:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | \
+  bash -s -- --with-web --start-web --token "$(openssl rand -hex 24)"
+```
+
 ### From a Local Clone
 
 ```bash
-./scripts/install.sh
+./setup.sh --with-web
 ```
+
+`scripts/install.sh` remains as a compatibility wrapper for `setup.sh`.
 
 ### Editable Development Install
 
@@ -497,6 +506,20 @@ printf 'Summarize the current daemon queue' | dormammu daemonize --repo-root . -
 
 Empty or whitespace-only stdin is ignored and does not enqueue work.
 
+### `dormammu web`
+
+Start the token-protected browser console for live terminal sessions,
+Telegram conversation sessions, and common settings.
+
+```bash
+DORMAMMU_WEB_TOKEN="$(openssl rand -hex 24)" \
+  dormammu web --repo-root . --host 0.0.0.0 --port 9001
+```
+
+External binds require `--token` or `DORMAMMU_WEB_TOKEN` because the web
+terminal can execute shell commands. Terminal working directories are limited
+to `web.allowed_roots` from `dormammu.json`.
+
 ---
 
 ## Configuration Reference
@@ -530,6 +553,11 @@ Full example:
     "token limit",
     "insufficient credits"
   ],
+  "web": {
+    "allowed_roots": ["/home/you/projects/dormammu"],
+    "host": "0.0.0.0",
+    "port": 9001
+  },
   "agents": {
     "analyzer":  { "cli": "claude", "model": "claude-sonnet-4-6" },
     "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
@@ -554,6 +582,7 @@ Full example:
 | `token_exhaustion_patterns` | Patterns in agent output that trigger CLI fallback |
 | `hooks` | Optional lifecycle hook definitions for policy, auditing, and annotations |
 | `mcp` | Optional MCP server catalog, profile allowlists, and per-server transport metadata |
+| `web` | Web terminal host, port, and allowed terminal roots |
 | `agents` | Role-based pipeline CLI and model assignments |
 | `worktree` | Optional managed worktree settings for isolated stage execution |
 

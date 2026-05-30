@@ -16,6 +16,13 @@
     "token limit",
     "insufficient credits"
   ],
+  "web": {
+    "allowed_roots": [
+      "/home/you/projects/dormammu"
+    ],
+    "host": "0.0.0.0",
+    "port": 9001
+  },
   "agents": {
     "refiner": {
       "cli": "claude",

@@ -13,13 +13,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from dormammu.agent import CliAdapter
-from dormammu.agent.models import AgentRunRequest
-from dormammu.daemon.cli_output import model_args, select_agent_output
 from dormammu.operator_services import GoalsOperatorService
 from dormammu.telegram.session_store import (
     ConversationIdentity,
     TelegramConversationSessionStore,
 )
+from dormammu.web.telegram_service import TelegramConversationService
 
 _log = logging.getLogger(__name__)
 
@@ -996,14 +995,11 @@ class TelegramBot:
         cli: Path,
         model: str | None,
     ) -> None:
-        store = self._conversation_session_store()
         identity = self._conversation_session_identity(update)
         lock = self._conversation_session_lock(identity.session_id)
         try:
             async with lock:
                 loop = asyncio.get_running_loop()
-                snapshot = store.compact_if_needed(identity, current_message=prompt_text)
-                direct_prompt = store.build_prompt(snapshot, prompt_text)
 
                 def _generate() -> str:
                     started = time.monotonic()
@@ -1011,33 +1007,19 @@ class TelegramBot:
                         (
                             "telegram cli request started: "
                             f"cli={cli} model={model or 'default'} "
-                            f"prompt_chars={len(direct_prompt)} session_id={identity.session_id}"
+                            f"session_id={identity.session_id}"
                         ),
                         file=sys.stderr,
                         flush=True,
                     )
-                    adapter = CliAdapter(
+                    output = TelegramConversationService(
                         self._app_config,
+                        adapter_cls=CliAdapter,
                         live_output_stream=sys.stderr,
+                    ).continue_identity(
+                        identity,
+                        prompt_text,
                     )
-                    result = adapter.run_once(
-                        AgentRunRequest(
-                            cli_path=cli,
-                            prompt_text=direct_prompt,
-                            repo_root=self._app_config.repo_root,
-                            workdir=self._app_config.repo_root,
-                            extra_args=tuple(model_args(cli.name, model)),
-                            run_label=f"telegram-direct-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
-                        )
-                    )
-                    stdout_text = result.stdout_path.read_text(encoding="utf-8") if result.stdout_path.exists() else ""
-                    stderr_text = result.stderr_path.read_text(encoding="utf-8") if result.stderr_path.exists() else ""
-                    output = select_agent_output(stdout_text, stderr_text).strip()
-                    if result.exit_code != 0:
-                        raise RuntimeError(
-                            f"CLI request failed with exit code {result.exit_code}: "
-                            f"{output or '(no output)'}"
-                        )
                     elapsed = time.monotonic() - started
                     print(
                         (
@@ -1052,12 +1034,8 @@ class TelegramBot:
                     return output or "(empty response)"
 
                 response_text = await loop.run_in_executor(None, _generate)
-                store.append_turn(identity, role="user", text=prompt_text)
-                store.append_turn(identity, role="assistant", text=response_text)
         except Exception as exc:
             print(f"telegram cli request failed: {exc}", file=sys.stderr, flush=True)
-            store.append_turn(identity, role="user", text=prompt_text)
-            store.append_turn(identity, role="error", kind="cli_error", text=str(exc))
             await self._reply(
                 update,
                 f"CLI request failed: {exc}",

@@ -36,6 +36,7 @@ from dormammu._cli_handlers import (
     _handle_set_config,
     _handle_show_config,
     _handle_start_session,
+    _handle_web,
 )
 
 # Re-export utilities that external callers (tests, integrations) import
@@ -540,6 +541,21 @@ def build_parser() -> argparse.ArgumentParser:
     _add_verbose(daemonize, help="Show the full live runtime stream, including raw agent stdout/stderr.")
     _add_debug(daemonize, help="Mirror daemon stderr into <result_path>/../progress/<prompt>_progress.log and reset it for each new prompt session.")
     daemonize.set_defaults(handler=_handle_daemonize)
+
+    web = subparsers.add_parser(
+        "web",
+        help="Start the Dormammu web terminal and settings server.",
+        description=(
+            "Serve the TypeScript web terminal, settings UI, and web APIs. "
+            "Binding to an external host requires --token or DORMAMMU_WEB_TOKEN."
+        ),
+    )
+    _add_repo_root(web)
+    web.add_argument("--host", default=None, help="Host to bind. Defaults to web.host or 0.0.0.0.")
+    web.add_argument("--port", type=int, default=None, help="Port to bind. Defaults to web.port or 9001.")
+    web.add_argument("--token", default=None, help="Access token for HTTP and WebSocket auth.")
+    _add_debug(web, help="Show web dependency import errors.")
+    web.set_defaults(handler=_handle_web)
 
     shell = subparsers.add_parser(
         "shell",

@@ -59,6 +59,7 @@ automation alike.
 | **Role-based pipeline** | Route goals through `refiner → planner → developer → tester → reviewer → committer` with automated feedback loops |
 | **Goals analysis experts** | Use `analyzer → planner → designer` to turn scheduled goals into stronger execution prompts before the normal runtime pipeline starts |
 | **Daemonize mode** | Watch a prompt directory, queue incoming files in deterministic order, and run each through the supervised pipeline |
+| **Web terminal** | Serve a token-protected TypeScript console for multi-session terminals, Telegram conversation continuation, and settings |
 | **Goals automation** | Schedule periodic goals that are automatically promoted into the daemon queue; manageable via Telegram |
 | **Fallback CLIs** | Automatically switch to a backup agent CLI when the primary hits quota or token exhaustion |
 | **Guidance injection** | Embed repository guidance (`AGENTS.md`, custom `--guidance-file`) into every agent prompt |
@@ -107,6 +108,7 @@ DORMAMMU has four operator entry styles:
 | **run-once** | `dormammu run-once` | One bounded agent call with artifact capture, no retry |
 | **run** | `dormammu run` | Full supervised retry loop with validation and continuation |
 | **daemonize** | `dormammu daemonize` | Long-running daemon that watches a prompt queue |
+| **web** | `dormammu web` | Token-protected browser terminal and settings console |
 
 Every execution mode now begins with a mandatory `refine -> plan` prelude.
 The post-plan evaluator is not part of normal `run` or `run-once` execution.
@@ -256,11 +258,20 @@ See [docs/GUIDE.md](docs/GUIDE.md) for a full description of each agent role.
 curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
 ```
 
+Pass setup options after `bash -s --`, for example:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | \
+  bash -s -- --with-web --start-web --token "$(openssl rand -hex 24)"
+```
+
 ### From a Local Clone
 
 ```bash
-./scripts/install.sh
+./setup.sh --with-web
 ```
+
+`scripts/install.sh` remains as a compatibility wrapper for `setup.sh`.
 
 ### Editable Development Install
 
@@ -352,6 +363,7 @@ for a starting config.
 | `resume` | `resume-loop` | Continue a previous `run` from saved loop state |
 | `shell` | — | Start the interactive shell explicitly |
 | `daemonize` | — | Long-running daemon that watches a prompt directory and processes a queue |
+| `web` | — | Start the web terminal and settings server |
 | `start-session` | — | Archive the current session and begin a new named session |
 | `sessions` | — | List all saved session snapshots |
 | `restore-session` | — | Restore an older session into the active `.dev/` view |
@@ -423,6 +435,36 @@ Full reference: `dormammu --help` or `dormammu <command> --help`.
 | `--stdin` | Read stdin once and enqueue non-empty text as a direct-response prompt; empty stdin is ignored |
 | `--guidance-file` | Additional guidance files (repeatable) |
 | `--debug` | Write per-prompt progress logs under `result_path/../progress/` |
+
+### `web` Options
+
+`dormammu web` serves the browser console on `0.0.0.0:9001` by default. Because
+the web terminal can execute shell commands, external binds require an access
+token:
+
+```bash
+DORMAMMU_WEB_TOKEN="$(openssl rand -hex 24)" \
+  dormammu web --repo-root . --host 0.0.0.0 --port 9001
+```
+
+The same token is required by the UI, REST APIs, and WebSocket terminal
+connections. Configure terminal directory access in `dormammu.json`:
+
+```json
+{
+  "web": {
+    "allowed_roots": ["/home/you/projects/dormammu"],
+    "host": "0.0.0.0",
+    "port": 9001
+  }
+}
+```
+
+The web app provides:
+
+- multiple live terminal sessions backed by POSIX PTYs
+- a Settings page for common CLI, fallback, Telegram, web, and timeout config
+- Telegram conversation session browsing and browser-side continuation
 
 ## Configuration
 

@@ -13,6 +13,7 @@ import argparse
 import contextlib
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import signal
 import sys
@@ -186,6 +187,36 @@ def _handle_set_config(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     print(str(config_path))
+    return 0
+
+
+def _handle_web(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    host = args.host or config.web_config.host or "0.0.0.0"
+    port = args.port or config.web_config.port or 9001
+    token = args.token or os.environ.get("DORMAMMU_WEB_TOKEN")
+    try:
+        from dormammu.web.server import run_web_server
+    except ImportError as exc:
+        print(
+            "error: web dependencies are not installed. "
+            "Install them with: pip install 'dormammu[web]'",
+            file=sys.stderr,
+        )
+        if args.debug:
+            print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        run_web_server(
+            config,
+            host=host,
+            port=port,
+            token=token,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     return 0
 
 

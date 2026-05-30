@@ -118,14 +118,20 @@ class TelegramConversationSessionStore:
     def session_dir(self, identity: ConversationIdentity) -> Path:
         return self.root_dir / identity.session_id
 
+    def session_dir_for_id(self, session_id: str) -> Path:
+        return self.root_dir / _safe_segment(session_id)
+
     def load(self, identity: ConversationIdentity) -> ConversationSnapshot:
-        session_dir = self.session_dir(identity)
+        return self.load_by_session_id(identity.session_id)
+
+    def load_by_session_id(self, session_id: str) -> ConversationSnapshot:
+        session_dir = self.session_dir_for_id(session_id)
         summary = self._read_text(session_dir / "summary.md")
         turns = tuple(self._read_turns(session_dir / "transcript.jsonl"))
         metadata = self._read_metadata(session_dir / "session.json")
         compaction_count = int(metadata.get("compaction_count") or 0)
         return ConversationSnapshot(
-            session_id=identity.session_id,
+            session_id=_safe_segment(session_id),
             session_dir=session_dir,
             summary=summary,
             turns=turns,
@@ -147,7 +153,22 @@ class TelegramConversationSessionStore:
         text: str,
         kind: str = "message",
     ) -> ConversationTurn:
-        session_dir = self.session_dir(identity)
+        return self.append_turn_by_session_id(
+            identity.session_id,
+            role=role,
+            text=text,
+            kind=kind,
+        )
+
+    def append_turn_by_session_id(
+        self,
+        session_id: str,
+        *,
+        role: str,
+        text: str,
+        kind: str = "message",
+    ) -> ConversationTurn:
+        session_dir = self.session_dir_for_id(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
         turn = ConversationTurn(
             role=role,
@@ -157,7 +178,7 @@ class TelegramConversationSessionStore:
         )
         with (session_dir / "transcript.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(turn.to_dict(), ensure_ascii=False) + "\n")
-        self._write_metadata(identity, session_dir=session_dir)
+        self._write_metadata_for_session_id(session_id, session_dir=session_dir)
         return turn
 
     def build_prompt(self, snapshot: ConversationSnapshot, current_message: str) -> str:
@@ -196,7 +217,18 @@ class TelegramConversationSessionStore:
         *,
         current_message: str,
     ) -> ConversationSnapshot:
-        snapshot = self.load(identity)
+        return self.compact_if_needed_by_session_id(
+            identity.session_id,
+            current_message=current_message,
+        )
+
+    def compact_if_needed_by_session_id(
+        self,
+        session_id: str,
+        *,
+        current_message: str,
+    ) -> ConversationSnapshot:
+        snapshot = self.load_by_session_id(session_id)
         prompt = self.build_prompt(snapshot, current_message)
         if (
             _utf8_size(prompt) < self.soft_limit_bytes
@@ -205,12 +237,12 @@ class TelegramConversationSessionStore:
             return snapshot
 
         compacted = self._compact_snapshot(snapshot)
-        self._write_compacted(identity, compacted)
-        refreshed = self.load(identity)
+        self._write_compacted_by_session_id(session_id, compacted)
+        refreshed = self.load_by_session_id(session_id)
         prompt = self.build_prompt(refreshed, current_message)
         if _utf8_size(prompt) > self.hard_limit_bytes:
-            self._trim_for_hard_limit(identity, current_message=current_message)
-            refreshed = self.load(identity)
+            self._trim_for_hard_limit_by_session_id(session_id, current_message=current_message)
+            refreshed = self.load_by_session_id(session_id)
         return refreshed
 
     def _compact_snapshot(self, snapshot: ConversationSnapshot) -> ConversationSnapshot:
@@ -249,7 +281,18 @@ class TelegramConversationSessionStore:
         *,
         current_message: str,
     ) -> None:
-        snapshot = self.load(identity)
+        self._trim_for_hard_limit_by_session_id(
+            identity.session_id,
+            current_message=current_message,
+        )
+
+    def _trim_for_hard_limit_by_session_id(
+        self,
+        session_id: str,
+        *,
+        current_message: str,
+    ) -> None:
+        snapshot = self.load_by_session_id(session_id)
         turns = list(snapshot.turns)
         while turns:
             candidate = ConversationSnapshot(
@@ -269,14 +312,21 @@ class TelegramConversationSessionStore:
             turns=tuple(turns),
             compaction_count=snapshot.compaction_count + 1,
         )
-        self._write_compacted(identity, trimmed)
+        self._write_compacted_by_session_id(session_id, trimmed)
 
     def _write_compacted(
         self,
         identity: ConversationIdentity,
         snapshot: ConversationSnapshot,
     ) -> None:
-        session_dir = self.session_dir(identity)
+        self._write_compacted_by_session_id(identity.session_id, snapshot)
+
+    def _write_compacted_by_session_id(
+        self,
+        session_id: str,
+        snapshot: ConversationSnapshot,
+    ) -> None:
+        session_dir = self.session_dir_for_id(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
         (session_dir / "summary.md").write_text(snapshot.summary, encoding="utf-8")
         transcript = session_dir / "transcript.jsonl"
@@ -287,8 +337,8 @@ class TelegramConversationSessionStore:
             ),
             encoding="utf-8",
         )
-        self._write_metadata(
-            identity,
+        self._write_metadata_for_session_id(
+            session_id,
             session_dir=session_dir,
             compaction_count=snapshot.compaction_count,
             turn_count=len(snapshot.turns),
@@ -302,6 +352,25 @@ class TelegramConversationSessionStore:
         compaction_count: int | None = None,
         turn_count: int | None = None,
     ) -> None:
+        self._write_metadata_for_session_id(
+            identity.session_id,
+            session_dir=session_dir,
+            compaction_count=compaction_count,
+            turn_count=turn_count,
+            chat_id=str(identity.chat_id),
+            thread_id=str(identity.thread_id) if identity.thread_id is not None else None,
+        )
+
+    def _write_metadata_for_session_id(
+        self,
+        session_id: str,
+        *,
+        session_dir: Path,
+        compaction_count: int | None = None,
+        turn_count: int | None = None,
+        chat_id: str | None = None,
+        thread_id: str | None = None,
+    ) -> None:
         metadata_path = session_dir / "session.json"
         existing = self._read_metadata(metadata_path)
         now = iso_now()
@@ -310,11 +379,11 @@ class TelegramConversationSessionStore:
             turns = sum(1 for _ in self._read_turns(session_dir / "transcript.jsonl"))
         metadata = {
             "schema_version": 1,
-            "session_id": identity.session_id,
+            "session_id": _safe_segment(session_id),
             "repo_root": str(self._config.repo_root),
             "workspace_project_root": str(self._config.workspace_project_root),
-            "chat_id": str(identity.chat_id),
-            "thread_id": str(identity.thread_id) if identity.thread_id is not None else None,
+            "chat_id": chat_id if chat_id is not None else existing.get("chat_id"),
+            "thread_id": thread_id if thread_id is not None else existing.get("thread_id"),
             "created_at": existing.get("created_at") or now,
             "updated_at": now,
             "turn_count": turns,

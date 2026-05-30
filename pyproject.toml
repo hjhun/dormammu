@@ -13,6 +13,11 @@ dependencies = []
 
 [project.optional-dependencies]
 telegram = ["python-telegram-bot>=21.0"]
+web = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "websockets>=12",
+]
 
 [project.scripts]
 dormammu = "dormammu.cli:main"
@@ -36,4 +41,6 @@ dormammu = [
   "assets/agents/rules/*.md",
   "assets/agents/skills/*/SKILL.md",
   "assets/agents/skills/*/agents/*.yaml",
+  "web/static/*",
+  "web/static/assets/*",
 ]

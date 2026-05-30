@@ -145,6 +145,7 @@ DORMAMMU에는 네 가지 운영자 진입 방식이 있습니다.
 | run-once | `dormammu run-once` | 아티팩트를 남기는 단일 bounded 실행 |
 | run | `dormammu run` | 검증과 continuation을 포함한 supervised 재시도 루프 |
 | daemonize | `dormammu daemonize` | 프롬프트 큐를 감시하는 장기 실행 데몬 |
+| web | `dormammu web` | 브라우저 기반 멀티 터미널, Telegram 세션, 설정 콘솔 |
 
 모든 실행 모드는 먼저 필수 `refine -> plan` 전주를 수행합니다. 그 이후:
 
@@ -162,11 +163,20 @@ DORMAMMU에는 네 가지 운영자 진입 방식이 있습니다.
 curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | bash
 ```
 
+`bash -s --` 뒤에 setup 옵션을 전달할 수 있습니다:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hjhun/dormammu/main/install.sh | \
+  bash -s -- --with-web --start-web --token "$(openssl rand -hex 24)"
+```
+
 ### 로컬 클론에서 설치
 
 ```bash
-./scripts/install.sh
+./setup.sh --with-web
 ```
+
+`scripts/install.sh`는 호환성을 위해 `setup.sh`로 위임합니다.
 
 ### 개발용 설치
 
@@ -350,6 +360,20 @@ dormammu daemonize --repo-root .
 `--config daemonize.json`을 지정하면 됩니다. 자세한 설정은
 [데몬 모드](#데몬-모드)를 참고하세요.
 
+### `dormammu web`
+
+실시간 터미널 세션, Telegram 대화 세션, 주요 설정을 브라우저에서 다루는
+토큰 보호 웹 콘솔을 시작합니다.
+
+```bash
+DORMAMMU_WEB_TOKEN="$(openssl rand -hex 24)" \
+  dormammu web --repo-root . --host 0.0.0.0 --port 9001
+```
+
+웹 터미널은 쉘 명령을 실행할 수 있으므로 외부 주소로 바인딩할 때는
+`--token` 또는 `DORMAMMU_WEB_TOKEN`이 필요합니다. 터미널 작업 디렉터리는
+`dormammu.json`의 `web.allowed_roots` 안으로 제한됩니다.
+
 ---
 
 ## 설정 레퍼런스
@@ -377,6 +401,11 @@ dormammu daemonize --repo-root .
   "token_exhaustion_patterns": [
     "usage limit", "quota exceeded", "rate limit exceeded"
   ],
+  "web": {
+    "allowed_roots": ["/home/you/projects/dormammu"],
+    "host": "0.0.0.0",
+    "port": 9001
+  },
   "agents": {
     "refiner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
     "planner":   { "cli": "claude", "model": "claude-sonnet-4-6" },
