@@ -520,7 +520,9 @@ DORMAMMU_WEB_TOKEN="$(openssl rand -hex 24)" \
 
 Terminal working directories are limited to `web.allowed_roots` from
 `dormammu.json`. Terminal sessions are backed by tmux, so they survive browser
-refreshes and can be shared with a real shell:
+refreshes and can be shared with a real shell. The web terminal also includes
+a Dormammu runner for `run`, `run-once`, and `resume` so operators do not need
+to type the full command by hand:
 
 ```bash
 dormammu terminal open --repo-root . --cwd .

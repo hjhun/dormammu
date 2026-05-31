@@ -283,7 +283,7 @@ input:disabled {
 
 .terminal-console {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   gap: 8px;
   height: calc(100vh - 126px);
   min-height: 420px;
@@ -324,6 +324,12 @@ input:disabled {
 .command-bar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+}
+
+.dormammu-runner {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) 42px;
   gap: 8px;
 }
 

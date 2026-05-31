@@ -7,7 +7,7 @@ import pytest
 
 from dormammu.config import AppConfig
 from dormammu.web.auth import hash_password
-from dormammu.web.app import create_app
+from dormammu.web.app import build_dormammu_terminal_command, create_app
 
 
 def _seed_repo(root: Path) -> None:
@@ -145,3 +145,19 @@ def test_terminal_input_endpoint_validates_command(tmp_path: Path) -> None:
     assert empty.status_code == 400
     assert missing.status_code == 404
     assert unauthorized.status_code == 401
+
+
+def test_dormammu_terminal_command_builder_quotes_prompt(tmp_path: Path) -> None:
+    command = build_dormammu_terminal_command(
+        mode="run",
+        repo_root=tmp_path,
+        prompt="review this repo; echo unsafe",
+    )
+
+    assert command == f"dormammu run --repo-root {tmp_path} --prompt 'review this repo; echo unsafe'"
+    assert build_dormammu_terminal_command(mode="resume", repo_root=tmp_path) == f"dormammu resume --repo-root {tmp_path}"
+
+
+def test_dormammu_terminal_command_builder_requires_prompt(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        build_dormammu_terminal_command(mode="run", repo_root=tmp_path)

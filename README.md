@@ -462,6 +462,7 @@ Configure terminal directory access in `dormammu.json`:
 The web app provides:
 
 - multiple live terminal sessions backed by tmux
+- a Dormammu runner for `run`, `run-once`, and `resume` inside a session
 - a Settings page for common CLI, fallback, Telegram, web, and timeout config
 - Telegram conversation session browsing and browser-side continuation
 

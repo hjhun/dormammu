@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+import shlex
 from typing import Any
 
 from dormammu.config import AppConfig
@@ -7,6 +8,26 @@ from dormammu.web.auth import credential_matches, hash_password, request_token
 from dormammu.web.settings import apply_settings_patch, read_settings, set_web_password_hash, write_raw_settings
 from dormammu.web.telegram_service import TelegramConversationService
 from dormammu.web.terminal import TerminalAccessError, TerminalRuntimeError, TerminalSessionManager
+
+
+def build_dormammu_terminal_command(
+    *,
+    mode: str,
+    repo_root: Path,
+    prompt: str = "",
+    prompt_file: str | None = None,
+) -> str:
+    if mode not in {"run", "run-once", "resume"}:
+        raise ValueError("mode must be run, run-once, or resume")
+    args = ["dormammu", mode, "--repo-root", str(repo_root)]
+    if mode in {"run", "run-once"}:
+        if prompt_file and prompt_file.strip():
+            args.extend(["--prompt-file", prompt_file.strip()])
+        elif prompt.strip():
+            args.extend(["--prompt", prompt.strip()])
+        else:
+            raise ValueError("prompt or prompt_file is required")
+    return shlex.join(args)
 
 
 def create_app(config: AppConfig, *, token: str | None = None):
@@ -186,6 +207,33 @@ def create_app(config: AppConfig, *, token: str | None = None):
             raise HTTPException(status_code=404, detail="Session not found") from None
         session.write(raw_data)
         return {"written": True}
+
+    @app.post("/api/terminal/sessions/{session_id}/dormammu")
+    async def run_dormammu_in_terminal(session_id: str, request: Request, _: None = Depends(_require_http_auth)) -> dict[str, object]:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Dormammu run request must be an object")
+        mode = str(body.get("mode") or "run")
+        try:
+            session = terminal_manager.get(session_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Session not found") from None
+
+        repo_root = Path(str(body.get("repo_root") or state["config"].repo_root)).expanduser().resolve()
+        if not any(repo_root == root or repo_root.is_relative_to(root) for root in terminal_manager.allowed_roots):
+            raise HTTPException(status_code=400, detail="repo_root is outside allowed roots")
+
+        try:
+            command = build_dormammu_terminal_command(
+                mode=mode,
+                repo_root=repo_root,
+                prompt=str(body.get("prompt") or ""),
+                prompt_file=body.get("prompt_file") if isinstance(body.get("prompt_file"), str) else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        session.write(f"{command}\n")
+        return {"written": True, "command": command}
 
     @app.websocket("/api/terminal/sessions/{session_id}/ws")
     async def terminal_ws(session_id: str, websocket: WebSocket, token_query: str | None = Query(default=None, alias="token")) -> None:

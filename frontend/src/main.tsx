@@ -13,6 +13,7 @@ import {
   LogOut,
   MessageSquareText,
   Monitor,
+  Play,
   PlugZap,
   RefreshCw,
   Save,
@@ -331,6 +332,8 @@ function XtermPanel({ api, session }: { api: ApiClient; session: TerminalSession
   const termRef = useRef<Terminal | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const [command, setCommand] = useState("");
+  const [dormammuMode, setDormammuMode] = useState<"run" | "run-once" | "resume">("run");
+  const [dormammuPrompt, setDormammuPrompt] = useState("");
   const [socketState, setSocketState] = useState("connecting");
   const [error, setError] = useState("");
 
@@ -400,6 +403,22 @@ function XtermPanel({ api, session }: { api: ApiClient; session: TerminalSession
     }
   };
 
+  const submitDormammu = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (dormammuMode !== "resume" && !dormammuPrompt.trim()) return;
+    try {
+      const payload = dormammuMode === "resume"
+        ? { mode: dormammuMode }
+        : { mode: dormammuMode, prompt: dormammuPrompt };
+      await api.post<{ written: boolean; command: string }>(`/api/terminal/sessions/${session.id}/dormammu`, payload);
+      setDormammuPrompt("");
+      setError("");
+      termRef.current?.focus();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const focusTerminal = () => termRef.current?.focus();
 
   return (
@@ -408,6 +427,23 @@ function XtermPanel({ api, session }: { api: ApiClient; session: TerminalSession
         <span>{session.cwd}</span>
         <small>{socketState}</small>
       </div>
+      <form className="dormammu-runner" onSubmit={submitDormammu}>
+        <select value={dormammuMode} onChange={(event) => setDormammuMode(event.target.value as "run" | "run-once" | "resume")}>
+          <option value="run">run</option>
+          <option value="run-once">run-once</option>
+          <option value="resume">resume</option>
+        </select>
+        <input
+          value={dormammuPrompt}
+          onChange={(event) => setDormammuPrompt(event.target.value)}
+          placeholder={dormammuMode === "resume" ? "Resume latest state" : "Prompt"}
+          autoComplete="off"
+          disabled={dormammuMode === "resume"}
+        />
+        <button className="primary-icon" title="Run Dormammu" disabled={dormammuMode !== "resume" && !dormammuPrompt.trim()}>
+          <Play size={17} />
+        </button>
+      </form>
       <div className="xterm-host" ref={ref} onClick={focusTerminal} />
       <form className="command-bar" onSubmit={submitCommand}>
         <input

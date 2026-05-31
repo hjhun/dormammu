@@ -374,7 +374,9 @@ DORMAMMU_WEB_TOKEN="$(openssl rand -hex 24)" \
 
 터미널 작업 디렉터리는 `dormammu.json`의 `web.allowed_roots` 안으로
 제한됩니다. 터미널 세션은 tmux 기반이므로 브라우저 새로고침 이후에도
-살아 있고 실제 쉘에서도 같은 세션에 붙을 수 있습니다.
+살아 있고 실제 쉘에서도 같은 세션에 붙을 수 있습니다. 웹 터미널에는
+`run`, `run-once`, `resume`을 실행하는 Dormammu 전용 입력 바도 있어서
+전체 명령을 직접 외워 입력하지 않아도 됩니다.
 
 ```bash
 dormammu terminal open --repo-root . --cwd .
