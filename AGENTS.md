@@ -285,8 +285,22 @@ Rules:
 
 ### 9. Commit
 
-Use the committing skill only after the active scope has passed validation or
-the user explicitly asks for commit preparation.
+For implementation work in this repository, run the committing skill
+automatically after the active scope has passed Test And Review and Final
+Verification. A separate "commit this" prompt should not be required once a
+user has asked the agent to develop, fix, or implement a scoped change.
+
+Rules:
+
+- do not commit if validation or final verification failed
+- do not commit when the user explicitly asks to avoid committing
+- do not commit plan-only, review-only, investigation-only, or brainstorming
+  responses unless the user explicitly asks for a commit
+- stage only files that belong to the completed scope
+- preserve unrelated dirty worktree changes and ask before mixing scopes
+- never push unless the user explicitly asks for a push
+- after committing, verify the stored commit with
+  `git show --format=fuller --no-patch HEAD`
 
 ### 10. Evaluate
 
@@ -356,7 +370,8 @@ Each phase transition requires evidence:
 - `test_author → test_review`: unit/integration test code exists and has been
   executed (authored tests alone do not satisfy this gate)
 - `test_review → final_verify`: executed validation has clear results
-- `final_verify → commit`: completed slice passed final operational verification
+- `final_verify → commit`: completed implementation slices should proceed to
+  an automatic local commit unless the user explicitly opted out
 - `commit`: diff scope and validation both support version control
 
 ## Roadmap Alignment

@@ -331,9 +331,9 @@ function XtermPanel({ api, session }: { api: ApiClient; session: TerminalSession
   const ref = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const [command, setCommand] = useState("");
-  const [dormammuMode, setDormammuMode] = useState<"run" | "run-once" | "resume">("run");
-  const [dormammuPrompt, setDormammuPrompt] = useState("");
+  const [inputMode, setInputMode] = useState<"command" | "run" | "run-once" | "resume">("command");
+  const [inputValue, setInputValue] = useState("");
+  const [lastCommand, setLastCommand] = useState(session.last_command || "");
   const [socketState, setSocketState] = useState("connecting");
   const [error, setError] = useState("");
 
@@ -390,28 +390,25 @@ function XtermPanel({ api, session }: { api: ApiClient; session: TerminalSession
     };
   }, [api, session.id]);
 
-  const submitCommand = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!command.trim()) return;
-    try {
-      await api.post<{ written: boolean }>(`/api/terminal/sessions/${session.id}/input`, { command });
-      setCommand("");
-      setError("");
-      termRef.current?.focus();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
+  useEffect(() => {
+    setLastCommand(session.last_command || "");
+  }, [session.last_command]);
 
-  const submitDormammu = async (event: React.FormEvent<HTMLFormElement>) => {
+  const submitTerminalInput = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (dormammuMode !== "resume" && !dormammuPrompt.trim()) return;
+    if (inputMode !== "resume" && !inputValue.trim()) return;
     try {
-      const payload = dormammuMode === "resume"
-        ? { mode: dormammuMode }
-        : { mode: dormammuMode, prompt: dormammuPrompt };
-      await api.post<{ written: boolean; command: string }>(`/api/terminal/sessions/${session.id}/dormammu`, payload);
-      setDormammuPrompt("");
+      if (inputMode === "command") {
+        await api.post<{ written: boolean }>(`/api/terminal/sessions/${session.id}/input`, { command: inputValue });
+        setLastCommand(inputValue.trim());
+      } else {
+        const payload = inputMode === "resume"
+          ? { mode: inputMode }
+          : { mode: inputMode, prompt: inputValue };
+        const result = await api.post<{ written: boolean; command: string }>(`/api/terminal/sessions/${session.id}/dormammu`, payload);
+        setLastCommand(result.command);
+      }
+      setInputValue("");
       setError("");
       termRef.current?.focus();
     } catch (err) {
@@ -425,36 +422,26 @@ function XtermPanel({ api, session }: { api: ApiClient; session: TerminalSession
     <div className="terminal-console">
       <div className="terminal-strip">
         <span>{session.cwd}</span>
-        <small>{session.last_command || socketState}</small>
+        <small>{lastCommand || socketState}</small>
       </div>
-      <form className="dormammu-runner" onSubmit={submitDormammu}>
-        <select value={dormammuMode} onChange={(event) => setDormammuMode(event.target.value as "run" | "run-once" | "resume")}>
+      <div className="xterm-host" ref={ref} onClick={focusTerminal} />
+      <form className="terminal-input-bar" onSubmit={submitTerminalInput}>
+        <select value={inputMode} onChange={(event) => setInputMode(event.target.value as "command" | "run" | "run-once" | "resume")}>
+          <option value="command">command</option>
           <option value="run">run</option>
           <option value="run-once">run-once</option>
           <option value="resume">resume</option>
         </select>
         <input
-          value={dormammuPrompt}
-          onChange={(event) => setDormammuPrompt(event.target.value)}
-          placeholder={dormammuMode === "resume" ? "Resume latest state" : "Prompt"}
-          autoComplete="off"
-          disabled={dormammuMode === "resume"}
-        />
-        <button className="primary-icon" title="Run Dormammu" disabled={dormammuMode !== "resume" && !dormammuPrompt.trim()}>
-          <Play size={17} />
-        </button>
-      </form>
-      <div className="xterm-host" ref={ref} onClick={focusTerminal} />
-      <form className="command-bar" onSubmit={submitCommand}>
-        <input
-          value={command}
-          onChange={(event) => setCommand(event.target.value)}
-          placeholder="Command"
+          value={inputValue}
+          onChange={(event) => setInputValue(event.target.value)}
+          placeholder={inputMode === "command" ? "Type a terminal command" : inputMode === "resume" ? "Resume latest state" : "Prompt"}
           autoComplete="off"
           spellCheck={false}
+          disabled={inputMode === "resume"}
         />
-        <button className="primary-icon" title="Run command" disabled={!command.trim()}>
-          <SendHorizontal size={17} />
+        <button className="primary-icon" title={inputMode === "command" ? "Send command" : "Run Dormammu"} disabled={inputMode !== "resume" && !inputValue.trim()}>
+          {inputMode === "command" ? <SendHorizontal size={17} /> : <Play size={17} />}
         </button>
       </form>
       {error && <div className="inline-error command-error">{error}</div>}
