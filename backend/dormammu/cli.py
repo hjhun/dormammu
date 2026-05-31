@@ -575,6 +575,27 @@ def build_parser() -> argparse.ArgumentParser:
     terminal_send.add_argument("text", nargs="+", help="Command text to send.")
     terminal_send.set_defaults(handler=_handle_terminal)
 
+    terminal_run = terminal_subparsers.add_parser("run", help="Run Dormammu in an existing terminal session.")
+    _add_repo_root(terminal_run)
+    terminal_run.add_argument("session_id", help="Terminal session id.")
+    terminal_run_prompt = terminal_run.add_mutually_exclusive_group(required=True)
+    terminal_run_prompt.add_argument("--prompt", help="Prompt text to pass to dormammu run.")
+    terminal_run_prompt.add_argument("--prompt-file", help="Prompt file to pass to dormammu run.")
+    terminal_run.set_defaults(handler=_handle_terminal)
+
+    terminal_run_once = terminal_subparsers.add_parser("run-once", help="Run one Dormammu turn in an existing terminal session.")
+    _add_repo_root(terminal_run_once)
+    terminal_run_once.add_argument("session_id", help="Terminal session id.")
+    terminal_run_once_prompt = terminal_run_once.add_mutually_exclusive_group(required=True)
+    terminal_run_once_prompt.add_argument("--prompt", help="Prompt text to pass to dormammu run-once.")
+    terminal_run_once_prompt.add_argument("--prompt-file", help="Prompt file to pass to dormammu run-once.")
+    terminal_run_once.set_defaults(handler=_handle_terminal)
+
+    terminal_resume = terminal_subparsers.add_parser("resume", help="Resume Dormammu in an existing terminal session.")
+    _add_repo_root(terminal_resume)
+    terminal_resume.add_argument("session_id", help="Terminal session id.")
+    terminal_resume.set_defaults(handler=_handle_terminal)
+
     terminal_close = terminal_subparsers.add_parser("close", help="Close a terminal session.")
     _add_repo_root(terminal_close)
     terminal_close.add_argument("session_id", help="Terminal session id.")

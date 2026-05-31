@@ -94,6 +94,9 @@ class CliTests(unittest.TestCase):
         listed = parser.parse_args(["terminal", "list"])
         attached = parser.parse_args(["terminal", "attach", "abc123"])
         sent = parser.parse_args(["terminal", "send", "abc123", "dormammu", "resume"])
+        run = parser.parse_args(["terminal", "run", "abc123", "--prompt", "build this"])
+        run_once = parser.parse_args(["terminal", "run-once", "abc123", "--prompt-file", "goal.md"])
+        resume = parser.parse_args(["terminal", "resume", "abc123"])
         closed = parser.parse_args(["terminal", "close", "abc123"])
 
         self.assertEqual(opened.terminal_command, "open")
@@ -102,6 +105,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(listed.terminal_command, "list")
         self.assertEqual(attached.session_id, "abc123")
         self.assertEqual(sent.text, ["dormammu", "resume"])
+        self.assertEqual(run.terminal_command, "run")
+        self.assertEqual(run.prompt, "build this")
+        self.assertEqual(run_once.terminal_command, "run-once")
+        self.assertEqual(run_once.prompt_file, "goal.md")
+        self.assertEqual(resume.terminal_command, "resume")
         self.assertEqual(closed.terminal_command, "close")
 
     def test_daemonize_uses_default_global_daemon_config_when_flag_is_omitted(self) -> None:

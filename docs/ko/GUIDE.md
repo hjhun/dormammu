@@ -383,8 +383,14 @@ dormammu terminal open --repo-root . --cwd .
 dormammu terminal list --repo-root .
 dormammu terminal attach --repo-root . <session-id>
 dormammu terminal send --repo-root . <session-id> "dormammu resume"
+dormammu terminal run --repo-root . <session-id> --prompt "다음 작업을 구현해줘"
+dormammu terminal run-once --repo-root . <session-id> --prompt-file goal.md
+dormammu terminal resume --repo-root . <session-id>
 dormammu terminal close --repo-root . <session-id>
 ```
+
+세션이 웹앱에서 열렸는지 CLI에서 열렸는지와 마지막 Dormammu 명령은
+`~/.dormammu/web/terminal_sessions.json`에 기록됩니다.
 
 ---
 

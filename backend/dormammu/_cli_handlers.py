@@ -225,24 +225,40 @@ def _handle_web(args: argparse.Namespace) -> int:
 def _handle_terminal(args: argparse.Namespace) -> int:
     config = _load_config(args.repo_root)
     try:
-        from dormammu.web.terminal import TerminalAccessError, TerminalRuntimeError, TerminalSessionManager, tmux_session_name
+        from dormammu.web.terminal import (
+            TerminalAccessError,
+            TerminalRuntimeError,
+            TerminalSessionManager,
+            build_dormammu_terminal_command,
+            tmux_session_name,
+        )
     except ImportError as exc:
         print(f"error: terminal runtime is unavailable: {exc}", file=sys.stderr)
         return 1
 
     try:
-        manager = TerminalSessionManager(allowed_roots=config.web_config.allowed_roots)
+        manager = TerminalSessionManager(
+            allowed_roots=config.web_config.allowed_roots,
+            state_dir=config.global_home_dir / "web",
+            repo_root=config.repo_root,
+        )
         command = args.terminal_command
         if command == "open":
             cwd = args.cwd or config.repo_root
-            snapshot = manager.create_session(cwd=cwd, cols=args.cols, rows=args.rows)
+            snapshot = manager.create_session(
+                cwd=cwd,
+                cols=args.cols,
+                rows=args.rows,
+                source="cli",
+                repo_root=config.repo_root,
+            )
             print(snapshot.id)
             return 0
         if command == "list":
             sessions = manager.list_sessions()
             for snapshot in sessions:
                 status = "running" if snapshot.running else f"exit {snapshot.exit_code}"
-                print(f"{snapshot.id}\t{status}\t{snapshot.cwd}\t{snapshot.created_at}")
+                print(f"{snapshot.id}\t{status}\t{snapshot.source}\t{snapshot.cwd}\t{snapshot.created_at}")
             return 0
         if command == "attach":
             target = tmux_session_name(args.session_id)
@@ -254,6 +270,19 @@ def _handle_terminal(args: argparse.Namespace) -> int:
             session = manager.get(args.session_id)
             text = " ".join(args.text) if isinstance(args.text, list) else str(args.text)
             session.write(text if text.endswith("\n") else f"{text}\n")
+            manager.record_command(args.session_id, text)
+            return 0
+        if command in {"run", "run-once", "resume"}:
+            session = manager.get(args.session_id)
+            dormammu_command = build_dormammu_terminal_command(
+                mode=command,
+                repo_root=config.repo_root,
+                prompt=str(getattr(args, "prompt", "") or ""),
+                prompt_file=getattr(args, "prompt_file", None),
+            )
+            session.write(f"{dormammu_command}\n")
+            manager.record_command(args.session_id, dormammu_command)
+            print(dormammu_command)
             return 0
         if command == "close":
             if not manager.delete(args.session_id):

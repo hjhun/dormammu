@@ -184,6 +184,31 @@ def test_terminal_manager_rediscovers_tmux_sessions(tmp_path: Path) -> None:
     assert any(item.id == snapshot.id for item in rediscovered)
 
 
+def test_terminal_manager_persists_session_metadata(tmp_path: Path) -> None:
+    if not shutil.which("tmux"):
+        pytest.skip("tmux is required for terminal runtime tests")
+    state_dir = tmp_path / ".state"
+    manager = TerminalSessionManager(allowed_roots=(tmp_path,), state_dir=state_dir, repo_root=tmp_path)
+    snapshot = manager.create_session(cwd=tmp_path, source="cli")
+
+    try:
+        manager.record_command(snapshot.id, "dormammu resume --repo-root .")
+        rediscovered = TerminalSessionManager(
+            allowed_roots=(tmp_path,),
+            state_dir=state_dir,
+            repo_root=tmp_path,
+        ).list_sessions()
+    finally:
+        manager.delete(snapshot.id)
+
+    matched = next(item for item in rediscovered if item.id == snapshot.id)
+    assert matched.source == "cli"
+    assert matched.repo_root == tmp_path.resolve()
+    assert matched.last_command == "dormammu resume --repo-root ."
+    payload = json.loads((state_dir / "terminal_sessions.json").read_text(encoding="utf-8"))
+    assert snapshot.id not in payload["sessions"]
+
+
 def test_external_bind_requires_token() -> None:
     assert host_requires_token("0.0.0.0") is True
     assert host_requires_token("127.0.0.1") is False

@@ -473,11 +473,16 @@ dormammu terminal open --repo-root . --cwd .
 dormammu terminal list --repo-root .
 dormammu terminal attach --repo-root . <session-id>
 dormammu terminal send --repo-root . <session-id> "dormammu resume"
+dormammu terminal run --repo-root . <session-id> --prompt "implement the next task"
+dormammu terminal run-once --repo-root . <session-id> --prompt-file goal.md
+dormammu terminal resume --repo-root . <session-id>
 dormammu terminal close --repo-root . <session-id>
 ```
 
 Because sessions are tmux-backed, a browser refresh or server restart can
 rediscover existing `dormammu-*` sessions as long as tmux is still running.
+Session metadata, including the source and last Dormammu command, is stored
+under `~/.dormammu/web/terminal_sessions.json`.
 
 ## Configuration
 

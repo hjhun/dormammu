@@ -314,7 +314,7 @@ function TerminalView({ api }: { api: ApiClient }) {
           {sessions.map((session) => (
             <button key={session.id} className={`session-row ${active?.id === session.id ? "selected" : ""}`} onClick={() => setActive(session)}>
               <span>{session.id}</span>
-              <small>{session.running ? (session.runtime || "running") : `exit ${session.exit_code ?? ""}`}</small>
+              <small>{session.source || session.runtime || "tmux"} · {session.running ? "running" : `exit ${session.exit_code ?? ""}`}</small>
               <Trash2 size={15} onClick={(event) => { event.stopPropagation(); void remove(session); }} />
             </button>
           ))}
@@ -425,7 +425,7 @@ function XtermPanel({ api, session }: { api: ApiClient; session: TerminalSession
     <div className="terminal-console">
       <div className="terminal-strip">
         <span>{session.cwd}</span>
-        <small>{socketState}</small>
+        <small>{session.last_command || socketState}</small>
       </div>
       <form className="dormammu-runner" onSubmit={submitDormammu}>
         <select value={dormammuMode} onChange={(event) => setDormammuMode(event.target.value as "run" | "run-once" | "resume")}>

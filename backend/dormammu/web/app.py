@@ -1,33 +1,17 @@
 import asyncio
 from pathlib import Path
-import shlex
 from typing import Any
 
 from dormammu.config import AppConfig
 from dormammu.web.auth import credential_matches, hash_password, request_token
 from dormammu.web.settings import apply_settings_patch, read_settings, set_web_password_hash, write_raw_settings
 from dormammu.web.telegram_service import TelegramConversationService
-from dormammu.web.terminal import TerminalAccessError, TerminalRuntimeError, TerminalSessionManager
-
-
-def build_dormammu_terminal_command(
-    *,
-    mode: str,
-    repo_root: Path,
-    prompt: str = "",
-    prompt_file: str | None = None,
-) -> str:
-    if mode not in {"run", "run-once", "resume"}:
-        raise ValueError("mode must be run, run-once, or resume")
-    args = ["dormammu", mode, "--repo-root", str(repo_root)]
-    if mode in {"run", "run-once"}:
-        if prompt_file and prompt_file.strip():
-            args.extend(["--prompt-file", prompt_file.strip()])
-        elif prompt.strip():
-            args.extend(["--prompt", prompt.strip()])
-        else:
-            raise ValueError("prompt or prompt_file is required")
-    return shlex.join(args)
+from dormammu.web.terminal import (
+    TerminalAccessError,
+    TerminalRuntimeError,
+    TerminalSessionManager,
+    build_dormammu_terminal_command,
+)
 
 
 def create_app(config: AppConfig, *, token: str | None = None):
@@ -40,7 +24,11 @@ def create_app(config: AppConfig, *, token: str | None = None):
 
     app = FastAPI(title="Dormammu Web", version="1.0")
     state: dict[str, Any] = {"config": config}
-    terminal_manager = TerminalSessionManager(allowed_roots=config.web_config.allowed_roots)
+    terminal_manager = TerminalSessionManager(
+        allowed_roots=config.web_config.allowed_roots,
+        state_dir=config.global_home_dir / "web",
+        repo_root=config.repo_root,
+    )
     telegram_service = TelegramConversationService(config)
 
     def _require_http_auth(
@@ -132,6 +120,7 @@ def create_app(config: AppConfig, *, token: str | None = None):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         state["config"] = reloaded
         terminal_manager.allowed_roots = reloaded.web_config.allowed_roots
+        terminal_manager.repo_root = reloaded.repo_root
         return {
             "config_file": str(written),
             "settings": read_settings(reloaded, scope=scope),
@@ -153,6 +142,7 @@ def create_app(config: AppConfig, *, token: str | None = None):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         state["config"] = reloaded
         terminal_manager.allowed_roots = reloaded.web_config.allowed_roots
+        terminal_manager.repo_root = reloaded.repo_root
         return {
             "config_file": str(written),
             "settings": read_settings(reloaded, scope=scope),
@@ -176,6 +166,8 @@ def create_app(config: AppConfig, *, token: str | None = None):
                 cwd=str(cwd),
                 cols=int(body.get("cols") or 120),
                 rows=int(body.get("rows") or 32),
+                source="web",
+                repo_root=state["config"].repo_root,
             )
         except (TerminalAccessError, TerminalRuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -206,6 +198,9 @@ def create_app(config: AppConfig, *, token: str | None = None):
         except KeyError:
             raise HTTPException(status_code=404, detail="Session not found") from None
         session.write(raw_data)
+        command = body.get("command")
+        if isinstance(command, str):
+            terminal_manager.record_command(session_id, command)
         return {"written": True}
 
     @app.post("/api/terminal/sessions/{session_id}/dormammu")
@@ -233,6 +228,7 @@ def create_app(config: AppConfig, *, token: str | None = None):
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         session.write(f"{command}\n")
+        terminal_manager.record_command(session_id, command)
         return {"written": True, "command": command}
 
     @app.websocket("/api/terminal/sessions/{session_id}/ws")

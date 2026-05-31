@@ -7,6 +7,9 @@ export type TerminalSession = {
   running: boolean;
   exit_code: number | null;
   runtime?: string;
+  source?: string;
+  last_command?: string | null;
+  repo_root?: string | null;
 };
 
 export type TelegramTurn = {

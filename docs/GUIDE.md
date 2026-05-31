@@ -529,8 +529,15 @@ dormammu terminal open --repo-root . --cwd .
 dormammu terminal list --repo-root .
 dormammu terminal attach --repo-root . <session-id>
 dormammu terminal send --repo-root . <session-id> "dormammu resume"
+dormammu terminal run --repo-root . <session-id> --prompt "implement the next task"
+dormammu terminal run-once --repo-root . <session-id> --prompt-file goal.md
+dormammu terminal resume --repo-root . <session-id>
 dormammu terminal close --repo-root . <session-id>
 ```
+
+Session metadata, including whether the session was opened from the web app or
+CLI and the last Dormammu command sent to it, is stored under
+`~/.dormammu/web/terminal_sessions.json`.
 
 ---
 
