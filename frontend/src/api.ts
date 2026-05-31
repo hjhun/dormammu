@@ -6,6 +6,7 @@ export type TerminalSession = {
   pid: number;
   running: boolean;
   exit_code: number | null;
+  runtime?: string;
 };
 
 export type TelegramTurn = {

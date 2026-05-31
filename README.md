@@ -438,17 +438,16 @@ Full reference: `dormammu --help` or `dormammu <command> --help`.
 
 ### `web` Options
 
-`dormammu web` serves the browser console on `0.0.0.0:9001` by default. Because
-the web terminal can execute shell commands, external binds require an access
-token:
+`dormammu web` serves the browser console on `0.0.0.0:9001` by default. On
+first launch, the UI asks for a web password and stores only a password hash in
+config. You can still pass a temporary token for automation:
 
 ```bash
 DORMAMMU_WEB_TOKEN="$(openssl rand -hex 24)" \
   dormammu web --repo-root . --host 0.0.0.0 --port 9001
 ```
 
-The same token is required by the UI, REST APIs, and WebSocket terminal
-connections. Configure terminal directory access in `dormammu.json`:
+Configure terminal directory access in `dormammu.json`:
 
 ```json
 {
@@ -462,9 +461,22 @@ connections. Configure terminal directory access in `dormammu.json`:
 
 The web app provides:
 
-- multiple live terminal sessions backed by POSIX PTYs
+- multiple live terminal sessions backed by tmux
 - a Settings page for common CLI, fallback, Telegram, web, and timeout config
 - Telegram conversation session browsing and browser-side continuation
+
+The same terminal sessions are available from a real shell:
+
+```bash
+dormammu terminal open --repo-root . --cwd .
+dormammu terminal list --repo-root .
+dormammu terminal attach --repo-root . <session-id>
+dormammu terminal send --repo-root . <session-id> "dormammu resume"
+dormammu terminal close --repo-root . <session-id>
+```
+
+Because sessions are tmux-backed, a browser refresh or server restart can
+rediscover existing `dormammu-*` sessions as long as tmux is still running.
 
 ## Configuration
 

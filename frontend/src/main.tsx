@@ -313,7 +313,7 @@ function TerminalView({ api }: { api: ApiClient }) {
           {sessions.map((session) => (
             <button key={session.id} className={`session-row ${active?.id === session.id ? "selected" : ""}`} onClick={() => setActive(session)}>
               <span>{session.id}</span>
-              <small>{session.running ? "running" : `exit ${session.exit_code ?? ""}`}</small>
+              <small>{session.running ? (session.runtime || "running") : `exit ${session.exit_code ?? ""}`}</small>
               <Trash2 size={15} onClick={(event) => { event.stopPropagation(); void remove(session); }} />
             </button>
           ))}
@@ -360,6 +360,10 @@ function XtermPanel({ api, session }: { api: ApiClient; session: TerminalSession
     socket.addEventListener("message", (event) => {
       const message = JSON.parse(event.data);
       if (message.type === "output") term.write(message.data);
+      if (message.type === "snapshot") {
+        term.clear();
+        term.write(message.data.replace(/\n/g, "\r\n"));
+      }
       if (message.type === "status") term.writeln(`\r\n[session exited: ${message.exit_code ?? "closed"}]`);
     });
     socket.addEventListener("close", () => setSocketState("closed"));

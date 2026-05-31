@@ -3,23 +3,27 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import fcntl
-import os
 from pathlib import Path
-import pty
 import queue
-import select
-import signal
-import struct
+import re
+import shlex
+import shutil
 import subprocess
-import termios
-import threading
+import time
 import uuid
 from typing import Iterator
 
 
 class TerminalAccessError(ValueError):
     """Raised when a requested terminal cwd is outside the configured roots."""
+
+
+class TerminalRuntimeError(RuntimeError):
+    """Raised when tmux cannot create or operate a terminal session."""
+
+
+TMUX_SESSION_PREFIX = "dormammu-"
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
@@ -43,6 +47,43 @@ def resolve_allowed_cwd(cwd: str | Path, allowed_roots: tuple[Path, ...]) -> Pat
     return candidate
 
 
+def tmux_session_name(session_id: str) -> str:
+    if not _SESSION_ID_RE.match(session_id):
+        raise TerminalRuntimeError(f"Invalid terminal session id: {session_id}")
+    return f"{TMUX_SESSION_PREFIX}{session_id}"
+
+
+def session_id_from_tmux_name(name: str) -> str | None:
+    if not name.startswith(TMUX_SESSION_PREFIX):
+        return None
+    session_id = name[len(TMUX_SESSION_PREFIX):]
+    return session_id if _SESSION_ID_RE.match(session_id) else None
+
+
+def require_tmux() -> str:
+    tmux = shutil.which("tmux")
+    if not tmux:
+        raise TerminalRuntimeError("tmux is required for persistent web terminal sessions")
+    return tmux
+
+
+def _iso_from_epoch(raw: str) -> str:
+    try:
+        value = int(raw)
+    except ValueError:
+        return datetime.now(timezone.utc).isoformat()
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+
+
+def _run_tmux(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    command = [require_tmux(), *args]
+    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout or "tmux command failed").strip()
+        raise TerminalRuntimeError(detail)
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class TerminalSessionSnapshot:
     id: str
@@ -52,6 +93,7 @@ class TerminalSessionSnapshot:
     pid: int
     running: bool
     exit_code: int | None
+    runtime: str = "tmux"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -62,142 +104,154 @@ class TerminalSessionSnapshot:
             "pid": self.pid,
             "running": self.running,
             "exit_code": self.exit_code,
+            "runtime": self.runtime,
         }
 
 
 class TerminalSession:
-    def __init__(
-        self,
-        *,
-        session_id: str,
-        cwd: Path,
-        command: tuple[str, ...],
-        cols: int,
-        rows: int,
-    ) -> None:
+    def __init__(self, *, session_id: str) -> None:
         self.id = session_id
-        self.cwd = cwd
-        self.command = command
-        self.created_at = datetime.now(timezone.utc).isoformat()
-        self._master_fd, slave_fd = pty.openpty()
-        self._subscribers: set[queue.Queue[bytes | None]] = set()
-        self._subscribers_lock = threading.Lock()
-        self._closed = threading.Event()
-        self._set_winsize(cols=cols, rows=rows)
-        env = dict(os.environ)
-        env.setdefault("TERM", "xterm-256color")
-        self._process = subprocess.Popen(
-            list(command),
-            cwd=str(cwd),
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            env=env,
-            start_new_session=True,
-            close_fds=True,
-        )
-        os.close(slave_fd)
-        self._reader = threading.Thread(
-            target=self._read_loop,
-            name=f"dormammu-web-terminal-{self.id}",
-            daemon=True,
-        )
-        self._reader.start()
+        self.name = tmux_session_name(session_id)
+        self.target = f"{self.name}:0.0"
 
     @property
     def running(self) -> bool:
-        return self._process.poll() is None
+        return _run_tmux(["has-session", "-t", self.name], check=False).returncode == 0
 
     @property
     def exit_code(self) -> int | None:
-        return self._process.poll()
+        return None if self.running else 0
 
     def snapshot(self) -> TerminalSessionSnapshot:
+        if not self.running:
+            raise KeyError(self.id)
+        created = _run_tmux(["display-message", "-p", "-t", self.name, "#{session_created}"]).stdout.strip()
+        cwd = _run_tmux(["display-message", "-p", "-t", self.target, "#{pane_current_path}"]).stdout.strip()
+        command = _run_tmux(["display-message", "-p", "-t", self.target, "#{pane_current_command}"]).stdout.strip()
+        pid_raw = _run_tmux(["display-message", "-p", "-t", self.target, "#{pane_pid}"]).stdout.strip()
+        try:
+            pid = int(pid_raw)
+        except ValueError:
+            pid = 0
         return TerminalSessionSnapshot(
             id=self.id,
-            cwd=self.cwd,
-            command=self.command,
-            created_at=self.created_at,
-            pid=self._process.pid,
-            running=self.running,
-            exit_code=self.exit_code,
+            cwd=Path(cwd).expanduser().resolve(),
+            command=(command or "tmux",),
+            created_at=_iso_from_epoch(created),
+            pid=pid,
+            running=True,
+            exit_code=None,
         )
 
+    def capture(self, *, start: int = -2000) -> str:
+        result = _run_tmux(
+            ["capture-pane", "-p", "-e", "-t", self.target, "-S", str(start)],
+            check=False,
+        )
+        if result.returncode != 0:
+            raise KeyError(self.id)
+        return result.stdout
+
     def write(self, data: str) -> None:
-        if self._closed.is_set():
+        if not self.running:
             return
-        os.write(self._master_fd, data.encode("utf-8", errors="ignore"))
+        for key_or_text, literal in _tmux_key_sequence(data):
+            if not key_or_text:
+                continue
+            if literal:
+                _run_tmux(["send-keys", "-t", self.target, "-l", key_or_text])
+            else:
+                _run_tmux(["send-keys", "-t", self.target, key_or_text])
 
     def resize(self, *, cols: int, rows: int) -> None:
-        self._set_winsize(cols=cols, rows=rows)
+        cols = max(1, int(cols or 80))
+        rows = max(1, int(rows or 24))
+        _run_tmux(["resize-pane", "-t", self.target, "-x", str(cols), "-y", str(rows)], check=False)
 
     @contextmanager
     def subscribe(self) -> Iterator[queue.Queue[bytes | None]]:
         subscriber: queue.Queue[bytes | None] = queue.Queue()
-        with self._subscribers_lock:
-            self._subscribers.add(subscriber)
+        stop = False
+
+        def poll() -> None:
+            previous = object()
+            while not stop:
+                if not self.running:
+                    subscriber.put(None)
+                    return
+                try:
+                    current = self.capture()
+                except KeyError:
+                    subscriber.put(None)
+                    return
+                if current != previous:
+                    previous = current
+                    subscriber.put(current.encode("utf-8", errors="replace"))
+                time.sleep(0.35)
+
+        import threading
+
+        thread = threading.Thread(target=poll, name=f"dormammu-tmux-terminal-{self.id}", daemon=True)
+        thread.start()
         try:
             yield subscriber
         finally:
-            with self._subscribers_lock:
-                self._subscribers.discard(subscriber)
+            stop = True
+            thread.join(timeout=1)
 
     def close(self) -> None:
-        if self._closed.is_set():
-            return
-        self._closed.set()
-        if self.running:
-            try:
-                os.killpg(self._process.pid, signal.SIGTERM)
-            except OSError:
-                pass
-        try:
-            os.close(self._master_fd)
-        except OSError:
-            pass
-        self._broadcast(None)
+        _run_tmux(["kill-session", "-t", self.name], check=False)
 
-    def _set_winsize(self, *, cols: int, rows: int) -> None:
-        rows = max(1, int(rows or 24))
-        cols = max(1, int(cols or 80))
-        fcntl.ioctl(
-            self._master_fd,
-            termios.TIOCSWINSZ,
-            struct.pack("HHHH", rows, cols, 0, 0),
-        )
 
-    def _read_loop(self) -> None:
-        while not self._closed.is_set():
-            try:
-                readable, _, _ = select.select([self._master_fd], [], [], 0.1)
-                if not readable:
-                    if not self.running:
-                        break
-                    continue
-                chunk = os.read(self._master_fd, 4096)
-            except OSError:
+def _tmux_key_sequence(data: str) -> Iterator[tuple[str, bool]]:
+    i = 0
+    literal: list[str] = []
+
+    def flush_literal() -> Iterator[tuple[str, bool]]:
+        nonlocal literal
+        if literal:
+            value = "".join(literal)
+            literal = []
+            yield value, True
+
+    special = {
+        "\r": "Enter",
+        "\n": "Enter",
+        "\t": "Tab",
+        "\x03": "C-c",
+        "\x04": "C-d",
+        "\x7f": "BSpace",
+    }
+    arrows = {
+        "\x1b[A": "Up",
+        "\x1b[B": "Down",
+        "\x1b[C": "Right",
+        "\x1b[D": "Left",
+    }
+    while i < len(data):
+        matched = False
+        for sequence, key in arrows.items():
+            if data.startswith(sequence, i):
+                yield from flush_literal()
+                yield key, False
+                i += len(sequence)
+                matched = True
                 break
-            if not chunk:
-                break
-            self._broadcast(chunk)
-        self._closed.set()
-        self._broadcast(None)
-
-    def _broadcast(self, chunk: bytes | None) -> None:
-        with self._subscribers_lock:
-            subscribers = tuple(self._subscribers)
-        for subscriber in subscribers:
-            try:
-                subscriber.put_nowait(chunk)
-            except queue.Full:
-                pass
+        if matched:
+            continue
+        char = data[i]
+        if char in special:
+            yield from flush_literal()
+            yield special[char], False
+        else:
+            literal.append(char)
+        i += 1
+    yield from flush_literal()
 
 
 class TerminalSessionManager:
     def __init__(self, *, allowed_roots: tuple[Path, ...]) -> None:
         self.allowed_roots = tuple(path.expanduser().resolve() for path in allowed_roots)
-        self._sessions: dict[str, TerminalSession] = {}
-        self._lock = threading.Lock()
 
     def create_session(
         self,
@@ -208,41 +262,64 @@ class TerminalSessionManager:
         command: tuple[str, ...] | None = None,
     ) -> TerminalSessionSnapshot:
         resolved_cwd = resolve_allowed_cwd(cwd, self.allowed_roots)
-        shell = os.environ.get("SHELL") or "/bin/bash"
-        session = TerminalSession(
-            session_id=uuid.uuid4().hex[:12],
-            cwd=resolved_cwd,
-            command=command or (shell,),
-            cols=cols,
-            rows=rows,
+        shell = command or (shutil.which("bash") or "/bin/bash",)
+        session_id = uuid.uuid4().hex[:12]
+        name = tmux_session_name(session_id)
+        command_text = shlex.join(str(item) for item in shell)
+        result = _run_tmux(
+            [
+                "new-session",
+                "-d",
+                "-s",
+                name,
+                "-c",
+                str(resolved_cwd),
+                "-x",
+                str(max(1, int(cols or 120))),
+                "-y",
+                str(max(1, int(rows or 32))),
+                command_text,
+            ],
+            check=False,
         )
-        with self._lock:
-            self._sessions[session.id] = session
-        return session.snapshot()
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "failed to create tmux session").strip()
+            raise TerminalRuntimeError(detail)
+        return TerminalSession(session_id=session_id).snapshot()
 
     def list_sessions(self) -> tuple[TerminalSessionSnapshot, ...]:
-        with self._lock:
-            sessions = tuple(self._sessions.values())
-        return tuple(session.snapshot() for session in sessions)
+        result = _run_tmux(["list-sessions", "-F", "#{session_name}"], check=False)
+        if result.returncode != 0:
+            return ()
+        snapshots: list[TerminalSessionSnapshot] = []
+        for name in result.stdout.splitlines():
+            session_id = session_id_from_tmux_name(name.strip())
+            if not session_id:
+                continue
+            try:
+                snapshot = TerminalSession(session_id=session_id).snapshot()
+            except KeyError:
+                continue
+            try:
+                resolve_allowed_cwd(snapshot.cwd, self.allowed_roots)
+            except TerminalAccessError:
+                continue
+            snapshots.append(snapshot)
+        return tuple(sorted(snapshots, key=lambda item: item.created_at, reverse=True))
 
     def get(self, session_id: str) -> TerminalSession:
-        with self._lock:
-            session = self._sessions.get(session_id)
-        if session is None:
+        session = TerminalSession(session_id=session_id)
+        if not session.running:
             raise KeyError(session_id)
         return session
 
     def delete(self, session_id: str) -> bool:
-        with self._lock:
-            session = self._sessions.pop(session_id, None)
-        if session is None:
+        session = TerminalSession(session_id=session_id)
+        if not session.running:
             return False
         session.close()
         return True
 
     def close_all(self) -> None:
-        with self._lock:
-            sessions = tuple(self._sessions.values())
-            self._sessions.clear()
-        for session in sessions:
-            session.close()
+        for snapshot in self.list_sessions():
+            self.delete(snapshot.id)

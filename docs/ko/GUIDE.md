@@ -363,16 +363,26 @@ dormammu daemonize --repo-root .
 ### `dormammu web`
 
 실시간 터미널 세션, Telegram 대화 세션, 주요 설정을 브라우저에서 다루는
-토큰 보호 웹 콘솔을 시작합니다.
+웹 콘솔을 시작합니다. 첫 실행 시 UI에서 웹 비밀번호를 설정하며,
+설정 파일에는 비밀번호 해시만 저장됩니다. 자동화가 필요하면 임시 토큰도
+사용할 수 있습니다.
 
 ```bash
 DORMAMMU_WEB_TOKEN="$(openssl rand -hex 24)" \
   dormammu web --repo-root . --host 0.0.0.0 --port 9001
 ```
 
-웹 터미널은 쉘 명령을 실행할 수 있으므로 외부 주소로 바인딩할 때는
-`--token` 또는 `DORMAMMU_WEB_TOKEN`이 필요합니다. 터미널 작업 디렉터리는
-`dormammu.json`의 `web.allowed_roots` 안으로 제한됩니다.
+터미널 작업 디렉터리는 `dormammu.json`의 `web.allowed_roots` 안으로
+제한됩니다. 터미널 세션은 tmux 기반이므로 브라우저 새로고침 이후에도
+살아 있고 실제 쉘에서도 같은 세션에 붙을 수 있습니다.
+
+```bash
+dormammu terminal open --repo-root . --cwd .
+dormammu terminal list --repo-root .
+dormammu terminal attach --repo-root . <session-id>
+dormammu terminal send --repo-root . <session-id> "dormammu resume"
+dormammu terminal close --repo-root . <session-id>
+```
 
 ---
 

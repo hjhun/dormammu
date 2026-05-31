@@ -6,7 +6,7 @@ from dormammu.config import AppConfig
 from dormammu.web.auth import credential_matches, hash_password, request_token
 from dormammu.web.settings import apply_settings_patch, read_settings, set_web_password_hash, write_raw_settings
 from dormammu.web.telegram_service import TelegramConversationService
-from dormammu.web.terminal import TerminalAccessError, TerminalSessionManager
+from dormammu.web.terminal import TerminalAccessError, TerminalRuntimeError, TerminalSessionManager
 
 
 def create_app(config: AppConfig, *, token: str | None = None):
@@ -156,7 +156,7 @@ def create_app(config: AppConfig, *, token: str | None = None):
                 cols=int(body.get("cols") or 120),
                 rows=int(body.get("rows") or 32),
             )
-        except TerminalAccessError as exc:
+        except (TerminalAccessError, TerminalRuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"session": snapshot.to_dict()}
 
@@ -211,7 +211,7 @@ def create_app(config: AppConfig, *, token: str | None = None):
                     if chunk is None:
                         await websocket.send_json({"type": "status", "running": session.running, "exit_code": session.exit_code})
                         break
-                    await websocket.send_json({"type": "output", "data": chunk.decode("utf-8", errors="replace")})
+                    await websocket.send_json({"type": "snapshot", "data": chunk.decode("utf-8", errors="replace")})
 
         async def receiver() -> None:
             while True:

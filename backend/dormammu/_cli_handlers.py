@@ -15,7 +15,9 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
+import subprocess
 import sys
 from typing import TextIO
 
@@ -218,6 +220,51 @@ def _handle_web(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     return 0
+
+
+def _handle_terminal(args: argparse.Namespace) -> int:
+    config = _load_config(args.repo_root)
+    try:
+        from dormammu.web.terminal import TerminalAccessError, TerminalRuntimeError, TerminalSessionManager, tmux_session_name
+    except ImportError as exc:
+        print(f"error: terminal runtime is unavailable: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        manager = TerminalSessionManager(allowed_roots=config.web_config.allowed_roots)
+        command = args.terminal_command
+        if command == "open":
+            cwd = args.cwd or config.repo_root
+            snapshot = manager.create_session(cwd=cwd, cols=args.cols, rows=args.rows)
+            print(snapshot.id)
+            return 0
+        if command == "list":
+            sessions = manager.list_sessions()
+            for snapshot in sessions:
+                status = "running" if snapshot.running else f"exit {snapshot.exit_code}"
+                print(f"{snapshot.id}\t{status}\t{snapshot.cwd}\t{snapshot.created_at}")
+            return 0
+        if command == "attach":
+            target = tmux_session_name(args.session_id)
+            tmux = shutil.which("tmux")
+            if not tmux:
+                raise TerminalRuntimeError("tmux is required for terminal attach")
+            return subprocess.call([tmux, "attach-session", "-t", target])
+        if command == "send":
+            session = manager.get(args.session_id)
+            text = " ".join(args.text) if isinstance(args.text, list) else str(args.text)
+            session.write(text if text.endswith("\n") else f"{text}\n")
+            return 0
+        if command == "close":
+            if not manager.delete(args.session_id):
+                print(f"terminal session not found: {args.session_id}", file=sys.stderr)
+                return 1
+            return 0
+    except (TerminalAccessError, TerminalRuntimeError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"error: unknown terminal command: {args.terminal_command}", file=sys.stderr)
+    return 1
 
 
 def _handle_init_state(args: argparse.Namespace) -> int:

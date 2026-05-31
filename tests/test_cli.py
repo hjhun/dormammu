@@ -87,6 +87,23 @@ class CliTests(unittest.TestCase):
         self.assertTrue(run_loop.verbose)
         self.assertTrue(daemonize.verbose)
 
+    def test_terminal_subcommands_parse_expected_arguments(self) -> None:
+        parser = build_parser()
+
+        opened = parser.parse_args(["terminal", "open", "--cwd", "/tmp", "--cols", "100"])
+        listed = parser.parse_args(["terminal", "list"])
+        attached = parser.parse_args(["terminal", "attach", "abc123"])
+        sent = parser.parse_args(["terminal", "send", "abc123", "dormammu", "resume"])
+        closed = parser.parse_args(["terminal", "close", "abc123"])
+
+        self.assertEqual(opened.terminal_command, "open")
+        self.assertEqual(opened.cwd, Path("/tmp"))
+        self.assertEqual(opened.cols, 100)
+        self.assertEqual(listed.terminal_command, "list")
+        self.assertEqual(attached.session_id, "abc123")
+        self.assertEqual(sent.text, ["dormammu", "resume"])
+        self.assertEqual(closed.terminal_command, "close")
+
     def test_daemonize_uses_default_global_daemon_config_when_flag_is_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

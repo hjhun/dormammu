@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import shutil
 import time
 
 import pytest
@@ -141,7 +142,9 @@ def test_allowed_cwd_rejects_path_outside_allowed_root(tmp_path: Path) -> None:
         resolve_allowed_cwd(outside, (allowed,))
 
 
-def test_terminal_session_write_reaches_pty(tmp_path: Path) -> None:
+def test_terminal_session_write_reaches_tmux_session(tmp_path: Path) -> None:
+    if not shutil.which("tmux"):
+        pytest.skip("tmux is required for terminal runtime tests")
     manager = TerminalSessionManager(allowed_roots=(tmp_path,))
     snapshot = manager.create_session(cwd=tmp_path, command=("/bin/cat",))
     session = manager.get(snapshot.id)
@@ -165,6 +168,20 @@ def test_terminal_session_write_reaches_pty(tmp_path: Path) -> None:
         manager.close_all()
 
     assert b"dormammu-input-smoke" in b"".join(chunks)
+
+
+def test_terminal_manager_rediscovers_tmux_sessions(tmp_path: Path) -> None:
+    if not shutil.which("tmux"):
+        pytest.skip("tmux is required for terminal runtime tests")
+    manager = TerminalSessionManager(allowed_roots=(tmp_path,))
+    snapshot = manager.create_session(cwd=tmp_path)
+
+    try:
+        rediscovered = TerminalSessionManager(allowed_roots=(tmp_path,)).list_sessions()
+    finally:
+        manager.delete(snapshot.id)
+
+    assert any(item.id == snapshot.id for item in rediscovered)
 
 
 def test_external_bind_requires_token() -> None:

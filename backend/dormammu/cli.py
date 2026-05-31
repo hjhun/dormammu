@@ -36,6 +36,7 @@ from dormammu._cli_handlers import (
     _handle_set_config,
     _handle_show_config,
     _handle_start_session,
+    _handle_terminal,
     _handle_web,
 )
 
@@ -542,12 +543,49 @@ def build_parser() -> argparse.ArgumentParser:
     _add_debug(daemonize, help="Mirror daemon stderr into <result_path>/../progress/<prompt>_progress.log and reset it for each new prompt session.")
     daemonize.set_defaults(handler=_handle_daemonize)
 
+    terminal = subparsers.add_parser(
+        "terminal",
+        help="Manage persistent tmux-backed Dormammu terminal sessions.",
+        description=(
+            "Create, list, attach to, send commands to, and close the same "
+            "tmux-backed terminal sessions used by the web UI."
+        ),
+    )
+    terminal_subparsers = terminal.add_subparsers(dest="terminal_command", required=True)
+
+    terminal_open = terminal_subparsers.add_parser("open", help="Create a persistent terminal session.")
+    _add_repo_root(terminal_open)
+    terminal_open.add_argument("--cwd", type=Path, default=None, help="Working directory for the session.")
+    terminal_open.add_argument("--cols", type=int, default=120, help="Initial terminal width.")
+    terminal_open.add_argument("--rows", type=int, default=32, help="Initial terminal height.")
+    terminal_open.set_defaults(handler=_handle_terminal)
+
+    terminal_list = terminal_subparsers.add_parser("list", help="List persistent terminal sessions.")
+    _add_repo_root(terminal_list)
+    terminal_list.set_defaults(handler=_handle_terminal)
+
+    terminal_attach = terminal_subparsers.add_parser("attach", help="Attach tmux to a terminal session.")
+    _add_repo_root(terminal_attach)
+    terminal_attach.add_argument("session_id", help="Terminal session id.")
+    terminal_attach.set_defaults(handler=_handle_terminal)
+
+    terminal_send = terminal_subparsers.add_parser("send", help="Send a command to a terminal session.")
+    _add_repo_root(terminal_send)
+    terminal_send.add_argument("session_id", help="Terminal session id.")
+    terminal_send.add_argument("text", nargs="+", help="Command text to send.")
+    terminal_send.set_defaults(handler=_handle_terminal)
+
+    terminal_close = terminal_subparsers.add_parser("close", help="Close a terminal session.")
+    _add_repo_root(terminal_close)
+    terminal_close.add_argument("session_id", help="Terminal session id.")
+    terminal_close.set_defaults(handler=_handle_terminal)
+
     web = subparsers.add_parser(
         "web",
         help="Start the Dormammu web terminal and settings server.",
         description=(
             "Serve the TypeScript web terminal, settings UI, and web APIs. "
-            "Binding to an external host requires --token or DORMAMMU_WEB_TOKEN."
+            "Authentication uses the configured web password or an optional token."
         ),
     )
     _add_repo_root(web)

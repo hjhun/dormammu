@@ -508,17 +508,27 @@ Empty or whitespace-only stdin is ignored and does not enqueue work.
 
 ### `dormammu web`
 
-Start the token-protected browser console for live terminal sessions,
-Telegram conversation sessions, and common settings.
+Start the browser console for live terminal sessions, Telegram conversation
+sessions, and common settings. On first launch, the UI asks for a web password
+and stores only a password hash in config. You can still pass a temporary token
+for automation:
 
 ```bash
 DORMAMMU_WEB_TOKEN="$(openssl rand -hex 24)" \
   dormammu web --repo-root . --host 0.0.0.0 --port 9001
 ```
 
-External binds require `--token` or `DORMAMMU_WEB_TOKEN` because the web
-terminal can execute shell commands. Terminal working directories are limited
-to `web.allowed_roots` from `dormammu.json`.
+Terminal working directories are limited to `web.allowed_roots` from
+`dormammu.json`. Terminal sessions are backed by tmux, so they survive browser
+refreshes and can be shared with a real shell:
+
+```bash
+dormammu terminal open --repo-root . --cwd .
+dormammu terminal list --repo-root .
+dormammu terminal attach --repo-root . <session-id>
+dormammu terminal send --repo-root . <session-id> "dormammu resume"
+dormammu terminal close --repo-root . <session-id>
+```
 
 ---
 
