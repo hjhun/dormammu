@@ -539,6 +539,12 @@ Session metadata, including whether the session was opened from the web app or
 CLI and the last Dormammu command sent to it, is stored under
 `~/.dormammu/web/terminal_sessions.json`.
 
+The web console also exposes daemon operations for the configured
+`~/.dormammu/daemonize.json`: start/stop, status, queue depth, log tailing,
+prompt enqueue/delete, prompt file editing, and goals file editing. The
+Prompts tab writes to `prompt_path`; the Goals tab writes to `goals.path` when
+the daemon config has a goals section.
+
 ---
 
 ## Configuration Reference

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -18,6 +19,23 @@ def _app_config(root: Path) -> AppConfig:
     env = dict(os.environ)
     env["HOME"] = str(root / "home")
     return AppConfig.load(repo_root=root, env=env)
+
+
+def _write_daemon_config(config: AppConfig, *, goals: bool = True) -> Path:
+    path = config.home_dir / ".dormammu" / "daemonize.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "prompt_path": str(config.home_dir / "queue" / "prompts"),
+        "result_path": str(config.home_dir / "queue" / "results"),
+    }
+    if goals:
+        payload["goals"] = {
+            "path": str(config.home_dir / "goals"),
+            "interval_minutes": 5,
+        }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
 
 def test_config_api_requires_token(tmp_path: Path) -> None:
@@ -161,3 +179,91 @@ def test_dormammu_terminal_command_builder_quotes_prompt(tmp_path: Path) -> None
 def test_dormammu_terminal_command_builder_requires_prompt(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         build_dormammu_terminal_command(mode="run", repo_root=tmp_path)
+
+
+def test_daemon_api_manages_queue_prompts_and_goals(tmp_path: Path) -> None:
+    testclient = pytest.importorskip("fastapi.testclient")
+    _seed_repo(tmp_path)
+    config = _app_config(tmp_path)
+    _write_daemon_config(config)
+    client = testclient.TestClient(create_app(config, token="secret"))
+    headers = {"Authorization": "Bearer secret"}
+
+    status = client.get("/api/daemon/status", headers=headers)
+    queued = client.post("/api/daemon/queue", json={"text": "Implement queue UI"}, headers=headers)
+    prompts = client.get("/api/daemon/prompts", headers=headers)
+    filename = queued.json()["prompt"]["filename"]
+    prompt = client.get(f"/api/daemon/prompts/{filename}", headers=headers)
+    updated = client.put(
+        f"/api/daemon/prompts/{filename}",
+        json={"content": "Implement queue UI\n\nWith details."},
+        headers=headers,
+    )
+    goal = client.post("/api/daemon/goals", json={"content": "Add daemon dashboard"}, headers=headers)
+    goals = client.get("/api/daemon/goals", headers=headers)
+    deleted_prompt = client.delete(f"/api/daemon/prompts/{filename}", headers=headers)
+    deleted_goal = client.delete(f"/api/daemon/goals/{goal.json()['goal']['filename']}", headers=headers)
+
+    assert status.status_code == 200
+    assert status.json()["queue_depth"] == 0
+    assert queued.status_code == 200
+    assert prompts.status_code == 200
+    assert prompt.json()["content"] == "Implement queue UI\n"
+    assert updated.json()["prompt"]["content"] == "Implement queue UI\n\nWith details.\n"
+    assert goal.status_code == 200
+    assert goals.status_code == 200
+    assert len(goals.json()["goals"]) == 1
+    assert deleted_prompt.status_code == 200
+    assert deleted_goal.status_code == 200
+
+
+def test_daemon_api_rejects_path_traversal(tmp_path: Path) -> None:
+    testclient = pytest.importorskip("fastapi.testclient")
+    _seed_repo(tmp_path)
+    config = _app_config(tmp_path)
+    _write_daemon_config(config)
+    client = testclient.TestClient(create_app(config, token="secret"))
+
+    response = client.put(
+        "/api/daemon/prompts/../escape.md",
+        json={"content": "bad"},
+        headers={"Authorization": "Bearer secret"},
+    )
+
+    assert response.status_code in {400, 404}
+
+
+def test_daemon_start_and_stop_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    testclient = pytest.importorskip("fastapi.testclient")
+    _seed_repo(tmp_path)
+    config = _app_config(tmp_path)
+    _write_daemon_config(config)
+    client = testclient.TestClient(create_app(config, token="secret"))
+    calls: list[list[str]] = []
+
+    class FakeProcess:
+        pid = 4321
+
+    def fake_popen(command, **kwargs):
+        calls.append(list(command))
+        pid_path = config.results_dir.parent / "daemon.pid"
+        pid_path.parent.mkdir(parents=True, exist_ok=True)
+        pid_path.write_text("4321", encoding="utf-8")
+        return FakeProcess()
+
+    stopped: list[int] = []
+
+    def fake_kill(pid: int, signal_number: int) -> None:
+        stopped.append(pid)
+
+    monkeypatch.setattr("dormammu.web.app.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("os.kill", fake_kill)
+
+    started = client.post("/api/daemon/start", headers={"Authorization": "Bearer secret"})
+    stopped_response = client.post("/api/daemon/stop", headers={"Authorization": "Bearer secret"})
+
+    assert started.status_code == 200
+    assert started.json()["started"] is True
+    assert calls and calls[0][3] == "daemonize"
+    assert stopped_response.status_code == 200
+    assert stopped == [4321]

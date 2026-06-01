@@ -26,6 +26,28 @@ export type TelegramSession = {
   turn_count: number;
 };
 
+export type DaemonFile = {
+  filename: string;
+  path: string;
+  size: number;
+  updated_at: string;
+  content?: string;
+};
+
+export type DaemonStatus = {
+  config_path: string;
+  prompt_path: string;
+  result_path: string;
+  pid_path: string;
+  heartbeat_path: string;
+  pid_present: boolean;
+  heartbeat_present: boolean;
+  queue_depth: number;
+  heartbeat_payload: Record<string, unknown> | null;
+  heartbeat_error: string | null;
+  queue: DaemonFile[];
+};
+
 export type SettingsPayload = {
   scope: string;
   config_file: string | null;
@@ -95,6 +117,15 @@ export class ApiClient {
   async patch<T>(path: string, body: unknown): Promise<T> {
     const response = await fetch(path, {
       method: "PATCH",
+      headers: this.headers(),
+      body: JSON.stringify(body)
+    });
+    return this.decode<T>(response);
+  }
+
+  async put<T>(path: string, body: unknown): Promise<T> {
+    const response = await fetch(path, {
+      method: "PUT",
       headers: this.headers(),
       body: JSON.stringify(body)
     });

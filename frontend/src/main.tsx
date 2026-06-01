@@ -5,28 +5,33 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
   Bot,
+  ClipboardList,
   FileJson,
+  FileText,
   FolderPlus,
   Gauge,
   Globe2,
   KeyRound,
+  ListTodo,
   LogOut,
   MessageSquareText,
   Monitor,
   Play,
   PlugZap,
+  Power,
   RefreshCw,
   Save,
   SendHorizontal,
   Settings,
   ShieldCheck,
+  Square,
   TerminalSquare,
   Trash2
 } from "lucide-react";
-import { ApiClient, SettingsPayload, TelegramSession, TelegramTurn, TerminalSession } from "./api";
+import { ApiClient, DaemonFile, DaemonStatus, SettingsPayload, TelegramSession, TelegramTurn, TerminalSession } from "./api";
 import "./styles.css";
 
-type View = "terminal" | "telegram" | "settings";
+type View = "terminal" | "daemon" | "prompts" | "goals" | "telegram" | "settings";
 type AuthState = "checking" | "setup" | "signed-out" | "signed-in";
 type SettingsTab = "agent" | "telegram" | "web" | "advanced" | "raw";
 
@@ -146,6 +151,15 @@ function App() {
           <button className={view === "terminal" ? "active" : ""} onClick={() => setView("terminal")} title="Terminal sessions">
             <TerminalSquare size={18} /> Terminal
           </button>
+          <button className={view === "daemon" ? "active" : ""} onClick={() => setView("daemon")} title="Daemon control">
+            <Gauge size={18} /> Daemon
+          </button>
+          <button className={view === "prompts" ? "active" : ""} onClick={() => setView("prompts")} title="Daemon prompts">
+            <FileText size={18} /> Prompts
+          </button>
+          <button className={view === "goals" ? "active" : ""} onClick={() => setView("goals")} title="Daemon goals">
+            <ListTodo size={18} /> Goals
+          </button>
           <button className={view === "telegram" ? "active" : ""} onClick={() => setView("telegram")} title="Telegram sessions">
             <MessageSquareText size={18} /> Telegram
           </button>
@@ -169,6 +183,9 @@ function App() {
         </header>
         {error && <div className="banner">{error}</div>}
         {view === "terminal" && <TerminalView api={api} />}
+        {view === "daemon" && <DaemonView api={api} />}
+        {view === "prompts" && <PromptLibraryView api={api} />}
+        {view === "goals" && <GoalsView api={api} />}
         {view === "telegram" && <TelegramView api={api} />}
         {view === "settings" && <SettingsView api={api} />}
       </main>
@@ -253,6 +270,232 @@ function AuthScreen({
         </form>
       </section>
     </main>
+  );
+}
+
+function DaemonView({ api }: { api: ApiClient }) {
+  const [status, setStatus] = useState<DaemonStatus | null>(null);
+  const [logs, setLogs] = useState<{ path: string | null; lines: string[] }>({ path: null, lines: [] });
+  const [prompt, setPrompt] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const refresh = () => {
+    api.get<DaemonStatus>("/api/daemon/status")
+      .then(setStatus)
+      .catch((err: Error) => setMessage(err.message));
+    api.get<{ path: string | null; lines: string[] }>("/api/daemon/logs")
+      .then(setLogs)
+      .catch(() => setLogs({ path: null, lines: [] }));
+  };
+
+  useEffect(() => {
+    refresh();
+  }, [api]);
+
+  const action = async (kind: "start" | "stop") => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await api.post<{ started?: boolean; stopped?: boolean; pid?: number; message?: string }>(`/api/daemon/${kind}`, {});
+      setMessage(result.message || `${kind} requested${result.pid ? `: pid ${result.pid}` : ""}`);
+      refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const enqueue = async () => {
+    if (!prompt.trim()) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await api.post<{ queued: boolean; prompt: DaemonFile }>("/api/daemon/queue", { text: prompt });
+      setPrompt("");
+      setMessage("Prompt queued");
+      refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeQueued = async (file: DaemonFile) => {
+    await api.delete(`/api/daemon/queue/${encodeURIComponent(file.filename)}`);
+    refresh();
+  };
+
+  return (
+    <section className="daemon-surface">
+      <div className="daemon-header">
+        <div>
+          <h1>Daemon</h1>
+          <div className="settings-path">{status?.config_path || "daemonize.json"}</div>
+        </div>
+        <div className="daemon-actions">
+          <button className="save-button" onClick={() => action("start")} disabled={busy}><Power size={16} /> Start</button>
+          <button className="icon-text-button" onClick={() => action("stop")} disabled={busy}><Square size={15} /> Stop</button>
+          <button className="icon-button" onClick={refresh} title="Refresh"><RefreshCw size={15} /></button>
+        </div>
+      </div>
+      {message && <div className="banner">{message}</div>}
+      <div className="daemon-grid">
+        <div className="metric-strip">
+          <div><span>Process</span><strong>{status?.pid_present ? "running" : "stopped"}</strong></div>
+          <div><span>Heartbeat</span><strong>{status?.heartbeat_present ? "present" : "missing"}</strong></div>
+          <div><span>Queue</span><strong>{status?.queue_depth ?? 0}</strong></div>
+        </div>
+        <div className="daemon-paths">
+          <div><span>Prompts</span><code>{status?.prompt_path || ""}</code></div>
+          <div><span>Results</span><code>{status?.result_path || ""}</code></div>
+          <div><span>PID</span><code>{status?.pid_path || ""}</code></div>
+        </div>
+      </div>
+      <div className="daemon-columns">
+        <div className="daemon-panel">
+          <div className="section-title"><ClipboardList size={17} /> Queue</div>
+          <textarea className="daemon-textarea" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Queue a supervised Dormammu prompt..." />
+          <button className="save-button" onClick={enqueue} disabled={busy || !prompt.trim()}><SendHorizontal size={16} /> Enqueue</button>
+          <div className="file-list compact">
+            {(status?.queue || []).map((file) => (
+              <button key={file.filename} onClick={() => void removeQueued(file)}>
+                <span>{file.filename}</span>
+                <Trash2 size={14} />
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="daemon-panel">
+          <div className="section-title"><FileJson size={17} /> Logs</div>
+          <div className="log-path">{logs.path || "No daemon logs yet"}</div>
+          <pre className="log-output">{logs.lines.join("\n") || "No log output."}</pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PromptLibraryView({ api }: { api: ApiClient }) {
+  return <MarkdownFileManager api={api} title="Prompts" endpoint="/api/daemon/prompts" icon="prompt" />;
+}
+
+function GoalsView({ api }: { api: ApiClient }) {
+  return <MarkdownFileManager api={api} title="Goals" endpoint="/api/daemon/goals" icon="goal" createMode="post" />;
+}
+
+function MarkdownFileManager({
+  api,
+  title,
+  endpoint,
+  createMode = "put"
+}: {
+  api: ApiClient;
+  title: string;
+  endpoint: string;
+  icon: "prompt" | "goal";
+  createMode?: "put" | "post";
+}) {
+  const [rootPath, setRootPath] = useState("");
+  const [files, setFiles] = useState<DaemonFile[]>([]);
+  const [active, setActive] = useState<DaemonFile | null>(null);
+  const [filename, setFilename] = useState("");
+  const [content, setContent] = useState("");
+  const [message, setMessage] = useState("");
+
+  const refresh = () =>
+    api.get<{ path: string | null; prompts?: DaemonFile[]; goals?: DaemonFile[] }>(endpoint)
+      .then((payload) => {
+        const items = payload.prompts || payload.goals || [];
+        setRootPath(payload.path || "");
+        setFiles(items);
+        if (!active && items[0]) void load(items[0]);
+      })
+      .catch((err: Error) => setMessage(err.message));
+
+  useEffect(() => {
+    refresh();
+  }, [api, endpoint]);
+
+  const load = async (file: DaemonFile) => {
+    const payload = await api.get<DaemonFile>(`${endpoint}/${encodeURIComponent(file.filename)}`);
+    setActive(payload);
+    setFilename(payload.filename);
+    setContent(payload.content || "");
+    setMessage("");
+  };
+
+  const clearDraft = () => {
+    setActive(null);
+    setFilename("");
+    setContent("");
+    setMessage("");
+  };
+
+  const save = async () => {
+    try {
+      if (createMode === "post" && !active) {
+        const payload = await api.post<{ saved: boolean; goal: DaemonFile }>(endpoint, { content });
+        await load(payload.goal);
+      } else {
+        const target = (filename || active?.filename || "").trim();
+        if (!target) throw new Error("Filename is required");
+        const payload = await api.put<{ saved: boolean; prompt?: DaemonFile; goal?: DaemonFile }>(
+          `${endpoint}/${encodeURIComponent(target)}`,
+          { content }
+        );
+        await load((payload.prompt || payload.goal) as DaemonFile);
+      }
+      setMessage("Saved");
+      refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    }
+  };
+
+  const remove = async () => {
+    const target = active?.filename || filename;
+    if (!target || !window.confirm(`Delete ${target}?`)) return;
+    await api.delete(`${endpoint}/${encodeURIComponent(target)}`);
+    clearDraft();
+    refresh();
+  };
+
+  return (
+    <section className="markdown-manager">
+      <div className="daemon-header">
+        <div>
+          <h1>{title}</h1>
+          <div className="settings-path">{rootPath || "Not configured"}</div>
+        </div>
+        <div className="daemon-actions">
+          <button className="icon-text-button" onClick={clearDraft}><FolderPlus size={16} /> New</button>
+          <button className="save-button" onClick={save} disabled={!content.trim()}><Save size={16} /> Save</button>
+          <button className="icon-button" onClick={remove} title="Delete" disabled={!active && !filename}><Trash2 size={15} /></button>
+          <button className="icon-button" onClick={refresh} title="Refresh"><RefreshCw size={15} /></button>
+        </div>
+      </div>
+      {message && <div className="banner">{message}</div>}
+      <div className="markdown-grid">
+        <div className="file-list">
+          {files.map((file) => (
+            <button key={file.filename} className={active?.filename === file.filename ? "selected" : ""} onClick={() => void load(file)}>
+              <span>{file.filename}</span>
+              <small>{Math.max(1, Math.ceil(file.size / 1024))} KiB</small>
+            </button>
+          ))}
+        </div>
+        <div className="editor-pane">
+          <label className="field">
+            <span>Filename</span>
+            <input value={filename} onChange={(event) => setFilename(event.target.value)} placeholder={createMode === "post" && !active ? "Generated from first line" : "001-task.md"} disabled={createMode === "post" && !active} />
+          </label>
+          <textarea className="markdown-editor" value={content} onChange={(event) => setContent(event.target.value)} placeholder={title === "Goals" ? "Describe a recurring daemon goal..." : "Write a daemon prompt..."} />
+        </div>
+      </div>
+    </section>
   );
 }
 
