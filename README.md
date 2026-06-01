@@ -464,7 +464,10 @@ The web app provides:
 - multiple live terminal sessions backed by tmux
 - a Dormammu runner for `run`, `run-once`, and `resume` inside a session
 - a Queue page for daemon status, start/stop, log tailing, queue selection,
-  queue deletion, and prompt editing for `daemonize`
+  queue deletion, active prompt visibility, result history, and prompt editing
+  for `daemonize`
+- daemonize config inspection and validated raw config editing from the Queue
+  page
 - a goals editor backed by the configured daemon goals directory
 - a Settings page for common CLI, fallback, Telegram, web, and timeout config
 - Telegram conversation session browsing and browser-side continuation

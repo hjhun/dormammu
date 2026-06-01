@@ -527,6 +527,10 @@ input:disabled {
 .metric-strip strong {
   color: var(--accent);
   font-size: 20px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .daemon-paths {
@@ -548,6 +552,10 @@ input:disabled {
   grid-template-columns: minmax(330px, 0.58fr) minmax(0, 1fr);
   gap: 16px;
   margin-top: 16px;
+}
+
+.daemon-columns.secondary {
+  grid-template-columns: minmax(330px, 0.62fr) minmax(0, 1fr);
 }
 
 .daemon-panel {
@@ -621,6 +629,14 @@ input:disabled {
   grid-template-columns: 22px minmax(0, 1fr) auto;
 }
 
+.file-list.result-list {
+  min-height: 220px;
+  max-height: 34vh;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .file-list.queue-list input {
   width: 16px;
   height: 16px;
@@ -631,7 +647,7 @@ input:disabled {
   background: rgba(242, 201, 76, 0.11);
 }
 
-.file-list span,
+.file-list button > span,
 .file-list small {
   min-width: 0;
   overflow: hidden;
@@ -639,8 +655,100 @@ input:disabled {
   white-space: nowrap;
 }
 
+.file-list button > span {
+  display: grid;
+  gap: 3px;
+}
+
+.file-list button > span strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
 .file-list small {
   color: var(--text-dim);
+}
+
+.status-pill {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 76px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #0f1214;
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.status-pill.running,
+.status-pill.completed {
+  border-color: rgba(56, 193, 114, 0.45);
+  color: var(--accent-2);
+}
+
+.status-pill.failed,
+.status-pill.interrupted {
+  border-color: rgba(255, 107, 107, 0.45);
+  color: var(--danger);
+}
+
+.empty-inline {
+  display: grid;
+  place-items: center;
+  min-height: 90px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.daemon-config-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.daemon-config-grid div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101315;
+  padding: 10px;
+}
+
+.daemon-config-grid span {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.daemon-config-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-warning {
+  border: 1px solid #5b5331;
+  border-radius: 8px;
+  background: rgba(242, 201, 76, 0.08);
+  color: #f8dfa0;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.daemon-config-editor {
+  min-height: 260px;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .log-output {
@@ -856,6 +964,10 @@ input:disabled {
 
   .nav {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .daemon-config-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .topbar {

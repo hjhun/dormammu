@@ -191,6 +191,7 @@ def test_daemon_api_manages_queue_prompts_and_goals(tmp_path: Path) -> None:
 
     status = client.get("/api/daemon/status", headers=headers)
     queued = client.post("/api/daemon/queue", json={"text": "Implement queue UI"}, headers=headers)
+    queued_status = client.get("/api/daemon/status", headers=headers)
     prompts = client.get("/api/daemon/prompts", headers=headers)
     filename = queued.json()["prompt"]["filename"]
     prompt = client.get(f"/api/daemon/prompts/{filename}", headers=headers)
@@ -200,11 +201,66 @@ def test_daemon_api_manages_queue_prompts_and_goals(tmp_path: Path) -> None:
         headers=headers,
     )
     queued_second = client.post("/api/daemon/queue", json={"text": "Second queue item"}, headers=headers)
+    prompt_root = Path(queued_status.json()["prompt_path"])
+    goal_source = tmp_path / "home" / "goals" / "source-goal.md"
+    goal_prompt = prompt_root / "20260601_source-goal.md"
+    goal_prompt.parent.mkdir(parents=True, exist_ok=True)
+    goal_prompt.write_text(
+        f"<!-- dormammu:goal_source={goal_source} -->\n\n# Goal prompt\n",
+        encoding="utf-8",
+    )
+    progress_dir = Path(queued_status.json()["result_path"]).parent / "progress"
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    (progress_dir / "20260601_source-goal_progress.log").write_text(
+        "daemon prompt detected: 20260601_source-goal.md "
+        "(sort_key=(1, 'source', 'source'), watcher=polling, result=20260601_source-goal_RESULT.md)\n",
+        encoding="utf-8",
+    )
+    enriched_status = client.get("/api/daemon/status", headers=headers)
+    result_root = Path(enriched_status.json()["result_path"])
+    result_root.mkdir(parents=True, exist_ok=True)
+    (result_root / "done_RESULT.md").write_text(
+        "# Result: done.md\n\n"
+        "## Summary\n\n"
+        "- Status: `completed`\n"
+        "- Prompt path: `/queue/done.md`\n"
+        "- Session id: `session-done`\n"
+        "- Started at: `2026-06-01T00:00:00+00:00`\n"
+        "- Completed at: `2026-06-01T00:01:00+00:00`\n",
+        encoding="utf-8",
+    )
+    (result_root / "bad_RESULT.md").write_text(
+        "# Result: bad.md\n\n"
+        "## Summary\n\n"
+        "- Status: `failed`\n"
+        "- Prompt path: `/queue/bad.md`\n"
+        "- Session id: `session-bad`\n"
+        "- Started at: `2026-06-01T00:00:00+00:00`\n"
+        "- Completed at: `2026-06-01T00:01:00+00:00`\n\n"
+        "## Error\n\nagent failed\n",
+        encoding="utf-8",
+    )
+    history_status = client.get("/api/daemon/status", headers=headers)
+    archived = client.post("/api/daemon/results/archive-completed", headers=headers)
+    cleared = client.post("/api/daemon/results/clear-failed", headers=headers)
+    daemon_config = client.get("/api/daemon/config", headers=headers)
+    config_payload = json.loads(daemon_config.json()["raw_json"])
+    config_payload["watch"] = {"backend": "polling", "poll_interval_seconds": 2, "settle_seconds": 0}
+    patched_config = client.patch(
+        "/api/daemon/config/raw",
+        json={"raw_json": json.dumps(config_payload)},
+        headers=headers,
+    )
+    invalid_config = client.patch(
+        "/api/daemon/config/raw",
+        json={"raw_json": "{invalid json"},
+        headers=headers,
+    )
     goal = client.post("/api/daemon/goals", json={"content": "Add daemon dashboard"}, headers=headers)
     goals = client.get("/api/daemon/goals", headers=headers)
     deleted_prompt = client.post(
         "/api/daemon/queue/delete",
-        json={"filenames": [filename, queued_second.json()["prompt"]["filename"]]},
+        json={"filenames": [filename, queued_second.json()["prompt"]["filename"], goal_prompt.name]},
         headers=headers,
     )
     deleted_goal = client.delete(f"/api/daemon/goals/{goal.json()['goal']['filename']}", headers=headers)
@@ -212,15 +268,26 @@ def test_daemon_api_manages_queue_prompts_and_goals(tmp_path: Path) -> None:
     assert status.status_code == 200
     assert status.json()["queue_depth"] == 0
     assert queued.status_code == 200
+    assert queued_status.json()["queue"][0]["status"] == "queued"
     assert prompts.status_code == 200
     assert prompt.json()["content"] == "Implement queue UI\n"
     assert updated.json()["prompt"]["content"] == "Implement queue UI\n\nWith details.\n"
     assert queued_second.status_code == 200
+    assert enriched_status.json()["active_prompt"]["filename"] == goal_prompt.name
+    source_item = next(item for item in enriched_status.json()["queue"] if item["filename"] == goal_prompt.name)
+    assert source_item["source_goal"] == str(goal_source)
+    assert any(item["status"] == "completed" for item in history_status.json()["history"])
+    assert any(item["status"] == "failed" and item["error"] == "agent failed" for item in history_status.json()["history"])
+    assert archived.json()["archived"] == ["done_RESULT.md"]
+    assert cleared.json()["deleted"] == ["bad_RESULT.md"]
+    assert daemon_config.status_code == 200
+    assert patched_config.json()["summary"]["watch"]["poll_interval_seconds"] == 2
+    assert invalid_config.status_code == 400
     assert goal.status_code == 200
     assert goals.status_code == 200
     assert len(goals.json()["goals"]) == 1
     assert deleted_prompt.status_code == 200
-    assert len(deleted_prompt.json()["deleted"]) == 2
+    assert len(deleted_prompt.json()["deleted"]) == 3
     assert deleted_goal.status_code == 200
 
 

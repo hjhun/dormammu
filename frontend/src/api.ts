@@ -32,6 +32,35 @@ export type DaemonFile = {
   size: number;
   updated_at: string;
   content?: string;
+  status?: string;
+  source_goal?: string | null;
+  result_path?: string;
+  result_exists?: boolean;
+  progress_path?: string;
+  progress_exists?: boolean;
+  prompt_filename?: string;
+  prompt_path?: string | null;
+  session_id?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error?: string | null;
+};
+
+export type DaemonConfigSummary = {
+  schema_version: number;
+  config_path: string;
+  prompt_path: string;
+  result_path: string;
+  watch: {
+    backend: string;
+    poll_interval_seconds: number;
+    settle_seconds: number;
+  };
+  queue: {
+    allowed_extensions: string[];
+    ignore_hidden_files: boolean;
+  };
+  goals: Record<string, unknown> | null;
 };
 
 export type DaemonStatus = {
@@ -45,7 +74,11 @@ export type DaemonStatus = {
   queue_depth: number;
   heartbeat_payload: Record<string, unknown> | null;
   heartbeat_error: string | null;
+  active_prompt: DaemonFile | null;
   queue: DaemonFile[];
+  history: DaemonFile[];
+  config: DaemonConfigSummary;
+  config_warnings: string[];
 };
 
 export type SettingsPayload = {

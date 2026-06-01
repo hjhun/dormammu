@@ -1,13 +1,17 @@
 import asyncio
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any
 
 from dormammu.config import AppConfig
 from dormammu.daemon.config import load_daemon_config
+from dormammu.daemon._patterns import GOAL_SOURCE_RE, RESULT_STATUS_RE
+from dormammu.daemon.models import DaemonConfig
 from dormammu.operator_services import DaemonOperatorService, GoalsOperatorService, default_daemon_config_path
 from dormammu.web.auth import credential_matches, hash_password, request_token
 from dormammu.web.settings import apply_settings_patch, read_settings, set_web_password_hash, write_raw_settings
@@ -302,6 +306,49 @@ def create_app(config: AppConfig, *, token: str | None = None):
             return {"path": None, "lines": []}
         return {"path": str(tail.path), "lines": list(tail.lines)}
 
+    @app.get("/api/daemon/config")
+    def get_daemon_config(_: None = Depends(_require_http_auth)) -> dict[str, object]:
+        try:
+            service = _daemon_service(state["config"])
+            daemon_config = service.load_config()
+            raw_json = daemon_config.config_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "config_file": str(daemon_config.config_path),
+            "raw_json": raw_json,
+            "summary": _daemon_config_payload(daemon_config),
+            "warnings": _daemon_config_warnings(daemon_config),
+        }
+
+    @app.patch("/api/daemon/config/raw")
+    async def patch_daemon_config(request: Request, _: None = Depends(_require_http_auth)) -> dict[str, object]:
+        body = await request.json()
+        raw_json = body.get("raw_json") if isinstance(body, dict) else None
+        if not isinstance(raw_json, str) or not raw_json.strip():
+            raise HTTPException(status_code=400, detail="raw_json is required")
+        try:
+            json.loads(raw_json)
+            current = _daemon_service(state["config"]).load_config()
+            current.config_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = current.config_path.with_name(f".{current.config_path.name}.web.tmp")
+            tmp_path.write_text(raw_json.rstrip() + "\n", encoding="utf-8")
+            load_daemon_config(tmp_path, app_config=state["config"])
+            tmp_path.replace(current.config_path)
+            daemon_config = load_daemon_config(current.config_path, app_config=state["config"])
+        except Exception as exc:
+            try:
+                tmp_path.unlink(missing_ok=True)  # type: ignore[name-defined]
+            except Exception:
+                pass
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "config_file": str(daemon_config.config_path),
+            "raw_json": daemon_config.config_path.read_text(encoding="utf-8"),
+            "summary": _daemon_config_payload(daemon_config),
+            "warnings": _daemon_config_warnings(daemon_config),
+        }
+
     @app.post("/api/daemon/queue")
     async def enqueue_daemon_prompt(request: Request, _: None = Depends(_require_http_auth)) -> dict[str, object]:
         body = await request.json()
@@ -335,6 +382,38 @@ def create_app(config: AppConfig, *, token: str | None = None):
                 path = _safe_child(prompt_root, filename)
                 path.unlink(missing_ok=True)
                 deleted.append(filename)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"deleted": deleted}
+
+    @app.post("/api/daemon/results/archive-completed")
+    def archive_completed_results(_: None = Depends(_require_http_auth)) -> dict[str, object]:
+        try:
+            daemon_config = _daemon_service(state["config"]).load_config()
+            archive_dir = daemon_config.result_path / "archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            archived: list[str] = []
+            for result in _list_result_files(daemon_config):
+                summary = _result_payload(result)
+                if summary.get("status") != "completed":
+                    continue
+                result.replace(archive_dir / result.name)
+                archived.append(result.name)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"archived": archived, "archive_path": str(archive_dir)}
+
+    @app.post("/api/daemon/results/clear-failed")
+    def clear_failed_results(_: None = Depends(_require_http_auth)) -> dict[str, object]:
+        try:
+            daemon_config = _daemon_service(state["config"]).load_config()
+            deleted: list[str] = []
+            for result in _list_result_files(daemon_config):
+                summary = _result_payload(result)
+                if summary.get("status") != "failed":
+                    continue
+                result.unlink(missing_ok=True)
+                deleted.append(result.name)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"deleted": deleted}
@@ -550,7 +629,9 @@ def _goals_service(config: AppConfig) -> GoalsOperatorService:
 
 def _daemon_status_payload(service: DaemonOperatorService) -> dict[str, object]:
     status = service.status()
-    queue = [_file_payload(path) for path in service.list_queue()]
+    daemon_config = service.load_config()
+    active_prompt = _active_prompt_payload(service)
+    queue = [_queue_payload(path, daemon_config=daemon_config, active_prompt=active_prompt) for path in service.list_queue()]
     return {
         "config_path": str(status.config_path),
         "prompt_path": str(status.prompt_path),
@@ -562,7 +643,11 @@ def _daemon_status_payload(service: DaemonOperatorService) -> dict[str, object]:
         "queue_depth": status.queue_depth,
         "heartbeat_payload": status.heartbeat_payload,
         "heartbeat_error": status.heartbeat_error,
+        "active_prompt": active_prompt,
         "queue": queue,
+        "history": [_result_payload(path) for path in _list_result_files(daemon_config)[:20]],
+        "config": _daemon_config_payload(daemon_config),
+        "config_warnings": _daemon_config_warnings(daemon_config),
     }
 
 
@@ -595,3 +680,127 @@ def _file_payload(path: Path, *, include_content: bool = False) -> dict[str, obj
     if include_content:
         payload["content"] = path.read_text(encoding="utf-8", errors="replace")
     return payload
+
+
+def _queue_payload(path: Path, *, daemon_config: DaemonConfig, active_prompt: dict[str, object] | None = None) -> dict[str, object]:
+    payload = _file_payload(path)
+    content_head = path.read_text(encoding="utf-8", errors="replace")[:8192]
+    goal_match = GOAL_SOURCE_RE.search(content_head)
+    expected_result = daemon_config.result_path / f"{path.stem}_RESULT.md"
+    progress_path = daemon_config.result_path.parent / "progress" / f"{path.stem}_progress.log"
+    payload.update(
+        {
+            "status": "running" if active_prompt and active_prompt.get("filename") == path.name else "queued",
+            "source_goal": goal_match.group(1) if goal_match else None,
+            "result_path": str(expected_result),
+            "result_exists": expected_result.exists(),
+            "progress_path": str(progress_path),
+            "progress_exists": progress_path.exists(),
+        }
+    )
+    return payload
+
+
+def _active_prompt_payload(service: DaemonOperatorService) -> dict[str, object] | None:
+    tail = service.latest_log_tail(max_lines=200)
+    if tail is None:
+        return None
+    matches = list(re.finditer(r"daemon prompt detected: ([^\s]+)", "\n".join(tail.lines)))
+    if not matches:
+        return None
+    filename = matches[-1].group(1)
+    daemon_config = service.load_config()
+    prompt_path = daemon_config.prompt_path / filename
+    result_path = daemon_config.result_path / f"{Path(filename).stem}_RESULT.md"
+    if result_path.exists() or not prompt_path.exists():
+        return None
+    payload = _file_payload(prompt_path)
+    payload.update(
+        {
+            "status": "running",
+            "progress_path": str(daemon_config.result_path.parent / "progress" / f"{Path(filename).stem}_progress.log"),
+            "result_path": str(result_path),
+        }
+    )
+    return payload
+
+
+def _list_result_files(daemon_config: DaemonConfig) -> list[Path]:
+    if not daemon_config.result_path.exists():
+        return []
+    return sorted(
+        (path for path in daemon_config.result_path.glob("*_RESULT.md") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+
+def _result_payload(path: Path) -> dict[str, object]:
+    payload = _file_payload(path)
+    text = path.read_text(encoding="utf-8", errors="replace")
+    prompt_path = _markdown_field(text, "Prompt path")
+    prompt_filename = Path(prompt_path).name if prompt_path else path.name.removesuffix("_RESULT.md") + ".md"
+    payload.update(
+        {
+            "status": _match_group(RESULT_STATUS_RE, text) or "unknown",
+            "prompt_path": prompt_path,
+            "prompt_filename": prompt_filename,
+            "session_id": _markdown_field(text, "Session id"),
+            "started_at": _markdown_field(text, "Started at"),
+            "completed_at": _markdown_field(text, "Completed at"),
+            "source_goal": _match_group(GOAL_SOURCE_RE, text),
+            "error": _error_excerpt(text),
+        }
+    )
+    return payload
+
+
+def _daemon_config_payload(daemon_config: DaemonConfig) -> dict[str, object]:
+    goals = daemon_config.goals
+    return {
+        "schema_version": daemon_config.schema_version,
+        "config_path": str(daemon_config.config_path),
+        "prompt_path": str(daemon_config.prompt_path),
+        "result_path": str(daemon_config.result_path),
+        "watch": {
+            "backend": daemon_config.watch.backend,
+            "poll_interval_seconds": daemon_config.watch.poll_interval_seconds,
+            "settle_seconds": daemon_config.watch.settle_seconds,
+        },
+        "queue": {
+            "allowed_extensions": list(daemon_config.queue.allowed_extensions),
+            "ignore_hidden_files": daemon_config.queue.ignore_hidden_files,
+        },
+        "goals": goals.to_dict() if goals is not None else None,
+    }
+
+
+def _daemon_config_warnings(daemon_config: DaemonConfig) -> list[str]:
+    warnings: list[str] = []
+    if daemon_config.queue.allowed_extensions and ".md" not in {
+        item.lower() for item in daemon_config.queue.allowed_extensions
+    }:
+        warnings.append("The web Queue editor writes Markdown prompts, but .md is not allowed by queue.allowed_extensions.")
+    if daemon_config.watch.poll_interval_seconds > 60:
+        warnings.append("watch.poll_interval_seconds is above 60 seconds; queued prompts may take a while to start.")
+    if daemon_config.goals is None:
+        warnings.append("goals is not configured; the Goals page will be read-only unavailable.")
+    return warnings
+
+
+def _markdown_field(text: str, label: str) -> str | None:
+    pattern = re.compile(rf"^- {re.escape(label)}: `([^`]+)`$", re.MULTILINE)
+    return _match_group(pattern, text)
+
+
+def _match_group(pattern: re.Pattern[str], text: str) -> str | None:
+    match = pattern.search(text)
+    return match.group(1) if match else None
+
+
+def _error_excerpt(text: str) -> str | None:
+    marker = "\n## Error\n\n"
+    if marker not in text:
+        return None
+    error = text.split(marker, 1)[1].split("\n## ", 1)[0].strip()
+    return error[:400] if error else None

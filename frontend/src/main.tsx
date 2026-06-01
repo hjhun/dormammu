@@ -275,6 +275,8 @@ function DaemonView({ api }: { api: ApiClient }) {
   const [promptFilename, setPromptFilename] = useState("");
   const [promptContent, setPromptContent] = useState("");
   const [selectedQueue, setSelectedQueue] = useState<string[]>([]);
+  const [configRaw, setConfigRaw] = useState("");
+  const [configOpen, setConfigOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -290,8 +292,15 @@ function DaemonView({ api }: { api: ApiClient }) {
       .catch(() => setLogs({ path: null, lines: [] }));
   };
 
+  const loadConfig = () => {
+    api.get<{ raw_json: string }>("/api/daemon/config")
+      .then((payload) => setConfigRaw(payload.raw_json))
+      .catch(() => setConfigRaw(""));
+  };
+
   useEffect(() => {
     refresh();
+    loadConfig();
   }, [api]);
 
   const action = async (kind: "start" | "stop") => {
@@ -369,6 +378,15 @@ function DaemonView({ api }: { api: ApiClient }) {
     );
   };
 
+  const toggleAllQueue = () => {
+    const queue = status?.queue || [];
+    if (queue.length > 0 && selectedQueue.length === queue.length) {
+      setSelectedQueue([]);
+      return;
+    }
+    setSelectedQueue(queue.map((file) => file.filename));
+  };
+
   const deleteSelected = async () => {
     if (selectedQueue.length === 0) return;
     if (!window.confirm(`Delete ${selectedQueue.length} queued prompt(s)?`)) return;
@@ -387,6 +405,56 @@ function DaemonView({ api }: { api: ApiClient }) {
     }
   };
 
+  const archiveCompleted = async () => {
+    if (!window.confirm("Archive completed result reports?")) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await api.post<{ archived: string[] }>("/api/daemon/results/archive-completed", {});
+      setMessage(`${payload.archived.length} completed result report(s) archived`);
+      refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearFailed = async () => {
+    if (!window.confirm("Delete failed result reports?")) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await api.post<{ deleted: string[] }>("/api/daemon/results/clear-failed", {});
+      setMessage(`${payload.deleted.length} failed result report(s) deleted`);
+      refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveDaemonConfig = async () => {
+    if (!configRaw.trim()) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await api.patch<{ raw_json: string }>("/api/daemon/config/raw", { raw_json: configRaw });
+      setConfigRaw(payload.raw_json);
+      setMessage("Daemon config saved");
+      refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const queue = status?.queue || [];
+  const history = status?.history || [];
+  const allQueueSelected = queue.length > 0 && selectedQueue.length === queue.length;
+
   return (
     <section className="daemon-surface">
       <div className="daemon-header">
@@ -404,7 +472,7 @@ function DaemonView({ api }: { api: ApiClient }) {
       <div className="daemon-grid">
         <div className="metric-strip">
           <div><span>Process</span><strong>{status?.pid_present ? "running" : "stopped"}</strong></div>
-          <div><span>Heartbeat</span><strong>{status?.heartbeat_present ? "present" : "missing"}</strong></div>
+          <div><span>Active</span><strong>{status?.active_prompt?.filename || "none"}</strong></div>
           <div><span>Queue</span><strong>{status?.queue_depth ?? 0}</strong></div>
         </div>
         <div className="daemon-paths">
@@ -420,13 +488,16 @@ function DaemonView({ api }: { api: ApiClient }) {
             <button className="icon-button" onClick={newPrompt} title="New prompt"><FolderPlus size={15} /></button>
           </div>
           <div className="queue-toolbar">
+            <button className="icon-text-button" onClick={toggleAllQueue} disabled={queue.length === 0}>
+              <ClipboardList size={15} /> {allQueueSelected ? "Clear selection" : "Select all"}
+            </button>
             <button className="icon-text-button" onClick={deleteSelected} disabled={busy || selectedQueue.length === 0}>
               <Trash2 size={15} /> Delete selected
             </button>
             <span>{selectedQueue.length} selected</span>
           </div>
           <div className="file-list queue-list">
-            {(status?.queue || []).map((file) => (
+            {queue.map((file) => (
               <button key={file.filename} className={activePrompt?.filename === file.filename ? "selected" : ""} onClick={() => void loadPrompt(file)}>
                 <input
                   type="checkbox"
@@ -435,10 +506,14 @@ function DaemonView({ api }: { api: ApiClient }) {
                   onChange={() => toggleQueueSelection(file.filename)}
                   aria-label={`Select ${file.filename}`}
                 />
-                <span>{file.filename}</span>
-                <small>{Math.max(1, Math.ceil(file.size / 1024))} KiB</small>
+                <span>
+                  <strong>{file.filename}</strong>
+                  {file.source_goal && <small>{file.source_goal}</small>}
+                </span>
+                <small className={`status-pill ${file.status || "queued"}`}>{file.status || "queued"}</small>
               </button>
             ))}
+            {queue.length === 0 && <div className="empty-inline">No queued prompts.</div>}
           </div>
         </div>
         <div className="daemon-panel">
@@ -456,6 +531,57 @@ function DaemonView({ api }: { api: ApiClient }) {
             )}
             <button className="icon-text-button" onClick={newPrompt}><FolderPlus size={16} /> New draft</button>
           </div>
+        </div>
+      </div>
+      <div className="daemon-columns secondary">
+        <div className="daemon-panel">
+          <div className="section-title"><FileJson size={17} /> Results</div>
+          <div className="queue-toolbar">
+            <button className="icon-text-button" onClick={archiveCompleted} disabled={busy || history.every((file) => file.status !== "completed")}>
+              <FolderPlus size={15} /> Archive completed
+            </button>
+            <button className="icon-text-button" onClick={clearFailed} disabled={busy || history.every((file) => file.status !== "failed")}>
+              <Trash2 size={15} /> Clear failed
+            </button>
+          </div>
+          <div className="file-list result-list">
+            {history.map((file) => (
+              <button key={file.filename} onClick={() => setMessage(`${file.filename}: ${file.path}`)}>
+                <span>
+                  <strong>{file.prompt_filename || file.filename}</strong>
+                  <small>{file.session_id || file.filename}</small>
+                </span>
+                <small className={`status-pill ${file.status || "unknown"}`}>{file.status || "unknown"}</small>
+              </button>
+            ))}
+            {history.length === 0 && <div className="empty-inline">No result reports yet.</div>}
+          </div>
+        </div>
+        <div className="daemon-panel">
+          <div className="section-title">
+            <Settings size={17} /> Daemonize config
+            <button className="icon-button" onClick={() => setConfigOpen((value) => !value)} title="Toggle config editor">
+              <FileJson size={15} />
+            </button>
+          </div>
+          <div className="daemon-config-grid">
+            <div><span>Watch</span><strong>{status?.config.watch.backend || "auto"}</strong></div>
+            <div><span>Poll</span><strong>{status?.config.watch.poll_interval_seconds ?? 0}s</strong></div>
+            <div><span>Settle</span><strong>{status?.config.watch.settle_seconds ?? 0}s</strong></div>
+            <div><span>Goals</span><strong>{status?.config.goals ? "configured" : "off"}</strong></div>
+          </div>
+          {(status?.config_warnings || []).map((warning) => (
+            <div className="inline-warning" key={warning}>{warning}</div>
+          ))}
+          {configOpen && (
+            <>
+              <textarea className="daemon-config-editor" value={configRaw} onChange={(event) => setConfigRaw(event.target.value)} />
+              <div className="daemon-actions">
+                <button className="save-button" onClick={saveDaemonConfig} disabled={busy || !configRaw.trim()}><Save size={16} /> Save config</button>
+                <button className="icon-text-button" onClick={loadConfig}><RefreshCw size={15} /> Reload</button>
+              </div>
+            </>
+          )}
         </div>
       </div>
       <div className="daemon-panel daemon-log-panel">
