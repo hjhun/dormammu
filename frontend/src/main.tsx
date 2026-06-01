@@ -7,7 +7,6 @@ import {
   Bot,
   ClipboardList,
   FileJson,
-  FileText,
   FolderPlus,
   Gauge,
   Globe2,
@@ -31,7 +30,7 @@ import {
 import { ApiClient, DaemonFile, DaemonStatus, SettingsPayload, TelegramSession, TelegramTurn, TerminalSession } from "./api";
 import "./styles.css";
 
-type View = "terminal" | "daemon" | "prompts" | "goals" | "telegram" | "settings";
+type View = "terminal" | "daemon" | "goals" | "telegram" | "settings";
 type AuthState = "checking" | "setup" | "signed-out" | "signed-in";
 type SettingsTab = "agent" | "telegram" | "web" | "advanced" | "raw";
 
@@ -151,11 +150,8 @@ function App() {
           <button className={view === "terminal" ? "active" : ""} onClick={() => setView("terminal")} title="Terminal sessions">
             <TerminalSquare size={18} /> Terminal
           </button>
-          <button className={view === "daemon" ? "active" : ""} onClick={() => setView("daemon")} title="Daemon control">
-            <Gauge size={18} /> Daemon
-          </button>
-          <button className={view === "prompts" ? "active" : ""} onClick={() => setView("prompts")} title="Daemon prompts">
-            <FileText size={18} /> Prompts
+          <button className={view === "daemon" ? "active" : ""} onClick={() => setView("daemon")} title="Daemon queue">
+            <Gauge size={18} /> Queue
           </button>
           <button className={view === "goals" ? "active" : ""} onClick={() => setView("goals")} title="Daemon goals">
             <ListTodo size={18} /> Goals
@@ -184,7 +180,6 @@ function App() {
         {error && <div className="banner">{error}</div>}
         {view === "terminal" && <TerminalView api={api} />}
         {view === "daemon" && <DaemonView api={api} />}
-        {view === "prompts" && <PromptLibraryView api={api} />}
         {view === "goals" && <GoalsView api={api} />}
         {view === "telegram" && <TelegramView api={api} />}
         {view === "settings" && <SettingsView api={api} />}
@@ -276,13 +271,19 @@ function AuthScreen({
 function DaemonView({ api }: { api: ApiClient }) {
   const [status, setStatus] = useState<DaemonStatus | null>(null);
   const [logs, setLogs] = useState<{ path: string | null; lines: string[] }>({ path: null, lines: [] });
-  const [prompt, setPrompt] = useState("");
+  const [activePrompt, setActivePrompt] = useState<DaemonFile | null>(null);
+  const [promptFilename, setPromptFilename] = useState("");
+  const [promptContent, setPromptContent] = useState("");
+  const [selectedQueue, setSelectedQueue] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
   const refresh = () => {
     api.get<DaemonStatus>("/api/daemon/status")
-      .then(setStatus)
+      .then((payload) => {
+        setStatus(payload);
+        setSelectedQueue((items) => items.filter((item) => payload.queue.some((file) => file.filename === item)));
+      })
       .catch((err: Error) => setMessage(err.message));
     api.get<{ path: string | null; lines: string[] }>("/api/daemon/logs")
       .then(setLogs)
@@ -307,13 +308,32 @@ function DaemonView({ api }: { api: ApiClient }) {
     }
   };
 
+  const loadPrompt = async (file: DaemonFile) => {
+    try {
+      const payload = await api.get<DaemonFile>(`/api/daemon/prompts/${encodeURIComponent(file.filename)}`);
+      setActivePrompt(payload);
+      setPromptFilename(payload.filename);
+      setPromptContent(payload.content || "");
+      setMessage("");
+    } catch (err) {
+      setMessage((err as Error).message);
+    }
+  };
+
+  const newPrompt = () => {
+    setActivePrompt(null);
+    setPromptFilename("");
+    setPromptContent("");
+    setMessage("");
+  };
+
   const enqueue = async () => {
-    if (!prompt.trim()) return;
+    if (!promptContent.trim()) return;
     setBusy(true);
     setMessage("");
     try {
-      await api.post<{ queued: boolean; prompt: DaemonFile }>("/api/daemon/queue", { text: prompt });
-      setPrompt("");
+      const payload = await api.post<{ queued: boolean; prompt: DaemonFile }>("/api/daemon/queue", { text: promptContent });
+      await loadPrompt(payload.prompt);
       setMessage("Prompt queued");
       refresh();
     } catch (err) {
@@ -323,16 +343,55 @@ function DaemonView({ api }: { api: ApiClient }) {
     }
   };
 
-  const removeQueued = async (file: DaemonFile) => {
-    await api.delete(`/api/daemon/queue/${encodeURIComponent(file.filename)}`);
-    refresh();
+  const savePrompt = async () => {
+    const target = (activePrompt?.filename || "").trim();
+    if (!target || !promptContent.trim()) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await api.put<{ saved: boolean; prompt: DaemonFile }>(
+        `/api/daemon/prompts/${encodeURIComponent(target)}`,
+        { content: promptContent }
+      );
+      await loadPrompt(payload.prompt);
+      setMessage("Prompt saved");
+      refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleQueueSelection = (filename: string) => {
+    setSelectedQueue((items) =>
+      items.includes(filename) ? items.filter((item) => item !== filename) : [...items, filename]
+    );
+  };
+
+  const deleteSelected = async () => {
+    if (selectedQueue.length === 0) return;
+    if (!window.confirm(`Delete ${selectedQueue.length} queued prompt(s)?`)) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await api.post<{ deleted: string[] }>("/api/daemon/queue/delete", { filenames: selectedQueue });
+      if (activePrompt && selectedQueue.includes(activePrompt.filename)) newPrompt();
+      setSelectedQueue([]);
+      setMessage("Selected queued prompts deleted");
+      refresh();
+    } catch (err) {
+      setMessage((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <section className="daemon-surface">
       <div className="daemon-header">
         <div>
-          <h1>Daemon</h1>
+          <h1>Daemon Queue</h1>
           <div className="settings-path">{status?.config_path || "daemonize.json"}</div>
         </div>
         <div className="daemon-actions">
@@ -356,30 +415,56 @@ function DaemonView({ api }: { api: ApiClient }) {
       </div>
       <div className="daemon-columns">
         <div className="daemon-panel">
-          <div className="section-title"><ClipboardList size={17} /> Queue</div>
-          <textarea className="daemon-textarea" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Queue a supervised Dormammu prompt..." />
-          <button className="save-button" onClick={enqueue} disabled={busy || !prompt.trim()}><SendHorizontal size={16} /> Enqueue</button>
-          <div className="file-list compact">
+          <div className="section-title">
+            <ClipboardList size={17} /> Queue
+            <button className="icon-button" onClick={newPrompt} title="New prompt"><FolderPlus size={15} /></button>
+          </div>
+          <div className="queue-toolbar">
+            <button className="icon-text-button" onClick={deleteSelected} disabled={busy || selectedQueue.length === 0}>
+              <Trash2 size={15} /> Delete selected
+            </button>
+            <span>{selectedQueue.length} selected</span>
+          </div>
+          <div className="file-list queue-list">
             {(status?.queue || []).map((file) => (
-              <button key={file.filename} onClick={() => void removeQueued(file)}>
+              <button key={file.filename} className={activePrompt?.filename === file.filename ? "selected" : ""} onClick={() => void loadPrompt(file)}>
+                <input
+                  type="checkbox"
+                  checked={selectedQueue.includes(file.filename)}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={() => toggleQueueSelection(file.filename)}
+                  aria-label={`Select ${file.filename}`}
+                />
                 <span>{file.filename}</span>
-                <Trash2 size={14} />
+                <small>{Math.max(1, Math.ceil(file.size / 1024))} KiB</small>
               </button>
             ))}
           </div>
         </div>
         <div className="daemon-panel">
-          <div className="section-title"><FileJson size={17} /> Logs</div>
+          <div className="section-title"><FileJson size={17} /> Prompt</div>
+          <label className="field compact-field">
+            <span>Filename</span>
+            <input value={promptFilename} onChange={(event) => setPromptFilename(event.target.value)} placeholder="Created when enqueued" disabled />
+          </label>
+          <textarea className="daemon-prompt-editor" value={promptContent} onChange={(event) => setPromptContent(event.target.value)} placeholder="Write a daemon prompt, then enqueue it for daemonize..." />
+          <div className="daemon-actions">
+            {activePrompt ? (
+              <button className="save-button" onClick={savePrompt} disabled={busy || !promptContent.trim()}><Save size={16} /> Save prompt</button>
+            ) : (
+              <button className="save-button" onClick={enqueue} disabled={busy || !promptContent.trim()}><SendHorizontal size={16} /> Enqueue prompt</button>
+            )}
+            <button className="icon-text-button" onClick={newPrompt}><FolderPlus size={16} /> New draft</button>
+          </div>
+        </div>
+      </div>
+      <div className="daemon-panel daemon-log-panel">
+        <div className="section-title"><FileJson size={17} /> Logs</div>
           <div className="log-path">{logs.path || "No daemon logs yet"}</div>
           <pre className="log-output">{logs.lines.join("\n") || "No log output."}</pre>
-        </div>
       </div>
     </section>
   );
-}
-
-function PromptLibraryView({ api }: { api: ApiClient }) {
-  return <MarkdownFileManager api={api} title="Prompts" endpoint="/api/daemon/prompts" icon="prompt" />;
 }
 
 function GoalsView({ api }: { api: ApiClient }) {

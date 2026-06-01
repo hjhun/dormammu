@@ -199,9 +199,14 @@ def test_daemon_api_manages_queue_prompts_and_goals(tmp_path: Path) -> None:
         json={"content": "Implement queue UI\n\nWith details."},
         headers=headers,
     )
+    queued_second = client.post("/api/daemon/queue", json={"text": "Second queue item"}, headers=headers)
     goal = client.post("/api/daemon/goals", json={"content": "Add daemon dashboard"}, headers=headers)
     goals = client.get("/api/daemon/goals", headers=headers)
-    deleted_prompt = client.delete(f"/api/daemon/prompts/{filename}", headers=headers)
+    deleted_prompt = client.post(
+        "/api/daemon/queue/delete",
+        json={"filenames": [filename, queued_second.json()["prompt"]["filename"]]},
+        headers=headers,
+    )
     deleted_goal = client.delete(f"/api/daemon/goals/{goal.json()['goal']['filename']}", headers=headers)
 
     assert status.status_code == 200
@@ -210,10 +215,12 @@ def test_daemon_api_manages_queue_prompts_and_goals(tmp_path: Path) -> None:
     assert prompts.status_code == 200
     assert prompt.json()["content"] == "Implement queue UI\n"
     assert updated.json()["prompt"]["content"] == "Implement queue UI\n\nWith details.\n"
+    assert queued_second.status_code == 200
     assert goal.status_code == 200
     assert goals.status_code == 200
     assert len(goals.json()["goals"]) == 1
     assert deleted_prompt.status_code == 200
+    assert len(deleted_prompt.json()["deleted"]) == 2
     assert deleted_goal.status_code == 200
 
 

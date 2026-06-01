@@ -322,6 +322,23 @@ def create_app(config: AppConfig, *, token: str | None = None):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"deleted": True, "filename": filename}
 
+    @app.post("/api/daemon/queue/delete")
+    async def delete_queued_prompts(request: Request, _: None = Depends(_require_http_auth)) -> dict[str, object]:
+        body = await request.json()
+        filenames = body.get("filenames") if isinstance(body, dict) else None
+        if not isinstance(filenames, list) or any(not isinstance(item, str) for item in filenames):
+            raise HTTPException(status_code=400, detail="filenames must be a list of strings")
+        try:
+            prompt_root = _daemon_service(state["config"]).load_config().prompt_path
+            deleted: list[str] = []
+            for filename in filenames:
+                path = _safe_child(prompt_root, filename)
+                path.unlink(missing_ok=True)
+                deleted.append(filename)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"deleted": deleted}
+
     @app.get("/api/daemon/prompts")
     def list_daemon_prompts(_: None = Depends(_require_http_auth)) -> dict[str, object]:
         try:

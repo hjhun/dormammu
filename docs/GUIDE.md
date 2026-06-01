@@ -541,9 +541,9 @@ CLI and the last Dormammu command sent to it, is stored under
 
 The web console also exposes daemon operations for the configured
 `~/.dormammu/daemonize.json`: start/stop, status, queue depth, log tailing,
-prompt enqueue/delete, prompt file editing, and goals file editing. The
-Prompts tab writes to `prompt_path`; the Goals tab writes to `goals.path` when
-the daemon config has a goals section.
+prompt enqueue/editing, selected queue deletion, and goals file editing. The
+Queue page writes queued prompts to `prompt_path`; the Goals tab writes to
+`goals.path` when the daemon config has a goals section.
 
 ---
 
