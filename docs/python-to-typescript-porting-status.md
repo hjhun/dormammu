@@ -19,6 +19,11 @@ Ported modules:
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
   -> `runtime/src/results.ts`
+- `backend/dormammu/state/persistence.py`
+  -> `runtime/src/state/persistence.ts`
+- pure prompt, guidance, roadmap, dashboard, and plan helpers from
+  `backend/dormammu/state/models.py`
+  -> `runtime/src/state/models.ts`
 
 Validation:
 
@@ -44,8 +49,8 @@ Validation:
    - path and workspace projections
 
 2. State model and repository
-   - `.dev` state schemas
-   - session index
+   - `.dev` state schemas (in progress)
+   - session index (next)
    - task and dashboard projections
    - JSON and Markdown persistence
 
@@ -91,3 +96,15 @@ Validation:
 - no Python runtime entrypoint is required for normal operation.
 - no Python files remain except historical migration notes or explicitly
   retained compatibility shims.
+
+## Next Slice
+
+Port the state repository execution projection and session manager:
+
+- `backend/dormammu/state/execution_projection.py`
+- `backend/dormammu/state/session_manager.py`
+- selected pure helpers from `backend/dormammu/state/repository.py`
+
+The next slice should introduce TypeScript tests for session id normalization,
+session listing, latest run projection, and stage result projection before any
+Python call site is removed.
