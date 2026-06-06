@@ -9,6 +9,9 @@ dist/
 frontend/dist/
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
+runtime/dist/
+runtime/node_modules/
+runtime/tsconfig.tsbuildinfo
 dormammu.json
 .dev/
 .session

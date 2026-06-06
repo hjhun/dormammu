@@ -47,7 +47,18 @@ esac
 
 cd "${ROOT_DIR}"
 
+run_runtime_tests() {
+  (
+    cd "${ROOT_DIR}/runtime"
+    if [[ ! -d node_modules ]]; then
+      npm ci
+    fi
+    npm test
+  )
+}
+
 run_step "agents bundle sync" scripts/verify-agents-sync.sh
+run_step "typescript runtime tests" run_runtime_tests
 run_step "phase 0 quick regression baseline" \
   "${PYTEST_BIN}" -q tests/test_packaging_sync.py tests/test_results.py tests/test_supervisor.py
 
