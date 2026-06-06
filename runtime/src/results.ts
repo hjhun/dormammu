@@ -52,6 +52,35 @@ export type StageResult = {
   status?: ResultStatus | string;
   stageName?: string | null;
   summary?: string | null;
+  reportPath?: string | null;
+  artifacts?: readonly unknown[];
+  retry?: RetryMetadata | null;
+  timing?: TimingMetadata | null;
+  metadata?: Readonly<Record<string, unknown>>;
+};
+
+export type RunResult = {
+  status: ResultStatus | string;
+  attemptsCompleted?: number;
+  attempts_completed?: number;
+  retriesUsed?: number;
+  retries_used?: number;
+  maxRetries?: number;
+  max_retries?: number;
+  maxIterations?: number;
+  max_iterations?: number;
+  latestRunId?: string | null;
+  latest_run_id?: string | null;
+  supervisorVerdict?: ResultVerdict | string | null;
+  supervisor_verdict?: ResultVerdict | string | null;
+  reportPath?: string | null;
+  report_path?: string | null;
+  continuationPromptPath?: string | null;
+  continuation_prompt_path?: string | null;
+  summary?: string | null;
+  output?: string | null;
+  stageResults?: readonly StageResult[];
+  stage_results?: readonly StageResult[];
   artifacts?: readonly unknown[];
   retry?: RetryMetadata | null;
   timing?: TimingMetadata | null;
@@ -125,8 +154,8 @@ export function parseFinalEvaluatorVerdict(output: string): ResultVerdict {
   return parseLastNormalizedVerdict(output, EVALUATOR_VERDICT_RE) ?? "unknown";
 }
 
-function stageKey(stage: StageResult): string {
-  return stage.stageName ?? stage.role;
+export function stageResultKey(stage: StageResult): string {
+  return stage.stageName ? stage.stageName : stage.role;
 }
 
 function normalizedStageStatus(stage: StageResult): ResultStatus {
@@ -176,7 +205,7 @@ export function latestStageResults(stageResults: readonly StageResult[]): StageR
   const latestReversed: StageResult[] = [];
   const seen = new Set<string>();
   for (const stage of [...stageResults].reverse()) {
-    const key = stageKey(stage);
+    const key = stageResultKey(stage);
     if (seen.has(key)) {
       continue;
     }
@@ -184,6 +213,129 @@ export function latestStageResults(stageResults: readonly StageResult[]): StageR
     seen.add(key);
   }
   return latestReversed.reverse();
+}
+
+function artifactToPayload(artifact: unknown): unknown {
+  if (
+    typeof artifact === "object" &&
+    artifact !== null &&
+    "toDict" in artifact &&
+    typeof (artifact as { toDict: unknown }).toDict === "function"
+  ) {
+    return (artifact as { toDict: () => unknown }).toDict();
+  }
+  return artifact;
+}
+
+function retryToDict(retry: RetryMetadata | null | undefined): Record<string, number | null> | null {
+  if (retry == null) {
+    return null;
+  }
+  return {
+    attempt: retry.attempt ?? null,
+    next_attempt: retry.nextAttempt ?? null,
+    retries_used: retry.retriesUsed ?? null,
+    max_retries: retry.maxRetries ?? null,
+    max_iterations: retry.maxIterations ?? null
+  };
+}
+
+function timingToDict(timing: TimingMetadata | null | undefined): Record<string, string | number | null> | null {
+  if (timing == null) {
+    return null;
+  }
+  return {
+    started_at: timing.startedAt ?? null,
+    completed_at: timing.completedAt ?? null,
+    duration_seconds: timing.durationSeconds ?? null
+  };
+}
+
+export function stageResultToDict(
+  stage: StageResult,
+  options: { includeOutput?: boolean } = {}
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    role: stage.role,
+    stage_name: stage.stageName ?? null,
+    status: normalizeResultStatus(stage.status ?? "completed"),
+    verdict: normalizeResultVerdict(stage.verdict ?? null),
+    summary: stage.summary ?? null,
+    report_path: stage.reportPath ?? null,
+    artifacts: [...(stage.artifacts ?? [])].map(artifactToPayload),
+    retry: retryToDict(stage.retry),
+    timing: timingToDict(stage.timing),
+    metadata: { ...(stage.metadata ?? {}) }
+  };
+  if (options.includeOutput === true) {
+    payload.output = stage.output ?? "";
+  }
+  return payload;
+}
+
+function coalesceNumber(...values: readonly (number | undefined)[]): number {
+  for (const value of values) {
+    if (typeof value === "number") {
+      return value;
+    }
+  }
+  return 0;
+}
+
+function coalesceNullableString(...values: readonly (string | null | undefined)[]): string | null {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function runRetryToDict(result: RunResult): Record<string, number | null> | null {
+  const explicitRetry = retryToDict(result.retry);
+  if (explicitRetry !== null) {
+    return explicitRetry;
+  }
+  return {
+    attempt: coalesceNumber(result.attemptsCompleted, result.attempts_completed),
+    next_attempt: null,
+    retries_used: coalesceNumber(result.retriesUsed, result.retries_used),
+    max_retries: coalesceNumber(result.maxRetries, result.max_retries),
+    max_iterations: coalesceNumber(result.maxIterations, result.max_iterations)
+  };
+}
+
+export function runResultToDict(
+  result: RunResult,
+  options: { includeOutput?: boolean } = {}
+): Record<string, unknown> {
+  const stageResults = result.stageResults ?? result.stage_results ?? [];
+  const payload: Record<string, unknown> = {
+    status: normalizeResultStatus(result.status),
+    attempts_completed: coalesceNumber(result.attemptsCompleted, result.attempts_completed),
+    retries_used: coalesceNumber(result.retriesUsed, result.retries_used),
+    max_retries: coalesceNumber(result.maxRetries, result.max_retries),
+    max_iterations: coalesceNumber(result.maxIterations, result.max_iterations),
+    latest_run_id: coalesceNullableString(result.latestRunId, result.latest_run_id),
+    supervisor_verdict: normalizeResultVerdict(
+      result.supervisorVerdict ?? result.supervisor_verdict ?? null
+    ),
+    report_path: coalesceNullableString(result.reportPath, result.report_path),
+    continuation_prompt_path: coalesceNullableString(
+      result.continuationPromptPath,
+      result.continuation_prompt_path
+    ),
+    summary: result.summary ?? null,
+    stage_results: stageResults.map((stage) => stageResultToDict(stage, options)),
+    artifacts: [...(result.artifacts ?? [])].map(artifactToPayload),
+    retry: runRetryToDict(result),
+    timing: timingToDict(result.timing),
+    metadata: { ...(result.metadata ?? {}) }
+  };
+  if (options.includeOutput === true) {
+    payload.output = result.output ?? null;
+  }
+  return payload;
 }
 
 export function stageResultsHaveCleanTerminalEvidence(stageResults: readonly StageResult[]): boolean {

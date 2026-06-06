@@ -24,6 +24,10 @@ Ported modules:
 - pure prompt, guidance, roadmap, dashboard, and plan helpers from
   `backend/dormammu/state/models.py`
   -> `runtime/src/state/models.ts`
+- `backend/dormammu/state/execution_projection.py`
+  -> `runtime/src/state/executionProjection.ts`
+- `backend/dormammu/state/session_manager.py`
+  -> `runtime/src/state/sessionManager.ts`
 
 Validation:
 
@@ -50,7 +54,8 @@ Validation:
 
 2. State model and repository
    - `.dev` state schemas (in progress)
-   - session index (next)
+   - session index (ported)
+   - execution projection (ported)
    - task and dashboard projections
    - JSON and Markdown persistence
 
@@ -99,12 +104,13 @@ Validation:
 
 ## Next Slice
 
-Port the state repository execution projection and session manager:
+Port the remaining state repository orchestration surface:
 
-- `backend/dormammu/state/execution_projection.py`
-- `backend/dormammu/state/session_manager.py`
-- selected pure helpers from `backend/dormammu/state/repository.py`
+- selected helpers from `backend/dormammu/state/repository.py`
+- `backend/dormammu/state/operator_sync.py`
+- task, dashboard, and workflow-state projections that still depend on Python
+  repository methods
 
-The next slice should introduce TypeScript tests for session id normalization,
-session listing, latest run projection, and stage result projection before any
-Python call site is removed.
+The next slice should introduce TypeScript tests around root index writes,
+operator mirror synchronization, and repository read/write coordination before
+any Python call site is removed.

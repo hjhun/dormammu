@@ -50,7 +50,7 @@ cd "${ROOT_DIR}"
 run_runtime_tests() {
   (
     cd "${ROOT_DIR}/runtime"
-    if [[ ! -d node_modules ]]; then
+    if [[ ! -x node_modules/.bin/tsc || ! -d node_modules/typescript ]]; then
       npm ci
     fi
     npm test
