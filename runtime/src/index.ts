@@ -5,6 +5,7 @@ export * from "./state/executionProjection.js";
 export * from "./state/models.js";
 export * from "./state/operatorSync.js";
 export * from "./state/persistence.js";
+export * from "./state/repository.js";
 export * from "./state/sessionManager.js";
 export * from "./state/tasks.js";
 export * from "./workflowPolicy.js";

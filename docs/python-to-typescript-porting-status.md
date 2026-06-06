@@ -32,6 +32,9 @@ Ported modules:
   -> `runtime/src/state/tasks.ts`
 - `backend/dormammu/state/operator_sync.py`
   -> `runtime/src/state/operatorSync.ts`
+- session/workflow read-write, paired state synchronization, hook event, and
+  lifecycle event helpers from `backend/dormammu/state/repository.py`
+  -> `runtime/src/state/repository.ts`
 
 Validation:
 
@@ -61,6 +64,7 @@ Validation:
    - session index (ported)
    - execution projection (ported)
    - task parsing and operator sync (ported)
+   - repository read/write synchronization (in progress)
    - task and dashboard projections
    - JSON and Markdown persistence
 
@@ -111,9 +115,10 @@ Validation:
 
 Port the remaining state repository orchestration surface:
 
-- selected helpers from `backend/dormammu/state/repository.py`
 - bootstrap/reset orchestration that wires templates, guidance, sessions, and
   operator sync together
+- artifact writers, prompt persistence, runtime skill resolution, and worktree
+  state mutation helpers still owned by `backend/dormammu/state/repository.py`
 - task, dashboard, and workflow-state projections that still depend on Python
   repository methods
 
