@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-agents-sync.sh — Fail if agents/ and assets/agents/ have diverged.
+# verify-agents-sync.sh — Fail if .agents/ and assets/.agents/ have diverged.
 #
 # Exits 0 when the two directories are identical.
 # Exits 1 and prints a diff summary when they differ.
@@ -9,8 +9,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$REPO_ROOT/agents"
-DST="$REPO_ROOT/backend/dormammu/assets/agents"
+SRC="$REPO_ROOT/.agents"
+DST="$REPO_ROOT/backend/dormammu/assets/.agents"
 
 if [ ! -d "$SRC" ]; then
   echo "ERROR: source directory not found: $SRC" >&2
@@ -25,7 +25,7 @@ fi
 DIFF=$(diff -rq "$SRC" "$DST" 2>&1 || true)
 
 if [ -n "$DIFF" ]; then
-  echo "FAIL: agents/ and backend/dormammu/assets/agents/ have diverged."
+  echo "FAIL: .agents/ and backend/dormammu/assets/.agents/ have diverged."
   echo ""
   echo "$DIFF"
   echo ""
@@ -33,4 +33,4 @@ if [ -n "$DIFF" ]; then
   exit 1
 fi
 
-echo "OK: agents/ and backend/dormammu/assets/agents/ are in sync."
+echo "OK: .agents/ and backend/dormammu/assets/.agents/ are in sync."

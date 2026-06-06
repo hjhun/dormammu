@@ -1,6 +1,6 @@
-"""Packaging verification: agents/ source bundle must match packaged assets.
+"""Packaging verification: .agents/ source bundle must match packaged assets.
 
-Fails if ``agents/`` and ``backend/dormammu/assets/agents/`` have diverged.
+Fails if ``.agents/`` and ``backend/dormammu/assets/.agents/`` have diverged.
 Run ``scripts/sync-agents.sh`` to fix a failure.
 """
 from __future__ import annotations
@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_SOURCE = _REPO_ROOT / "agents"
-_PACKAGED = _REPO_ROOT / "backend" / "dormammu" / "assets" / "agents"
+_SOURCE = _REPO_ROOT / ".agents"
+_PACKAGED = _REPO_ROOT / "backend" / "dormammu" / "assets" / ".agents"
 
 
 def _collect_relative_paths(root: Path) -> set[str]:
@@ -46,7 +46,7 @@ class TestAgentsBundleSync:
                 + "\n  ".join(sorted(only_in_packaged))
             )
         assert not errors, (
-            "agents/ and backend/dormammu/assets/agents/ have diverged.\n"
+            ".agents/ and backend/dormammu/assets/.agents/ have diverged.\n"
             + "\n".join(errors)
             + "\nRun scripts/sync-agents.sh to fix."
         )
@@ -62,8 +62,42 @@ class TestAgentsBundleSync:
             if not filecmp.cmp(src_file, pkg_file, shallow=False):
                 mismatched.append(rel)
         assert not mismatched, (
-            "agents/ and backend/dormammu/assets/agents/ have diverged "
+            ".agents/ and backend/dormammu/assets/.agents/ have diverged "
             "(content mismatch):\n  "
             + "\n  ".join(mismatched)
             + "\nRun scripts/sync-agents.sh to fix."
         )
+
+    def test_required_role_skills_are_present(self) -> None:
+        roles = {
+            "analyzer",
+            "refiner",
+            "planner",
+            "architect",
+            "developer",
+            "reviewer",
+            "committer",
+            "coordinator",
+            "supervisor",
+        }
+
+        for role in sorted(roles):
+            skill_path = _SOURCE / "roles" / role / "SKILL.md"
+            text = skill_path.read_text(encoding="utf-8")
+            assert f"name: {role}" in text
+            assert "description:" in text
+
+    def test_required_workflows_and_adapters_are_present(self) -> None:
+        expected = {
+            "workflows/autonomous-development-loop.md",
+            "workflows/simple-task.md",
+            "workflows/recovery-loop.md",
+            "adapters/codex/AGENTS.md",
+            "adapters/claude/CLAUDE.md",
+            "adapters/agy/AGENTS.md",
+            "adapters/cline/AGENTS.md",
+        }
+
+        missing = [rel for rel in sorted(expected) if not (_SOURCE / rel).exists()]
+
+        assert not missing

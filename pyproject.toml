@@ -36,6 +36,12 @@ where = ["backend"]
 dormammu = [
   "assets/templates/dev/*.tmpl",
   "assets/templates/continuation/*.tmpl",
+  "assets/.agents/AGENTS.md",
+  "assets/.agents/README.md",
+  "assets/.agents/adapters/*/*.md",
+  "assets/.agents/roles/*/SKILL.md",
+  "assets/.agents/templates/*.md",
+  "assets/.agents/workflows/*.md",
   "assets/agents/AGENTS.md",
   "assets/agents/workflows/*.md",
   "assets/agents/rules/*.md",

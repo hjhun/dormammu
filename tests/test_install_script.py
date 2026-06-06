@@ -155,7 +155,7 @@ class InstallScriptTests(unittest.TestCase):
             config_path = install_root / "config"
             binary = bin_dir / "dormammu"
             launcher = launcher_dir / "dormammu"
-            agents_dir = install_root / "agents"
+            agents_dir = install_root / ".agents"
             self.assertTrue(binary.exists())
             self.assertTrue(launcher.exists())
             self.assertTrue(config_path.exists())
@@ -185,7 +185,7 @@ class InstallScriptTests(unittest.TestCase):
                     (
                         "from pathlib import Path; "
                         "import dormammu; "
-                        "asset = Path(dormammu.__file__).resolve().parent / 'assets' / 'agents' / 'AGENTS.md'; "
+                        "asset = Path(dormammu.__file__).resolve().parent / 'assets' / '.agents' / 'AGENTS.md'; "
                         "print(asset); "
                         "print(asset.exists())"
                     ),

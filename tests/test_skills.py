@@ -381,7 +381,7 @@ class TestSkillDiscovery:
 
         manifest_dir = tmp_path / "custom-project-manifests"
         manifest_dir.mkdir()
-        expected_skill_path = next_repo_root / "agents" / "skills" / "alpha" / "SKILL.md"
+        expected_skill_path = next_repo_root / ".agents" / "roles" / "alpha" / "SKILL.md"
         _write_skill(expected_skill_path, name="alpha-skill")
 
         updated = config.with_overrides(
@@ -390,8 +390,8 @@ class TestSkillDiscovery:
         )
         discovery = discover_skills(updated)
 
-        assert updated.project_agents_dir == (next_repo_root / "agents").resolve()
-        assert updated.project_skills_dir == (next_repo_root / "agents" / "skills").resolve()
+        assert updated.project_agents_dir == (next_repo_root / ".agents").resolve()
+        assert updated.project_skills_dir == (next_repo_root / ".agents" / "roles").resolve()
         assert updated.project_agent_manifests_dir == manifest_dir.resolve()
         assert tuple(discovery.selected_by_name()) == ("alpha-skill",)
         assert discovery.selected[0].path == expected_skill_path.resolve()
@@ -415,7 +415,7 @@ class TestSkillDiscovery:
         manifest_dir = tmp_path / "custom-user-manifests"
         manifest_dir.mkdir()
         expected_skill_path = (
-            next_global_home_dir / "agents" / "skills" / "reviewer" / "SKILL.md"
+            next_global_home_dir / ".agents" / "roles" / "reviewer" / "SKILL.md"
         )
         _write_skill(expected_skill_path, name="reviewer-custom")
 
@@ -425,8 +425,8 @@ class TestSkillDiscovery:
         )
         discovery = discover_skills(updated)
 
-        assert updated.user_agents_dir == (next_global_home_dir / "agents").resolve()
-        assert updated.user_skills_dir == (next_global_home_dir / "agents" / "skills").resolve()
+        assert updated.user_agents_dir == (next_global_home_dir / ".agents").resolve()
+        assert updated.user_skills_dir == (next_global_home_dir / ".agents" / "roles").resolve()
         assert updated.user_agent_manifests_dir == manifest_dir.resolve()
         assert tuple(discovery.selected_by_name()) == ("reviewer-custom",)
         assert discovery.selected[0].path == expected_skill_path.resolve()

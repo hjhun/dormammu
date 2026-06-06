@@ -315,7 +315,7 @@ run_update() {
   local tmp_dir="$4"
   local extracted_root=""
   local update_paths=(
-    "agents"
+    ".agents"
     "backend"
     "config"
     "docs"

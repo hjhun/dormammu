@@ -304,7 +304,7 @@ PY
 }
 
 install_agents_bundle() {
-  local agents_dir="${INSTALL_ROOT}/agents"
+  local agents_dir="${INSTALL_ROOT}/.agents"
   "${VENV_DIR}/bin/python" - "${agents_dir}" <<'PY'
 from __future__ import annotations
 
@@ -315,7 +315,7 @@ from pathlib import Path
 import dormammu
 
 target_dir = Path(sys.argv[1])
-source_dir = Path(dormammu.__file__).resolve().parent / "assets" / "agents"
+source_dir = Path(dormammu.__file__).resolve().parent / "assets" / ".agents"
 if target_dir.exists():
     shutil.rmtree(target_dir)
 shutil.copytree(source_dir, target_dir)
@@ -466,7 +466,7 @@ Launcher: ${LAUNCHER_DIR}/dormammu
 Launcher directory: ${LAUNCHER_DIR}
 Config: ${CONFIG_PATH}
 Config file: ${CONFIG_PATH}
-Agents directory: ${INSTALL_ROOT}/agents
+Agents directory: ${INSTALL_ROOT}/.agents
 Active agent CLI: ${active_cli:-not set}
 PATH update: ${bashrc_update_json}
 Removed legacy ${BIN_DIR} PATH entry from ${BASHRC_PATH}: ${legacy_path_removed}

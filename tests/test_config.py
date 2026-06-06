@@ -81,15 +81,15 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(
                 config.project_skills_dir,
-                (root / "agents" / "skills").resolve(),
+                (root / ".agents" / "roles").resolve(),
             )
             self.assertEqual(
                 config.user_skills_dir,
-                (config.global_home_dir / "agents" / "skills").resolve(),
+                (config.global_home_dir / ".agents" / "roles").resolve(),
             )
             self.assertEqual(
                 config.built_in_skills_dir,
-                (config.built_in_agents_dir / "skills").resolve(),
+                (config.built_in_agents_dir / "roles").resolve(),
             )
 
             payload = config.to_dict()
@@ -1677,7 +1677,7 @@ class ConfigTests(unittest.TestCase):
             root.mkdir(parents=True, exist_ok=True)
             (root / "AGENTS.md").write_text("marker\n", encoding="utf-8")
             home_dir = Path(tmpdir) / "home"
-            agents_dir = home_dir / ".dormammu" / "agents"
+            agents_dir = home_dir / ".dormammu" / ".agents"
             agents_dir.mkdir(parents=True, exist_ok=True)
             (agents_dir / "AGENTS.md").write_text("global guidance\n", encoding="utf-8")
 
@@ -1703,8 +1703,9 @@ class ConfigTests(unittest.TestCase):
             root.mkdir(parents=True, exist_ok=True)
             home_dir = Path(tmpdir) / "home"
             global_home_dir = home_dir / ".dormammu"
-            agents_dir = global_home_dir / "agents"
+            agents_dir = global_home_dir / ".agents"
             agents_dir.mkdir(parents=True, exist_ok=True)
+            (agents_dir / "roles").mkdir()
             guidance_path = agents_dir / "AGENTS.md"
             guidance_path.write_text("global guidance\n", encoding="utf-8")
             env = {
@@ -1720,7 +1721,7 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(layout.agents_dir, agents_dir)
             self.assertEqual(layout.default_guidance_files, (guidance_path,))
-            self.assertEqual(layout.user_skills_dir, (agents_dir / "skills").resolve())
+            self.assertEqual(layout.user_skills_dir, (agents_dir / "roles").resolve())
 
 
 class SetConfigValueTests(unittest.TestCase):

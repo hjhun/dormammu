@@ -98,7 +98,7 @@ class ConfigAssetResolver:
                 candidate = (self._root / candidate).resolve()
             return candidate
 
-        global_agents_dir = self._global_home_dir / "agents"
+        global_agents_dir = self._global_home_dir / ".agents"
         if (global_agents_dir / "AGENTS.md").exists():
             return global_agents_dir
 
@@ -106,7 +106,7 @@ class ConfigAssetResolver:
         if (repo_agents_dir / "AGENTS.md").exists():
             return repo_agents_dir
 
-        packaged_agents_dir = asset_root / "agents"
+        packaged_agents_dir = asset_root / ".agents"
         if (packaged_agents_dir / "AGENTS.md").exists():
             return packaged_agents_dir
 
@@ -114,18 +114,23 @@ class ConfigAssetResolver:
 
     @staticmethod
     def project_agents_dir(root: Path) -> Path:
-        return (root / "agents").resolve()
+        return (root / ".agents").resolve()
 
     @staticmethod
     def user_agents_dir(global_home_dir: Path) -> Path:
-        return (global_home_dir / "agents").resolve()
+        return (global_home_dir / ".agents").resolve()
 
     @staticmethod
     def built_in_agents_dir() -> Path:
-        return (Path(__file__).resolve().parent / "assets" / "agents").resolve()
+        return (Path(__file__).resolve().parent / "assets" / ".agents").resolve()
 
     @staticmethod
     def skills_dir(agents_dir: Path) -> Path:
+        if agents_dir.name == ".agents":
+            return (agents_dir / "roles").resolve()
+        roles_dir = agents_dir / "roles"
+        if roles_dir.exists():
+            return roles_dir.resolve()
         return (agents_dir / "skills").resolve()
 
     @staticmethod
