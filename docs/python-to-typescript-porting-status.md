@@ -28,6 +28,10 @@ Ported modules:
   -> `runtime/src/state/executionProjection.ts`
 - `backend/dormammu/state/session_manager.py`
   -> `runtime/src/state/sessionManager.ts`
+- `backend/dormammu/state/tasks.py`
+  -> `runtime/src/state/tasks.ts`
+- `backend/dormammu/state/operator_sync.py`
+  -> `runtime/src/state/operatorSync.ts`
 
 Validation:
 
@@ -56,6 +60,7 @@ Validation:
    - `.dev` state schemas (in progress)
    - session index (ported)
    - execution projection (ported)
+   - task parsing and operator sync (ported)
    - task and dashboard projections
    - JSON and Markdown persistence
 
@@ -107,10 +112,11 @@ Validation:
 Port the remaining state repository orchestration surface:
 
 - selected helpers from `backend/dormammu/state/repository.py`
-- `backend/dormammu/state/operator_sync.py`
+- bootstrap/reset orchestration that wires templates, guidance, sessions, and
+  operator sync together
 - task, dashboard, and workflow-state projections that still depend on Python
   repository methods
 
 The next slice should introduce TypeScript tests around root index writes,
-operator mirror synchronization, and repository read/write coordination before
-any Python call site is removed.
+repository read/write coordination, bootstrap regeneration, and session restore
+before any Python call site is removed.

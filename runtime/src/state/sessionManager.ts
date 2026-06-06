@@ -58,7 +58,7 @@ function isRecord(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeWorktrees(payload: unknown): WorktreeSummary {
+export function managedWorktreeSummaryFromDict(payload: unknown): WorktreeSummary {
   if (!isRecord(payload)) {
     return { activeWorktreeId: null, managedCount: 0 };
   }
@@ -186,7 +186,7 @@ export class SessionManager {
         : isRecord(workflowState.loop)
           ? workflowState.loop
           : {};
-      const worktrees = normalizeWorktrees(sessionState.worktrees);
+      const worktrees = managedWorktreeSummaryFromDict(sessionState.worktrees);
       const sessionId = sessionState.session_id;
       sessions.push({
         session_id: sessionId,
