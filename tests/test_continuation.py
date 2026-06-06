@@ -243,12 +243,12 @@ class ContinuationPromptEdgeCaseTests(unittest.TestCase):
             original_prompt_text="Do the work.",
             repo_guidance={
                 "rule_files": [],
-                "workflow_files": ["agents/workflows/refine-plan.md"],
+                "workflow_files": [".agents/workflows/autonomous-development-loop.md"],
             },
         )
 
         self.assertIn("Repository workflows:", continuation.text)
-        self.assertIn("agents/workflows/refine-plan.md", continuation.text)
+        self.assertIn(".agents/workflows/autonomous-development-loop.md", continuation.text)
 
     def test_runtime_skills_section_is_omitted_for_built_in_only_visibility(self) -> None:
         report = self._make_report()
@@ -282,7 +282,7 @@ class ContinuationPromptEdgeCaseTests(unittest.TestCase):
             home_dir = Path(tmpdir) / "home"
             home_dir.mkdir()
             _write_skill(
-                repo_root / "agents" / "skills" / "designing-agent" / "SKILL.md",
+                repo_root / ".agents" / "roles" / "designing-agent" / "SKILL.md",
                 name="designing-agent",
             )
             config = _make_config(repo_root, home_dir)
@@ -353,7 +353,7 @@ class ContinuationPromptEdgeCaseTests(unittest.TestCase):
 class SupervisorHandoffPromptTests(ContinuationPromptEdgeCaseTests):
     def test_handoff_prompt_uses_workflow_and_skill_documents(self) -> None:
         prompt = build_supervisor_handoff_prompt_from_agents(
-            agents_dir=ROOT / "agents",
+            agents_dir=ROOT / ".agents",
             workflow_state={
                 "workflow": {
                     "active_phase": "plan",
@@ -364,7 +364,7 @@ class SupervisorHandoffPromptTests(ContinuationPromptEdgeCaseTests):
                 "bootstrap": {
                     "repo_guidance": {
                         "rule_files": ["AGENTS.md"],
-                        "workflow_files": ["agents/workflows/supervised-downstream.md"],
+                        "workflow_files": [".agents/workflows/supervised-downstream.md"],
                     }
                 },
             },
@@ -375,13 +375,13 @@ class SupervisorHandoffPromptTests(ContinuationPromptEdgeCaseTests):
             "This workflow keeps downstream execution under the supervising-agent contract",
             prompt,
         )
-        self.assertIn("Orchestrates planning, design, development", prompt)
+        self.assertIn("Decide whether the loop should stop or continue", prompt)
         self.assertIn("Recommended resume phase: design", prompt)
-        self.assertIn("agents/workflows/supervised-downstream.md", prompt)
+        self.assertIn(".agents/workflows/supervised-downstream.md", prompt)
 
     def test_handoff_prompt_uses_downstream_role_runtime_skills_over_latest_stage(self) -> None:
         prompt = build_supervisor_handoff_prompt_from_agents(
-            agents_dir=ROOT / "agents",
+            agents_dir=ROOT / ".agents",
             workflow_state={
                 "workflow": {
                     "active_phase": "plan",
@@ -425,7 +425,7 @@ class SupervisorHandoffPromptTests(ContinuationPromptEdgeCaseTests):
             home_dir = Path(tmpdir) / "home"
             home_dir.mkdir()
             _write_skill(
-                repo_root / "agents" / "skills" / "phase5-project-skill" / "SKILL.md",
+                repo_root / ".agents" / "roles" / "phase5-project-skill" / "SKILL.md",
                 name="phase5-project-skill",
             )
             config = _make_config(repo_root, home_dir)
@@ -439,7 +439,7 @@ class SupervisorHandoffPromptTests(ContinuationPromptEdgeCaseTests):
 
             prompt = build_supervisor_handoff_prompt_for_repository(
                 repository=repository,
-                agents_dir=ROOT / "agents",
+                agents_dir=ROOT / ".agents",
                 original_prompt_text="Implement the requested feature.",
             )
 

@@ -21,22 +21,22 @@ instead of dropping straight back to the raw user prompt.
    - `.dev/WORKFLOWS.md`
    - `.dev/TASKS.md` when present
    - `.dev/workflow_state.json`
-2. Use `skills/supervising-agent/SKILL.md` as the top-level controller for the
+2. Use `roles/supervisor/SKILL.md` as the top-level controller for the
    remaining work.
 3. Resume from the earliest unfinished downstream phase after planning.
 4. Route into the next workflow skill implied by `.dev/WORKFLOWS.md` instead of
    restarting from the raw goal.
 5. Keep `.dev/workflow_state.json` as machine truth and keep the Markdown state
    synchronized with actual progress.
-6. Re-enter `workflows/refine-plan.md` only when state inconsistency or missing
-   requirements make the saved plan unsafe to continue.
+6. Re-enter `workflows/autonomous-development-loop.md` only when state
+   inconsistency or missing requirements make the saved plan unsafe to continue.
 7. When marking phases complete in `.dev/WORKFLOWS.md`, use `[O]` (capital O),
    never `[x]`.  The supervisor reads only `[ ]` and `[O]` markers.
 8. After a successful commit — and only when this is **not** a goals-scheduler
    run — print the loop-completion signal as the very last line of output so
    the dormammu runtime stops the loop.  The signal is the XML tag
    `promise` wrapping the word `COMPLETE` (no spaces, own line, no other
-   text on that line).  See `skills/committer/SKILL.md` for the exact
+   text on that line).  See `roles/committer/SKILL.md` for the exact
    format.
 
 ## Expected Outcome

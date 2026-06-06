@@ -919,7 +919,7 @@ class PipelineRunnerNoStageDirSmokeTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         (root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
         (root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
-        rules_dir = root / "agents" / "rules"
+        rules_dir = root / ".agents" / "rules"
         rules_dir.mkdir(parents=True, exist_ok=True)
         for name in ("refiner-runtime.md", "planner-runtime.md"):
             (rules_dir / name).write_text(f"# {name}\nDo the task.\n", encoding="utf-8")

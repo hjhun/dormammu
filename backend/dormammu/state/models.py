@@ -55,7 +55,7 @@ def discover_repo_guidance(
     else:
         rule_candidates = [
             Path("AGENTS.md"),
-            Path("agents/AGENTS.md"),
+            Path(".agents/AGENTS.md"),
             Path(".dev/PROJECT.md"),
             Path(".dev/ROADMAP.md"),
         ]
@@ -664,7 +664,7 @@ def default_workflow_state(
                 *(
                     list(repo_guidance.rule_files)
                     if repo_guidance is not None
-                    else ["AGENTS.md", "agents/AGENTS.md"]
+                    else ["AGENTS.md", ".agents/AGENTS.md"]
                 ),
             ]
         )

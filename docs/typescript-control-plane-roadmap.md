@@ -58,10 +58,10 @@ TypeScript 중심으로 통합하는 것이다.
 
 ### Agent guidance 번들
 
-- 현재 저장소에는 `agents/` 아래 runtime rules, skills, workflows가 있고,
-  `.agents/skills/*-workflows` 아래에는 프로젝트 전용 workflow skill이 따로 있다.
-- 두 위치가 동시에 존재하므로 어떤 파일이 설치/실행 시 authoritative한지
-  불명확하다.
+- 이전 구조에는 `agents/` 아래 runtime rules, skills, workflows가 있고,
+  `.agents/skills/*-workflows` 아래에는 프로젝트 전용 workflow skill이 따로 있었다.
+- 두 위치가 동시에 존재하면서 어떤 파일이 설치/실행 시 authoritative한지
+  불명확했던 문제가 있었다.
 - 새 방향은 기존 `agents/`와 `.agents/skills/*-workflows`를 제거하고,
   `.agents` 아래에 Codex, Claude, agy(Antigravity), Cline이 공통으로 참조할 수
   있는 역할 기반 skill/workflow 번들을 두는 것이다.
@@ -635,9 +635,9 @@ workflow를 `.agents` 아래 단일 구조로 재작성한다.
    - 권장: 최소 한 릴리스는 legacy runner를 유지한다.
 5. Markdown `.dev`의 역할: source of truth 또는 export view 중 선택.
    - 권장: 내부 source of truth는 event store, `.dev`는 operator-facing export.
-6. 기존 `agents/` 제거 시점: 즉시 제거 또는 compatibility 기간 유지 중 선택.
-   - 권장: Phase 1에서 새 `.agents`가 검증되면 `agents/`를 제거하고,
-     한 릴리스 동안 migration guide를 제공한다.
+6. 기존 `agents/` 제거 시점: Phase 1에서 새 `.agents`가 검증되면 제거한다.
+   - 적용: runtime rules와 supervised downstream workflow를 `.agents`로 이관한
+     뒤 `agents/`와 packaged `assets/agents`를 제거한다.
 7. `tester` 독립 역할 유지 여부.
    - 권장: 별도 역할로 노출하지 않고 reviewer의 검증 책임에 포함한다.
      다만 대규모 프로젝트에서는 reviewer가 test executor subtask를 호출할 수

@@ -162,7 +162,7 @@ class TestSkillDocumentParsing:
             )
 
     def test_mapping_from_disk_to_runtime_skill_definition(self, tmp_path: Path) -> None:
-        path = tmp_path / "agents" / "skills" / "phase5-custom-skill" / "SKILL.md"
+        path = tmp_path / ".agents" / "roles" / "phase5-custom-skill" / "SKILL.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_valid_skill_text(), encoding="utf-8")
 
@@ -181,15 +181,15 @@ class TestSkillDocumentParsing:
         }
 
     def test_existing_packaged_skill_layout_loads_without_schema_version(self) -> None:
-        planning_skill = ROOT / "agents" / "skills" / "planning-agent" / "SKILL.md"
+        planning_skill = ROOT / ".agents" / "roles" / "planner" / "SKILL.md"
 
         loaded = load_skill_definition(planning_skill, source_scope="built_in")
 
-        assert loaded.name == "planning-agent"
+        assert loaded.name == "planner"
         assert loaded.schema_version == SKILL_DOCUMENT_SCHEMA_VERSION
         assert loaded.source_scope == "built_in"
         assert loaded.content.mode == SKILL_CONTENT_MODE_INLINE_MARKDOWN
-        assert "Use this skill when the next useful action is planning" in loaded.content.text
+        assert "Create a practical execution plan" in loaded.content.text
 
 
 class TestSkillDiscovery:

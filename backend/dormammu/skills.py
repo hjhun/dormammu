@@ -570,33 +570,11 @@ def skill_source_precedence(scope: str) -> int:
 
 
 def skill_search_roots(config: "AppConfig") -> tuple[SkillSearchRoot, ...]:
-    roots = [
+    return (
         SkillSearchRoot(scope="project", path=config.project_skills_dir),
         SkillSearchRoot(scope="user", path=config.user_skills_dir),
         SkillSearchRoot(scope="built_in", path=config.built_in_skills_dir),
-    ]
-
-    legacy_roots = (
-        SkillSearchRoot(scope="project", path=(config.repo_root / "agents" / "skills")),
-        SkillSearchRoot(
-            scope="user",
-            path=(config.global_home_dir / "agents" / "skills"),
-        ),
-        SkillSearchRoot(
-            scope="built_in",
-            path=(config.built_in_agents_dir.parent / "agents" / "skills"),
-        ),
     )
-    primary_by_scope = {root.scope: root.path.resolve() for root in roots}
-    for legacy_root in legacy_roots:
-        primary = primary_by_scope[legacy_root.scope]
-        legacy_path = legacy_root.path.resolve()
-        if primary.is_dir() or legacy_path == primary:
-            continue
-        if legacy_path.is_dir():
-            roots.append(SkillSearchRoot(scope=legacy_root.scope, path=legacy_path))
-
-    return tuple(roots)
 
 
 def enumerate_skill_candidates(

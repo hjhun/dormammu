@@ -331,7 +331,7 @@ def build_supervisor_handoff_prompt_from_agents(
         agents_dir, "workflows/supervised-downstream.md"
     )
     skill_text = load_agent_guidance_text(
-        agents_dir, "skills/supervising-agent/SKILL.md"
+        agents_dir, "roles/supervisor/SKILL.md"
     )
     return build_supervisor_handoff_prompt(
         workflow_state=workflow_state,

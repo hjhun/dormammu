@@ -579,39 +579,39 @@ class PromiseCompleteSignalTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 3. PRD agent skill file existence and structure
+# 3. Refiner role skill file existence and structure
 # ---------------------------------------------------------------------------
 
-class PrdAgentSkillTests(unittest.TestCase):
-    """Scenario: prd-agent/SKILL.md exists and contains expected structural elements."""
+class RefinerRoleSkillTests(unittest.TestCase):
+    """Scenario: refiner/SKILL.md exists and contains expected structural elements."""
 
-    _SKILL_PATH = ROOT / "agents" / "skills" / "prd-agent" / "SKILL.md"
+    _SKILL_PATH = ROOT / ".agents" / "roles" / "refiner" / "SKILL.md"
 
-    def test_prd_agent_skill_file_exists(self) -> None:
+    def test_refiner_role_skill_file_exists(self) -> None:
         self.assertTrue(
             self._SKILL_PATH.exists(),
-            f"agents/skills/prd-agent/SKILL.md must exist at {self._SKILL_PATH}",
+            f".agents/roles/refiner/SKILL.md must exist at {self._SKILL_PATH}",
         )
 
-    def test_prd_skill_has_frontmatter_name(self) -> None:
+    def test_refiner_skill_has_frontmatter_name(self) -> None:
         content = self._SKILL_PATH.read_text(encoding="utf-8")
-        self.assertIn("name: prd-agent", content)
+        self.assertIn("name: refiner", content)
 
-    def test_prd_skill_has_user_story_format(self) -> None:
+    def test_refiner_skill_has_acceptance_criteria(self) -> None:
         content = self._SKILL_PATH.read_text(encoding="utf-8")
         self.assertIn("Acceptance Criteria", content)
 
-    def test_prd_skill_has_sizing_rules(self) -> None:
+    def test_refiner_skill_has_non_functional_requirements(self) -> None:
         content = self._SKILL_PATH.read_text(encoding="utf-8")
-        self.assertIn("Sizing", content.replace("sizing", "Sizing"))
+        self.assertIn("Non-Functional Requirements", content)
 
-    def test_prd_skill_has_done_criteria(self) -> None:
+    def test_refiner_skill_has_test_cases(self) -> None:
         content = self._SKILL_PATH.read_text(encoding="utf-8")
-        self.assertIn("Done Criteria", content)
+        self.assertIn("Test Cases", content)
 
-    def test_prd_skill_references_planning_agent_handoff(self) -> None:
+    def test_refiner_skill_references_planner_handoff(self) -> None:
         content = self._SKILL_PATH.read_text(encoding="utf-8")
-        self.assertIn("planning-agent", content)
+        self.assertIn("planner role", content)
 
 
 # ---------------------------------------------------------------------------

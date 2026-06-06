@@ -44,7 +44,7 @@ def resolve_guidance_files(
 
     repo_candidates = (
         config.repo_root / "AGENTS.md",
-        config.repo_root / "agents" / "AGENTS.md",
+        config.repo_root / ".agents" / "AGENTS.md",
     )
     repo_files = tuple(path for path in repo_candidates if _has_content(path))
     if repo_files:

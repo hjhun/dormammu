@@ -32,6 +32,12 @@ Before completion, run the relevant validation gates:
 If a gate is not relevant or cannot run in the current environment, record the
 reason in `TEST_REPORT.md` or `SUPERVISOR_REPORT.md`.
 
+## Runtime Rules
+
+Stable one-shot pipeline stage contracts live under `.agents/rules/`. Runtime
+loaders should resolve rules and workflows from `.agents` first and packaged
+`assets/.agents` second.
+
 ## State
 
 Keep operator-readable state current:

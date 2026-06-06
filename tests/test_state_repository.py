@@ -73,7 +73,7 @@ class StateRepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
-            skill_path = root / "agents" / "skills" / "designing-agent" / "SKILL.md"
+            skill_path = root / ".agents" / "roles" / "designing-agent" / "SKILL.md"
             skill_path.parent.mkdir(parents=True, exist_ok=True)
             skill_path.write_text(
                 """---

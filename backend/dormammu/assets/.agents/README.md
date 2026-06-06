@@ -19,6 +19,7 @@ not add value. Every workflow must still make validation evidence visible.
 .agents/
   AGENTS.md
   roles/<role>/SKILL.md
+  rules/*.md
   workflows/*.md
   templates/*.md
   adapters/<agent>/AGENTS.md
@@ -29,4 +30,3 @@ not add value. Every workflow must still make validation evidence visible.
 Runtime state is projected to `.dev/` or the configured Dormammu shadow
 workspace. Use the templates in `.agents/templates/` when a state file does
 not already exist.
-

@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def load_rule_text(agents_dir: Path, rule_name: str) -> str:
-    """Load a packaged runtime rule from ``agents/rules``."""
+    """Load a runtime rule from ``.agents/rules``."""
     tried_paths: list[Path] = []
     for rule_path in _candidate_rule_paths(agents_dir, rule_name):
         tried_paths.append(rule_path)
@@ -18,7 +18,7 @@ def load_rule_text(agents_dir: Path, rule_name: str) -> str:
 
 
 def load_agent_guidance_text(agents_dir: Path, relative_path: str) -> str:
-    """Load a guidance document from ``agents/`` or the packaged asset mirror."""
+    """Load a guidance document from ``.agents/`` or its packaged mirror."""
     tried_paths: list[Path] = []
     for candidate in _candidate_agent_paths(agents_dir, relative_path):
         tried_paths.append(candidate)
@@ -53,7 +53,7 @@ def build_rule_prompt(
 
 
 def _candidate_rule_paths(agents_dir: Path, rule_name: str) -> tuple[Path, ...]:
-    packaged_agents_dir = Path(__file__).resolve().parents[1] / "assets" / "agents"
+    packaged_agents_dir = Path(__file__).resolve().parents[1] / "assets" / ".agents"
     candidates: list[Path] = [agents_dir / "rules" / rule_name]
     packaged_rule_path = packaged_agents_dir / "rules" / rule_name
     if packaged_rule_path not in candidates:
@@ -62,9 +62,29 @@ def _candidate_rule_paths(agents_dir: Path, rule_name: str) -> tuple[Path, ...]:
 
 
 def _candidate_agent_paths(agents_dir: Path, relative_path: str) -> tuple[Path, ...]:
-    packaged_agents_dir = Path(__file__).resolve().parents[1] / "assets" / "agents"
-    candidates: list[Path] = [agents_dir / relative_path]
-    packaged_path = packaged_agents_dir / relative_path
-    if packaged_path not in candidates:
-        candidates.append(packaged_path)
+    packaged_agents_dir = Path(__file__).resolve().parents[1] / "assets" / ".agents"
+    relative_paths = _candidate_relative_agent_paths(relative_path)
+    candidates: list[Path] = []
+    for candidate_relative_path in relative_paths:
+        candidates.append(agents_dir / candidate_relative_path)
+        packaged_path = packaged_agents_dir / candidate_relative_path
+        if packaged_path not in candidates:
+            candidates.append(packaged_path)
     return tuple(candidates)
+
+
+def _candidate_relative_agent_paths(relative_path: str) -> tuple[str, ...]:
+    normalized = relative_path.strip().lstrip("/")
+    path_overrides = {
+        "skills/supervising-agent/SKILL.md": "roles/supervisor/SKILL.md",
+        "skills/committer/SKILL.md": "roles/committer/SKILL.md",
+        "skills/developer/SKILL.md": "roles/developer/SKILL.md",
+        "skills/planner/SKILL.md": "roles/planner/SKILL.md",
+        "skills/refiner/SKILL.md": "roles/refiner/SKILL.md",
+        "skills/reviewer/SKILL.md": "roles/reviewer/SKILL.md",
+        "skills/architect/SKILL.md": "roles/architect/SKILL.md",
+    }
+    mapped = path_overrides.get(normalized)
+    if mapped is None or mapped == normalized:
+        return (normalized,)
+    return (normalized, mapped)

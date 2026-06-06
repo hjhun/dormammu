@@ -37,12 +37,12 @@ class TestAgentsBundleSync:
         errors: list[str] = []
         if only_in_source:
             errors.append(
-                "Files in agents/ missing from packaged bundle:\n  "
+                "Files in .agents/ missing from packaged bundle:\n  "
                 + "\n  ".join(sorted(only_in_source))
             )
         if only_in_packaged:
             errors.append(
-                "Files in packaged bundle not present in agents/:\n  "
+                "Files in packaged bundle not present in .agents/:\n  "
                 + "\n  ".join(sorted(only_in_packaged))
             )
         assert not errors, (

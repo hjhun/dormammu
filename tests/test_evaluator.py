@@ -27,7 +27,7 @@ from dormammu.daemon.goals_config import (
 from dormammu.daemon.pipeline_runner import _strip_goal_source_tag
 from dormammu.results import ResultStatus, parse_final_evaluator_verdict
 
-AGENTS_DIR = Path(__file__).resolve().parents[1] / "agents"
+AGENTS_DIR = Path(__file__).resolve().parents[1] / ".agents"
 
 
 # ---------------------------------------------------------------------------

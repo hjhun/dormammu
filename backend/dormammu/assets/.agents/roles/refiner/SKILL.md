@@ -25,6 +25,7 @@ Turn analysis into implementation-ready requirements.
 5. Define required unit, smoke, and e2e test cases.
 6. Mark assumptions and open questions separately from confirmed requirements.
 7. Write or update `REQUIREMENTS.md`.
+8. Hand off to the planner role when requirements are complete.
 
 ## Output
 
@@ -40,4 +41,3 @@ Use this structure:
 ## Assumptions
 ## Open Questions
 ```
-

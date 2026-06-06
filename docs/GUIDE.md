@@ -998,7 +998,7 @@ defines:
 
 The runtime does **not** treat `AGENTS.md` as a skill document. `AGENTS.md`
 remains general guidance, while runtime skills are discovered only from
-`agents/skills/**/SKILL.md` trees.
+`.agents/roles/**/SKILL.md` trees.
 
 ### Discovery roots
 
@@ -1006,9 +1006,9 @@ The runtime searches three skill scopes in deterministic order:
 
 | Scope | Location |
 |-------|----------|
-| project | `<repo-root>/agents/skills/` |
-| user | `<effective-global-home>/agents/skills/` |
-| built-in | packaged `assets/agents/skills/` shipped with DORMAMMU |
+| project | `<repo-root>/.agents/roles/` |
+| user | `<effective-global-home>/.agents/roles/` |
+| built-in | packaged `assets/.agents/roles/` shipped with DORMAMMU |
 
 The effective global home defaults to `~/.dormammu/`. If that path is not
 writable, DORMAMMU falls back to `tempfile.gettempdir()/dormammu-<uid>`, so
@@ -1075,8 +1075,8 @@ These concepts are adjacent but distinct:
 - Manifest-backed profiles are named runtime profile definitions that can
   request preloaded skills and permission overrides.
 - `AGENTS.md` files provide general repository or bundle guidance.
-- `agents/workflows/*.md` files define packaged workflow sequences.
-- `agents/skills/*/SKILL.md` files are the packaged built-in skill documents
+- `.agents/workflows/*.md` files define packaged workflow sequences.
+- `.agents/roles/*/SKILL.md` files are the packaged built-in skill documents
   that participate in runtime discovery as the built-in scope.
 
 Manifest-backed profiles can reference skill names, but they do not replace the
@@ -1150,19 +1150,19 @@ If no manifest files exist, built-in role profiles still work exactly as
 before. Manifest support is additive; it does not require you to create
 manifest directories just to use DORMAMMU normally.
 
-### Relationship to the bundled `agents/` tree
+### Relationship to the bundled `.agents/` tree
 
-Manifest-backed profiles and the repository `agents/` directory solve different
+Manifest-backed profiles and the repository `.agents/` directory solve different
 problems:
 
 - Manifests define runtime agent profiles: prompt body, CLI override, model,
   permission policy, preloaded skills, and metadata for a named profile.
-- `agents/` is the distributable workflow guidance bundle: stage instructions,
+- `.agents/` is the distributable workflow guidance bundle: stage instructions,
   portable skill documents, and runtime rule documents used by the built-in
   development workflow.
 
-Do not put manifest JSON files under `agents/`, and do not treat
-`agents/AGENTS.md` or `agents/skills/*` as manifest definitions.
+Do not put manifest JSON files under `.agents/`, and do not treat
+`.agents/AGENTS.md` or `.agents/roles/*` as manifest definitions.
 
 ### Validation and failure behavior
 
@@ -1195,7 +1195,7 @@ Runtime profile resolution is intentionally selective:
 
 - Manifests are JSON-only in the current implementation.
 - Manifest files define runtime profiles only; they do not replace the bundled
-  `agents/` workflow guidance assets.
+  `.agents/` workflow guidance assets.
 - There is no separate manifest-management CLI yet; creation and editing are
   file-based.
 
@@ -1203,269 +1203,59 @@ Runtime profile resolution is intentionally selective:
 
 ## Agent Roles
 
-DORMAMMU ships a bundled guidance framework under `agents/` that defines
-specialized roles for each phase of development. The **Supervising Agent**
-acts as the top-level controller, deciding which role acts next and when to
-advance a phase transition.
+DORMAMMU ships a bundled guidance framework under `.agents/`. Role skills live
+under `.agents/roles/<role>/SKILL.md`, stable runtime stage contracts live under
+`.agents/rules/`, and reusable workflows live under `.agents/workflows/`.
 
-### Refining Agent
+The standard autonomous development loop is:
 
-**Path:** `agents/skills/refining-agent/SKILL.md`
+```text
+analyzer -> refiner -> planner -> architect -> developer -> reviewer
+         -> coordinator -> supervisor
+```
 
-Converts a raw goal or user request into a structured, unambiguous
-requirements document before any planning or coding begins.
+Available role skills:
 
-- Identifies missing information and asks 3–6 targeted clarifying questions
-  (scope, acceptance criteria, constraints, dependencies, risks)
-- Writes the refined requirements to `.dev/REQUIREMENTS.md`
-- Updates `.dev/DASHBOARD.md` to show requirements-confirmed status
-- Hands off to the Planning Agent when requirements are confirmed
-
-**Runtime entry stage:** Always runs before downstream execution. Uses
-`agents.refiner.cli` when configured, otherwise falls back to
-`active_agent_cli`.
-
-Used when: a new scope has ambiguous goals, missing acceptance criteria, or
-unclear constraints that could derail implementation.
-
-### Planning Agent
-
-**Path:** `agents/skills/planning-agent/SKILL.md`
-
-Converts confirmed requirements (or a raw goal) into a concrete, adaptive
-workflow checklist.
-
-- Reads `.dev/REQUIREMENTS.md` as primary input (falls back to raw goal)
-- Produces `.dev/WORKFLOWS.md` — an adaptive, task-specific stage sequence
-  with `[ ]` checkboxes for each phase
-- Includes evaluator checkpoint annotations where mid-pipeline review is needed
-- Produces 4–8 phases with clear completion signals
-- Writes a phase checklist to `.dev/PLAN.md` (`[ ] Phase N. <title>`)
-- Updates `.dev/DASHBOARD.md` with active phase and next action
-
-**Runtime entry stage:** Always runs after refinement. Uses
-`agents.planner.cli` when configured, otherwise falls back to
-`active_agent_cli`.
-
-Used when: requirements are clear and planning decisions are needed before
-implementation begins.
-
-### Analyzer Agent
-
-**Path:** configured through `agents.analyzer` in `dormammu.json`
-
-The Analyzer Agent is used by goals automation before planning starts.
-
-- Reads a scheduled goal file
-- Produces a requirements-focused brief for the planner
-- Surfaces scope boundaries, acceptance criteria, dependencies, and risks
-- Writes raw analysis output to `.dev/logs/<date>_analyzer_<stem>.md`
-
-Used when: a goal is promoted from `goals.path` into the daemon prompt queue.
-
-The runtime pipeline still begins with `refine -> plan` after the prompt is
-queued; analyzer output strengthens the queued prompt rather than replacing the
-runtime refiner.
-
-`analyzer` is not a runtime pipeline stage. It is used only by goals automation
-and autonomous scheduling before a prompt enters the normal `refine -> plan`
-contract.
-
-### Supervising Agent
-
-**Path:** `agents/skills/supervising-agent/SKILL.md`
-
-The Supervising Agent is the controller for all multi-phase work. It:
-
-- Decides which skill acts next based on the current `.dev/workflow_state.json`
-- Enforces phase gates — transitions only when evidence exists (not just intent)
-- Resumes safely after interruption by re-reading `.dev/` state
-- Treats `.dev/workflow_state.json` as the machine truth and Markdown files as
-  the operator-facing view
-
-Phase gate rules:
-
-| Transition | Required evidence |
-|------------|------------------|
-| refine → plan | `.dev/REQUIREMENTS.md` exists and is confirmed |
-| plan → design | `WORKFLOWS.md` and `PLAN.md` exist; next action is clear |
-| design → develop | Active scope has interface or decision records |
-| develop → test_author | Product code changes exist in intended files |
-| test_author → build | Unit/integration test code exists |
-| test_review → final_verify | Executed validation has clear results |
-| final_verify → commit | Active slice passed final operational review |
-
-### Designing Agent
-
-**Path:** `agents/skills/designing-agent/SKILL.md`
-
-Produces implementation-ready design decisions before broad coding begins.
-
-- Documents module contracts, API interfaces, and schema decisions
-- Records only decisions that affect implementation, recovery, testing, or deployment
-- Does not write product code
-- Used when: after planning, before implementation; design choices affect multiple files
-
-### Developing Agent
-
-**Path:** `agents/skills/developing-agent/SKILL.md`
-
-Implements the active task slice.
-
-- Reads `.dev/REQUIREMENTS.md` and `.dev/WORKFLOWS.md` at the start of each
-  session to align with current requirements and planned stages
-- Writes product code for the current active phase only
-- Keeps product-code ownership separate from test-code ownership
-- Updates `.dev/` state after each meaningful change
-- Each step is idempotent — safe to retry after interruption
-
-### Test Authoring Agent
-
-**Path:** `agents/skills/test-authoring-agent/SKILL.md`
-
-Writes and maintains automated tests for the active implementation slice.
-
-- Default scope: unit tests + integration tests
-- System tests only when explicitly requested
-- Runs in parallel with the Developing Agent after design is complete
-- Updates `.dev/` state when test code is ready
-
-### Building and Deploying Agent
-
-**Path:** `agents/skills/building-and-deploying/SKILL.md`
-
-Produces release artifacts and validates packaging or deployment flows.
-
-- Runs only from current repo state — no speculative builds
-- Captures build commands, output, and failures in `.dev/logs/`
-- Used when: packaging is required, installation flows need validation, or
-  deployment outputs need to be produced
-
-### Testing and Reviewing Agent
-
-**Path:** `agents/skills/testing-and-reviewing/SKILL.md`
-
-Validates changes through executed tests and review-oriented analysis.
-
-- Default scope: unit + integration tests
-- Can add linters, build checks, and system tests as needed
-- Produces execution evidence (not just test code) for the supervisor gate
-
-### Committing Agent
-
-**Path:** `agents/skills/committing-agent/SKILL.md`
-
-Finalizes a validated scope into an intentional git commit.
-
-- Stages only files within the active scope (no incidental changes)
-- Enforces 80-character line limit on commit messages
-- Updates `.dev/` commit status after a successful commit
-
-### Evaluating Agent
-
-**Path:** `agents/skills/evaluating-agent/SKILL.md`
-
-Assesses goal achievement after a pipeline run completes. Supports two modes:
-
-- **Mid-pipeline check**: writes `DECISION: PROCEED` or `DECISION: REWORK` to
-  `.dev/logs/check_<stage>_<stem>_<date>.md` — used when a WORKFLOWS.md
-  checkpoint is reached
-- **Final evaluation**: writes `VERDICT: goal_achieved / partial / not_achieved`
-  with a structured report — used at end-of-pipeline
-
-Can generate a follow-up goal for the Goals Scheduler to queue next.
-
-### PRD Agent
-
-**Path:** `agents/skills/prd-agent/SKILL.md`
-
-Generates a structured Product Requirements Document before planning begins.
-
-- Produces user stories, acceptance criteria, and success metrics
-- Provides scope boundaries that inform the Planning Agent
-- Used when: a new initiative needs formal requirements before a plan is made
-
----
+| Role | Path | Purpose |
+|------|------|---------|
+| analyzer | `.agents/roles/analyzer/SKILL.md` | Analyze goals, scope, risks, and dependencies. |
+| refiner | `.agents/roles/refiner/SKILL.md` | Rewrite analysis into functional, non-functional, acceptance, and test requirements. |
+| planner | `.agents/roles/planner/SKILL.md` | Produce `ROADMAP.md`, `DASHBOARD.md`, and `TASKS.md`. |
+| architect | `.agents/roles/architect/SKILL.md` | Design the software/hardware solution and key contracts. |
+| developer | `.agents/roles/developer/SKILL.md` | Implement high-quality code with performance and memory awareness. |
+| reviewer | `.agents/roles/reviewer/SKILL.md` | Review code, tests, side effects, and requirement fit. |
+| committer | `.agents/roles/committer/SKILL.md` | Clean the worktree and create a scoped local commit. |
+| coordinator | `.agents/roles/coordinator/SKILL.md` | Monitor handoffs and route rework to the right role. |
+| supervisor | `.agents/roles/supervisor/SKILL.md` | Decide whether the loop is complete or must continue. |
 
 ## Workflow Pipeline
 
-The bundled workflows (`agents/workflows/`) combine the agent roles above into
-composable sequences. The Supervising Agent controls which workflow is active
-and when to advance.
+The bundled workflows (`.agents/workflows/`) combine those roles into resumable
+operator flows. Use the simple workflow for low-risk one-step edits and the
+autonomous loop for normal development.
 
 ```mermaid
 flowchart TD
-    Start([New Scope]) --> wf0["Workflow 0<br/>Refine & Plan"]
-    wf0 --> refine[Refining Agent]
-    refine --> plan[Planning Agent]
-
-    plan --> design[Designing Agent]
-
-    design --> wf1["Workflow 1<br/>Develop & Test Authoring"]
-    wf1 --> develop[Developing Agent]
-    wf1 --> testauth[Test Authoring Agent]
-
-    develop --> wf2["Workflow 2<br/>Build, Deploy & Review"]
-    testauth --> wf2
-    wf2 --> build[Building & Deploying Agent]
-    build --> review[Testing & Reviewing Agent]
-    review -- "fail / needs rework" --> develop
-
-    review -- pass --> wf3["Workflow 3<br/>Cleanup & Commit"]
-    wf3 --> finalverify["Final Verification<br/>Supervising Agent"]
-    finalverify -- fail --> develop
-    finalverify -- pass --> commit[Committing Agent]
-    commit --> Done([Done])
-
-    supervisor[Supervising Agent] -. orchestrates all transitions .-> wf0
+    Start([Goal]) --> analyze[Analyzer]
+    analyze --> refine[Refiner]
+    refine --> plan[Planner]
+    plan --> arch[Architect]
+    arch --> dev[Developer]
+    dev --> review[Reviewer]
+    review --> coord[Coordinator]
+    coord --> supervisor[Supervisor]
+    supervisor -- rework --> analyze
+    supervisor -- complete --> Done([Done])
 ```
 
-### Workflow 0 — Refine and Plan
+Workflow files:
 
-**Path:** `agents/workflows/refine-plan.md`
-
-Runs the Refining Agent then the Planning Agent in sequence. The refiner
-converts the raw goal into `.dev/REQUIREMENTS.md`; the planner reads it and
-produces `.dev/WORKFLOWS.md` — an adaptive checklist of stages tailored to
-the specific task.
-
-**When to skip refining:** For simple, well-scoped changes where requirements
-are already clear, the refiner can be skipped (leave `agents.refiner.cli`
-unset). The planner can still run from the raw goal, and the supervisor can
-hand off directly to the Designing Agent after planning. There is no separate
-planning-and-design workflow document.
-
-**Outputs:** `.dev/REQUIREMENTS.md`, `.dev/WORKFLOWS.md`, `.dev/PLAN.md`,
-updated `.dev/DASHBOARD.md`.
-
-### Workflow 1 — Develop and Test Authoring
-
-**Path:** `agents/workflows/develop-test-authoring.md`
-
-Runs the Developing Agent and the Test Authoring Agent as parallel tracks after
-design is complete. Both share the same active slice but own separate files.
-
-**Outputs:** Product-code changes, matching unit/integration tests, updated
-`.dev/` state.
-
-### Workflow 2 — Build, Deploy, and Test Review
-
-**Path:** `agents/workflows/build-deploy-test-review.md`
-
-Runs the Building/Deploying Agent, then the Testing/Reviewing Agent, then Final
-Verification. Failures at any stage route back to development.
-
-**Outputs:** Build/packaging evidence, executed validation results, findings
-written to `.dev/`.
-
-### Workflow 3 — Cleanup and Commit
-
-**Path:** `agents/workflows/cleanup-commit.md`
-
-Runs the Committing Agent after final verification passes. Cleans up transient
-files, stages only the active scope, and produces a scoped commit.
-
-**Outputs:** Intentional git commit with `.dev/` commit status updated.
+| Workflow | Path | Purpose |
+|----------|------|---------|
+| Autonomous loop | `.agents/workflows/autonomous-development-loop.md` | Full development loop for non-trivial work. |
+| Simple task | `.agents/workflows/simple-task.md` | Lightweight path for trivial or low-risk edits. |
+| Recovery loop | `.agents/workflows/recovery-loop.md` | Resume, rework, and failed-validation handling. |
+| Supervised downstream | `.agents/workflows/supervised-downstream.md` | Runtime handoff after the mandatory planning prelude. |
 
 ### Phase Gate Summary
 
@@ -1658,7 +1448,7 @@ Guidance files let you inject repository-specific operating rules into every
 agent prompt. DORMAMMU resolves guidance in this order:
 
 1. Explicit `--guidance-file` flags (in order given)
-2. Repository guidance: `AGENTS.md` or `agents/AGENTS.md` at the repo root
+2. Repository guidance: `AGENTS.md` or `.agents/AGENTS.md` at the repo root
 3. Installed fallback guidance under `~/.dormammu/agents`
 4. Packaged fallback guidance assets bundled with DORMAMMU
 
@@ -1996,7 +1786,7 @@ cat .dev/DASHBOARD.md
 
 ```text
 backend/     Python package — loop engine, CLI adapters, state, supervisor, daemon
-agents/      Distributable workflow and skill guidance bundle
+.agents/     Distributable workflow and skill guidance bundle
 templates/   Bootstrap templates for .dev/ state files
 config/      Example configuration files
 docs/        User and operator documentation

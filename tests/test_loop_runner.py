@@ -173,8 +173,8 @@ class LoopRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
-            (root / "agents" / "skills" / "designing-agent").mkdir(parents=True, exist_ok=True)
-            (root / "agents" / "skills" / "designing-agent" / "SKILL.md").write_text(
+            (root / ".agents" / "roles" / "designing-agent").mkdir(parents=True, exist_ok=True)
+            (root / ".agents" / "roles" / "designing-agent" / "SKILL.md").write_text(
                 """---
 schema_version: 1
 name: designing-agent
