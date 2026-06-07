@@ -1,0 +1,66 @@
+#!/usr/bin/env node
+import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+
+import {
+  runAgentRunnerEntrypoint,
+  type AgentRunnerEntrypointPayload
+} from "./runnerEntrypoint.js";
+
+const USAGE = [
+  "Usage: dormammu-agent-runner [payload.json|-]",
+  "",
+  "Reads an agent runner JSON payload from stdin by default and writes the",
+  "Python-compatible run result JSON to stdout."
+].join("\n");
+
+export async function runAgentRunnerCli(args: string[] = process.argv.slice(2)): Promise<number> {
+  try {
+    if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
+      process.stdout.write(`${USAGE}\n`);
+      return 0;
+    }
+    const payload = await readPayload(args);
+    const result = await runAgentRunnerEntrypoint(payload);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return 0;
+  } catch (error) {
+    process.stderr.write(`dormammu-agent-runner: ${formatError(error)}\n`);
+    return 1;
+  }
+}
+
+async function readPayload(args: string[]): Promise<AgentRunnerEntrypointPayload> {
+  if (args.length > 1) {
+    throw new Error("expected at most one payload path argument");
+  }
+
+  const source = args[0] ?? "-";
+  const text = source === "-" ? await readStdin() : await readFile(source, "utf8");
+  try {
+    return JSON.parse(text) as AgentRunnerEntrypointPayload;
+  } catch (error) {
+    throw new Error(`Invalid JSON payload: ${formatError(error)}`);
+  }
+}
+
+async function readStdin(): Promise<string> {
+  let text = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) {
+    text += chunk;
+  }
+  return text;
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runAgentRunnerCli().then((exitCode) => {
+    if (process.exitCode === undefined) {
+      process.exitCode = exitCode;
+    }
+  });
+}

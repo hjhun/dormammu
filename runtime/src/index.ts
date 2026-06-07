@@ -6,6 +6,7 @@ export * from "./agent/promptIdentity.js";
 export * from "./agent/presetArgs.js";
 export * from "./agent/presets.js";
 export * from "./agent/runArtifacts.js";
+export * from "./agent/runnerCli.js";
 export * from "./agent/runnerEntrypoint.js";
 export * from "./results.js";
 export * from "./state/executionProjection.js";
