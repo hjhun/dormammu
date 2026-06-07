@@ -262,8 +262,9 @@ detect_active_agent_cli() {
 write_runtime_config() {
   local active_cli="${1:-}"
   local allowed_roots="${2:-}"
+  local typescript_runner_cli="${3:-}"
   mkdir -p "$(dirname "${CONFIG_PATH}")"
-  "${VENV_DIR}/bin/python" - "${CONFIG_PATH}" "${active_cli}" "${allowed_roots}" "${WEB_HOST}" "${WEB_PORT}" <<'PY'
+  "${VENV_DIR}/bin/python" - "${CONFIG_PATH}" "${active_cli}" "${allowed_roots}" "${WEB_HOST}" "${WEB_PORT}" "${typescript_runner_cli}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -275,6 +276,7 @@ active_cli = sys.argv[2]
 allowed_roots = [item for item in sys.argv[3].split(":") if item]
 web_host = sys.argv[4]
 web_port = int(sys.argv[5])
+typescript_runner_cli = sys.argv[6]
 if config_path.exists():
     loaded = json.loads(config_path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
@@ -284,6 +286,8 @@ else:
     payload = {}
 if active_cli and not payload.get("active_agent_cli"):
     payload["active_agent_cli"] = active_cli
+if typescript_runner_cli and not payload.get("typescript_agent_runner_cli"):
+    payload["typescript_agent_runner_cli"] = typescript_runner_cli
 cli_overrides = payload.get("cli_overrides")
 if not isinstance(cli_overrides, dict):
     cli_overrides = {}
@@ -478,7 +482,11 @@ main() {
   else
     warn "no supported agent CLI was auto-detected"
   fi
-  write_runtime_config "${active_cli}" "${WEB_ALLOWED_ROOTS}"
+  local typescript_runner_cli=""
+  if [[ -x "${BIN_DIR}/dormammu-agent-runner" ]]; then
+    typescript_runner_cli="${BIN_DIR}/dormammu-agent-runner"
+  fi
+  write_runtime_config "${active_cli}" "${WEB_ALLOWED_ROOTS}" "${typescript_runner_cli}"
   configure_telegram
   local bashrc_update_json
   bashrc_update_json="$(update_bashrc_path_entries)"

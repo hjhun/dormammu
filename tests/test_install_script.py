@@ -357,7 +357,10 @@ class InstallScriptTests(unittest.TestCase):
 
             config_payload = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(config_payload["active_agent_cli"], str(codex_path))
-            self.assertNotIn("typescript_agent_runner_cli", config_payload)
+            self.assertEqual(
+                config_payload["typescript_agent_runner_cli"],
+                str(runner_binary),
+            )
             self.assertEqual(
                 config_payload["cli_overrides"]["cline"]["extra_args"],
                 ["-y", "--timeout", "1200"],
