@@ -307,6 +307,53 @@ test("restoreSession selects an existing session and mirrors operator files", as
   });
 });
 
+test("startNewSession creates a fresh active session with prompt state", async () => {
+  await withTempDirectory(async (root) => {
+    await seedRepository(root, "old-session");
+    const rootRepository = new StateRepository({
+      baseDevDir: path.join(root, ".dev"),
+      sessionsDir: path.join(root, ".dev", "sessions"),
+      repoRoot: root
+    });
+
+    const artifacts = await rootRepository.startNewSession({
+      goal: "Start fresh work",
+      promptText: "Start fresh work\n- create a new active session",
+      activeRoadmapPhaseIds: ["phase_6"],
+      sessionId: "Fresh Session!",
+      timestamp: "2026-04-27T00:07:00.000Z"
+    });
+
+    const sessionDir = path.join(root, ".dev", "sessions", "Fresh-Session");
+    const rootIndex = await readJson(path.join(root, ".dev", "session.json"));
+    const sessionState = await readJson(path.join(sessionDir, "session.json"));
+    const workflowState = await readJson(path.join(sessionDir, "workflow_state.json"));
+    assert.equal(artifacts.dashboard, path.join(sessionDir, "DASHBOARD.md"));
+    assert.equal(rootIndex.active_session_id, "Fresh-Session");
+    assert.equal(sessionState.session_id, "Fresh-Session");
+    assert.equal(requireRecord(sessionState.bootstrap).goal, "Start fresh work");
+    assert.deepEqual(sessionState.active_roadmap_phase_ids, ["phase_6"]);
+    assert.deepEqual(requireRecord(workflowState.roadmap).active_phase_ids, ["phase_6"]);
+    assert.match(await readFile(path.join(root, ".dev", "TASKS.md"), "utf8"), /create a new active session/);
+  });
+});
+
+test("startNewSession rejects session-scoped repositories", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = new StateRepository({
+      baseDevDir: path.join(root, ".dev"),
+      sessionsDir: path.join(root, ".dev", "sessions"),
+      repoRoot: root,
+      sessionId: "scoped"
+    });
+
+    await assert.rejects(
+      () => repository.startNewSession({ goal: "Nope" }),
+      /active repository/
+    );
+  });
+});
+
 test("writeWorkflowState syncs roadmap phase ids and loop request", async () => {
   await withTempDirectory(async (root) => {
     const repository = await seedRepository(root);

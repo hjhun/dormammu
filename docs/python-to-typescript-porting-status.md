@@ -44,6 +44,9 @@ Ported modules:
 - filesystem guidance discovery and session restore orchestration from
   `backend/dormammu/state/repository.py`
   -> `runtime/src/state/repository.ts`
+- start-session lifecycle orchestration from
+  `backend/dormammu/state/repository.py`
+  -> `runtime/src/state/repository.ts`
 
 Validation:
 
@@ -124,12 +127,11 @@ Validation:
 
 Port the remaining state repository orchestration surface:
 
-- session lifecycle parity for explicitly starting new sessions
 - artifact writers, prompt persistence, runtime skill resolution, and worktree
   state mutation helpers still owned by `backend/dormammu/state/repository.py`
 - task, dashboard, and workflow-state projections that still depend on Python
   repository methods
 
 The next slice should introduce TypeScript tests around root index writes,
-repository read/write coordination, start-session behavior, and artifact
-writers before any Python call site is removed.
+repository read/write coordination, artifact writers, and prompt persistence
+before any Python call site is removed.

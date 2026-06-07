@@ -46,6 +46,10 @@ export type EnsureBootstrapStateOptions = {
   repoGuidance?: RepoGuidance | null;
 };
 
+export type StartNewSessionOptions = EnsureBootstrapStateOptions & {
+  sessionId?: string | null;
+};
+
 function isRecord(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -450,6 +454,45 @@ export class StateRepository {
     return path.join(this.devDir, name);
   }
 
+  async startNewSession(options: StartNewSessionOptions = {}): Promise<BootstrapArtifacts> {
+    if (this.sessionId !== null) {
+      throw new Error("startNewSession must be called from the active repository.");
+    }
+
+    const timestamp = options.timestamp ?? new Date().toISOString();
+    const roadmapPhaseIds = normalizedRoadmapPhaseIds(options.activeRoadmapPhaseIds) ?? ["phase_1"];
+    const nextSessionId = SessionManager.normalizeSessionId(
+      options.sessionId ?? (await this.sessionManager.generatedSessionId(timestamp))
+    );
+    const goal =
+      options.goal?.trim() ||
+      summarizePromptGoal(
+        options.promptText,
+        "Bootstrap dormammu in the current repository."
+      );
+
+    await mkdir(this.baseDevDir, { recursive: true });
+    await mkdir(this.sessionsDir, { recursive: true });
+    await this.sessionManager.migrateLegacyRootSnapshot({ timestamp });
+
+    const sessionRepository = this.forSession(nextSessionId);
+    await sessionRepository.resetBootstrapState({
+      goal,
+      promptText: options.promptText,
+      roadmapPhaseIds,
+      timestamp,
+      repoGuidance: options.repoGuidance ?? (await sessionRepository.discoverRepoGuidance())
+    });
+    await this.operatorSync.writeRootIndexForSession({
+      sessionDevDir: sessionRepository.devDir,
+      sessionId: nextSessionId,
+      stateRoot: sessionRepository.stateRootDisplay(),
+      timestamp,
+      listSessions: () => this.sessionManager.listSessions()
+    });
+    return sessionRepository.artifactsForDir(sessionRepository.devDir);
+  }
+
   async restoreSession(sessionId: string, options: { timestamp?: string } = {}): Promise<BootstrapArtifacts> {
     if (this.sessionId !== null) {
       throw new Error("restoreSession must be called from the active repository.");
@@ -620,6 +663,74 @@ export class StateRepository {
     });
     await this.syncRootIndex(timestamp);
     return this.artifactsForDir(this.devDir);
+  }
+
+  private async resetBootstrapState(options: {
+    goal: string;
+    promptText?: string | null;
+    roadmapPhaseIds: readonly string[];
+    timestamp: string;
+    repoGuidance: RepoGuidance | null;
+  }): Promise<void> {
+    if (this.sessionId === null) {
+      throw new Error("resetBootstrapState requires a session repository.");
+    }
+    const stateRoot = this.stateRootDisplay();
+    await mkdir(this.devDir, { recursive: true });
+    await mkdir(this.logsDir, { recursive: true });
+    await mkdir(this.sessionsDir, { recursive: true });
+
+    const dashboardValues = renderDashboardValues(
+      defaultDashboardContext({
+        goal: options.goal,
+        roadmapPhaseIds: options.roadmapPhaseIds,
+        promptText: options.promptText,
+        repoGuidance: options.repoGuidance
+      })
+    );
+    const planValues = renderPlanValues(
+      defaultPlanContext({
+        goal: options.goal,
+        promptText: options.promptText,
+        repoGuidance: options.repoGuidance
+      })
+    );
+
+    await writeFile(this.stateFile("DASHBOARD.md"), renderDashboardMarkdown(dashboardValues), "utf8");
+    await writeFile(this.stateFile("PLAN.md"), renderPlanMarkdown(planValues), "utf8");
+    await writeFile(this.stateFile("TASKS.md"), renderTasksMarkdown(planValues), "utf8");
+    await writeJson(
+      this.stateFile("session.json"),
+      defaultSessionState({
+        timestamp: options.timestamp,
+        roadmapPhaseIds: options.roadmapPhaseIds,
+        goal: options.goal,
+        stateRoot,
+        promptText: options.promptText,
+        sessionId: this.sessionId,
+        runType: "session",
+        repoGuidance: options.repoGuidance
+      })
+    );
+    await writeJson(
+      this.stateFile("workflow_state.json"),
+      defaultWorkflowState({
+        timestamp: options.timestamp,
+        roadmapPhaseIds: options.roadmapPhaseIds,
+        goal: options.goal,
+        stateRoot,
+        promptText: options.promptText,
+        repoGuidance: options.repoGuidance
+      })
+    );
+    await this.operatorSync.syncOperatorState({
+      sessionPath: this.stateFile("session.json"),
+      workflowPath: this.stateFile("workflow_state.json"),
+      operatorTaskPath: this.stateFile("TASKS.md"),
+      timestamp: options.timestamp,
+      devDir: this.devDir,
+      displayStatePath: (filePath) => this.displayStatePath(filePath)
+    });
   }
 
   async readSessionState(): Promise<JsonObject> {
