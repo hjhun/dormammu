@@ -53,6 +53,9 @@ Ported modules:
 - Python opt-in compatibility bridge for delegating `CliAdapter.run_once` to
   `dormammu-agent-runner`
   -> `backend/dormammu/agent/cli_adapter.py`
+- bridge safety fallback that keeps Python `CliAdapter` semantics for calls
+  requiring `on_started` current-run timing or `stop_event` shutdown handling
+  -> `backend/dormammu/agent/cli_adapter.py`
 - setup/install wiring for building `runtime/` and exposing
   `dormammu-agent-runner` as an installed launcher
   -> `setup.sh`, `install.sh`
@@ -185,6 +188,7 @@ Port the remaining state repository orchestration surface:
 - Python runtime call sites still own daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
-The next slice should evaluate which Python `CliAdapter` call sites can move
-from opt-in bridge usage to TypeScript-runner-first execution without losing
-live output, stop-event, or current-run timing semantics.
+The next slice should extend `dormammu-agent-runner` with a structured event or
+streaming protocol so Python call sites that need current-run start timing,
+live output, or stop-event shutdown handling can move to the TypeScript runner
+without falling back to the Python adapter.

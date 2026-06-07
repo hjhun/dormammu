@@ -165,8 +165,8 @@ class CliAdapter:
         *,
         on_started: Callable[[AgentRunStarted], None] | None = None,
     ) -> AgentRunResult:
-        if self.config.typescript_agent_runner_cli is not None:
-            return self._run_once_with_typescript_runner(request, on_started=on_started)
+        if self._can_use_typescript_runner(on_started=on_started):
+            return self._run_once_with_typescript_runner(request)
 
         request = self._apply_cli_override(request, cli_path=request.cli_path)
         candidates = self._build_candidate_requests(request)
@@ -206,8 +206,6 @@ class CliAdapter:
     def _run_once_with_typescript_runner(
         self,
         request: AgentRunRequest,
-        *,
-        on_started: Callable[[AgentRunStarted], None] | None = None,
     ) -> AgentRunResult:
         runner_cli = self.config.typescript_agent_runner_cli
         if runner_cli is None:
@@ -236,23 +234,20 @@ class CliAdapter:
             raise RuntimeError("TypeScript agent runner returned invalid JSON") from exc
 
         result = _agent_run_result_from_payload(result_payload)
-        if on_started is not None:
-            on_started(
-                AgentRunStarted(
-                    run_id=result.run_id,
-                    cli_path=result.cli_path,
-                    workdir=result.workdir,
-                    prompt_mode=result.prompt_mode,
-                    command=result.command,
-                    started_at=result.started_at,
-                    prompt_path=result.prompt_path,
-                    stdout_path=result.stdout_path,
-                    stderr_path=result.stderr_path,
-                    metadata_path=result.metadata_path,
-                    capabilities=result.capabilities,
-                )
-            )
         return result
+
+    def _can_use_typescript_runner(
+        self,
+        *,
+        on_started: Callable[[AgentRunStarted], None] | None,
+    ) -> bool:
+        if self.config.typescript_agent_runner_cli is None:
+            return False
+        if on_started is not None:
+            return False
+        if self.stop_event is not None:
+            return False
+        return True
 
     def _typescript_runner_payload(self, request: AgentRunRequest) -> dict[str, object]:
         return {

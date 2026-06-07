@@ -379,20 +379,34 @@ class InstallScriptTests(unittest.TestCase):
             )
             bridge_result = subprocess.run(
                 [
-                    str(binary),
-                    "run-once",
-                    "--repo-root",
+                    str(install_root / "venv" / "bin" / "python"),
+                    "-c",
+                    textwrap.dedent(
+                        """\
+                        import json
+                        import sys
+                        from pathlib import Path
+
+                        from dormammu.agent import AgentRunRequest, CliAdapter
+                        from dormammu.config import AppConfig
+
+                        repo = Path(sys.argv[1])
+                        fake_agent = Path(sys.argv[2])
+                        config = AppConfig.load(repo_root=repo)
+                        result = CliAdapter(config).run_once(
+                            AgentRunRequest(
+                                cli_path=fake_agent,
+                                prompt_text="Installed TypeScript bridge prompt",
+                                repo_root=repo,
+                                extra_args=("--echo-tag", "ts-bridge"),
+                                run_label="installed-typescript-bridge",
+                            )
+                        )
+                        print(json.dumps(result.to_dict(), ensure_ascii=True))
+                        """
+                    ),
                     str(packaged_repo),
-                    "--debug",
-                    "--agent-cli",
                     str(fake_agent),
-                    "--prompt",
-                    "Installed TypeScript bridge prompt",
-                    "--run-label",
-                    "installed-typescript-bridge",
-                    "--extra-arg=--echo-tag",
-                    "--extra-arg",
-                    "ts-bridge",
                 ],
                 cwd=ROOT,
                 env=env,

@@ -8,6 +8,7 @@ from pathlib import Path
 import stat
 import sys
 import tempfile
+import threading
 import textwrap
 import unittest
 from unittest import mock
@@ -718,7 +719,6 @@ class CliAdapterTests(unittest.TestCase):
 
             config = AppConfig.load(repo_root=root)
             self.assertEqual(config.typescript_agent_runner_cli, runner_cli)
-            started_events: list[object] = []
             result = CliAdapter(config).run_once(
                 AgentRunRequest(
                     cli_path=fake_cli,
@@ -726,8 +726,7 @@ class CliAdapterTests(unittest.TestCase):
                     repo_root=root,
                     input_mode="stdin",
                     run_label="typescript-bridge",
-                ),
-                on_started=started_events.append,
+                )
             )
 
             self.assertEqual(result.exit_code, 0)
@@ -736,7 +735,6 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(result.command, (str(fake_cli), "--typescript-runner"))
             self.assertEqual(result.capabilities.help_text, "usage: ts-runner")
             self.assertEqual(result.attempted_cli_paths, (fake_cli,))
-            self.assertEqual(len(started_events), 1)
 
             captured = json.loads((root / "captured-runner-payload.json").read_text(encoding="utf-8"))
             self.assertEqual(captured["config"]["active_agent_cli"], str(fake_cli))
@@ -756,6 +754,55 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(captured["request"]["cli_path"], str(fake_cli))
             self.assertEqual(captured["request"]["prompt_text"], "Run through TypeScript.")
             self.assertEqual(captured["request"]["input_mode"], "stdin")
+
+    def test_run_once_keeps_python_path_when_started_callback_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            self._write_fake_typescript_runner(root)
+            config = AppConfig.load(repo_root=root).with_overrides(
+                typescript_agent_runner_cli=root / "ts-runner",
+            )
+
+            started_events: list[AgentRunStarted] = []
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Keep current-run timing.",
+                    repo_root=root,
+                    run_label="started-callback-fallback",
+                ),
+                on_started=started_events.append,
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(len(started_events), 1)
+            self.assertIn("--prompt-file", result.command)
+            self.assertFalse((root / "captured-runner-payload.json").exists())
+
+    def test_run_once_keeps_python_path_when_stop_event_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            self._write_fake_typescript_runner(root)
+            config = AppConfig.load(repo_root=root).with_overrides(
+                typescript_agent_runner_cli=root / "ts-runner",
+            )
+
+            result = CliAdapter(config, stop_event=threading.Event()).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Keep stop-event semantics.",
+                    repo_root=root,
+                    run_label="stop-event-fallback",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("--prompt-file", result.command)
+            self.assertFalse((root / "captured-runner-payload.json").exists())
 
     def test_run_once_reports_typescript_runner_process_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
