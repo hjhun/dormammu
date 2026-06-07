@@ -116,7 +116,14 @@ test("agentRunStartedToDict emits Python-compatible payload and artifact refs", 
     help_text: "usage: fake",
     help_exit_code: 0,
     command_prefix: ["run"],
-    prompt_positional: false
+    prompt_positional: false,
+    preset: null,
+    auto_approve: {
+      supported: false,
+      requires_confirmation: false,
+      candidates: [],
+      notes: []
+    }
   });
 });
 

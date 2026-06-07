@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { CliCapabilities, CommandPlan } from "./commandBuilder.js";
+import type { AutoApproveInfo, CliCapabilities, CommandPlan } from "./commandBuilder.js";
 
 export type ArtifactRefPayload = {
   kind: string;
@@ -24,6 +24,22 @@ export type CliCapabilitiesPayload = {
   help_exit_code: number;
   command_prefix: string[];
   prompt_positional: boolean;
+  preset: {
+    key: string | null;
+    label: string | null;
+    source: string | null;
+  } | null;
+  auto_approve: {
+    supported: boolean;
+    requires_confirmation: boolean;
+    candidates: Array<{
+      value: string;
+      risk: string;
+      source: string;
+      summary: string;
+    }>;
+    notes: string[];
+  };
 };
 
 export type AgentRunStarted = {
@@ -97,12 +113,45 @@ export function capabilitiesToDict(
     workdir_flag: capabilities.workdirFlag,
     help_exit_code: capabilities.helpExitCode,
     command_prefix: [...(capabilities.commandPrefix ?? [])],
-    prompt_positional: capabilities.promptPositional ?? false
+    prompt_positional: capabilities.promptPositional ?? false,
+    preset:
+      capabilities.presetKey !== null && capabilities.presetKey !== undefined
+        ? {
+            key: capabilities.presetKey,
+            label: capabilities.presetLabel ?? null,
+            source: capabilities.presetSource ?? null
+          }
+        : null,
+    auto_approve: autoApproveToDict(capabilities.autoApprove)
   };
   if (options.includeHelpText) {
     payload.help_text = capabilities.helpText;
   }
   return payload;
+}
+
+function autoApproveToDict(
+  autoApprove: AutoApproveInfo | undefined
+): CliCapabilitiesPayload["auto_approve"] {
+  if (autoApprove === undefined) {
+    return {
+      supported: false,
+      requires_confirmation: false,
+      candidates: [],
+      notes: []
+    };
+  }
+  return {
+    supported: autoApprove.supported,
+    requires_confirmation: autoApprove.requiresConfirmation,
+    candidates: autoApprove.candidates.map((candidate) => ({
+      value: candidate.value,
+      risk: candidate.risk,
+      source: candidate.source,
+      summary: candidate.summary
+    })),
+    notes: [...autoApprove.notes]
+  };
 }
 
 export function agentRunArtifactRefs(options: {

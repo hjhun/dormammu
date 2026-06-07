@@ -9,6 +9,24 @@ export type CliCapabilities = {
   helpExitCode: number;
   commandPrefix?: readonly string[];
   promptPositional?: boolean;
+  presetKey?: string | null;
+  presetLabel?: string | null;
+  presetSource?: string | null;
+  autoApprove?: AutoApproveInfo;
+};
+
+export type AutoApproveCandidate = {
+  value: string;
+  risk: string;
+  source: string;
+  summary: string;
+};
+
+export type AutoApproveInfo = {
+  supported: boolean;
+  requiresConfirmation: boolean;
+  candidates: readonly AutoApproveCandidate[];
+  notes: readonly string[];
 };
 
 export type AgentRunRequest = {

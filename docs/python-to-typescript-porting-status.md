@@ -22,6 +22,10 @@ Ported modules:
   execution, stdout/stderr mirroring, timeout handling, and run metadata
   artifact writing
   -> `runtime/src/agent/cliAdapter.ts`
+- `backend/dormammu/agent/help_parser.py` and
+  `backend/dormammu/agent/presets.py` deterministic CLI capability parsing,
+  known CLI preset matching, and auto-approve candidate detection
+  -> `runtime/src/agent/helpParser.ts`, `runtime/src/agent/presets.ts`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -149,6 +153,6 @@ Port the remaining state repository orchestration surface:
   execution while TypeScript parity surfaces are assembled
 
 The next slice should continue the agent runtime port by adding TypeScript
-coverage for CLI capability discovery, help parsing, known CLI presets, fallback
-CLI selection, and token-exhaustion retry metadata before Python call site
-removal.
+coverage for help-command capability discovery, default preset extra arguments,
+fallback CLI selection, and token-exhaustion retry metadata before Python call
+site removal.
