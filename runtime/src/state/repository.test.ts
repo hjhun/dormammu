@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { readJson, writeJson, type JsonObject } from "./persistence.js";
+import { promptFingerprint } from "./models.js";
 import { StateRepository } from "./repository.js";
 
 async function withTempDirectory(run: (root: string) => Promise<void>): Promise<void> {
@@ -160,6 +161,76 @@ test("ensureBootstrapState preserves existing operator markdown", async () => {
     const workflowState = await repository.readWorkflowState();
     assert.deepEqual(sessionState.active_roadmap_phase_ids, ["phase_5"]);
     assert.deepEqual(requireRecord(workflowState.roadmap).active_phase_ids, ["phase_5"]);
+  });
+});
+
+test("ensureBootstrapState regenerates operator files when prompt fingerprint changes", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = new StateRepository({
+      baseDevDir: path.join(root, ".dev"),
+      sessionsDir: path.join(root, ".dev", "sessions"),
+      repoRoot: root,
+      sessionId: "fingerprint-session"
+    });
+
+    await repository.ensureBootstrapState({
+      goal: "Fingerprint reset",
+      promptText: "old prompt",
+      timestamp: "2026-04-27T00:03:00.000Z"
+    });
+    await writeFile(repository.stateFile("DASHBOARD.md"), "# Dashboard\n\nManual stale note\n", "utf8");
+
+    await repository.ensureBootstrapState({
+      goal: "Fingerprint reset",
+      promptText: "new prompt\n- regenerate operator files",
+      timestamp: "2026-04-27T00:04:00.000Z"
+    });
+
+    const dashboard = await readFile(repository.stateFile("DASHBOARD.md"), "utf8");
+    const tasks = await readFile(repository.stateFile("TASKS.md"), "utf8");
+    const sessionState = await repository.readSessionState();
+    const bootstrap = requireRecord(sessionState.bootstrap);
+    assert.doesNotMatch(dashboard, /Manual stale note/);
+    assert.match(tasks, /regenerate operator files/);
+    assert.equal(bootstrap.prompt_fingerprint, promptFingerprint("new prompt\n- regenerate operator files"));
+  });
+});
+
+test("ensureBootstrapState includes supplied repo guidance in defaults and markdown", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = new StateRepository({
+      baseDevDir: path.join(root, ".dev"),
+      sessionsDir: path.join(root, ".dev", "sessions"),
+      repoRoot: root,
+      sessionId: "guidance-session"
+    });
+
+    const artifacts = await repository.ensureBootstrapState({
+      goal: "Guidance-aware defaults",
+      promptText: "Guidance-aware defaults",
+      repoGuidance: {
+        ruleFiles: ["AGENTS.md", ".agents/AGENTS.md"],
+        workflowFiles: [".github/workflows/test.yml"]
+      },
+      timestamp: "2026-04-27T00:05:00.000Z"
+    });
+
+    const dashboard = await readFile(artifacts.dashboard, "utf8");
+    const sessionState = await repository.readSessionState();
+    const workflowState = await repository.readWorkflowState();
+    const sessionGuidance = requireRecord(requireRecord(sessionState.bootstrap).repo_guidance);
+    const workflowGuidance = requireRecord(requireRecord(workflowState.bootstrap).repo_guidance);
+    const sourceOfTruth = requireRecord(workflowState.source_of_truth);
+    assert.deepEqual(sessionGuidance.rule_files, ["AGENTS.md", ".agents/AGENTS.md"]);
+    assert.deepEqual(workflowGuidance.workflow_files, [".github/workflows/test.yml"]);
+    assert.deepEqual(sourceOfTruth.goal, [
+      ".dev/PROJECT.md",
+      ".dev/ROADMAP.md",
+      "AGENTS.md",
+      ".agents/AGENTS.md"
+    ]);
+    assert.match(dashboard, /Repository rules to follow: AGENTS.md, \.agents\/AGENTS.md/);
+    assert.match(dashboard, /Relevant repository workflows: \.github\/workflows\/test.yml/);
   });
 });
 

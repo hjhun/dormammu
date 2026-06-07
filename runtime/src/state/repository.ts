@@ -12,6 +12,7 @@ import {
   defaultDashboardContext,
   defaultPlanContext,
   promptFingerprint,
+  type RepoGuidance,
   renderDashboardValues,
   renderPlanValues,
   STATE_SCHEMA_VERSION,
@@ -41,6 +42,7 @@ export type EnsureBootstrapStateOptions = {
   promptText?: string | null;
   activeRoadmapPhaseIds?: readonly string[] | null;
   timestamp?: string;
+  repoGuidance?: RepoGuidance | null;
 };
 
 function isRecord(value: unknown): value is JsonObject {
@@ -186,6 +188,23 @@ function statePath(stateRoot: string, filename: string): string {
   return stateRoot === ".dev" ? `.dev/${filename}` : `${stateRoot}/${filename}`;
 }
 
+function repoGuidancePayload(repoGuidance: RepoGuidance | null | undefined): JsonObject {
+  return {
+    rule_files: repoGuidance ? [...repoGuidance.ruleFiles] : [],
+    workflow_files: repoGuidance ? [...repoGuidance.workflowFiles] : []
+  };
+}
+
+function sourceGoalFiles(repoGuidance: RepoGuidance | null | undefined): string[] {
+  return [
+    ...new Set([
+      ".dev/PROJECT.md",
+      ".dev/ROADMAP.md",
+      ...(repoGuidance ? repoGuidance.ruleFiles : ["AGENTS.md", ".agents/AGENTS.md"])
+    ])
+  ];
+}
+
 function defaultIntakeState(promptText: string | null | undefined): JsonObject {
   if (promptText && promptText.trim()) {
     return {
@@ -215,6 +234,7 @@ function defaultSessionState(options: {
   promptText?: string | null;
   sessionId: string;
   runType: string;
+  repoGuidance?: RepoGuidance | null;
 }): JsonObject {
   return {
     session_id: options.sessionId,
@@ -237,7 +257,7 @@ function defaultSessionState(options: {
       state_root: options.stateRoot,
       prompt_summary: summarizePromptGoal(options.promptText, options.goal),
       prompt_fingerprint: promptFingerprint(options.promptText),
-      repo_guidance: { rule_files: [], workflow_files: [] }
+      repo_guidance: repoGuidancePayload(options.repoGuidance)
     },
     task_sync: {
       source: statePath(options.stateRoot, "TASKS.md"),
@@ -274,6 +294,7 @@ function defaultWorkflowState(options: {
   goal: string;
   stateRoot: string;
   promptText?: string | null;
+  repoGuidance?: RepoGuidance | null;
 }): JsonObject {
   const intakeState = defaultIntakeState(options.promptText);
   const requestClass = String(intakeState.request_class ?? "direct_response") as RequestClass;
@@ -284,7 +305,7 @@ function defaultWorkflowState(options: {
     updated_at: options.timestamp,
     mode: "supervised",
     source_of_truth: {
-      goal: [".dev/PROJECT.md", ".dev/ROADMAP.md", "AGENTS.md", ".agents/AGENTS.md"],
+      goal: sourceGoalFiles(options.repoGuidance),
       machine_state: statePath(options.stateRoot, "workflow_state.json"),
       operator_state: [
         statePath(options.stateRoot, "DASHBOARD.md"),
@@ -340,7 +361,7 @@ function defaultWorkflowState(options: {
       state_root: options.stateRoot,
       prompt_summary: summarizePromptGoal(options.promptText, options.goal),
       prompt_fingerprint: promptFingerprint(options.promptText),
-      repo_guidance: { rule_files: [], workflow_files: [] }
+      repo_guidance: repoGuidancePayload(options.repoGuidance)
     },
     intake: intakeState,
     workflow_policy: defaultWorkflowPolicyState(requestClass),
@@ -462,44 +483,51 @@ export class StateRepository {
       goal,
       roadmapPhaseIds,
       promptText: options.promptText,
-      repoGuidance: null
+      repoGuidance: options.repoGuidance ?? null
     });
     const planContext = defaultPlanContext({
       goal,
       promptText: options.promptText,
-      repoGuidance: null
+      repoGuidance: options.repoGuidance ?? null
     });
     const dashboardValues = renderDashboardValues(dashboardContext);
     const planValues = renderPlanValues(planContext);
 
-    await writeIfMissing(this.stateFile("DASHBOARD.md"), renderDashboardMarkdown(dashboardValues));
-    await writeIfMissing(this.stateFile("PLAN.md"), renderPlanMarkdown(planValues));
-    await writeIfMissing(this.stateFile("TASKS.md"), renderTasksMarkdown(planValues));
-
     const sessionPath = this.stateFile("session.json");
     const workflowPath = this.stateFile("workflow_state.json");
-    await ensureJsonFile(
-      sessionPath,
-      defaultSessionState({
-        timestamp,
-        roadmapPhaseIds,
-        goal,
-        stateRoot,
-        promptText: options.promptText,
-        sessionId: this.sessionId,
-        runType: "session"
-      })
-    );
-    await ensureJsonFile(
-      workflowPath,
-      defaultWorkflowState({
-        timestamp,
-        roadmapPhaseIds,
-        goal,
-        stateRoot,
-        promptText: options.promptText
-      })
-    );
+    const sessionDefaults = defaultSessionState({
+      timestamp,
+      roadmapPhaseIds,
+      goal,
+      stateRoot,
+      promptText: options.promptText,
+      sessionId: this.sessionId,
+      runType: "session",
+      repoGuidance: options.repoGuidance ?? null
+    });
+    const workflowDefaults = defaultWorkflowState({
+      timestamp,
+      roadmapPhaseIds,
+      goal,
+      stateRoot,
+      promptText: options.promptText,
+      repoGuidance: options.repoGuidance ?? null
+    });
+    const shouldReset = await this.shouldRegenerateOperatorState(options.promptText);
+
+    if (shouldReset) {
+      await writeFile(this.stateFile("DASHBOARD.md"), renderDashboardMarkdown(dashboardValues), "utf8");
+      await writeFile(this.stateFile("PLAN.md"), renderPlanMarkdown(planValues), "utf8");
+      await writeFile(this.stateFile("TASKS.md"), renderTasksMarkdown(planValues), "utf8");
+      await writeJson(sessionPath, sessionDefaults);
+      await writeJson(workflowPath, workflowDefaults);
+    } else {
+      await writeIfMissing(this.stateFile("DASHBOARD.md"), renderDashboardMarkdown(dashboardValues));
+      await writeIfMissing(this.stateFile("PLAN.md"), renderPlanMarkdown(planValues));
+      await writeIfMissing(this.stateFile("TASKS.md"), renderTasksMarkdown(planValues));
+      await ensureJsonFile(sessionPath, sessionDefaults);
+      await ensureJsonFile(workflowPath, workflowDefaults);
+    }
     await this.operatorSync.refreshActiveRoadmapPhaseIds({
       sessionPath,
       workflowPath,
@@ -845,6 +873,46 @@ export class StateRepository {
       const bootstrap = isRecord(payload.bootstrap) ? payload.bootstrap : {};
       if (typeof bootstrap.goal === "string" && bootstrap.goal.trim()) {
         return bootstrap.goal.trim();
+      }
+    }
+    return null;
+  }
+
+  private async shouldRegenerateOperatorState(
+    promptText: string | null | undefined
+  ): Promise<boolean> {
+    if (
+      !(await exists(this.stateFile("DASHBOARD.md"))) ||
+      !(await exists(this.stateFile("PLAN.md")))
+    ) {
+      return false;
+    }
+    const incomingFingerprint = promptFingerprint(promptText);
+    if (incomingFingerprint === null) {
+      return false;
+    }
+    const storedFingerprint = await this.storedPromptFingerprint();
+    return storedFingerprint !== null && storedFingerprint !== incomingFingerprint;
+  }
+
+  private async storedPromptFingerprint(): Promise<string | null> {
+    for (const filename of ["session.json", "workflow_state.json"]) {
+      const candidate = this.stateFile(filename);
+      if (!(await exists(candidate))) {
+        continue;
+      }
+      let payload: JsonObject;
+      try {
+        payload = await readJson(candidate);
+      } catch {
+        continue;
+      }
+      const bootstrap = isRecord(payload.bootstrap) ? payload.bootstrap : {};
+      if (typeof bootstrap.prompt_fingerprint === "string") {
+        const fingerprint = bootstrap.prompt_fingerprint.trim();
+        if (fingerprint) {
+          return fingerprint;
+        }
       }
     }
     return null;

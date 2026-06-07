@@ -38,6 +38,9 @@ Ported modules:
 - root/session bootstrap orchestration slice from
   `backend/dormammu/state/repository.py`
   -> `runtime/src/state/repository.ts`
+- prompt-fingerprint bootstrap regeneration and guidance-aware state defaults
+  from `backend/dormammu/state/repository.py`
+  -> `runtime/src/state/repository.ts`
 
 Validation:
 
@@ -118,14 +121,13 @@ Validation:
 
 Port the remaining state repository orchestration surface:
 
-- reset orchestration and the remaining bootstrap parity that wires repository
-  guidance discovery and prompt fingerprint regeneration decisions into the
-  TypeScript repository
+- remaining bootstrap parity that discovers repository guidance from the
+  filesystem instead of receiving it as an explicit payload
 - artifact writers, prompt persistence, runtime skill resolution, and worktree
   state mutation helpers still owned by `backend/dormammu/state/repository.py`
 - task, dashboard, and workflow-state projections that still depend on Python
   repository methods
 
 The next slice should introduce TypeScript tests around root index writes,
-repository read/write coordination, bootstrap regeneration, guidance-aware
-state defaults, and session restore before any Python call site is removed.
+repository read/write coordination, filesystem guidance discovery, and session
+restore before any Python call site is removed.
