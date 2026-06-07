@@ -45,6 +45,9 @@ Ported modules:
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
   `fallback_on_nonzero_exit`
   -> `runtime/src/agent/configuredRunner.ts`
+- JSON payload based TypeScript agent runner entrypoint for configured
+  single-agent execution
+  -> `runtime/src/agent/runnerEntrypoint.ts`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -171,6 +174,6 @@ Port the remaining state repository orchestration surface:
 - Python runtime call sites still own CLI, daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
-The next slice should continue the agent runtime port by adding a TypeScript
-runner entrypoint that consumes the configured agent runtime adapter before
-Python call site removal.
+The next slice should continue the agent runtime port by adding a Node CLI
+wrapper around the configured TypeScript runner entrypoint before Python call
+site removal.
