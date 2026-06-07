@@ -15,6 +15,9 @@ Ported modules:
   -> `runtime/src/agent/promptIdentity.ts`
 - `backend/dormammu/agent/command_builder.py`
   -> `runtime/src/agent/commandBuilder.ts`
+- `backend/dormammu/agent/models.py` agent run started/result artifact payload
+  helpers
+  -> `runtime/src/agent/runArtifacts.ts`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -142,5 +145,6 @@ Port the remaining state repository orchestration surface:
   execution while TypeScript parity surfaces are assembled
 
 The next slice should start the agent runtime port by introducing TypeScript
-tests around CLI adapter execution artifacts or by porting the runtime skill
-discovery/profile model needed before Python call site removal.
+tests around CLI adapter execution artifact writing and subprocess execution, or
+by porting the runtime skill discovery/profile model needed before Python call
+site removal.
