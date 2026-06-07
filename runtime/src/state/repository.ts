@@ -31,6 +31,12 @@ import {
 } from "./models.js";
 import type { RunResult, StageResult } from "../results.js";
 import { defaultWorkflowPolicyState, type RequestClass } from "../workflowPolicy.js";
+import {
+  discoverSkills,
+  resolveRuntimeSkillResolution,
+  type AgentSkillProfile,
+  type SkillSearchRoot
+} from "../agent/skills.js";
 
 export type StateRepositoryOptions = {
   baseDevDir: string;
@@ -84,6 +90,8 @@ export type ArtifactWriteOptions = {
 export type RuntimeSkillResolutionOptions = {
   role: string;
   resolution?: JsonObject | null;
+  profile?: AgentSkillProfile | null;
+  skillSearchRoots?: readonly SkillSearchRoot[] | null;
   timestamp?: string;
 };
 
@@ -1300,7 +1308,7 @@ export class StateRepository {
           throw error;
         }
         const timestamp = options.timestamp ?? new Date().toISOString();
-        const resolution = this.runtimeSkillResolutionPayload(role, options.resolution);
+        const resolution = await this.runtimeSkillResolutionPayload(role, options);
         return {
           updated_at: timestamp,
           active_role: role,
@@ -1311,7 +1319,7 @@ export class StateRepository {
     }
 
     const timestamp = options.timestamp ?? new Date().toISOString();
-    const resolution = this.runtimeSkillResolutionPayload(role, options.resolution);
+    const resolution = await this.runtimeSkillResolutionPayload(role, options);
     const sessionState = await readJson(this.stateFile("session.json"));
     const workflowState = await readJson(this.stateFile("workflow_state.json"));
 
@@ -1394,12 +1402,21 @@ export class StateRepository {
     await this.syncRootIndex(options.timestamp);
   }
 
-  private runtimeSkillResolutionPayload(
+  private async runtimeSkillResolutionPayload(
     role: string,
-    resolution: JsonObject | null | undefined
-  ): JsonObject {
-    if (resolution && Object.keys(resolution).length) {
-      return { ...resolution };
+    options: RuntimeSkillResolutionOptions
+  ): Promise<JsonObject> {
+    if (options.resolution && Object.keys(options.resolution).length) {
+      return { ...options.resolution };
+    }
+    if (options.profile && options.skillSearchRoots) {
+      const discovery = await discoverSkills([...options.skillSearchRoots], {
+        ignoreInvalid: true
+      });
+      return resolveRuntimeSkillResolution(discovery, {
+        role,
+        profile: options.profile
+      }) as unknown as JsonObject;
     }
     return {
       role,

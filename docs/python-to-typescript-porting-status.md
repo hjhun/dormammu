@@ -127,6 +127,9 @@ Ported modules:
 - managed worktree state mutation and runtime skill resolution state recording
   from `backend/dormammu/state/repository.py`
   -> `runtime/src/state/repository.ts`
+- search-root/profile-backed runtime skill resolution recording from
+  `backend/dormammu/state/repository.py`
+  -> `runtime/src/state/repository.ts`
 - operator task synchronization, agent run projection, and run/stage result
   projection from `backend/dormammu/state/repository.py`
   -> `runtime/src/state/repository.ts`
@@ -210,12 +213,14 @@ Validation:
 
 Port the remaining runtime orchestration surface:
 
-- runtime skill resolution can now be projected in TypeScript, but config-backed
-  profile resolution and runtime call-site wiring still depend on Python
-  `backend/dormammu/skills.py` and the Python agent profile/permission model
+- runtime skill resolution can now be projected and recorded from TypeScript
+  search roots, but full config-backed profile resolution still depends on
+  Python `backend/dormammu/skills.py` and the Python agent profile/permission
+  model
 - Python runtime call sites still own daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
 The next slice should use the accumulated contract coverage to start replacing
 remaining Python runtime fallback internals with TypeScript-owned
-implementations, beginning with config-backed runtime skill resolution wiring.
+implementations, beginning with TypeScript agent profile and permission policy
+normalization.

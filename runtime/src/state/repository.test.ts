@@ -62,6 +62,27 @@ function requireRecord(value: unknown): JsonObject {
   return value as JsonObject;
 }
 
+async function writeRuntimeSkill(root: string, relativePath: string, name: string): Promise<void> {
+  const skillPath = path.join(root, relativePath, "SKILL.md");
+  await mkdir(path.dirname(skillPath), { recursive: true });
+  await writeFile(
+    skillPath,
+    [
+      "---",
+      "schema_version: 1",
+      `name: ${name}`,
+      `description: ${name} description`,
+      "---",
+      "",
+      `# ${name}`,
+      "",
+      "Use this skill in repository runtime skill tests.",
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+}
+
 test("writeWorkflowState syncs session active phase and root index", async () => {
   await withTempDirectory(async (root) => {
     const repository = await seedRepository(root);
@@ -727,6 +748,56 @@ test("recordRuntimeSkillResolution stores latest and by-role payloads", async ()
     assert.equal(rootRuntimeSkills.profile_name, "codex");
     assert.equal(rootRuntimeSkills.selected_count, 2);
     assert.equal(rootRuntimeSkills.interesting_for_operator, true);
+  });
+});
+
+test("recordRuntimeSkillResolution can resolve profile skills from search roots", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+    const projectSkills = path.join(root, ".agents", "skills");
+    const userSkills = path.join(root, "home", ".agents", "skills");
+    await writeRuntimeSkill(projectSkills, "designing-agent", "designing-agent");
+    await writeRuntimeSkill(userSkills, "reviewer-agent", "reviewer-agent");
+
+    const runtimeSkills = await repository.recordRuntimeSkillResolution({
+      role: "designer",
+      profile: {
+        name: "designer",
+        source: "project",
+        description: "Designer profile",
+        preloaded_skills: ["designing-agent", "missing-skill"],
+        permission_policy: {
+          skills: {
+            rules: [{ skill: "reviewer-agent", decision: "deny" }]
+          }
+        }
+      },
+      skillSearchRoots: [
+        { scope: "project", path: projectSkills },
+        { scope: "user", path: userSkills }
+      ],
+      timestamp: "2026-04-25T05:30:00+00:00"
+    });
+
+    const latest = requireRecord(runtimeSkills.latest);
+    const summary = requireRecord(latest.summary);
+    const byRole = requireRecord(runtimeSkills.by_role);
+    const sessionRuntimeSkills = requireRecord((await repository.readSessionState()).runtime_skills);
+    assert.deepEqual(runtimeSkills, sessionRuntimeSkills);
+    assert.deepEqual(requireRecord(byRole.designer), latest);
+    assert.equal(runtimeSkills.active_role, "designer");
+    assert.equal(summary.profile_name, "designer");
+    assert.equal(summary.custom_visible_count, 1);
+    assert.equal(summary.hidden_count, 1);
+    assert.equal(summary.preloaded_count, 1);
+    assert.equal(summary.missing_preload_count, 1);
+    assert.deepEqual(latest.prompt_lines, [
+      "Runtime skills for designer / designer (project profile):",
+      "Visible project/user skills: designing-agent [project]",
+      "Preloaded skills: designing-agent",
+      "Hidden by profile policy: reviewer-agent",
+      "Missing requested preloads: missing-skill"
+    ]);
   });
 });
 
