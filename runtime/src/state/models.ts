@@ -25,11 +25,182 @@ export type RepoGuidancePayload = {
   workflow_files: string[];
 };
 
+export type WorktreeLifecycleStatus = "planned" | "active" | "removed";
+
+export type WorktreeOwner = {
+  session_id?: string | null;
+  run_id?: string | null;
+  agent_role?: string | null;
+};
+
+export type ManagedWorktree = {
+  worktree_id: string;
+  source_repo_root: string;
+  isolated_path: string;
+  owner: WorktreeOwner;
+  status?: WorktreeLifecycleStatus | string | null;
+};
+
+export type ManagedWorktreeState = {
+  active_worktree_id: string | null;
+  managed: ManagedWorktree[];
+};
+
 export function repoGuidanceToDict(guidance: RepoGuidance): RepoGuidancePayload {
   return {
     rule_files: [...guidance.ruleFiles],
     workflow_files: [...guidance.workflowFiles]
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizedWorktreeId(value: unknown): string | null {
+  if (value == null) {
+    return null;
+  }
+  const normalized = String(value).trim();
+  return normalized ? normalized : null;
+}
+
+function normalizedWorktreeStatus(value: unknown): WorktreeLifecycleStatus {
+  return value === "active" || value === "removed" ? value : "planned";
+}
+
+function managedWorktreeFromUnknown(value: unknown): ManagedWorktree | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const worktreeId = normalizedWorktreeId(value.worktree_id);
+  if (worktreeId === null) {
+    return null;
+  }
+  const sourceRepoRoot =
+    value.source_repo_root == null ? "" : String(value.source_repo_root);
+  const isolatedPath =
+    value.isolated_path == null ? "" : String(value.isolated_path);
+  const owner = isRecord(value.owner) ? value.owner : {};
+  return {
+    worktree_id: worktreeId,
+    source_repo_root: sourceRepoRoot,
+    isolated_path: isolatedPath,
+    owner: {
+      session_id: owner.session_id == null ? null : String(owner.session_id),
+      run_id: owner.run_id == null ? null : String(owner.run_id),
+      agent_role: owner.agent_role == null ? null : String(owner.agent_role)
+    },
+    status: normalizedWorktreeStatus(value.status)
+  };
+}
+
+function normalizedManagedWorktree(worktree: ManagedWorktree): ManagedWorktree {
+  const worktreeId = normalizedWorktreeId(worktree.worktree_id);
+  if (worktreeId === null) {
+    throw new Error("worktree_id must contain a non-empty value.");
+  }
+  return {
+    worktree_id: worktreeId,
+    source_repo_root: String(worktree.source_repo_root),
+    isolated_path: String(worktree.isolated_path),
+    owner: {
+      session_id: worktree.owner.session_id == null ? null : String(worktree.owner.session_id),
+      run_id: worktree.owner.run_id == null ? null : String(worktree.owner.run_id),
+      agent_role: worktree.owner.agent_role == null ? null : String(worktree.owner.agent_role)
+    },
+    status: normalizedWorktreeStatus(worktree.status)
+  };
+}
+
+function normalizeWorktreeRegistry(options: {
+  managed: readonly ManagedWorktree[];
+  activeWorktreeId: string | null;
+}): ManagedWorktreeState {
+  const deduped = new Map<string, ManagedWorktree>();
+  for (const record of options.managed) {
+    deduped.set(record.worktree_id, record);
+  }
+  let activeWorktreeId = options.activeWorktreeId;
+  if (activeWorktreeId !== null && !deduped.has(activeWorktreeId)) {
+    activeWorktreeId = null;
+  }
+  const managed = [...deduped.values()].map((record) => {
+    if (record.worktree_id === activeWorktreeId) {
+      return { ...record, status: "active" as const };
+    }
+    if (record.status === "active") {
+      return { ...record, status: "planned" as const };
+    }
+    return record;
+  });
+  return { active_worktree_id: activeWorktreeId, managed };
+}
+
+export function managedWorktreeStateFromDict(payload: unknown): ManagedWorktreeState {
+  if (!isRecord(payload)) {
+    return { active_worktree_id: null, managed: [] };
+  }
+  const activeWorktreeId = normalizedWorktreeId(payload.active_worktree_id);
+  const managed = Array.isArray(payload.managed)
+    ? payload.managed
+        .map(managedWorktreeFromUnknown)
+        .filter((item): item is ManagedWorktree => item !== null)
+    : [];
+  return normalizeWorktreeRegistry({ managed, activeWorktreeId });
+}
+
+export function managedWorktreeStateIsEmpty(state: ManagedWorktreeState): boolean {
+  return state.active_worktree_id === null && state.managed.length === 0;
+}
+
+export function managedWorktreeStateToDict(state: ManagedWorktreeState): ManagedWorktreeState {
+  return {
+    active_worktree_id: state.active_worktree_id,
+    managed: state.managed.map((record) => ({ ...record, owner: { ...record.owner } }))
+  };
+}
+
+export function upsertManagedWorktreeInState(
+  state: ManagedWorktreeState,
+  worktree: ManagedWorktree,
+  options: { active?: boolean | null } = {}
+): ManagedWorktreeState {
+  const normalized = normalizedManagedWorktree(worktree);
+  const managed = state.managed.map((record) =>
+    record.worktree_id === normalized.worktree_id ? normalized : record
+  );
+  if (!managed.some((record) => record.worktree_id === normalized.worktree_id)) {
+    managed.push(normalized);
+  }
+
+  let activeWorktreeId = state.active_worktree_id;
+  if (options.active === true) {
+    activeWorktreeId = normalized.worktree_id;
+  } else if (options.active === false && activeWorktreeId === normalized.worktree_id) {
+    activeWorktreeId = null;
+  } else if (options.active == null && activeWorktreeId === normalized.worktree_id) {
+    if (normalized.status !== "active") {
+      activeWorktreeId = null;
+    }
+  }
+  return normalizeWorktreeRegistry({ managed, activeWorktreeId });
+}
+
+export function forgetManagedWorktreeInState(
+  state: ManagedWorktreeState,
+  worktreeId: string
+): ManagedWorktreeState {
+  const normalizedId = normalizedWorktreeId(worktreeId);
+  if (normalizedId === null) {
+    return state;
+  }
+  const activeWorktreeId =
+    state.active_worktree_id === normalizedId ? null : state.active_worktree_id;
+  return normalizeWorktreeRegistry({
+    managed: state.managed.filter((record) => record.worktree_id !== normalizedId),
+    activeWorktreeId
+  });
 }
 
 function asPosix(value: string): string {

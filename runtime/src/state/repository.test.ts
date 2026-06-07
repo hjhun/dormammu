@@ -560,6 +560,176 @@ test("persistInputPrompt writes session prompt, mirror, and state pointers", asy
   });
 });
 
+test("upsertManagedWorktree tracks the active worktree and root summary", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+    const worktree = {
+      worktree_id: "wt-dev",
+      source_repo_root: root,
+      isolated_path: path.join(root, ".worktrees", "wt-dev"),
+      owner: {
+        session_id: "session-001",
+        run_id: "run-dev",
+        agent_role: "developer"
+      },
+      status: "planned"
+    };
+
+    await repository.upsertManagedWorktree(worktree, {
+      active: true,
+      timestamp: "2026-04-25T04:00:00+00:00"
+    });
+
+    const sessionWorktrees = requireRecord((await repository.readSessionState()).worktrees);
+    const workflowWorktrees = requireRecord((await repository.readWorkflowState()).worktrees);
+    const rootIndex = await readJson(path.join(root, ".dev", "session.json"));
+    const currentSession = requireRecord(rootIndex.current_session);
+    assert.equal(sessionWorktrees.active_worktree_id, "wt-dev");
+    assert.equal(workflowWorktrees.active_worktree_id, "wt-dev");
+    assert.deepEqual(requireRecord((sessionWorktrees.managed as unknown[])[0] as JsonObject).owner, {
+      session_id: "session-001",
+      run_id: "run-dev",
+      agent_role: "developer"
+    });
+    assert.equal(requireRecord((sessionWorktrees.managed as unknown[])[0] as JsonObject).status, "active");
+    assert.equal(currentSession.active_worktree_id, "wt-dev");
+    assert.equal(currentSession.managed_worktree_count, 1);
+  });
+});
+
+test("upsertManagedWorktree normalizes duplicate and stale active worktrees", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+    const sessionState = await repository.readSessionState();
+    sessionState.worktrees = {
+      active_worktree_id: "wt-old",
+      managed: [
+        {
+          worktree_id: "wt-old",
+          source_repo_root: root,
+          isolated_path: path.join(root, ".worktrees", "old-a"),
+          owner: { session_id: "session-001", run_id: "run-old-a", agent_role: "developer" },
+          status: "active"
+        },
+        {
+          worktree_id: "wt-old",
+          source_repo_root: root,
+          isolated_path: path.join(root, ".worktrees", "old-b"),
+          owner: { session_id: "session-001", run_id: "run-old-b", agent_role: "developer" },
+          status: "active"
+        }
+      ]
+    };
+    await repository.writeSessionState(sessionState);
+
+    await repository.upsertManagedWorktree(
+      {
+        worktree_id: "wt-next",
+        source_repo_root: root,
+        isolated_path: path.join(root, ".worktrees", "next"),
+        owner: { session_id: "session-001", run_id: "run-next", agent_role: "developer" },
+        status: "active"
+      },
+      { active: true, timestamp: "2026-04-25T04:01:00+00:00" }
+    );
+
+    const worktrees = requireRecord((await repository.readSessionState()).worktrees);
+    const managed = worktrees.managed as JsonObject[];
+    assert.equal(worktrees.active_worktree_id, "wt-next");
+    assert.equal(managed.length, 2);
+    assert.equal(requireRecord(managed[0]).worktree_id, "wt-old");
+    assert.equal(requireRecord(managed[0]).isolated_path, path.join(root, ".worktrees", "old-b"));
+    assert.equal(requireRecord(managed[0]).status, "planned");
+    assert.equal(requireRecord(managed[1]).worktree_id, "wt-next");
+    assert.equal(requireRecord(managed[1]).status, "active");
+  });
+});
+
+test("forgetManagedWorktree clears active state and removes empty worktree blocks", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+    await repository.upsertManagedWorktree(
+      {
+        worktree_id: "wt-dev",
+        source_repo_root: root,
+        isolated_path: path.join(root, ".worktrees", "wt-dev"),
+        owner: { session_id: "session-001", run_id: "run-dev", agent_role: "developer" },
+        status: "active"
+      },
+      { active: true, timestamp: "2026-04-25T04:02:00+00:00" }
+    );
+
+    await repository.forgetManagedWorktree("wt-dev", {
+      timestamp: "2026-04-25T04:03:00+00:00"
+    });
+
+    const sessionState = await repository.readSessionState();
+    const workflowState = await repository.readWorkflowState();
+    const rootIndex = await readJson(path.join(root, ".dev", "session.json"));
+    assert.equal("worktrees" in sessionState, false);
+    assert.equal("worktrees" in workflowState, false);
+    assert.equal(requireRecord(rootIndex.current_session).active_worktree_id, null);
+    assert.equal(requireRecord(rootIndex.current_session).managed_worktree_count, 0);
+  });
+});
+
+test("recordRuntimeSkillResolution stores latest and by-role payloads", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+    const resolution = {
+      role: "developer",
+      profile: {
+        name: "codex",
+        source: "project",
+        description: "Developer profile",
+        preloaded_skills: ["developer"],
+        runtime_metadata: {}
+      },
+      summary: {
+        role: "developer",
+        profile_name: "codex",
+        profile_source: "project",
+        candidate_count: 3,
+        selected_count: 2,
+        invalid_count: 0,
+        visible_count: 2,
+        hidden_count: 0,
+        preloaded_count: 1,
+        missing_preload_count: 0,
+        shadowed_count: 0,
+        custom_selected_count: 1,
+        custom_visible_count: 1,
+        interesting_for_operator: true
+      },
+      discovery: {},
+      visibility: {},
+      prompt_lines: ["Runtime skills for developer / codex (project profile):"]
+    };
+
+    const runtimeSkills = await repository.recordRuntimeSkillResolution({
+      role: "developer",
+      resolution,
+      timestamp: "2026-04-25T05:00:00+00:00"
+    });
+
+    const sessionRuntimeSkills = requireRecord((await repository.readSessionState()).runtime_skills);
+    const workflowRuntimeSkills = requireRecord((await repository.readWorkflowState()).runtime_skills);
+    const rootIndex = await readJson(path.join(root, ".dev", "session.json"));
+    const currentSession = requireRecord(rootIndex.current_session);
+    const rootRuntimeSkills = requireRecord(currentSession.runtime_skills);
+    assert.deepEqual(runtimeSkills, sessionRuntimeSkills);
+    assert.deepEqual(workflowRuntimeSkills, sessionRuntimeSkills);
+    assert.equal(sessionRuntimeSkills.updated_at, "2026-04-25T05:00:00+00:00");
+    assert.equal(sessionRuntimeSkills.active_role, "developer");
+    assert.deepEqual(sessionRuntimeSkills.latest, resolution);
+    assert.deepEqual(requireRecord(sessionRuntimeSkills.by_role).developer, resolution);
+    assert.equal(rootRuntimeSkills.active_role, "developer");
+    assert.equal(rootRuntimeSkills.profile_name, "codex");
+    assert.equal(rootRuntimeSkills.selected_count, 2);
+    assert.equal(rootRuntimeSkills.interesting_for_operator, true);
+  });
+});
+
 test("root repository delegates reads and writes to the active session", async () => {
   await withTempDirectory(async (root) => {
     const sessionRepository = await seedRepository(root);

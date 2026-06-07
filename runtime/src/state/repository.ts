@@ -12,12 +12,19 @@ import {
   defaultDashboardContext,
   defaultPlanContext,
   discoverRepoGuidanceFromFiles,
+  forgetManagedWorktreeInState,
+  managedWorktreeStateFromDict,
+  managedWorktreeStateIsEmpty,
+  managedWorktreeStateToDict,
   promptFingerprint,
+  type ManagedWorktree,
+  type ManagedWorktreeState,
   type RepoGuidance,
   renderDashboardValues,
   renderPlanValues,
   STATE_SCHEMA_VERSION,
-  summarizePromptGoal
+  summarizePromptGoal,
+  upsertManagedWorktreeInState
 } from "./models.js";
 import { defaultWorkflowPolicyState, type RequestClass } from "../workflowPolicy.js";
 
@@ -68,6 +75,12 @@ export type ArtifactWriteOptions = {
   role?: string | null;
   stageName?: string | null;
   metadata?: JsonObject | null;
+};
+
+export type RuntimeSkillResolutionOptions = {
+  role: string;
+  resolution?: JsonObject | null;
+  timestamp?: string;
 };
 
 function isRecord(value: unknown): value is JsonObject {
@@ -815,6 +828,59 @@ export class StateRepository {
     return readJson(this.stateFile("workflow_state.json"));
   }
 
+  async readSessionWorktreeState(): Promise<ManagedWorktreeState> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      return repository.readSessionWorktreeState();
+    }
+    const sessionState = await readJson(this.stateFile("session.json"));
+    return managedWorktreeStateFromDict(sessionState.worktrees);
+  }
+
+  async readWorkflowWorktreeState(): Promise<ManagedWorktreeState> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      return repository.readWorkflowWorktreeState();
+    }
+    const workflowState = await readJson(this.stateFile("workflow_state.json"));
+    return managedWorktreeStateFromDict(workflowState.worktrees);
+  }
+
+  async upsertManagedWorktree(
+    worktree: ManagedWorktree,
+    options: { active?: boolean | null; timestamp?: string } = {}
+  ): Promise<void> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      await repository.upsertManagedWorktree(worktree, options);
+      return;
+    }
+    const timestamp = options.timestamp ?? new Date().toISOString();
+    await this.updateManagedWorktreeState(
+      (state) => upsertManagedWorktreeInState(state, worktree, { active: options.active }),
+      { timestamp }
+    );
+  }
+
+  async forgetManagedWorktree(
+    worktreeId: string,
+    options: { timestamp?: string } = {}
+  ): Promise<void> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      await repository.forgetManagedWorktree(worktreeId, options);
+      return;
+    }
+    if (!worktreeId.trim()) {
+      return;
+    }
+    const timestamp = options.timestamp ?? new Date().toISOString();
+    await this.updateManagedWorktreeState(
+      (state) => forgetManagedWorktreeInState(state, worktreeId),
+      { timestamp }
+    );
+  }
+
   async writeWorkflowState(payload: Readonly<JsonObject>): Promise<void> {
     if (this.sessionId === null) {
       const repository = await this.activeSessionRepository();
@@ -1086,6 +1152,62 @@ export class StateRepository {
     await this.syncRootIndex(timestamp);
   }
 
+  async recordRuntimeSkillResolution(
+    options: RuntimeSkillResolutionOptions
+  ): Promise<JsonObject> {
+    const role = options.role.trim();
+    if (!role) {
+      throw new Error("role must contain a non-empty value.");
+    }
+    if (this.sessionId === null) {
+      try {
+        const repository = await this.activeSessionRepository();
+        return repository.recordRuntimeSkillResolution(options);
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "No active session is available.") {
+          throw error;
+        }
+        const timestamp = options.timestamp ?? new Date().toISOString();
+        const resolution = this.runtimeSkillResolutionPayload(role, options.resolution);
+        return {
+          updated_at: timestamp,
+          active_role: role,
+          latest: resolution,
+          by_role: { [role]: resolution }
+        };
+      }
+    }
+
+    const timestamp = options.timestamp ?? new Date().toISOString();
+    const resolution = this.runtimeSkillResolutionPayload(role, options.resolution);
+    const sessionState = await readJson(this.stateFile("session.json"));
+    const workflowState = await readJson(this.stateFile("workflow_state.json"));
+
+    for (const state of [sessionState, workflowState]) {
+      state.updated_at = timestamp;
+      const current = isRecord(state.runtime_skills) ? state.runtime_skills : {};
+      const currentByRole = isRecord(current.by_role) ? current.by_role : {};
+      const byRole: JsonObject = {};
+      for (const [key, value] of Object.entries(currentByRole)) {
+        if (isRecord(value)) {
+          byRole[key] = { ...value };
+        }
+      }
+      byRole[role] = resolution;
+      state.runtime_skills = {
+        updated_at: timestamp,
+        active_role: role,
+        latest: resolution,
+        by_role: byRole
+      };
+    }
+
+    await writeJson(this.stateFile("session.json"), sessionState);
+    await writeJson(this.stateFile("workflow_state.json"), workflowState);
+    await this.syncRootIndex(timestamp);
+    return sessionState.runtime_skills as JsonObject;
+  }
+
   private async writeTextArtifact(options: {
     kind: string;
     text: string;
@@ -1108,6 +1230,73 @@ export class StateRepository {
       stage_name: options.options.stageName ?? null,
       session_id: this.sessionId,
       metadata: options.options.metadata ? { ...options.options.metadata } : {}
+    };
+  }
+
+  private async updateManagedWorktreeState(
+    updater: (state: ManagedWorktreeState) => ManagedWorktreeState,
+    options: { timestamp: string }
+  ): Promise<void> {
+    const sessionState = await readJson(this.stateFile("session.json"));
+    const workflowState = await readJson(this.stateFile("workflow_state.json"));
+    const nextSessionWorktrees = updater(managedWorktreeStateFromDict(sessionState.worktrees));
+    const nextWorkflowWorktrees = updater(managedWorktreeStateFromDict(workflowState.worktrees));
+
+    sessionState.updated_at = options.timestamp;
+    workflowState.updated_at = options.timestamp;
+
+    if (managedWorktreeStateIsEmpty(nextSessionWorktrees)) {
+      delete sessionState.worktrees;
+    } else {
+      sessionState.worktrees = managedWorktreeStateToDict(nextSessionWorktrees);
+    }
+
+    if (managedWorktreeStateIsEmpty(nextWorkflowWorktrees)) {
+      delete workflowState.worktrees;
+    } else {
+      workflowState.worktrees = managedWorktreeStateToDict(nextWorkflowWorktrees);
+    }
+
+    await writeJson(this.stateFile("session.json"), sessionState);
+    await writeJson(this.stateFile("workflow_state.json"), workflowState);
+    await this.syncRootIndex(options.timestamp);
+  }
+
+  private runtimeSkillResolutionPayload(
+    role: string,
+    resolution: JsonObject | null | undefined
+  ): JsonObject {
+    if (resolution && Object.keys(resolution).length) {
+      return { ...resolution };
+    }
+    return {
+      role,
+      profile: {
+        name: role,
+        source: "typescript-default",
+        description: "",
+        preloaded_skills: [],
+        runtime_metadata: {}
+      },
+      summary: {
+        role,
+        profile_name: role,
+        profile_source: "typescript-default",
+        candidate_count: 0,
+        selected_count: 0,
+        invalid_count: 0,
+        visible_count: 0,
+        hidden_count: 0,
+        preloaded_count: 0,
+        missing_preload_count: 0,
+        shadowed_count: 0,
+        custom_selected_count: 0,
+        custom_visible_count: 0,
+        interesting_for_operator: false
+      },
+      discovery: {},
+      visibility: {},
+      prompt_lines: []
     };
   }
 
