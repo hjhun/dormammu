@@ -78,6 +78,10 @@ Ported modules:
   consume the configured TypeScript runner bridge, write stage reports, and
   mirror event-streamed output to progress logs
   -> `tests/test_pipeline_runner.py`
+- goals automation role-agent contract coverage proving `GoalsScheduler`
+  consumes the configured TypeScript runner bridge and mirrors event-streamed
+  output into scheduler progress logs
+  -> `tests/test_goals_scheduler.py`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -204,5 +208,6 @@ Port the remaining state repository orchestration surface:
 - Python runtime call sites still own daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
-The next slice should expand TypeScript runner contract coverage through goals
-automation before removing any Python runtime fallback code.
+The next slice should use the accumulated contract coverage to start replacing
+remaining Python runtime fallback internals with TypeScript-owned
+implementations, beginning with the next unported Phase 7 runtime surface.
