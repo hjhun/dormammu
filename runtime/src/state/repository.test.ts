@@ -79,6 +79,90 @@ test("writeWorkflowState syncs session active phase and root index", async () =>
   });
 });
 
+test("ensureBootstrapState creates an active session and root index", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = new StateRepository({
+      baseDevDir: path.join(root, ".dev"),
+      sessionsDir: path.join(root, ".dev", "sessions"),
+      repoRoot: root
+    });
+
+    const artifacts = await repository.ensureBootstrapState({
+      goal: "Port repository bootstrap orchestration",
+      promptText: "Port repository bootstrap orchestration\n- preserve operator files",
+      activeRoadmapPhaseIds: ["phase_2"],
+      timestamp: "2026-04-27T00:00:00.000Z"
+    });
+
+    const rootIndex = await readJson(path.join(root, ".dev", "session.json"));
+    const activeSessionId = String(rootIndex.active_session_id);
+    const sessionDir = path.join(root, ".dev", "sessions", activeSessionId);
+    assert.equal(artifacts.dashboard, path.join(sessionDir, "DASHBOARD.md"));
+    assert.equal(artifacts.logsDir, path.join(sessionDir, "logs"));
+    assert.equal(requireRecord(rootIndex.current_session).goal, "Port repository bootstrap orchestration");
+    assert.equal(requireRecord(rootIndex.current_session).state_root, `.dev/sessions/${activeSessionId}`);
+    assert.match(await readFile(path.join(root, ".dev", "DASHBOARD.md"), "utf8"), /Port repository bootstrap orchestration/);
+    assert.match(await readFile(path.join(sessionDir, "TASKS.md"), "utf8"), /preserve operator files/);
+  });
+});
+
+test("ensureBootstrapState initializes session files and sync projections", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = new StateRepository({
+      baseDevDir: path.join(root, ".dev"),
+      sessionsDir: path.join(root, ".dev", "sessions"),
+      repoRoot: root,
+      sessionId: "manual-session"
+    });
+
+    const artifacts = await repository.ensureBootstrapState({
+      goal: "Initialize state files",
+      activeRoadmapPhaseIds: ["phase_3"],
+      timestamp: "2026-04-27T00:01:00.000Z"
+    });
+
+    for (const filePath of [
+      artifacts.dashboard,
+      artifacts.plan,
+      artifacts.tasks,
+      artifacts.session,
+      artifacts.workflowState
+    ]) {
+      assert.match(await readFile(filePath, "utf8"), /\S/);
+    }
+
+    const sessionState = await readJson(artifacts.session);
+    const workflowState = await readJson(artifacts.workflowState);
+    assert.equal(sessionState.session_id, "manual-session");
+    assert.equal(sessionState.active_phase, "plan");
+    assert.deepEqual(sessionState.active_roadmap_phase_ids, ["phase_3"]);
+    assert.equal(requireRecord(workflowState.workflow).active_phase, "plan");
+    assert.deepEqual(requireRecord(workflowState.roadmap).active_phase_ids, ["phase_3"]);
+    assert.equal(requireRecord(sessionState.task_sync).synced_at, "2026-04-27T00:01:00.000Z");
+  });
+});
+
+test("ensureBootstrapState preserves existing operator markdown", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+    const dashboardPath = repository.stateFile("DASHBOARD.md");
+    await writeFile(dashboardPath, "# Dashboard\n\nManual operator note\n", "utf8");
+
+    await repository.ensureBootstrapState({
+      goal: "Repository state sync",
+      promptText: "Repository state sync",
+      activeRoadmapPhaseIds: ["phase_5"],
+      timestamp: "2026-04-27T00:02:00.000Z"
+    });
+
+    assert.match(await readFile(dashboardPath, "utf8"), /Manual operator note/);
+    const sessionState = await repository.readSessionState();
+    const workflowState = await repository.readWorkflowState();
+    assert.deepEqual(sessionState.active_roadmap_phase_ids, ["phase_5"]);
+    assert.deepEqual(requireRecord(workflowState.roadmap).active_phase_ids, ["phase_5"]);
+  });
+});
+
 test("writeWorkflowState syncs roadmap phase ids and loop request", async () => {
   await withTempDirectory(async (root) => {
     const repository = await seedRepository(root);
