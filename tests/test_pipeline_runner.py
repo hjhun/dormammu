@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 import io
+import json
+import os
+import stat
+import sys
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,6 +19,7 @@ from dormammu.artifacts import ArtifactRef
 from dormammu.daemon.cli_output import select_agent_output
 from dormammu.agent.profiles import resolve_agent_profile
 from dormammu.agent.role_config import AgentsConfig, RoleAgentConfig
+from dormammu.config import AppConfig
 from dormammu.daemon.models import StageResult
 from dormammu.daemon.pipeline_runner import (
     MAX_STAGE_ITERATIONS,
@@ -1498,7 +1504,149 @@ def _make_adapter_result(tmp_path: Path, stdout: str = "", stderr: str = "") -> 
     return result
 
 
+def _write_fake_typescript_runner(root: Path) -> Path:
+    script = root / "ts-runner"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            #!{sys.executable}
+            import base64
+            from datetime import datetime, timezone
+            import json
+            from pathlib import Path
+            import sys
+
+            payload = json.loads(sys.stdin.read())
+            (Path({str(root)!r}) / "captured-runner-payload.json").write_text(
+                json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
+                encoding="utf-8",
+            )
+            request = payload["request"]
+            logs_dir = Path(payload["logs_dir"])
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            run_id = "typescript-pipeline-" + str(request.get("run_label") or "stage")
+            started_at = datetime.now(timezone.utc).isoformat()
+            prompt_path = logs_dir / f"{{run_id}}.prompt.txt"
+            stdout_path = logs_dir / f"{{run_id}}.stdout.txt"
+            stderr_path = logs_dir / f"{{run_id}}.stderr.txt"
+            metadata_path = logs_dir / f"{{run_id}}.metadata.json"
+            prompt_path.write_text(request["prompt_text"], encoding="utf-8")
+            stdout_path.write_text("PIPELINE_TS_OUTPUT\\n", encoding="utf-8")
+            stderr_path.write_text("", encoding="utf-8")
+            capabilities = {{
+                "help_flag": "--help",
+                "prompt_file_flag": "--prompt-file",
+                "prompt_arg_flag": None,
+                "workdir_flag": None,
+                "help_text": "usage: ts-runner",
+                "help_exit_code": 0,
+                "command_prefix": [],
+                "prompt_positional": False,
+                "preset": None,
+                "auto_approve": {{
+                    "supported": False,
+                    "requires_confirmation": False,
+                    "candidates": [],
+                    "notes": [],
+                }},
+            }}
+            base = {{
+                "run_id": run_id,
+                "cli_path": request["cli_path"],
+                "workdir": request.get("workdir") or request["repo_root"],
+                "prompt_mode": "file",
+                "command": [request["cli_path"], "--typescript-runner"],
+                "started_at": started_at,
+                "artifacts": {{
+                    "prompt": str(prompt_path),
+                    "stdout": str(stdout_path),
+                    "stderr": str(stderr_path),
+                    "metadata": str(metadata_path),
+                }},
+                "capabilities": capabilities,
+            }}
+            if payload.get("event_stream"):
+                print(
+                    "DORMAMMU_EVENT " + json.dumps({{"type": "started", "started": base}}),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                print(
+                    "DORMAMMU_EVENT "
+                    + json.dumps({{
+                        "type": "output",
+                        "data": base64.b64encode(b"PIPELINE_TS_OUTPUT\\n").decode("ascii"),
+                    }}),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            result = dict(base)
+            result.update(
+                {{
+                    "exit_code": 0,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "requested_cli_path": request["cli_path"],
+                    "attempted_cli_paths": [request["cli_path"]],
+                    "fallback_trigger": None,
+                    "timed_out": False,
+                }}
+            )
+            metadata_path.write_text(
+                json.dumps(result, indent=2, ensure_ascii=True) + "\\n",
+                encoding="utf-8",
+            )
+            print(json.dumps(result, ensure_ascii=True))
+            """
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 class TestDocumentWriting:
+    def test_call_once_uses_configured_typescript_runner_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "AGENTS.md").write_text("pipeline test\n", encoding="utf-8")
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        progress = io.StringIO()
+        runner = PipelineRunner(app, AgentsConfig(), progress_stream=progress)
+
+        output = runner._call_once(
+            role="tester",
+            cli=Path("pipeline-agent"),
+            model=None,
+            prompt="pipeline prompt",
+            stem="typescript-stage",
+            date_str="20260412",
+        )
+
+        assert output == "PIPELINE_TS_OUTPUT\n"
+        assert "PIPELINE_TS_OUTPUT" in progress.getvalue()
+        doc = app.logs_dir / "20260412_tester_typescript-stage.md"
+        assert "PIPELINE_TS_OUTPUT" in doc.read_text(encoding="utf-8")
+        captured = json.loads(
+            (tmp_path / "captured-runner-payload.json").read_text(encoding="utf-8")
+        )
+        assert captured["event_stream"] is True
+        assert captured["request"]["cli_path"] == "pipeline-agent"
+        assert captured["request"]["prompt_text"] == "pipeline prompt"
+
     def test_call_once_writes_role_doc(self, tmp_path: Path) -> None:
         agents = AgentsConfig()
         app = _make_app_config(tmp_path, agents=agents)

@@ -74,6 +74,10 @@ Ported modules:
   delegation preserves live output streaming, current-run clearing, latest-run
   projection, and required-path supervision
   -> `tests/test_loop_runner.py`
+- daemon `PipelineRunner` stage contract coverage proving one-shot role stages
+  consume the configured TypeScript runner bridge, write stage reports, and
+  mirror event-streamed output to progress logs
+  -> `tests/test_pipeline_runner.py`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -200,6 +204,5 @@ Port the remaining state repository orchestration surface:
 - Python runtime call sites still own daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
-The next slice should expand TypeScript runner contract coverage through the
-remaining Python control-plane call sites, starting with daemon pipeline stages
-and goals automation, before removing any Python runtime fallback code.
+The next slice should expand TypeScript runner contract coverage through goals
+automation before removing any Python runtime fallback code.
