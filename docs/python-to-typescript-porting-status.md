@@ -70,6 +70,10 @@ Ported modules:
   `dormammu-agent-runner` launcher as `typescript_agent_runner_cli` when the
   operator has not already configured a runner
   -> `setup.sh`
+- `run` / `LoopRunner` contract coverage proving configured TypeScript runner
+  delegation preserves live output streaming, current-run clearing, latest-run
+  projection, and required-path supervision
+  -> `tests/test_loop_runner.py`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -197,6 +201,5 @@ Port the remaining state repository orchestration surface:
   execution while TypeScript parity surfaces are assembled
 
 The next slice should expand TypeScript runner contract coverage through the
-remaining Python control-plane call sites, starting with `run`, daemon
-pipeline stages, and goals automation, before removing any Python runtime
-fallback code.
+remaining Python control-plane call sites, starting with daemon pipeline stages
+and goals automation, before removing any Python runtime fallback code.

@@ -138,6 +138,55 @@ class LoopRunnerTests(unittest.TestCase):
                 str(config.sessions_dir / session_id / "continuation_prompt.txt"),
             )
 
+    def test_run_uses_configured_typescript_runner_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_loop_cli(root, success_attempt=1)
+            runner_cli = self._write_fake_typescript_runner(root)
+            (root / "dormammu.json").write_text(
+                json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(
+                repo_root=root,
+                env={**os.environ, "DORMAMMU_SESSIONS_DIR": str(root / "sessions")},
+            )
+            repository = StateRepository(config)
+            progress = io.StringIO()
+            result = LoopRunner(
+                config,
+                repository=repository,
+                progress_stream=progress,
+            ).run(
+                LoopRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Create the required marker file.",
+                    repo_root=root,
+                    run_label="typescript-loop-test",
+                    max_retries=0,
+                    required_paths=("done.txt",),
+                    expected_roadmap_phase_id="phase_4",
+                )
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertTrue((root / "done.txt").exists())
+            workflow_state = repository.read_workflow_state()
+            self.assertIsNone(workflow_state["current_run"])
+            latest_run = workflow_state["latest_run"]
+            self.assertEqual(latest_run["command"], [str(fake_cli), "--typescript-runner"])
+            self.assertIn("ATTEMPT::1", progress.getvalue())
+            captured_payloads = [
+                json.loads(line)
+                for line in (root / "captured-runner-payloads.ndjson")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(captured_payloads[-1]["request"]["cli_path"], str(fake_cli))
+            self.assertTrue(captured_payloads[-1]["event_stream"])
+
     def test_retry_prompt_keeps_original_prompt_instead_of_nesting_previous_retry_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1109,6 +1158,125 @@ Use this skill in loop runner tests.
                     return 0
 
                 raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_fake_typescript_runner(self, root: Path) -> Path:
+        script = root / "ts-runner"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import base64
+                from datetime import datetime, timezone
+                import json
+                import os
+                from pathlib import Path
+                import subprocess
+                import sys
+
+                payload = json.loads(sys.stdin.read())
+                captured_path = Path({str(root)!r}) / "captured-runner-payloads.ndjson"
+                with captured_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload, ensure_ascii=True) + "\\n")
+
+                request = payload["request"]
+                cli_path = request["cli_path"]
+                repo_root = Path(request["repo_root"])
+                workdir = Path(request["workdir"]) if request.get("workdir") else repo_root
+                logs_dir = Path(payload["logs_dir"])
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                run_label = request.get("run_label") or "typescript-loop"
+                run_id = "typescript-" + str(run_label)
+                started_at = datetime.now(timezone.utc).isoformat()
+                prompt_path = logs_dir / f"{{run_id}}.prompt.txt"
+                stdout_path = logs_dir / f"{{run_id}}.stdout.txt"
+                stderr_path = logs_dir / f"{{run_id}}.stderr.txt"
+                metadata_path = logs_dir / f"{{run_id}}.metadata.json"
+                prompt_path.write_text(request["prompt_text"], encoding="utf-8")
+
+                capabilities = {{
+                    "help_flag": "--help",
+                    "prompt_file_flag": "--prompt-file",
+                    "prompt_arg_flag": None,
+                    "workdir_flag": None,
+                    "help_text": "usage: ts-runner",
+                    "help_exit_code": 0,
+                    "command_prefix": [],
+                    "prompt_positional": False,
+                    "preset": None,
+                    "auto_approve": {{
+                        "supported": False,
+                        "requires_confirmation": False,
+                        "candidates": [],
+                        "notes": [],
+                    }},
+                }}
+                base = {{
+                    "run_id": run_id,
+                    "cli_path": cli_path,
+                    "workdir": str(workdir),
+                    "prompt_mode": "file",
+                    "command": [cli_path, "--typescript-runner"],
+                    "started_at": started_at,
+                    "artifacts": {{
+                        "prompt": str(prompt_path),
+                        "stdout": str(stdout_path),
+                        "stderr": str(stderr_path),
+                        "metadata": str(metadata_path),
+                    }},
+                    "capabilities": capabilities,
+                }}
+                if payload.get("event_stream"):
+                    print(
+                        "DORMAMMU_EVENT " + json.dumps({{"type": "started", "started": base}}),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+
+                completed = subprocess.run(
+                    [cli_path, "--prompt-file", str(prompt_path)],
+                    cwd=workdir,
+                    env=os.environ,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                stdout_path.write_text(completed.stdout, encoding="utf-8")
+                stderr_path.write_text(completed.stderr, encoding="utf-8")
+                if payload.get("event_stream") and completed.stdout:
+                    print(
+                        "DORMAMMU_EVENT "
+                        + json.dumps({{
+                            "type": "output",
+                            "data": base64.b64encode(
+                                completed.stdout.encode("utf-8")
+                            ).decode("ascii"),
+                        }}),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+
+                result = dict(base)
+                result.update(
+                    {{
+                        "exit_code": completed.returncode,
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "requested_cli_path": cli_path,
+                        "attempted_cli_paths": [cli_path],
+                        "fallback_trigger": None,
+                        "timed_out": False,
+                    }}
+                )
+                metadata_path.write_text(
+                    json.dumps(result, indent=2, ensure_ascii=True) + "\\n",
+                    encoding="utf-8",
+                )
+                print(json.dumps(result, ensure_ascii=True))
                 """
             ),
             encoding="utf-8",
