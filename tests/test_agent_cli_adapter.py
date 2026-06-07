@@ -695,6 +695,99 @@ class CliAdapterTests(unittest.TestCase):
             )
             self.assertIn("MODE::", output_text)
 
+    def test_run_once_can_delegate_to_configured_typescript_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            runner_cli = self._write_fake_typescript_runner(root)
+            (root / "dormammu.json").write_text(
+                json.dumps(
+                    {
+                        "active_agent_cli": str(fake_cli),
+                        "typescript_agent_runner_cli": "./ts-runner",
+                        "fallback_agent_clis": ["gemini"],
+                        "process_timeout_seconds": 13,
+                        "fallback_on_nonzero_exit": True,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = AppConfig.load(repo_root=root)
+            self.assertEqual(config.typescript_agent_runner_cli, runner_cli)
+            started_events: list[object] = []
+            result = CliAdapter(config).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Run through TypeScript.",
+                    repo_root=root,
+                    input_mode="stdin",
+                    run_label="typescript-bridge",
+                ),
+                on_started=started_events.append,
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.cli_path, fake_cli)
+            self.assertEqual(result.prompt_mode, "stdin")
+            self.assertEqual(result.command, (str(fake_cli), "--typescript-runner"))
+            self.assertEqual(result.capabilities.help_text, "usage: ts-runner")
+            self.assertEqual(result.attempted_cli_paths, (fake_cli,))
+            self.assertEqual(len(started_events), 1)
+
+            captured = json.loads((root / "captured-runner-payload.json").read_text(encoding="utf-8"))
+            self.assertEqual(captured["config"]["active_agent_cli"], str(fake_cli))
+            self.assertEqual(
+                captured["config"]["fallback_agent_clis"],
+                [
+                    {
+                        "extra_args": [],
+                        "input_mode": None,
+                        "path": "gemini",
+                        "prompt_flag": None,
+                    }
+                ],
+            )
+            self.assertEqual(captured["config"]["process_timeout_seconds"], 13)
+            self.assertEqual(captured["config"]["fallback_on_nonzero_exit"], True)
+            self.assertEqual(captured["request"]["cli_path"], str(fake_cli))
+            self.assertEqual(captured["request"]["prompt_text"], "Run through TypeScript.")
+            self.assertEqual(captured["request"]["input_mode"], "stdin")
+
+    def test_run_once_reports_typescript_runner_process_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            runner_cli = root / "failing-ts-runner"
+            runner_cli.write_text(
+                textwrap.dedent(
+                    f"""\
+                    #!{sys.executable}
+                    import sys
+                    print("runner exploded", file=sys.stderr)
+                    sys.exit(7)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            runner_cli.chmod(runner_cli.stat().st_mode | stat.S_IEXEC)
+
+            config = AppConfig.load(repo_root=root).with_overrides(
+                typescript_agent_runner_cli=runner_cli,
+            )
+            with self.assertRaisesRegex(RuntimeError, "runner exploded"):
+                CliAdapter(config).run_once(
+                    AgentRunRequest(
+                        cli_path=fake_cli,
+                        prompt_text="Run through TypeScript.",
+                        repo_root=root,
+                    )
+                )
+
     def _seed_repo(self, root: Path) -> None:
         (root / "AGENTS.md").write_text("bootstrap\n", encoding="utf-8")
         templates = root / "templates" / "dev"
@@ -735,6 +828,79 @@ class CliAdapterTests(unittest.TestCase):
                     return 0
 
                 raise SystemExit(main())
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
+
+    def _write_fake_typescript_runner(self, root: Path) -> Path:
+        script = root / "ts-runner"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import json
+                from pathlib import Path
+                import sys
+
+                payload = json.loads(sys.stdin.read())
+                root = Path({str(root)!r})
+                (root / "captured-runner-payload.json").write_text(
+                    json.dumps(payload, sort_keys=True),
+                    encoding="utf-8",
+                )
+                logs_dir = Path(payload["logs_dir"])
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                run_id = "typescript-bridge-run"
+                prompt_path = logs_dir / f"{{run_id}}.prompt.txt"
+                stdout_path = logs_dir / f"{{run_id}}.stdout.log"
+                stderr_path = logs_dir / f"{{run_id}}.stderr.log"
+                metadata_path = logs_dir / f"{{run_id}}.meta.json"
+                prompt_path.write_text(payload["request"]["prompt_text"], encoding="utf-8")
+                stdout_path.write_text("typescript runner stdout\\n", encoding="utf-8")
+                stderr_path.write_text("", encoding="utf-8")
+                metadata_path.write_text("{{}}\\n", encoding="utf-8")
+                cli_path = payload["request"]["cli_path"]
+                result = {{
+                    "run_id": run_id,
+                    "cli_path": cli_path,
+                    "requested_cli_path": cli_path,
+                    "attempted_cli_paths": [cli_path],
+                    "fallback_trigger": None,
+                    "timed_out": False,
+                    "workdir": payload["request"]["repo_root"],
+                    "prompt_mode": payload["request"]["input_mode"],
+                    "command": [cli_path, "--typescript-runner"],
+                    "exit_code": 0,
+                    "started_at": "2026-04-25T00:00:00.000Z",
+                    "completed_at": "2026-04-25T00:00:01.000Z",
+                    "artifacts": {{
+                        "prompt": str(prompt_path),
+                        "stdout": str(stdout_path),
+                        "stderr": str(stderr_path),
+                        "metadata": str(metadata_path),
+                    }},
+                    "capabilities": {{
+                        "help_flag": "--help",
+                        "prompt_file_flag": None,
+                        "prompt_arg_flag": None,
+                        "workdir_flag": None,
+                        "help_text": "usage: ts-runner",
+                        "help_exit_code": 0,
+                        "command_prefix": [],
+                        "prompt_positional": False,
+                        "preset": None,
+                        "auto_approve": {{
+                            "supported": False,
+                            "requires_confirmation": False,
+                            "candidates": [],
+                            "notes": [],
+                        }},
+                    }},
+                }}
+                print(json.dumps(result))
                 """
             ),
             encoding="utf-8",

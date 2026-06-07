@@ -22,6 +22,8 @@ from dormammu.agent.models import (
     AgentRunRequest,
     AgentRunResult,
     AgentRunStarted,
+    AutoApproveCandidate,
+    AutoApproveInfo,
     CliCapabilities,
 )
 from dormammu.agent.prompt_identity import prepend_cli_identity
@@ -163,6 +165,9 @@ class CliAdapter:
         *,
         on_started: Callable[[AgentRunStarted], None] | None = None,
     ) -> AgentRunResult:
+        if self.config.typescript_agent_runner_cli is not None:
+            return self._run_once_with_typescript_runner(request, on_started=on_started)
+
         request = self._apply_cli_override(request, cli_path=request.cli_path)
         candidates = self._build_candidate_requests(request)
         attempted_cli_paths: list[Path] = []
@@ -197,6 +202,75 @@ class CliAdapter:
             enriched,
             fallback_trigger=fallback_trigger,
         )
+
+    def _run_once_with_typescript_runner(
+        self,
+        request: AgentRunRequest,
+        *,
+        on_started: Callable[[AgentRunStarted], None] | None = None,
+    ) -> AgentRunResult:
+        runner_cli = self.config.typescript_agent_runner_cli
+        if runner_cli is None:
+            raise RuntimeError("typescript_agent_runner_cli is not configured")
+
+        payload = self._typescript_runner_payload(request)
+        completed = subprocess.run(
+            [str(runner_cli)],
+            cwd=request.workdir or request.repo_root,
+            env=self._subprocess_env(),
+            input=json.dumps(payload, ensure_ascii=True),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            message = (completed.stderr or completed.stdout or "").strip()
+            detail = f": {message}" if message else ""
+            raise RuntimeError(
+                f"TypeScript agent runner failed with exit code {completed.returncode}{detail}"
+            )
+
+        try:
+            result_payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("TypeScript agent runner returned invalid JSON") from exc
+
+        result = _agent_run_result_from_payload(result_payload)
+        if on_started is not None:
+            on_started(
+                AgentRunStarted(
+                    run_id=result.run_id,
+                    cli_path=result.cli_path,
+                    workdir=result.workdir,
+                    prompt_mode=result.prompt_mode,
+                    command=result.command,
+                    started_at=result.started_at,
+                    prompt_path=result.prompt_path,
+                    stdout_path=result.stdout_path,
+                    stderr_path=result.stderr_path,
+                    metadata_path=result.metadata_path,
+                    capabilities=result.capabilities,
+                )
+            )
+        return result
+
+    def _typescript_runner_payload(self, request: AgentRunRequest) -> dict[str, object]:
+        return {
+            "config": _typescript_config_payload(self.config),
+            "config_path": str(self.config.config_file) if self.config.config_file else None,
+            "request": {
+                "cli_path": str(request.cli_path),
+                "prompt_text": request.prompt_text,
+                "repo_root": str(request.repo_root),
+                "workdir": str(request.workdir) if request.workdir is not None else None,
+                "input_mode": request.input_mode,
+                "prompt_flag": request.prompt_flag,
+                "extra_args": list(request.extra_args),
+                "run_label": request.run_label,
+            },
+            "logs_dir": str(self.config.logs_dir),
+            "include_help_text": True,
+        }
 
     def _pause_before_next_cli_call_if_needed(self) -> None:
         if self._cli_calls_started == 0:
@@ -703,3 +777,131 @@ class CliAdapter:
             if normalized_pattern and normalized_pattern in combined_output:
                 return normalized_pattern
         return None
+
+
+def _typescript_config_payload(config: AppConfig) -> dict[str, object]:
+    return {
+        "active_agent_cli": str(config.active_agent_cli) if config.active_agent_cli else None,
+        "fallback_agent_clis": [fallback.to_dict() for fallback in config.fallback_agent_clis],
+        "cli_overrides": {
+            key: value.to_dict()
+            for key, value in (config.cli_overrides or {}).items()
+        },
+        "token_exhaustion_patterns": list(config.token_exhaustion_patterns),
+        "process_timeout_seconds": config.process_timeout_seconds,
+        "fallback_on_nonzero_exit": config.fallback_on_nonzero_exit,
+    }
+
+
+def _agent_run_result_from_payload(payload: object) -> AgentRunResult:
+    if not isinstance(payload, dict):
+        raise RuntimeError("TypeScript agent runner result must be a JSON object")
+    artifacts = _dict_field(payload, "artifacts")
+    return AgentRunResult(
+        run_id=_str_field(payload, "run_id"),
+        cli_path=Path(_str_field(payload, "cli_path")),
+        workdir=Path(_str_field(payload, "workdir")),
+        prompt_mode=_str_field(payload, "prompt_mode"),
+        command=tuple(_string_list_field(payload, "command")),
+        exit_code=_int_field(payload, "exit_code"),
+        started_at=_str_field(payload, "started_at"),
+        completed_at=_str_field(payload, "completed_at"),
+        prompt_path=Path(_str_field(artifacts, "prompt")),
+        stdout_path=Path(_str_field(artifacts, "stdout")),
+        stderr_path=Path(_str_field(artifacts, "stderr")),
+        metadata_path=Path(_str_field(artifacts, "metadata")),
+        capabilities=_capabilities_from_payload(_dict_field(payload, "capabilities")),
+        requested_cli_path=Path(_str_field(payload, "requested_cli_path")),
+        attempted_cli_paths=tuple(
+            Path(item)
+            for item in _string_list_field(payload, "attempted_cli_paths")
+        ),
+        fallback_trigger=_optional_str_field(payload, "fallback_trigger"),
+        timed_out=bool(payload.get("timed_out", False)),
+    )
+
+
+def _capabilities_from_payload(payload: dict[str, object]) -> CliCapabilities:
+    preset = payload.get("preset")
+    preset_payload = preset if isinstance(preset, dict) else {}
+    return CliCapabilities(
+        help_flag=_str_field(payload, "help_flag"),
+        prompt_file_flag=_optional_str_field(payload, "prompt_file_flag"),
+        prompt_arg_flag=_optional_str_field(payload, "prompt_arg_flag"),
+        workdir_flag=_optional_str_field(payload, "workdir_flag"),
+        help_text=str(payload.get("help_text") or ""),
+        help_exit_code=_int_field(payload, "help_exit_code"),
+        command_prefix=tuple(_string_list_field(payload, "command_prefix")),
+        prompt_positional=bool(payload.get("prompt_positional", False)),
+        preset_key=_optional_str_field(preset_payload, "key"),
+        preset_label=_optional_str_field(preset_payload, "label"),
+        preset_source=_optional_str_field(preset_payload, "source"),
+        auto_approve=_auto_approve_from_payload(payload.get("auto_approve")),
+    )
+
+
+def _auto_approve_from_payload(payload: object) -> AutoApproveInfo:
+    if not isinstance(payload, dict):
+        return AutoApproveInfo(supported=False, requires_confirmation=False)
+    raw_candidates = payload.get("candidates")
+    candidates = []
+    if isinstance(raw_candidates, list):
+        for item in raw_candidates:
+            if not isinstance(item, dict):
+                continue
+            candidates.append(
+                AutoApproveCandidate(
+                    value=str(item.get("value") or ""),
+                    risk=str(item.get("risk") or ""),
+                    source=str(item.get("source") or ""),
+                    summary=str(item.get("summary") or ""),
+                )
+            )
+    notes = payload.get("notes")
+    return AutoApproveInfo(
+        supported=bool(payload.get("supported", False)),
+        requires_confirmation=bool(payload.get("requires_confirmation", False)),
+        candidates=tuple(candidates),
+        notes=(
+            tuple(item for item in notes if isinstance(item, str))
+            if isinstance(notes, list)
+            else ()
+        ),
+    )
+
+
+def _dict_field(payload: dict[str, object], key: str) -> dict[str, object]:
+    value = payload.get(key)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"TypeScript agent runner result field {key!r} must be an object")
+    return value
+
+
+def _str_field(payload: dict[str, object], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str):
+        raise RuntimeError(f"TypeScript agent runner result field {key!r} must be a string")
+    return value
+
+
+def _optional_str_field(payload: dict[str, object], key: str) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RuntimeError(f"TypeScript agent runner result field {key!r} must be a string or null")
+    return value
+
+
+def _int_field(payload: dict[str, object], key: str) -> int:
+    value = payload.get(key)
+    if not isinstance(value, int):
+        raise RuntimeError(f"TypeScript agent runner result field {key!r} must be an integer")
+    return value
+
+
+def _string_list_field(payload: dict[str, object], key: str) -> tuple[str, ...]:
+    value = payload.get(key)
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise RuntimeError(f"TypeScript agent runner result field {key!r} must be a string list")
+    return tuple(value)

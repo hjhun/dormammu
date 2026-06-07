@@ -310,6 +310,11 @@ def _parse_config_payload_fields(
             config_payload.get("active_agent_cli"),
             config_path=config_file,
         ),
+        "typescript_agent_runner_cli": _parse_optional_cli_path(
+            config_payload.get("typescript_agent_runner_cli"),
+            field_name="typescript_agent_runner_cli",
+            config_path=config_file,
+        ),
         "fallback_agent_clis": fallback_agent_clis,
         "cli_overrides": _parse_cli_overrides(
             config_payload.get("cli_overrides"),
@@ -341,6 +346,7 @@ def _parse_config_payload_fields(
 
 SETTABLE_SCALAR_KEYS: frozenset[str] = frozenset({
     "active_agent_cli",
+    "typescript_agent_runner_cli",
     "telegram.bot_token",
 })
 SETTABLE_LIST_KEYS: frozenset[str] = frozenset({
@@ -487,11 +493,20 @@ def _parse_active_agent_cli(
     *,
     config_path: Path | None,
 ) -> Path | None:
+    return _parse_optional_cli_path(value, field_name="active_agent_cli", config_path=config_path)
+
+
+def _parse_optional_cli_path(
+    value: Any,
+    *,
+    field_name: str,
+    config_path: Path | None,
+) -> Path | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
         source = str(config_path) if config_path is not None else DEFAULT_CONFIG_FILENAME
-        raise RuntimeError(f"active_agent_cli must be a non-empty string in {source}")
+        raise RuntimeError(f"{field_name} must be a non-empty string in {source}")
     config_dir = config_path.parent if config_path is not None else None
     return _resolve_cli_path(value, config_dir=config_dir)
 
@@ -762,6 +777,7 @@ class AppConfig:
     hooks: HookCatalog | None = None
     mcp: McpCatalog | None = None
     active_agent_cli: Path | None = None
+    typescript_agent_runner_cli: Path | None = None
     fallback_agent_clis: tuple[FallbackCliConfig, ...] = ()
     cli_overrides: dict[str, CliInvocationConfig] | None = None
     token_exhaustion_patterns: tuple[str, ...] = DEFAULT_TOKEN_EXHAUSTION_PATTERNS
@@ -854,6 +870,7 @@ class AppConfig:
             hooks=hooks,
             mcp=None,
             active_agent_cli=parsed_config_fields["active_agent_cli"],
+            typescript_agent_runner_cli=parsed_config_fields["typescript_agent_runner_cli"],
             fallback_agent_clis=parsed_config_fields["fallback_agent_clis"],
             cli_overrides=parsed_config_fields["cli_overrides"],
             token_exhaustion_patterns=parsed_config_fields["token_exhaustion_patterns"],
@@ -1051,6 +1068,11 @@ class AppConfig:
             "hooks": self.hooks.to_dict() if self.hooks is not None else None,
             "mcp": self.mcp.to_dict() if self.mcp is not None else None,
             "active_agent_cli": str(self.active_agent_cli) if self.active_agent_cli else None,
+            "typescript_agent_runner_cli": (
+                str(self.typescript_agent_runner_cli)
+                if self.typescript_agent_runner_cli
+                else None
+            ),
             "fallback_agent_clis": [item.to_dict() for item in self.fallback_agent_clis],
             "cli_overrides": {
                 key: value.to_dict()

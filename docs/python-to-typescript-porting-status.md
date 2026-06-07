@@ -50,6 +50,9 @@ Ported modules:
   -> `runtime/src/agent/runnerEntrypoint.ts`
 - Node CLI wrapper for the configured TypeScript runner entrypoint
   -> `runtime/src/agent/runnerCli.ts`
+- Python opt-in compatibility bridge for delegating `CliAdapter.run_once` to
+  `dormammu-agent-runner`
+  -> `backend/dormammu/agent/cli_adapter.py`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -173,9 +176,8 @@ Port the remaining state repository orchestration surface:
 
 - full runtime skill discovery still depends on Python `backend/dormammu/skills.py`
   and the Python agent profile/permission model
-- Python runtime call sites still own CLI, daemon, supervisor, and pipeline
+- Python runtime call sites still own daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
-The next slice should add a Python-side compatibility bridge that can invoke
-`dormammu-agent-runner` behind an explicit opt-in path before Python call site
-removal.
+The next slice should add packaging/install wiring for `dormammu-agent-runner`
+so the opt-in bridge can resolve a stable executable in installed environments.

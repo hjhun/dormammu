@@ -149,12 +149,13 @@ def build_parser() -> argparse.ArgumentParser:
             "  2. ~/.dormammu/config (global, use --global)\n"
             "\n"
             "Settable keys:\n"
-            "  Scalar: active_agent_cli, telegram.bot_token\n"
+            "  Scalar: active_agent_cli, typescript_agent_runner_cli, telegram.bot_token\n"
             "  List:   token_exhaustion_patterns, fallback_agent_clis, telegram.allowed_chat_ids\n"
         ),
         epilog=(
             "Examples:\n"
             "  dormammu set-config active_agent_cli /usr/local/bin/claude\n"
+            "  dormammu set-config typescript_agent_runner_cli dormammu-agent-runner\n"
             "  dormammu set-config active_agent_cli --unset\n"
             "  dormammu set-config token_exhaustion_patterns --add 'context window exceeded'\n"
             "  dormammu set-config token_exhaustion_patterns --remove 'usage limit'\n"
