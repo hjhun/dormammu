@@ -1,4 +1,5 @@
 export * from "./agent/commandBuilder.js";
+export * from "./agent/cliAdapter.js";
 export * from "./agent/promptIdentity.js";
 export * from "./agent/runArtifacts.js";
 export * from "./results.js";

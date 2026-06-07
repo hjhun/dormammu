@@ -19,6 +19,7 @@ export type AgentRunRequest = {
   inputMode?: InputMode;
   promptFlag?: string | null;
   extraArgs?: readonly string[];
+  runLabel?: string | null;
 };
 
 export type CommandPlan = {

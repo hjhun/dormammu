@@ -18,6 +18,10 @@ Ported modules:
 - `backend/dormammu/agent/models.py` agent run started/result artifact payload
   helpers
   -> `runtime/src/agent/runArtifacts.ts`
+- `backend/dormammu/agent/cli_adapter.py` prompt persistence, subprocess
+  execution, stdout/stderr mirroring, timeout handling, and run metadata
+  artifact writing
+  -> `runtime/src/agent/cliAdapter.ts`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -144,7 +148,7 @@ Port the remaining state repository orchestration surface:
 - Python runtime call sites still own CLI, daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
-The next slice should start the agent runtime port by introducing TypeScript
-tests around CLI adapter execution artifact writing and subprocess execution, or
-by porting the runtime skill discovery/profile model needed before Python call
-site removal.
+The next slice should continue the agent runtime port by adding TypeScript
+coverage for CLI capability discovery, help parsing, known CLI presets, fallback
+CLI selection, and token-exhaustion retry metadata before Python call site
+removal.
