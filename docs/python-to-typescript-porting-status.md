@@ -44,6 +44,11 @@ Ported modules:
   evaluation, filesystem specificity evaluation, policy override merging, and
   permission override parsing
   -> `runtime/src/agent/permissions.ts`
+- `backend/dormammu/agent/profiles.py`,
+  `backend/dormammu/agent/role_config.py`, and
+  `backend/dormammu/agent/role_taxonomy.py` built-in role profile catalog,
+  role agent config parsing/merging, and effective profile normalization
+  -> `runtime/src/agent/profiles.ts`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -226,4 +231,4 @@ Port the remaining runtime orchestration surface:
 
 The next slice should use the accumulated contract coverage to start replacing
 remaining Python runtime fallback internals with TypeScript-owned
-implementations, beginning with TypeScript agent profile normalization.
+implementations, beginning with manifest-backed profile discovery and loading.

@@ -3,6 +3,7 @@ export * from "./agent/cliAdapter.js";
 export * from "./agent/configuredRunner.js";
 export * from "./agent/helpParser.js";
 export * from "./agent/permissions.js";
+export * from "./agent/profiles.js";
 export * from "./agent/promptIdentity.js";
 export * from "./agent/presetArgs.js";
 export * from "./agent/presets.js";
