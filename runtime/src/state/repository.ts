@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 
 import {
   projectLifecycleExecutionFact,
@@ -11,6 +11,7 @@ import { SessionManager } from "./sessionManager.js";
 import {
   defaultDashboardContext,
   defaultPlanContext,
+  discoverRepoGuidanceFromFiles,
   promptFingerprint,
   type RepoGuidance,
   renderDashboardValues,
@@ -114,6 +115,39 @@ async function writeIfMissing(filePath: string, text: string): Promise<void> {
     return;
   }
   await writeFile(filePath, text, "utf8");
+}
+
+async function listRelativeFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  async function walk(relativeDir: string): Promise<void> {
+    const absoluteDir = path.join(root, relativeDir);
+    let entries;
+    try {
+      entries = await readdir(absoluteDir, { withFileTypes: true });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        (error as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return;
+      }
+      throw error;
+    }
+    for (const entry of entries) {
+      const relativePath = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
+      if (entry.isDirectory()) {
+        if ([".git", "node_modules", "__pycache__", "sessions"].includes(entry.name)) {
+          continue;
+        }
+        await walk(relativePath);
+      } else if (entry.isFile()) {
+        files.push(relativePath.split(path.sep).join("/"));
+      }
+    }
+  }
+  await walk("");
+  return files.sort();
 }
 
 function substitute(template: string, values: Readonly<Record<string, string>>): string {
@@ -416,6 +450,46 @@ export class StateRepository {
     return path.join(this.devDir, name);
   }
 
+  async restoreSession(sessionId: string, options: { timestamp?: string } = {}): Promise<BootstrapArtifacts> {
+    if (this.sessionId !== null) {
+      throw new Error("restoreSession must be called from the active repository.");
+    }
+    const normalizedSessionId = SessionManager.normalizeSessionId(sessionId);
+    const targetDir = path.join(this.sessionsDir, normalizedSessionId);
+    if (!(await exists(targetDir))) {
+      throw new Error(`Saved session was not found: ${normalizedSessionId}`);
+    }
+    const sessionRepository = this.forSession(normalizedSessionId);
+    await sessionRepository.ensurePlanFile(path.join(targetDir, "PLAN.md"));
+    for (const filename of ["DASHBOARD.md", "PLAN.md", "session.json", "workflow_state.json"]) {
+      if (!(await exists(path.join(targetDir, filename)))) {
+        throw new Error(`Saved session ${normalizedSessionId} is missing required file: ${filename}`);
+      }
+    }
+
+    await mkdir(this.baseDevDir, { recursive: true });
+    await mkdir(this.sessionsDir, { recursive: true });
+    await this.sessionManager.migrateLegacyRootSnapshot({ timestamp: options.timestamp });
+    const timestamp = options.timestamp ?? new Date().toISOString();
+    const restoredRoadmapPhaseIds = await sessionRepository.existingRoadmapPhaseIds();
+    if (restoredRoadmapPhaseIds.length) {
+      await sessionRepository.operatorSync.refreshActiveRoadmapPhaseIds({
+        sessionPath: sessionRepository.stateFile("session.json"),
+        workflowPath: sessionRepository.stateFile("workflow_state.json"),
+        roadmapPhaseIds: restoredRoadmapPhaseIds,
+        timestamp
+      });
+    }
+    await this.operatorSync.writeRootIndexForSession({
+      sessionDevDir: sessionRepository.devDir,
+      sessionId: normalizedSessionId,
+      stateRoot: sessionRepository.stateRootDisplay(),
+      timestamp,
+      listSessions: () => this.sessionManager.listSessions()
+    });
+    return sessionRepository.artifactsForDir(targetDir);
+  }
+
   async ensureBootstrapState(
     options: EnsureBootstrapStateOptions = {}
   ): Promise<BootstrapArtifacts> {
@@ -463,6 +537,8 @@ export class StateRepository {
     }
 
     const timestamp = options.timestamp ?? new Date().toISOString();
+    const repoGuidance =
+      options.repoGuidance ?? (await this.discoverRepoGuidance());
     const roadmapPhaseIds = await this.resolveActiveRoadmapPhaseIds(
       options.activeRoadmapPhaseIds
     );
@@ -483,12 +559,12 @@ export class StateRepository {
       goal,
       roadmapPhaseIds,
       promptText: options.promptText,
-      repoGuidance: options.repoGuidance ?? null
+      repoGuidance
     });
     const planContext = defaultPlanContext({
       goal,
       promptText: options.promptText,
-      repoGuidance: options.repoGuidance ?? null
+      repoGuidance
     });
     const dashboardValues = renderDashboardValues(dashboardContext);
     const planValues = renderPlanValues(planContext);
@@ -503,7 +579,7 @@ export class StateRepository {
       promptText: options.promptText,
       sessionId: this.sessionId,
       runType: "session",
-      repoGuidance: options.repoGuidance ?? null
+      repoGuidance
     });
     const workflowDefaults = defaultWorkflowState({
       timestamp,
@@ -511,7 +587,7 @@ export class StateRepository {
       goal,
       stateRoot,
       promptText: options.promptText,
-      repoGuidance: options.repoGuidance ?? null
+      repoGuidance
     });
     const shouldReset = await this.shouldRegenerateOperatorState(options.promptText);
 
@@ -803,6 +879,10 @@ export class StateRepository {
     return filePath;
   }
 
+  private async discoverRepoGuidance(): Promise<RepoGuidance> {
+    return discoverRepoGuidanceFromFiles(this.repoRoot, await listRelativeFiles(this.repoRoot));
+  }
+
   private async artifactsForDir(directory: string): Promise<BootstrapArtifacts> {
     const promptPath = path.join(directory, "PROMPT.md");
     const artifacts: BootstrapArtifacts = {
@@ -817,6 +897,16 @@ export class StateRepository {
       artifacts.prompt = promptPath;
     }
     return artifacts;
+  }
+
+  private async ensurePlanFile(planPath: string): Promise<void> {
+    if (await exists(planPath)) {
+      return;
+    }
+    const tasksPath = this.stateFile("TASKS.md");
+    if (await exists(tasksPath)) {
+      await writeFile(planPath, await readFile(tasksPath, "utf8"), "utf8");
+    }
   }
 
   private async resolveActiveRoadmapPhaseIds(

@@ -234,6 +234,79 @@ test("ensureBootstrapState includes supplied repo guidance in defaults and markd
   });
 });
 
+test("ensureBootstrapState discovers repo guidance from filesystem", async () => {
+  await withTempDirectory(async (root) => {
+    await mkdir(path.join(root, ".agents"), { recursive: true });
+    await mkdir(path.join(root, ".dev"), { recursive: true });
+    await mkdir(path.join(root, ".github", "workflows"), { recursive: true });
+    await writeFile(path.join(root, "AGENTS.md"), "# Rules\n", "utf8");
+    await writeFile(path.join(root, ".agents", "AGENTS.md"), "# Agent Rules\n", "utf8");
+    await writeFile(path.join(root, ".dev", "PROJECT.md"), "# Project\n", "utf8");
+    await writeFile(path.join(root, ".dev", "ROADMAP.md"), "# Roadmap\n", "utf8");
+    await writeFile(path.join(root, ".github", "workflows", "test.yml"), "name: test\n", "utf8");
+    await writeFile(path.join(root, ".github", "workflows", "deploy.yaml"), "name: deploy\n", "utf8");
+
+    const repository = new StateRepository({
+      baseDevDir: path.join(root, ".dev"),
+      sessionsDir: path.join(root, ".dev", "sessions"),
+      repoRoot: root,
+      sessionId: "discovered-guidance"
+    });
+
+    const artifacts = await repository.ensureBootstrapState({
+      goal: "Discover guidance",
+      promptText: "Discover guidance",
+      timestamp: "2026-04-27T00:06:00.000Z"
+    });
+
+    const dashboard = await readFile(artifacts.dashboard, "utf8");
+    const sessionState = await repository.readSessionState();
+    const workflowState = await repository.readWorkflowState();
+    const guidance = requireRecord(requireRecord(sessionState.bootstrap).repo_guidance);
+    assert.deepEqual(guidance.rule_files, [
+      "AGENTS.md",
+      ".agents/AGENTS.md",
+      ".dev/PROJECT.md",
+      ".dev/ROADMAP.md"
+    ]);
+    assert.deepEqual(guidance.workflow_files, [
+      ".github/workflows/deploy.yaml",
+      ".github/workflows/test.yml"
+    ]);
+    assert.match(dashboard, /\.dev\/PROJECT.md/);
+    assert.deepEqual(requireRecord(workflowState.source_of_truth).goal, [
+      ".dev/PROJECT.md",
+      ".dev/ROADMAP.md",
+      "AGENTS.md",
+      ".agents/AGENTS.md"
+    ]);
+  });
+});
+
+test("restoreSession selects an existing session and mirrors operator files", async () => {
+  await withTempDirectory(async (root) => {
+    await seedRepository(root, "old-session");
+    const rootRepository = new StateRepository({
+      baseDevDir: path.join(root, ".dev"),
+      sessionsDir: path.join(root, ".dev", "sessions"),
+      repoRoot: root
+    });
+    const target = await seedRepository(root, "restore-me");
+    await writeFile(target.stateFile("DASHBOARD.md"), "# Restored Dashboard\n", "utf8");
+    await writeFile(target.stateFile("PLAN.md"), "# Restored Plan\n", "utf8");
+    await writeFile(target.stateFile("TASKS.md"), "# Restored Tasks\n- [ ] Phase 1. Restore\n", "utf8");
+
+    const artifacts = await rootRepository.restoreSession("restore-me");
+
+    const rootIndex = await readJson(path.join(root, ".dev", "session.json"));
+    assert.equal(rootIndex.active_session_id, "restore-me");
+    assert.equal(requireRecord(rootIndex.current_session).state_root, ".dev/sessions/restore-me");
+    assert.equal(artifacts.dashboard, path.join(root, ".dev", "sessions", "restore-me", "DASHBOARD.md"));
+    assert.match(await readFile(path.join(root, ".dev", "DASHBOARD.md"), "utf8"), /Restored Dashboard/);
+    assert.match(await readFile(path.join(root, ".dev", "TASKS.md"), "utf8"), /Restore/);
+  });
+});
+
 test("writeWorkflowState syncs roadmap phase ids and loop request", async () => {
   await withTempDirectory(async (root) => {
     const repository = await seedRepository(root);
