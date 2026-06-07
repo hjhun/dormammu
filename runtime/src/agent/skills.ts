@@ -1,6 +1,16 @@
 import { basename, relative, resolve } from "node:path";
 import { readdir, readFile } from "node:fs/promises";
 
+import type {
+  PermissionDecision,
+  SkillPermissionRule
+} from "./permissions.js";
+export type {
+  PermissionDecision,
+  SkillPermissionPolicy,
+  SkillPermissionRule
+} from "./permissions.js";
+
 export const SKILL_DOCUMENT_FILENAME = "SKILL.md";
 export const SKILL_DOCUMENT_SCHEMA_VERSION = 1;
 export const SKILL_CONTENT_MODE_INLINE_MARKDOWN = "inline_markdown";
@@ -88,25 +98,16 @@ export type SkillDiscovery = {
   invalid: InvalidSkillCandidate[];
 };
 
-export type PermissionDecision = "allow" | "deny" | "ask";
-
-export type SkillPermissionRule = {
-  skill: string;
-  decision: PermissionDecision;
-};
-
-export type SkillPermissionPolicy = {
-  default?: PermissionDecision;
-  rules?: SkillPermissionRule[];
-};
-
 export type AgentSkillProfile = {
   name: string;
   description?: string;
   source?: string;
   preloaded_skills?: string[];
   permission_policy?: {
-    skills?: SkillPermissionPolicy;
+    skills?: {
+      default?: PermissionDecision;
+      rules?: SkillPermissionRule[];
+    };
   };
   metadata?: Record<string, unknown>;
 };

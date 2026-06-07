@@ -40,6 +40,10 @@ Ported modules:
 - `backend/dormammu/agent/cli_adapter.py` shutdown interruption handling for
   active agent subprocesses and operator-visible shutdown output
   -> `runtime/src/agent/cliAdapter.ts`
+- `backend/dormammu/agent/permissions.py` permission decisions, named policy
+  evaluation, filesystem specificity evaluation, policy override merging, and
+  permission override parsing
+  -> `runtime/src/agent/permissions.ts`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -222,5 +226,4 @@ Port the remaining runtime orchestration surface:
 
 The next slice should use the accumulated contract coverage to start replacing
 remaining Python runtime fallback internals with TypeScript-owned
-implementations, beginning with TypeScript agent profile and permission policy
-normalization.
+implementations, beginning with TypeScript agent profile normalization.
