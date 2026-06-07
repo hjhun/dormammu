@@ -82,6 +82,9 @@ Ported modules:
   consumes the configured TypeScript runner bridge and mirrors event-streamed
   output into scheduler progress logs
   -> `tests/test_goals_scheduler.py`
+- typed `SKILL.md` document parsing, metadata validation, source scope
+  normalization, and source precedence helpers from `backend/dormammu/skills.py`
+  -> `runtime/src/agent/skills.ts`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -203,11 +206,13 @@ Validation:
 
 Port the remaining state repository orchestration surface:
 
-- full runtime skill discovery still depends on Python `backend/dormammu/skills.py`
-  and the Python agent profile/permission model
+- runtime skill discovery, visibility filtering, and prompt/log projection still
+  depend on Python `backend/dormammu/skills.py` and the Python agent
+  profile/permission model
 - Python runtime call sites still own daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
 The next slice should use the accumulated contract coverage to start replacing
 remaining Python runtime fallback internals with TypeScript-owned
-implementations, beginning with the next unported Phase 7 runtime surface.
+implementations, beginning with runtime skill discovery and visibility
+filtering.
