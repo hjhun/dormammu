@@ -8,7 +8,7 @@ import { Writable } from "node:stream";
 
 import type { CliCapabilities } from "./commandBuilder.js";
 import type { AgentRunStarted } from "./runArtifacts.js";
-import { inspectCliCapabilities, runSingleAgentCommand } from "./cliAdapter.js";
+import { inspectCliCapabilities, runAgentCommand, runSingleAgentCommand } from "./cliAdapter.js";
 
 const baseCapabilities: CliCapabilities = {
   helpFlag: "--help",
@@ -193,6 +193,149 @@ test("inspectCliCapabilities parses generic prompt and workdir flags", async () 
   assert.equal(capabilities.presetKey, null);
 });
 
+test("runAgentCommand falls back across token-exhausted CLI candidates", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dormammu-cli-adapter-"));
+  const logsDir = path.join(root, ".dev", "logs");
+  const primary = await writeExecutableAgent(root, "primary-agent", {
+    exitCode: 1,
+    message: "usage limit exceeded"
+  });
+  const fallbackOne = await writeExecutableAgent(root, "fallback-one", {
+    exitCode: 1,
+    message: "quota exceeded"
+  });
+  const fallbackTwo = await writeExecutableAgent(root, "fallback-two", {
+    exitCode: 0,
+    message: "done"
+  });
+
+  const result = await runAgentCommand({
+    request: {
+      cliPath: primary,
+      promptText: "Write a tiny test plan.",
+      repoRoot: root
+    },
+    fallbackAgentClis: [fallbackOne, fallbackTwo],
+    tokenExhaustionPatterns: ["usage limit exceeded", "quota exceeded"],
+    logsDir,
+    retryDelayMs: 0,
+    runIdFactory: (_request, index) => `attempt-${index}`,
+    nowFactory: fixedClock([
+      "2026-04-25T00:00:00.000Z",
+      "2026-04-25T00:00:01.000Z",
+      "2026-04-25T00:00:02.000Z",
+      "2026-04-25T00:00:03.000Z",
+      "2026-04-25T00:00:04.000Z",
+      "2026-04-25T00:00:05.000Z"
+    ])
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.requestedCliPath, path.resolve(primary));
+  assert.equal(result.cliPath, path.resolve(fallbackTwo));
+  assert.deepEqual(result.attemptedCliPaths, [
+    path.resolve(primary),
+    path.resolve(fallbackOne),
+    path.resolve(fallbackTwo)
+  ]);
+  assert.equal(result.fallbackTrigger, "quota exceeded");
+  assert.match(
+    await readFile(result.stdoutPath, "utf8"),
+    /\[fallback-two\]\nWrite a tiny test plan\./
+  );
+});
+
+test("runAgentCommand supports nonzero fallback but not timeout fallback", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dormammu-cli-adapter-"));
+  const logsDir = path.join(root, ".dev", "logs");
+  const failing = await writeExecutableAgent(root, "failing-agent", {
+    exitCode: 2,
+    message: "plain failure"
+  });
+  const fallback = await writeExecutableAgent(root, "fallback-agent", {
+    exitCode: 0,
+    message: "done"
+  });
+  const hanging = await writeHangingAgent(root);
+
+  const nonzero = await runAgentCommand({
+    request: {
+      cliPath: failing,
+      promptText: "Retry this failure.",
+      repoRoot: root
+    },
+    fallbackAgentClis: [fallback],
+    fallbackOnNonzeroExit: true,
+    logsDir,
+    retryDelayMs: 0,
+    runIdFactory: (_request, index) => `nonzero-${index}`
+  });
+  assert.equal(nonzero.exitCode, 0);
+  assert.equal(nonzero.fallbackTrigger, "non-zero exit code 2");
+  assert.deepEqual(nonzero.attemptedCliPaths, [
+    path.resolve(failing),
+    path.resolve(fallback)
+  ]);
+
+  const timeout = await runAgentCommand({
+    request: {
+      cliPath: hanging,
+      promptText: "Do not retry this timeout.",
+      repoRoot: root
+    },
+    fallbackAgentClis: [fallback],
+    fallbackOnNonzeroExit: true,
+    logsDir,
+    timeoutMs: 50,
+    retryDelayMs: 0,
+    runIdFactory: (_request, index) => `timeout-${index}`
+  });
+  assert.equal(timeout.exitCode, -1);
+  assert.equal(timeout.timedOut, true);
+  assert.equal(timeout.fallbackTrigger, null);
+  assert.deepEqual(timeout.attemptedCliPaths, [path.resolve(hanging)]);
+});
+
+test("runAgentCommand applies CLI overrides without replacing explicit request flags", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dormammu-cli-adapter-"));
+  const logsDir = path.join(root, ".dev", "logs");
+  const cline = await writeExecutableAgent(root, "cline", {
+    exitCode: 0,
+    message: "done"
+  });
+
+  const result = await runAgentCommand({
+    request: {
+      cliPath: cline,
+      promptText: "Summarize the repository.",
+      repoRoot: root,
+      extraArgs: ["--timeout", "30"]
+    },
+    cliOverrides: {
+      cline: {
+        inputMode: "arg",
+        promptFlag: "--prompt",
+        extraArgs: ["-y", "--timeout", "1200", "--verbose"]
+      }
+    },
+    logsDir,
+    runIdFactory: () => "override-run"
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(result.command, [
+    cline,
+    "--workdir",
+    path.resolve(process.cwd()),
+    "--prompt",
+    "[cline]\nSummarize the repository.",
+    "-y",
+    "--verbose",
+    "--timeout",
+    "30"
+  ]);
+});
+
 async function writeFakeCli(root: string): Promise<string> {
   const script = path.join(root, "fake-cli.cjs");
   await writeFile(
@@ -276,6 +419,60 @@ if (process.argv.includes("--help")) {
   process.exit(0);
 }
 process.exit(0);
+`,
+    "utf8"
+  );
+  await chmod(script, 0o755);
+  return script;
+}
+
+async function writeExecutableAgent(
+  root: string,
+  name: string,
+  options: { exitCode: number; message: string }
+): Promise<string> {
+  const script = path.join(root, name);
+  await writeFile(
+    script,
+    `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("--help")) {
+  console.log("usage: ${name} [OPTIONS]");
+  console.log("  --prompt-file PATH");
+  console.log("  --prompt TEXT");
+  console.log("  --workdir PATH");
+  process.exit(0);
+}
+let prompt = "";
+if (args.includes("--prompt-file")) {
+  prompt = fs.readFileSync(args[args.indexOf("--prompt-file") + 1], "utf8");
+} else if (args.includes("--prompt")) {
+  prompt = args[args.indexOf("--prompt") + 1];
+} else {
+  prompt = fs.readFileSync(0, "utf8");
+}
+console.log("PROMPT::" + prompt.trim());
+console.error(${JSON.stringify(options.message)});
+process.exit(${options.exitCode});
+`,
+    "utf8"
+  );
+  await chmod(script, 0o755);
+  return script;
+}
+
+async function writeHangingAgent(root: string): Promise<string> {
+  const script = path.join(root, "hanging-agent");
+  await writeFile(
+    script,
+    `#!${process.execPath}
+if (process.argv.includes("--help")) {
+  console.log("usage: hanging-agent [OPTIONS]");
+  console.log("  --prompt-file PATH");
+  process.exit(0);
+}
+setInterval(() => {}, 1000);
 `,
     "utf8"
   );

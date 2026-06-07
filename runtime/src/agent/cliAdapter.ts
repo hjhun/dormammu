@@ -1,12 +1,14 @@
 import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { constants, createWriteStream } from "node:fs";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import { finished } from "node:stream/promises";
 
-import { AgentRunRequest, buildCommandPlan, CliCapabilities } from "./commandBuilder.js";
+import { AgentRunRequest, buildCommandPlan, CliCapabilities, InputMode } from "./commandBuilder.js";
 import { parseHelpText } from "./helpParser.js";
+import { applyDefaultPresetExtraArgs } from "./presetArgs.js";
 import { prependCliIdentity } from "./promptIdentity.js";
 import {
   AgentRunResult,
@@ -20,6 +22,19 @@ import {
 } from "./runArtifacts.js";
 
 export const CLI_TIMEOUT_MESSAGE_PREFIX = "[dormammu] Agent CLI process timed out after";
+export const CLI_RETRY_DELAY_MS = 1000;
+export const CLI_RETRY_DELAY_MESSAGE =
+  "Taking a short break for 1 seconds before the next agent CLI call.";
+
+export type CliInvocationOptions = {
+  extraArgs?: readonly string[];
+  inputMode?: InputMode | null;
+  promptFlag?: string | null;
+};
+
+export type FallbackCliOptions = CliInvocationOptions & {
+  path: string;
+};
 
 export type RunSingleAgentCommandOptions = {
   request: AgentRunRequest;
@@ -38,6 +53,79 @@ export type InspectCliCapabilitiesOptions = {
   cwd: string;
   env?: NodeJS.ProcessEnv;
 };
+
+export type RunAgentCommandOptions = Omit<
+  RunSingleAgentCommandOptions,
+  "capabilities" | "runId"
+> & {
+  fallbackAgentClis?: readonly (string | FallbackCliOptions)[];
+  cliOverrides?: Record<string, CliInvocationOptions> | null;
+  tokenExhaustionPatterns?: readonly string[];
+  fallbackOnNonzeroExit?: boolean;
+  inspectCapabilities?: typeof inspectCliCapabilities;
+  runIdFactory?: (request: AgentRunRequest, attemptIndex: number) => string;
+  retryDelayMs?: number;
+};
+
+export async function runAgentCommand(
+  options: RunAgentCommandOptions
+): Promise<AgentRunResult> {
+  const request = applyCliOverride(options.request, {
+    cliPath: options.request.cliPath,
+    cliOverrides: options.cliOverrides
+  });
+  const candidates = await buildCandidateRequests(request, options);
+  const requestedCliPath = recordedCliPath(options.request.cliPath);
+  const attemptedCliPaths: string[] = [];
+  let fallbackTrigger: string | null = null;
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    if (index > 0) {
+      await pauseBeforeRetry(options);
+    }
+
+    const candidate = candidates[index];
+    const cwd = path.resolve(options.workdir ?? candidate.workdir ?? process.cwd());
+    const inspect = options.inspectCapabilities ?? inspectCliCapabilities;
+    const capabilities = await inspect(candidate.cliPath, { cwd, env: options.env });
+    const effectiveRequest = applyDefaultPresetExtraArgs(candidate, capabilities);
+    const result = await runSingleAgentCommand({
+      ...options,
+      request: effectiveRequest,
+      capabilities,
+      runId: options.runIdFactory?.(effectiveRequest, index)
+    });
+    attemptedCliPaths.push(result.cliPath);
+    const enriched: AgentRunResult = {
+      ...result,
+      requestedCliPath,
+      attemptedCliPaths: [...attemptedCliPaths],
+      fallbackTrigger
+    };
+
+    let fallbackReason = await detectTokenExhaustion(
+      enriched,
+      options.tokenExhaustionPatterns ?? []
+    );
+    if (
+      fallbackReason === null &&
+      options.fallbackOnNonzeroExit === true &&
+      enriched.exitCode !== 0 &&
+      !enriched.timedOut
+    ) {
+      fallbackReason = `non-zero exit code ${enriched.exitCode}`;
+    }
+    if (fallbackReason === null || index === candidates.length - 1) {
+      return {
+        ...enriched,
+        fallbackTrigger: fallbackReason ?? fallbackTrigger
+      };
+    }
+    fallbackTrigger = fallbackReason;
+  }
+
+  throw new Error("No agent CLI candidates were available.");
+}
 
 export async function inspectCliCapabilities(
   cliPath: string,
@@ -226,6 +314,194 @@ async function executeCommand(options: {
   });
 }
 
+async function buildCandidateRequests(
+  request: AgentRunRequest,
+  options: Pick<RunAgentCommandOptions, "fallbackAgentClis" | "cliOverrides" | "env">
+): Promise<AgentRunRequest[]> {
+  const candidates = [request];
+  const seenPaths = new Set([request.cliPath]);
+
+  for (const fallback of options.fallbackAgentClis ?? []) {
+    const candidate = applyFallbackConfig(request, fallback, options.cliOverrides);
+    if (
+      seenPaths.has(candidate.cliPath) ||
+      !(await cliCandidateAvailable(candidate.cliPath, options.env))
+    ) {
+      continue;
+    }
+    seenPaths.add(candidate.cliPath);
+    candidates.push(candidate);
+  }
+
+  return candidates;
+}
+
+function applyFallbackConfig(
+  request: AgentRunRequest,
+  fallback: string | FallbackCliOptions,
+  cliOverrides: Record<string, CliInvocationOptions> | null | undefined
+): AgentRunRequest {
+  const config = typeof fallback === "string" ? { path: fallback } : fallback;
+  const fallbackRequest: AgentRunRequest = {
+    ...request,
+    cliPath: config.path,
+    inputMode: config.inputMode ?? "auto",
+    promptFlag: config.promptFlag ?? null,
+    extraArgs: config.extraArgs ?? []
+  };
+  return applyCliOverride(fallbackRequest, {
+    cliPath: config.path,
+    cliOverrides
+  });
+}
+
+function applyCliOverride(
+  request: AgentRunRequest,
+  options: {
+    cliPath: string;
+    cliOverrides?: Record<string, CliInvocationOptions> | null;
+  }
+): AgentRunRequest {
+  const override = resolveCliOverride(options.cliPath, options.cliOverrides);
+  if (override === null) {
+    return request;
+  }
+
+  const inputMode =
+    (request.inputMode ?? "auto") === "auto" && override.inputMode != null
+      ? override.inputMode
+      : request.inputMode;
+  return {
+    ...request,
+    cliPath: options.cliPath,
+    inputMode,
+    promptFlag: request.promptFlag ?? override.promptFlag ?? null,
+    extraArgs: mergeOverrideExtraArgs(override.extraArgs ?? [], request.extraArgs ?? [])
+  };
+}
+
+function resolveCliOverride(
+  cliPath: string,
+  cliOverrides: Record<string, CliInvocationOptions> | null | undefined
+): CliInvocationOptions | null {
+  if (cliOverrides == null) {
+    return null;
+  }
+  for (const key of cliOverrideKeys(cliPath)) {
+    const override = cliOverrides[key];
+    if (override !== undefined) {
+      return override;
+    }
+  }
+  return {};
+}
+
+function cliOverrideKeys(cliPath: string): string[] {
+  const rawText = cliPath.trim();
+  const keys = [rawText.toLowerCase(), path.basename(rawText).toLowerCase()];
+  if (path.isAbsolute(rawText) || rawText.includes("/") || rawText.includes("\\")) {
+    keys.push(path.resolve(expandUserPath(rawText)).toLowerCase());
+  }
+  return [...new Set(keys.filter(Boolean))];
+}
+
+function mergeOverrideExtraArgs(
+  overrideArgs: readonly string[],
+  requestArgs: readonly string[]
+): string[] {
+  if (!overrideArgs.length) {
+    return [...requestArgs];
+  }
+  if (!requestArgs.length) {
+    return [...overrideArgs];
+  }
+
+  const explicitFlags = new Set(
+    requestArgs
+      .map((arg) => arg.trim().toLowerCase())
+      .filter((arg) => arg.startsWith("-") && arg.length > 0)
+  );
+  const merged: string[] = [];
+  let index = 0;
+  while (index < overrideArgs.length) {
+    const arg = overrideArgs[index];
+    const normalized = arg.trim().toLowerCase();
+    if (explicitFlags.has(normalized)) {
+      index += 1;
+      if (index < overrideArgs.length && !overrideArgs[index].startsWith("-")) {
+        index += 1;
+      }
+      continue;
+    }
+    merged.push(arg);
+    index += 1;
+  }
+  return [...merged, ...requestArgs];
+}
+
+async function cliCandidateAvailable(
+  cliPath: string,
+  env: NodeJS.ProcessEnv | undefined
+): Promise<boolean> {
+  if (path.isAbsolute(cliPath) || cliPath.includes("/") || cliPath.includes("\\")) {
+    try {
+      await access(path.resolve(expandUserPath(cliPath)), constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  for (const entry of (env?.PATH ?? process.env.PATH ?? "").split(path.delimiter)) {
+    if (!entry) {
+      continue;
+    }
+    try {
+      await access(path.join(entry, cliPath), constants.X_OK);
+      return true;
+    } catch {
+      // Keep scanning PATH entries.
+    }
+  }
+  return false;
+}
+
+async function detectTokenExhaustion(
+  result: AgentRunResult,
+  patterns: readonly string[]
+): Promise<string | null> {
+  if (result.exitCode === 0) {
+    return null;
+  }
+
+  const combinedOutput = [
+    await readFile(result.stdoutPath, "utf8"),
+    await readFile(result.stderrPath, "utf8")
+  ]
+    .join("\n")
+    .toLowerCase();
+  for (const pattern of patterns) {
+    const normalizedPattern = pattern.trim().toLowerCase();
+    if (normalizedPattern && combinedOutput.includes(normalizedPattern)) {
+      return normalizedPattern;
+    }
+  }
+  return null;
+}
+
+async function pauseBeforeRetry(
+  options: Pick<RunAgentCommandOptions, "liveOutput" | "retryDelayMs">
+): Promise<void> {
+  options.liveOutput?.write(`${CLI_RETRY_DELAY_MESSAGE}\n`);
+  const delayMs = options.retryDelayMs ?? CLI_RETRY_DELAY_MS;
+  if (delayMs <= 0) {
+    return;
+  }
+  await new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
 async function captureCommand(
   argv: string[],
   options: InspectCliCapabilitiesOptions
@@ -276,6 +552,16 @@ function cliExecutableName(cliPath: string): string {
   const normalized = cliPath.replace(/\\/g, "/");
   const index = normalized.lastIndexOf("/");
   return index === -1 ? normalized : normalized.slice(index + 1);
+}
+
+function expandUserPath(filePath: string): string {
+  if (filePath === "~") {
+    return os.homedir();
+  }
+  if (filePath.startsWith("~/") || filePath.startsWith("~\\")) {
+    return path.join(os.homedir(), filePath.slice(2));
+  }
+  return filePath;
 }
 
 function generatedRunId(label: string | null | undefined): string {
