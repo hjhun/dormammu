@@ -12,6 +12,7 @@ import {
   SkillDocumentError,
   discoverSkills,
   enumerateSkillCandidates,
+  filterSkillsForProfile,
   loadSkillDefinition,
   loadSkillDocument,
   normalizeSkillSourceScope,
@@ -289,4 +290,130 @@ test("discoverSkills can collect invalid candidates when requested", async () =>
   assert.deepEqual(discovery.selected.map((skill) => skill.name), ["valid-skill"]);
   assert.equal(discovery.invalid.length, 1);
   assert.match(discovery.invalid[0].error, /skill_document\.description/);
+});
+
+test("filterSkillsForProfile defaults selected skills to ask-visible", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-skill-visibility-"));
+  const projectRoot = path.join(root, "project");
+  const userRoot = path.join(root, "user");
+  const builtInRoot = path.join(root, "built-in");
+  await writeSkill(projectRoot, "alpha", { name: "alpha-skill" });
+  await writeSkill(userRoot, "beta", { name: "beta-skill" });
+  await writeSkill(builtInRoot, "planning-agent", { name: "planning-agent" });
+
+  const visibility = filterSkillsForProfile(
+    await discoverSkills([
+      { scope: "project", path: projectRoot },
+      { scope: "user", path: userRoot },
+      { scope: "built_in", path: builtInRoot }
+    ]),
+    { name: "planner" }
+  );
+
+  assert.equal(visibility.default_decision, "ask");
+  assert.deepEqual(
+    visibility.visible.map((entry) => entry.name),
+    ["alpha-skill", "beta-skill", "planning-agent"]
+  );
+  assert.deepEqual(visibility.hidden, []);
+  assert.deepEqual(
+    visibility.entries.map((entry) => entry.visibility_decision),
+    ["ask", "ask", "ask"]
+  );
+});
+
+test("filterSkillsForProfile can hide named skills without affecting others", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-skill-visibility-"));
+  const projectRoot = path.join(root, "project");
+  const userRoot = path.join(root, "user");
+  await writeSkill(projectRoot, "alpha", { name: "alpha-skill" });
+  await writeSkill(userRoot, "beta", { name: "beta-skill" });
+
+  const visibility = filterSkillsForProfile(
+    await discoverSkills([
+      { scope: "project", path: projectRoot },
+      { scope: "user", path: userRoot }
+    ]),
+    {
+      name: "reviewer",
+      permission_policy: {
+        skills: {
+          rules: [{ skill: "beta-skill", decision: "deny" }]
+        }
+      }
+    }
+  );
+
+  assert.deepEqual(visibility.visible.map((entry) => entry.name), ["alpha-skill"]);
+  assert.deepEqual(visibility.hidden.map((entry) => entry.name), ["beta-skill"]);
+  assert.equal(visibility.hidden[0].visibility_decision, "deny");
+});
+
+test("filterSkillsForProfile reports preloaded visible and missing skills", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-skill-visibility-"));
+  const projectRoot = path.join(root, "project");
+  const builtInRoot = path.join(root, "built-in");
+  await writeSkill(projectRoot, "designing-agent", { name: "designing-agent" });
+  await writeSkill(builtInRoot, "planning-agent", { name: "planning-agent" });
+
+  const visibility = filterSkillsForProfile(
+    await discoverSkills([
+      { scope: "project", path: projectRoot },
+      { scope: "built_in", path: builtInRoot }
+    ]),
+    {
+      name: "designer",
+      preloaded_skills: ["planning-agent", "designing-agent", "missing-skill"],
+      permission_policy: {
+        skills: {
+          rules: [{ skill: "designing-agent", decision: "deny" }]
+        }
+      }
+    }
+  );
+
+  assert.deepEqual(visibility.preloaded.map((entry) => entry.name), ["planning-agent"]);
+  assert.deepEqual(visibility.hidden.map((entry) => entry.name), ["designing-agent"]);
+  assert.equal(visibility.hidden[0].requested_preload, true);
+  assert.equal(visibility.hidden[0].preloaded, false);
+  assert.deepEqual(visibility.missing_preloads, [
+    { name: "missing-skill", reason: "not_discovered" }
+  ]);
+});
+
+test("filterSkillsForProfile can allow named skills when default is denied", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-skill-visibility-"));
+  const projectRoot = path.join(root, "project");
+  const userRoot = path.join(root, "user");
+  const builtInRoot = path.join(root, "built-in");
+  await writeSkill(projectRoot, "alpha", { name: "alpha-skill" });
+  await writeSkill(userRoot, "beta", { name: "beta-skill" });
+  await writeSkill(builtInRoot, "planning-agent", { name: "planning-agent" });
+
+  const visibility = filterSkillsForProfile(
+    await discoverSkills([
+      { scope: "project", path: projectRoot },
+      { scope: "user", path: userRoot },
+      { scope: "built_in", path: builtInRoot }
+    ]),
+    {
+      name: "custom",
+      permission_policy: {
+        skills: {
+          default: "deny",
+          rules: [
+            { skill: "alpha-skill", decision: "allow" },
+            { skill: "planning-agent", decision: "allow" }
+          ]
+        }
+      }
+    }
+  );
+
+  assert.deepEqual(
+    visibility.visible.map((entry) => entry.name),
+    ["alpha-skill", "planning-agent"]
+  );
+  assert.deepEqual(visibility.hidden.map((entry) => entry.name), ["beta-skill"]);
+  assert.deepEqual(visibility.visible.map((entry) => entry.scope), ["project", "built_in"]);
 });

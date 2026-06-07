@@ -1,6 +1,5 @@
-import { basename, resolve } from "node:path";
+import { basename, relative, resolve } from "node:path";
 import { readdir, readFile } from "node:fs/promises";
-import { relative } from "node:path";
 
 export const SKILL_DOCUMENT_FILENAME = "SKILL.md";
 export const SKILL_DOCUMENT_SCHEMA_VERSION = 1;
@@ -89,6 +88,51 @@ export type SkillDiscovery = {
   invalid: InvalidSkillCandidate[];
 };
 
+export type PermissionDecision = "allow" | "deny" | "ask";
+
+export type SkillPermissionRule = {
+  skill: string;
+  decision: PermissionDecision;
+};
+
+export type SkillPermissionPolicy = {
+  default?: PermissionDecision;
+  rules?: SkillPermissionRule[];
+};
+
+export type AgentSkillProfile = {
+  name: string;
+  source?: string;
+  preloaded_skills?: string[];
+  permission_policy?: {
+    skills?: SkillPermissionPolicy;
+  };
+};
+
+export type MissingSkillPreload = {
+  name: string;
+  reason: "not_discovered";
+};
+
+export type FilteredSkillEntry = DiscoveredSkill & {
+  visibility_decision: PermissionDecision;
+  visible: boolean;
+  requested_preload: boolean;
+  preloaded: boolean;
+};
+
+export type ProfileSkillVisibility = {
+  profile_name: string;
+  profile_source: string;
+  default_decision: PermissionDecision;
+  entries: FilteredSkillEntry[];
+  visible: FilteredSkillEntry[];
+  hidden: FilteredSkillEntry[];
+  preloaded: FilteredSkillEntry[];
+  missing_preloads: MissingSkillPreload[];
+  shadowed: DiscoveredSkill[];
+};
+
 export async function loadSkillDocument(path: string): Promise<SkillDocument> {
   const normalizedPath = resolve(path);
   if (basename(normalizedPath) !== SKILL_DOCUMENT_FILENAME) {
@@ -161,6 +205,40 @@ export async function discoverSkills(
     selected,
     shadowed,
     invalid
+  };
+}
+
+export function filterSkillsForProfile(
+  discovery: SkillDiscovery,
+  profile: AgentSkillProfile
+): ProfileSkillVisibility {
+  const requestedPreloads = normalizeRequestedPreloads(profile.preloaded_skills ?? []);
+  const selectedNames = new Set(discovery.selected.map((skill) => skill.name));
+  const entries = discovery.selected.map((discovered) => {
+    const visibilityDecision = evaluateSkillPermission(discovered.name, profile);
+    const requestedPreload = requestedPreloads.includes(discovered.name);
+    const visible = visibilityDecision !== "deny";
+    return {
+      ...discovered,
+      visibility_decision: visibilityDecision,
+      visible,
+      requested_preload: requestedPreload,
+      preloaded: visible && requestedPreload
+    };
+  });
+  const missingPreloads = requestedPreloads
+    .filter((name) => !selectedNames.has(name))
+    .map((name) => ({ name, reason: "not_discovered" as const }));
+  return {
+    profile_name: profile.name,
+    profile_source: profile.source ?? "builtin",
+    default_decision: profile.permission_policy?.skills?.default ?? "ask",
+    entries,
+    visible: entries.filter((entry) => entry.visible),
+    hidden: entries.filter((entry) => !entry.visible),
+    preloaded: entries.filter((entry) => entry.preloaded),
+    missing_preloads: missingPreloads,
+    shadowed: discovery.shadowed
   };
 }
 
@@ -368,6 +446,33 @@ function validateUniqueScopePerSkillName(name: string, contenders: DiscoveredSki
     }
     seenScopes.set(contender.scope, contender.path);
   }
+}
+
+function evaluateSkillPermission(
+  skill: string,
+  profile: AgentSkillProfile
+): PermissionDecision {
+  const normalizedSkill = skill.trim();
+  const policy = profile.permission_policy?.skills;
+  const rules = policy?.rules ?? [];
+  for (let index = rules.length - 1; index >= 0; index -= 1) {
+    const rule = rules[index];
+    if (rule.skill === normalizedSkill) {
+      return rule.decision;
+    }
+  }
+  return policy?.default ?? "ask";
+}
+
+function normalizeRequestedPreloads(values: string[]): string[] {
+  const normalized: string[] = [];
+  for (const value of values) {
+    const candidate = value.trim();
+    if (candidate && !normalized.includes(candidate)) {
+      normalized.push(candidate);
+    }
+  }
+  return normalized;
 }
 
 function parseFrontmatter(
