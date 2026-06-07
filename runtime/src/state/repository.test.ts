@@ -473,6 +473,93 @@ test("recordLifecycleEvent updates lifecycle and execution projections", async (
   });
 });
 
+test("writeSupervisorReportRef writes markdown and returns artifact metadata", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+
+    const artifact = await repository.writeSupervisorReportRef("# Supervisor\n\nApproved\n", {
+      runId: "run-123",
+      role: "reviewer",
+      stageName: "review"
+    });
+
+    assert.equal(artifact.kind, "supervisor_report");
+    assert.equal(artifact.path, repository.stateFile("supervisor_report.md"));
+    assert.equal(artifact.label, "supervisor_report");
+    assert.equal(artifact.content_type, "text/markdown");
+    assert.equal(artifact.run_id, "run-123");
+    assert.equal(artifact.role, "reviewer");
+    assert.equal(artifact.stage_name, "review");
+    assert.equal(artifact.session_id, "session-001");
+    assert.equal(await readFile(repository.stateFile("supervisor_report.md"), "utf8"), "# Supervisor\n\nApproved\n");
+  });
+});
+
+test("writeContinuationPromptRef writes prompt text and returns artifact metadata", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+
+    const artifact = await repository.writeContinuationPromptRef("Continue from review\n", {
+      runId: "run-456",
+      role: "supervisor",
+      stageName: "continuation"
+    });
+
+    assert.equal(artifact.kind, "continuation_prompt");
+    assert.equal(artifact.path, repository.stateFile("continuation_prompt.txt"));
+    assert.equal(artifact.label, "continuation_prompt");
+    assert.equal(artifact.content_type, "text/plain");
+    assert.equal(artifact.run_id, "run-456");
+    assert.equal(artifact.role, "supervisor");
+    assert.equal(artifact.stage_name, "continuation");
+    assert.equal(artifact.session_id, "session-001");
+    assert.equal(await readFile(repository.stateFile("continuation_prompt.txt"), "utf8"), "Continue from review\n");
+  });
+});
+
+test("root artifact writers delegate to the active session", async () => {
+  await withTempDirectory(async (root) => {
+    const sessionRepository = await seedRepository(root);
+    const rootRepository = new StateRepository({
+      baseDevDir: path.join(root, ".dev"),
+      sessionsDir: path.join(root, ".dev", "sessions"),
+      repoRoot: root
+    });
+
+    const reportPath = await rootRepository.writeSupervisorReport("# Root delegated\n");
+    const continuationPath = await rootRepository.writeContinuationPrompt("Continue active session\n");
+
+    assert.equal(reportPath, sessionRepository.stateFile("supervisor_report.md"));
+    assert.equal(continuationPath, sessionRepository.stateFile("continuation_prompt.txt"));
+    assert.equal(await readFile(reportPath, "utf8"), "# Root delegated\n");
+    assert.equal(await readFile(continuationPath, "utf8"), "Continue active session\n");
+  });
+});
+
+test("persistInputPrompt writes session prompt, mirror, and state pointers", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+    const promptPath = await repository.persistInputPrompt({
+      promptText: "Build prompt persistence\n- keep state pointers"
+    });
+
+    const mirrorPath = path.join(root, ".dev", "sessions", "session-001", ".dev", "PROMPT.md");
+    assert.equal(promptPath, repository.stateFile("PROMPT.md"));
+    assert.equal(await readFile(promptPath, "utf8"), "Build prompt persistence\n- keep state pointers");
+    assert.equal(await readFile(mirrorPath, "utf8"), "Build prompt persistence\n- keep state pointers");
+
+    const sessionState = await repository.readSessionState();
+    const workflowState = await repository.readWorkflowState();
+    const sessionBootstrap = requireRecord(sessionState.bootstrap);
+    const workflowBootstrap = requireRecord(workflowState.bootstrap);
+    assert.equal(sessionBootstrap.prompt_path, ".dev/sessions/session-001/PROMPT.md");
+    assert.equal(sessionBootstrap.global_prompt_path, mirrorPath);
+    assert.equal(workflowBootstrap.prompt_path, ".dev/sessions/session-001/PROMPT.md");
+    assert.equal(workflowBootstrap.global_prompt_path, mirrorPath);
+    assert.equal(requireRecord(workflowState.artifacts).prompt, ".dev/sessions/session-001/PROMPT.md");
+  });
+});
+
 test("root repository delegates reads and writes to the active session", async () => {
   await withTempDirectory(async (root) => {
     const sessionRepository = await seedRepository(root);

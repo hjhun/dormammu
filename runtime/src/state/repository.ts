@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 
 import {
   projectLifecycleExecutionFact,
@@ -48,6 +48,26 @@ export type EnsureBootstrapStateOptions = {
 
 export type StartNewSessionOptions = EnsureBootstrapStateOptions & {
   sessionId?: string | null;
+};
+
+export type ArtifactRef = {
+  kind: string;
+  path: string;
+  label: string | null;
+  content_type: string | null;
+  created_at: string | null;
+  run_id: string | null;
+  role: string | null;
+  stage_name: string | null;
+  session_id: string | null;
+  metadata: JsonObject;
+};
+
+export type ArtifactWriteOptions = {
+  runId?: string | null;
+  role?: string | null;
+  stageName?: string | null;
+  metadata?: JsonObject | null;
 };
 
 function isRecord(value: unknown): value is JsonObject {
@@ -119,6 +139,19 @@ async function writeIfMissing(filePath: string, text: string): Promise<void> {
     return;
   }
   await writeFile(filePath, text, "utf8");
+}
+
+async function copyOrWriteText(options: {
+  targetPath: string;
+  text: string;
+  sourcePath?: string | null;
+}): Promise<void> {
+  await mkdir(path.dirname(options.targetPath), { recursive: true });
+  if (options.sourcePath && (await exists(options.sourcePath))) {
+    await copyFile(options.sourcePath, options.targetPath);
+    return;
+  }
+  await writeFile(options.targetPath, options.text, "utf8");
 }
 
 async function listRelativeFiles(root: string): Promise<string[]> {
@@ -872,6 +905,113 @@ export class StateRepository {
     });
   }
 
+  async writeSupervisorReport(markdown: string): Promise<string> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      return repository.writeSupervisorReport(markdown);
+    }
+    const artifact = await this.writeSupervisorReportRef(markdown);
+    await this.syncRootIndex();
+    return artifact.path;
+  }
+
+  async writeContinuationPrompt(text: string): Promise<string> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      return repository.writeContinuationPrompt(text);
+    }
+    const artifact = await this.writeContinuationPromptRef(text);
+    await this.syncRootIndex();
+    return artifact.path;
+  }
+
+  async writeSupervisorReportRef(
+    markdown: string,
+    options: ArtifactWriteOptions = {}
+  ): Promise<ArtifactRef> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      return repository.writeSupervisorReportRef(markdown, options);
+    }
+    const artifact = await this.writeTextArtifact({
+      kind: "supervisor_report",
+      text: markdown,
+      artifactPath: this.stateFile("supervisor_report.md"),
+      label: "supervisor_report",
+      contentType: "text/markdown",
+      options
+    });
+    await this.syncRootIndex();
+    return artifact;
+  }
+
+  async writeContinuationPromptRef(
+    text: string,
+    options: ArtifactWriteOptions = {}
+  ): Promise<ArtifactRef> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      return repository.writeContinuationPromptRef(text, options);
+    }
+    const artifact = await this.writeTextArtifact({
+      kind: "continuation_prompt",
+      text,
+      artifactPath: this.stateFile("continuation_prompt.txt"),
+      label: "continuation_prompt",
+      contentType: "text/plain",
+      options
+    });
+    await this.syncRootIndex();
+    return artifact;
+  }
+
+  async persistInputPrompt(options: {
+    promptText: string;
+    sourcePath?: string | null;
+  }): Promise<string> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      return repository.persistInputPrompt(options);
+    }
+
+    const promptPath = this.stateFile("PROMPT.md");
+    await copyOrWriteText({
+      targetPath: promptPath,
+      text: options.promptText,
+      sourcePath: options.sourcePath
+    });
+
+    const mirrorPath = await this.globalPromptMirrorPath();
+    await copyOrWriteText({
+      targetPath: mirrorPath,
+      text: options.promptText,
+      sourcePath: options.sourcePath
+    });
+
+    const timestamp = new Date().toISOString();
+    const displayPromptPath = this.displayStatePath(promptPath);
+    const sessionState = await readJson(this.stateFile("session.json"));
+    const sessionBootstrap = isRecord(sessionState.bootstrap) ? sessionState.bootstrap : {};
+    sessionState.updated_at = timestamp;
+    sessionBootstrap.prompt_path = displayPromptPath;
+    sessionBootstrap.global_prompt_path = mirrorPath;
+    sessionState.bootstrap = sessionBootstrap;
+    await writeJson(this.stateFile("session.json"), sessionState);
+
+    const workflowState = await readJson(this.stateFile("workflow_state.json"));
+    const workflowBootstrap = isRecord(workflowState.bootstrap) ? workflowState.bootstrap : {};
+    const workflowArtifacts = isRecord(workflowState.artifacts) ? workflowState.artifacts : {};
+    workflowState.updated_at = timestamp;
+    workflowBootstrap.prompt_path = displayPromptPath;
+    workflowBootstrap.global_prompt_path = mirrorPath;
+    workflowState.bootstrap = workflowBootstrap;
+    workflowArtifacts.prompt = displayPromptPath;
+    workflowState.artifacts = workflowArtifacts;
+    await writeJson(this.stateFile("workflow_state.json"), workflowState);
+    await this.syncRootIndex(timestamp);
+    return promptPath;
+  }
+
   async recordHookEvent(
     payload: Readonly<JsonObject>,
     options: { historyLimit?: number } = {}
@@ -946,6 +1086,31 @@ export class StateRepository {
     await this.syncRootIndex(timestamp);
   }
 
+  private async writeTextArtifact(options: {
+    kind: string;
+    text: string;
+    artifactPath: string;
+    label: string;
+    contentType: string;
+    options: ArtifactWriteOptions;
+  }): Promise<ArtifactRef> {
+    const createdAt = new Date().toISOString();
+    await mkdir(path.dirname(options.artifactPath), { recursive: true });
+    await writeFile(options.artifactPath, options.text, "utf8");
+    return {
+      kind: options.kind,
+      path: options.artifactPath,
+      label: options.label,
+      content_type: options.contentType,
+      created_at: createdAt,
+      run_id: options.options.runId ?? null,
+      role: options.options.role ?? null,
+      stage_name: options.options.stageName ?? null,
+      session_id: this.sessionId,
+      metadata: options.options.metadata ? { ...options.options.metadata } : {}
+    };
+  }
+
   private async activeSessionRepository(): Promise<StateRepository> {
     const sessionId = await this.sessionManager.readActiveSessionId();
     if (sessionId === null) {
@@ -988,6 +1153,12 @@ export class StateRepository {
       return relative.split(path.sep).join("/");
     }
     return filePath;
+  }
+
+  private async globalPromptMirrorPath(): Promise<string> {
+    const sessionState = await readJson(this.stateFile("session.json"));
+    const sessionId = String(sessionState.session_id ?? this.sessionId ?? "").trim();
+    return path.join(this.sessionsDir, sessionId, ".dev", "PROMPT.md");
   }
 
   private async discoverRepoGuidance(): Promise<RepoGuidance> {
