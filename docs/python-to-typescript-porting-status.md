@@ -40,6 +40,11 @@ Ported modules:
 - `backend/dormammu/agent/cli_adapter.py` shutdown interruption handling for
   active agent subprocesses and operator-visible shutdown output
   -> `runtime/src/agent/cliAdapter.ts`
+- agent runtime config fields from `backend/dormammu/config.py` including
+  `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
+  `token_exhaustion_patterns`, `process_timeout_seconds`, and
+  `fallback_on_nonzero_exit`
+  -> `runtime/src/agent/configuredRunner.ts`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -166,5 +171,6 @@ Port the remaining state repository orchestration surface:
 - Python runtime call sites still own CLI, daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
-The next slice should continue the agent runtime port by wiring the fallback
-execution surface into TypeScript call sites before Python call site removal.
+The next slice should continue the agent runtime port by adding a TypeScript
+runner entrypoint that consumes the configured agent runtime adapter before
+Python call site removal.
