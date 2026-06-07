@@ -49,6 +49,12 @@ Ported modules:
   `backend/dormammu/agent/role_taxonomy.py` built-in role profile catalog,
   role agent config parsing/merging, and effective profile normalization
   -> `runtime/src/agent/profiles.ts`
+- `backend/dormammu/agent/manifests.py` and
+  `backend/dormammu/agent/manifest_loader.py` manifest schema parsing,
+  manifest candidate enumeration, selected-profile tolerant discovery,
+  scope precedence, shadowing, same-scope duplicate rejection, and loaded
+  runtime definition conversion
+  -> `runtime/src/agent/manifests.ts`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -222,13 +228,14 @@ Validation:
 
 Port the remaining runtime orchestration surface:
 
-- runtime skill resolution can now be projected and recorded from TypeScript
-  search roots, but full config-backed profile resolution still depends on
-  Python `backend/dormammu/skills.py` and the Python agent profile/permission
-  model
+- runtime skill resolution and manifest-backed profile discovery/loading can
+  now be projected from TypeScript search roots, but full config-backed profile
+  resolution still depends on Python config resolvers and Python runtime call
+  sites
 - Python runtime call sites still own daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
 The next slice should use the accumulated contract coverage to start replacing
 remaining Python runtime fallback internals with TypeScript-owned
-implementations, beginning with manifest-backed profile discovery and loading.
+implementations, beginning with config-backed manifest profile resolution
+wiring for normalized runtime role profiles.
