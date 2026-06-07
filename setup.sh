@@ -48,7 +48,7 @@ Options:
   --with-telegram              Install Telegram dependencies and offer interactive bot setup
   --with-web                   Install web dependencies for `dormammu web`
   --skip-frontend-build        Do not build frontend/ static assets
-  --skip-npm-install           Do not run npm install in frontend/
+  --skip-npm-install           Do not run npm install in frontend/ or runtime/
   --start-web                  Start `dormammu web` after setup
   --shutdown-web               Stop a web server started by this setup script and exit
   --host <addr>                Web host for --start-web (default: 0.0.0.0)
@@ -170,6 +170,20 @@ install_launcher() {
 exec "${VENV_DIR}/bin/dormammu" "\$@"
 EOF
   chmod 755 "${LAUNCHER_DIR}/dormammu"
+
+  local runtime_cli="${ROOT_DIR}/runtime/dist/agent/runnerCli.js"
+  if [[ -f "${runtime_cli}" ]] && command -v node >/dev/null 2>&1; then
+    cat > "${BIN_DIR}/dormammu-agent-runner" <<EOF
+#!/usr/bin/env bash
+exec node "${runtime_cli}" "\$@"
+EOF
+    chmod 755 "${BIN_DIR}/dormammu-agent-runner"
+    cat > "${LAUNCHER_DIR}/dormammu-agent-runner" <<EOF
+#!/usr/bin/env bash
+exec "${BIN_DIR}/dormammu-agent-runner" "\$@"
+EOF
+    chmod 755 "${LAUNCHER_DIR}/dormammu-agent-runner"
+  fi
 }
 
 update_bashrc_path_entries() {
@@ -345,6 +359,30 @@ build_frontend_if_available() {
   cp -R "${frontend_dir}/dist/." "${ROOT_DIR}/backend/dormammu/web/static/"
 }
 
+build_runtime_if_available() {
+  local runtime_dir="${ROOT_DIR}/runtime"
+  [[ -f "${runtime_dir}/package.json" ]] || return 0
+  if ! command -v npm >/dev/null 2>&1; then
+    warn "npm was not found; skipping TypeScript runtime build"
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    warn "node was not found; skipping TypeScript runtime build"
+    return 0
+  fi
+  (
+    cd "${runtime_dir}"
+    if [[ "${SKIP_NPM_INSTALL}" -eq 0 && ! -d node_modules ]]; then
+      npm install
+    fi
+    if [[ ! -d node_modules ]]; then
+      warn "runtime/node_modules is missing; skipping TypeScript runtime build"
+      return 0
+    fi
+    npm run build
+  )
+}
+
 _tty_readable() {
   [ -t 0 ] && return 0
   [ -r /dev/tty ] && [ -w /dev/tty ] && return 0
@@ -429,6 +467,7 @@ main() {
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
   ensure_build_backend
   build_frontend_if_available
+  build_runtime_if_available
   "${VENV_DIR}/bin/python" -m pip install --use-pep517 --upgrade "$(editable_spec)"
   install_launcher
   install_agents_bundle
@@ -464,6 +503,7 @@ Virtualenv: ${VENV_DIR}
 Binary directory: ${BIN_DIR}
 Launcher: ${LAUNCHER_DIR}/dormammu
 Launcher directory: ${LAUNCHER_DIR}
+TypeScript runner: $(if [[ -x "${LAUNCHER_DIR}/dormammu-agent-runner" ]]; then printf '%s' "${LAUNCHER_DIR}/dormammu-agent-runner"; else printf 'not installed'; fi)
 Config: ${CONFIG_PATH}
 Config file: ${CONFIG_PATH}
 Agents directory: ${INSTALL_ROOT}/.agents

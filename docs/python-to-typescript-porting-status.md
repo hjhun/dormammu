@@ -53,6 +53,9 @@ Ported modules:
 - Python opt-in compatibility bridge for delegating `CliAdapter.run_once` to
   `dormammu-agent-runner`
   -> `backend/dormammu/agent/cli_adapter.py`
+- setup/install wiring for building `runtime/` and exposing
+  `dormammu-agent-runner` as an installed launcher
+  -> `setup.sh`, `install.sh`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -179,5 +182,6 @@ Port the remaining state repository orchestration surface:
 - Python runtime call sites still own daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
-The next slice should add packaging/install wiring for `dormammu-agent-runner`
-so the opt-in bridge can resolve a stable executable in installed environments.
+The next slice should add an installed-environment smoke test that exercises
+the opt-in TypeScript runner bridge through the real `dormammu-agent-runner`
+launcher before broader Python call site migration.

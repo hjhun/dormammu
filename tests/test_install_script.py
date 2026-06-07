@@ -76,9 +76,12 @@ class InstallScriptTests(unittest.TestCase):
             )
 
             launcher = launcher_dir / "dormammu"
+            runner_launcher = launcher_dir / "dormammu-agent-runner"
             self.assertTrue(launcher.exists())
+            self.assertTrue(runner_launcher.exists())
             self.assertIn("Installed dormammu into", first_result.stdout)
             self.assertIn(str(launcher_dir), first_result.stdout)
+            self.assertIn(f"TypeScript runner: {runner_launcher}", first_result.stdout)
             self.assertIn("source ~/.bashrc", first_result.stdout)
             self.assertIn(
                 f"Added {launcher_dir} PATH entry to {bashrc_path}: yes",
@@ -98,6 +101,16 @@ class InstallScriptTests(unittest.TestCase):
                 check=True,
             )
             self.assertIn("usage: dormammu", help_result.stdout)
+
+            runner_help_result = subprocess.run(
+                [str(runner_launcher), "--help"],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertIn("Usage: dormammu-agent-runner", runner_help_result.stdout)
 
             export_line = f'export PATH="{launcher_dir}:$PATH"'
             bashrc_contents = bashrc_path.read_text(encoding="utf-8")
@@ -154,10 +167,14 @@ class InstallScriptTests(unittest.TestCase):
             bin_dir = install_root / "bin"
             config_path = install_root / "config"
             binary = bin_dir / "dormammu"
+            runner_binary = bin_dir / "dormammu-agent-runner"
             launcher = launcher_dir / "dormammu"
+            runner_launcher = launcher_dir / "dormammu-agent-runner"
             agents_dir = install_root / ".agents"
             self.assertTrue(binary.exists())
+            self.assertTrue(runner_binary.exists())
             self.assertTrue(launcher.exists())
+            self.assertTrue(runner_launcher.exists())
             self.assertTrue(config_path.exists())
             self.assertTrue((agents_dir / "AGENTS.md").exists())
             self.assertIn("Installed dormammu into", first_result.stdout)
@@ -165,6 +182,7 @@ class InstallScriptTests(unittest.TestCase):
             self.assertIn(str(bin_dir), first_result.stdout)
             self.assertIn(str(launcher_dir), first_result.stdout)
             self.assertIn(str(agents_dir), first_result.stdout)
+            self.assertIn(f"TypeScript runner: {runner_launcher}", first_result.stdout)
             self.assertIn(str(codex_path), first_result.stdout)
             self.assertIn("source ~/.bashrc", second_result.stdout)
 
@@ -177,6 +195,16 @@ class InstallScriptTests(unittest.TestCase):
                 check=True,
             )
             self.assertIn("usage: dormammu", help_result.stdout)
+
+            runner_help_result = subprocess.run(
+                [str(runner_launcher), "--help"],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertIn("Usage: dormammu-agent-runner", runner_help_result.stdout)
 
             package_assets_result = subprocess.run(
                 [
@@ -329,6 +357,7 @@ class InstallScriptTests(unittest.TestCase):
 
             config_payload = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(config_payload["active_agent_cli"], str(codex_path))
+            self.assertNotIn("typescript_agent_runner_cli", config_payload)
             self.assertEqual(
                 config_payload["cli_overrides"]["cline"]["extra_args"],
                 ["-y", "--timeout", "1200"],

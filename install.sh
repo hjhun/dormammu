@@ -260,6 +260,8 @@ sync_path() {
       rsync -a --checksum --delete \
         --exclude 'frontend/node_modules/' \
         --exclude 'frontend/dist/' \
+        --exclude 'runtime/node_modules/' \
+        --exclude 'runtime/dist/' \
         --exclude '.venv/' \
         --exclude '.run/' \
         "${source_path}/" "${target_path}/"
