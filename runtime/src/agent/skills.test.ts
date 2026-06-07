@@ -18,6 +18,10 @@ import {
   normalizeSkillSourceScope,
   parseSkillDocumentPayload,
   parseSkillDocumentText,
+  resolveRuntimeSkillResolution,
+  runtimeSkillLogLine,
+  runtimeSkillPromptLines,
+  runtimeSkillSummary,
   skillSourcePrecedence
 } from "./skills.js";
 
@@ -416,4 +420,96 @@ test("filterSkillsForProfile can allow named skills when default is denied", asy
   );
   assert.deepEqual(visibility.hidden.map((entry) => entry.name), ["beta-skill"]);
   assert.deepEqual(visibility.visible.map((entry) => entry.scope), ["project", "built_in"]);
+});
+
+test("resolveRuntimeSkillResolution is quiet when only built-in visibility applies", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-runtime-skills-"));
+  const builtInRoot = path.join(root, "built-in");
+  await writeSkill(builtInRoot, "planning-agent", { name: "planning-agent" });
+
+  const resolution = resolveRuntimeSkillResolution(
+    await discoverSkills([{ scope: "built_in", path: builtInRoot }]),
+    {
+      role: "planner",
+      profile: {
+        name: "planner",
+        description: "Planner profile."
+      }
+    }
+  );
+
+  assert.equal(resolution.summary.custom_visible_count, 0);
+  assert.equal(resolution.summary.profile_source, "built_in");
+  assert.equal(resolution.summary.interesting_for_operator, false);
+  assert.deepEqual(resolution.prompt_lines, []);
+  assert.deepEqual(runtimeSkillPromptLines(resolution), []);
+  assert.deepEqual(runtimeSkillSummary(resolution), resolution.summary);
+  assert.equal(runtimeSkillLogLine(resolution), null);
+});
+
+test("resolveRuntimeSkillResolution reports custom and hidden skill visibility", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-runtime-skills-"));
+  const projectRoot = path.join(root, "project");
+  const userRoot = path.join(root, "user");
+  await writeSkill(projectRoot, "designing-agent", { name: "designing-agent" });
+  await writeSkill(userRoot, "reviewer-agent", { name: "reviewer-agent" });
+
+  const resolution = resolveRuntimeSkillResolution(
+    await discoverSkills([
+      { scope: "project", path: projectRoot },
+      { scope: "user", path: userRoot }
+    ]),
+    {
+      role: "designer",
+      profile: {
+        name: "designer",
+        source: "project",
+        description: "Designer profile.",
+        preloaded_skills: ["designing-agent", "missing-skill"],
+        metadata: {
+          dormammu_runtime: {
+            runtime_role: "designer",
+            selected_via_role_config: false
+          }
+        },
+        permission_policy: {
+          skills: {
+            rules: [{ skill: "reviewer-agent", decision: "deny" }]
+          }
+        }
+      }
+    }
+  );
+
+  assert.equal(resolution.summary.candidate_count, 2);
+  assert.equal(resolution.summary.custom_selected_count, 2);
+  assert.equal(resolution.summary.custom_visible_count, 1);
+  assert.equal(resolution.summary.hidden_count, 1);
+  assert.equal(resolution.summary.preloaded_count, 1);
+  assert.equal(resolution.summary.missing_preload_count, 1);
+  assert.equal(resolution.summary.interesting_for_operator, true);
+  assert.deepEqual(resolution.profile.runtime_metadata, {
+    runtime_role: "designer",
+    selected_via_role_config: false
+  });
+  assert.deepEqual(resolution.prompt_lines, [
+    "Runtime skills for designer / designer (project profile):",
+    "Visible project/user skills: designing-agent [project]",
+    "Preloaded skills: designing-agent",
+    "Hidden by profile policy: reviewer-agent",
+    "Missing requested preloads: missing-skill"
+  ]);
+  assert.equal(
+    runtimeSkillLogLine(resolution),
+    "runtime skills: visible=1 custom=1 hidden=1 preloaded=1 missing_preloads=1 shadowed=0"
+  );
+  assert.deepEqual(runtimeSkillPromptLines({ prompt_lines: ["", "  ", "one"] }), ["one"]);
+  assert.deepEqual(runtimeSkillSummary({ summary: { role: "designer" } }), {
+    role: "designer"
+  });
+
+  const visibility = resolution.visibility as Record<string, unknown>;
+  const hidden = visibility.hidden as Record<string, unknown>[];
+  assert.equal(hidden[0].name, "reviewer-agent");
+  assert.equal(hidden[0].visibility_decision, "deny");
 });

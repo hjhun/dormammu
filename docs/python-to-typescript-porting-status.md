@@ -85,7 +85,8 @@ Ported modules:
 - typed `SKILL.md` document parsing, metadata validation, source scope
   normalization, source precedence helpers, candidate enumeration,
   discovery/shadowing resolution, profile permission filtering, preload
-  classification, and missing preload reporting from
+  classification, missing preload reporting, runtime skill resolution summary,
+  prompt-line projection, and log-line projection from
   `backend/dormammu/skills.py`
   -> `runtime/src/agent/skills.ts`
 - `backend/dormammu/workflow_policy.py`
@@ -209,11 +210,12 @@ Validation:
 
 Port the remaining runtime orchestration surface:
 
-- runtime skill prompt/log projection still depends on Python
+- runtime skill resolution can now be projected in TypeScript, but config-backed
+  profile resolution and runtime call-site wiring still depend on Python
   `backend/dormammu/skills.py` and the Python agent profile/permission model
 - Python runtime call sites still own daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
 The next slice should use the accumulated contract coverage to start replacing
 remaining Python runtime fallback internals with TypeScript-owned
-implementations, beginning with runtime skill prompt/log projection.
+implementations, beginning with config-backed runtime skill resolution wiring.

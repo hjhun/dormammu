@@ -102,11 +102,13 @@ export type SkillPermissionPolicy = {
 
 export type AgentSkillProfile = {
   name: string;
+  description?: string;
   source?: string;
   preloaded_skills?: string[];
   permission_policy?: {
     skills?: SkillPermissionPolicy;
   };
+  metadata?: Record<string, unknown>;
 };
 
 export type MissingSkillPreload = {
@@ -131,6 +133,38 @@ export type ProfileSkillVisibility = {
   preloaded: FilteredSkillEntry[];
   missing_preloads: MissingSkillPreload[];
   shadowed: DiscoveredSkill[];
+};
+
+export type RuntimeSkillSummary = {
+  role: string;
+  profile_name: string;
+  profile_source: string;
+  candidate_count: number;
+  selected_count: number;
+  invalid_count: number;
+  visible_count: number;
+  hidden_count: number;
+  preloaded_count: number;
+  missing_preload_count: number;
+  shadowed_count: number;
+  custom_selected_count: number;
+  custom_visible_count: number;
+  interesting_for_operator: boolean;
+};
+
+export type RuntimeSkillResolution = {
+  role: string;
+  profile: {
+    name: string;
+    source: string;
+    description: string;
+    preloaded_skills: string[];
+    runtime_metadata: Record<string, unknown>;
+  };
+  summary: RuntimeSkillSummary;
+  discovery: Record<string, unknown>;
+  visibility: Record<string, unknown>;
+  prompt_lines: string[];
 };
 
 export async function loadSkillDocument(path: string): Promise<SkillDocument> {
@@ -231,7 +265,7 @@ export function filterSkillsForProfile(
     .map((name) => ({ name, reason: "not_discovered" as const }));
   return {
     profile_name: profile.name,
-    profile_source: profile.source ?? "builtin",
+    profile_source: profile.source ?? "built_in",
     default_decision: profile.permission_policy?.skills?.default ?? "ask",
     entries,
     visible: entries.filter((entry) => entry.visible),
@@ -240,6 +274,221 @@ export function filterSkillsForProfile(
     missing_preloads: missingPreloads,
     shadowed: discovery.shadowed
   };
+}
+
+export function resolveRuntimeSkillResolution(
+  discovery: SkillDiscovery,
+  options: {
+    role: string;
+    profile: AgentSkillProfile;
+    visibility?: ProfileSkillVisibility;
+  }
+): RuntimeSkillResolution {
+  const role = options.role.trim();
+  if (!role) {
+    throw new Error("role must contain a non-empty value.");
+  }
+  const profile = options.profile;
+  const visibility = options.visibility ?? filterSkillsForProfile(discovery, profile);
+  const customSelected = discovery.selected.filter((skill) => isCustomSkillScope(skill.scope));
+  const customVisible = visibility.visible.filter((entry) => isCustomSkillScope(entry.scope));
+  const interestingForOperator =
+    customSelected.length > 0 ||
+    visibility.hidden.length > 0 ||
+    visibility.preloaded.length > 0 ||
+    visibility.missing_preloads.length > 0 ||
+    visibility.shadowed.length > 0;
+  const profileSource = profile.source ?? "built_in";
+  const summary: RuntimeSkillSummary = {
+    role,
+    profile_name: profile.name,
+    profile_source: profileSource,
+    candidate_count: discovery.candidates.length,
+    selected_count: discovery.selected.length,
+    invalid_count: discovery.invalid.length,
+    visible_count: visibility.visible.length,
+    hidden_count: visibility.hidden.length,
+    preloaded_count: visibility.preloaded.length,
+    missing_preload_count: visibility.missing_preloads.length,
+    shadowed_count: visibility.shadowed.length,
+    custom_selected_count: customSelected.length,
+    custom_visible_count: customVisible.length,
+    interesting_for_operator: interestingForOperator
+  };
+  return {
+    role,
+    profile: {
+      name: profile.name,
+      source: profileSource,
+      description: profile.description ?? "",
+      preloaded_skills: normalizeRequestedPreloads(profile.preloaded_skills ?? []),
+      runtime_metadata: runtimeMetadata(profile.metadata)
+    },
+    summary,
+    discovery: skillDiscoveryToPayload(discovery),
+    visibility: profileSkillVisibilityToPayload(visibility),
+    prompt_lines: runtimeSkillResolutionPromptLines({
+      role,
+      profileName: profile.name,
+      profileSource,
+      interestingForOperator,
+      customVisible,
+      visibility
+    })
+  };
+}
+
+export function runtimeSkillPromptLines(payload: unknown): string[] {
+  if (!isRecord(payload) || !Array.isArray(payload.prompt_lines)) {
+    return [];
+  }
+  return payload.prompt_lines.filter(
+    (line): line is string => typeof line === "string" && line.trim().length > 0
+  );
+}
+
+export function runtimeSkillSummary(payload: unknown): Record<string, unknown> {
+  if (!isRecord(payload) || !isRecord(payload.summary)) {
+    return {};
+  }
+  return { ...payload.summary };
+}
+
+export function runtimeSkillLogLine(payload: unknown): string | null {
+  const summary = runtimeSkillSummary(payload);
+  if (summary.interesting_for_operator !== true) {
+    return null;
+  }
+  return (
+    "runtime skills: " +
+    `visible=${summaryCount(summary.visible_count)} ` +
+    `custom=${summaryCount(summary.custom_visible_count)} ` +
+    `hidden=${summaryCount(summary.hidden_count)} ` +
+    `preloaded=${summaryCount(summary.preloaded_count)} ` +
+    `missing_preloads=${summaryCount(summary.missing_preload_count)} ` +
+    `shadowed=${summaryCount(summary.shadowed_count)}`
+  );
+}
+
+function isCustomSkillScope(scope: SkillSourceScope): boolean {
+  return scope === "project" || scope === "user";
+}
+
+function runtimeSkillResolutionPromptLines(options: {
+  role: string;
+  profileName: string;
+  profileSource: string;
+  interestingForOperator: boolean;
+  customVisible: FilteredSkillEntry[];
+  visibility: ProfileSkillVisibility;
+}): string[] {
+  if (!options.interestingForOperator) {
+    return [];
+  }
+  const lines = [
+    `Runtime skills for ${options.role} / ${options.profileName} (${options.profileSource} profile):`
+  ];
+  if (options.customVisible.length) {
+    lines.push(
+      "Visible project/user skills: " +
+        options.customVisible.map((entry) => `${entry.name} [${entry.scope}]`).join(", ")
+    );
+  }
+  if (options.visibility.preloaded.length) {
+    lines.push(
+      "Preloaded skills: " +
+        options.visibility.preloaded.map((entry) => entry.name).join(", ")
+    );
+  }
+  if (options.visibility.hidden.length) {
+    lines.push(
+      "Hidden by profile policy: " +
+        options.visibility.hidden.map((entry) => entry.name).join(", ")
+    );
+  }
+  if (options.visibility.missing_preloads.length) {
+    lines.push(
+      "Missing requested preloads: " +
+        options.visibility.missing_preloads.map((item) => item.name).join(", ")
+    );
+  }
+  if (options.visibility.shadowed.length) {
+    lines.push(
+      "Shadowed by precedence: " +
+        options.visibility.shadowed
+          .map((skill) => `${skill.name} [${skill.scope}]`)
+          .join(", ")
+    );
+  }
+  return lines;
+}
+
+function skillDiscoveryToPayload(discovery: SkillDiscovery): Record<string, unknown> {
+  return {
+    search_roots: discovery.search_roots.map((root) => ({ ...root })),
+    candidates: discovery.candidates.map(skillCandidateToPayload),
+    selected: discovery.selected.map(discoveredSkillToPayload),
+    shadowed: discovery.shadowed.map(discoveredSkillToPayload),
+    invalid: discovery.invalid.map((candidate) => ({
+      ...skillCandidateToPayload(candidate.candidate),
+      error: candidate.error
+    }))
+  };
+}
+
+function profileSkillVisibilityToPayload(
+  visibility: ProfileSkillVisibility
+): Record<string, unknown> {
+  return {
+    profile_name: visibility.profile_name,
+    profile_source: visibility.profile_source,
+    default_decision: visibility.default_decision,
+    entries: visibility.entries.map(filteredSkillEntryToPayload),
+    visible: visibility.visible.map(filteredSkillEntryToPayload),
+    hidden: visibility.hidden.map(filteredSkillEntryToPayload),
+    preloaded: visibility.preloaded.map(filteredSkillEntryToPayload),
+    missing_preloads: visibility.missing_preloads.map((item) => ({ ...item })),
+    shadowed: visibility.shadowed.map(discoveredSkillToPayload)
+  };
+}
+
+function skillCandidateToPayload(candidate: SkillCandidate): Record<string, string> {
+  return {
+    scope: candidate.scope,
+    root_dir: candidate.root_dir,
+    path: candidate.path,
+    relative_path: candidate.relative_path
+  };
+}
+
+function discoveredSkillToPayload(skill: DiscoveredSkill): Record<string, unknown> {
+  return {
+    name: skill.name,
+    scope: skill.scope,
+    path: skill.path,
+    relative_path: skill.relative_path,
+    source_precedence: skill.source_precedence,
+    description: skill.description
+  };
+}
+
+function filteredSkillEntryToPayload(entry: FilteredSkillEntry): Record<string, unknown> {
+  return {
+    ...discoveredSkillToPayload(entry),
+    visibility_decision: entry.visibility_decision,
+    visible: entry.visible,
+    requested_preload: entry.requested_preload,
+    preloaded: entry.preloaded
+  };
+}
+
+function runtimeMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
+  const candidate = metadata?.dormammu_runtime;
+  return isRecord(candidate) ? { ...candidate } : {};
+}
+
+function summaryCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export async function loadSkillDefinition(
