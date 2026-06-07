@@ -151,18 +151,23 @@ test("rootIndexLock serializes concurrent operations in one process", async () =
     const firstMayFinish = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
+    let markFirstStarted: () => void = () => undefined;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
 
     const first = operatorSync.rootIndexLock(async () => {
       events.push("first:start");
+      markFirstStarted();
       await firstMayFinish;
       events.push("first:end");
     });
+    await firstStarted;
     const second = operatorSync.rootIndexLock(async () => {
       events.push("second:start");
       events.push("second:end");
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
     assert.deepEqual(events, ["first:start"]);
     releaseFirst();
     await Promise.all([first, second]);

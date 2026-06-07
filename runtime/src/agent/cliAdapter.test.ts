@@ -8,7 +8,12 @@ import { Writable } from "node:stream";
 
 import type { CliCapabilities } from "./commandBuilder.js";
 import type { AgentRunStarted } from "./runArtifacts.js";
-import { inspectCliCapabilities, runAgentCommand, runSingleAgentCommand } from "./cliAdapter.js";
+import {
+  AgentCommandAbortedError,
+  inspectCliCapabilities,
+  runAgentCommand,
+  runSingleAgentCommand
+} from "./cliAdapter.js";
 
 const baseCapabilities: CliCapabilities = {
   helpFlag: "--help",
@@ -164,6 +169,41 @@ test("runSingleAgentCommand terminates timed out processes", async () => {
   const metadata = JSON.parse(await readFile(result.metadataPath, "utf8"));
   assert.equal(metadata.exit_code, -1);
   assert.equal(metadata.timed_out, true);
+});
+
+test("runSingleAgentCommand aborts running processes on shutdown signal", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dormammu-cli-adapter-"));
+  const logsDir = path.join(root, ".dev", "logs");
+  const hanging = await writeHangingAgent(root);
+  const controller = new AbortController();
+  const mirror = new MemoryWritable();
+
+  await assert.rejects(
+    runSingleAgentCommand({
+      request: {
+        cliPath: hanging,
+        promptText: "Stop this process.",
+        repoRoot: root,
+        inputMode: "file"
+      },
+      capabilities: baseCapabilities,
+      logsDir,
+      runId: "run-abort",
+      abortSignal: controller.signal,
+      liveOutput: mirror,
+      onStarted() {
+        controller.abort();
+      }
+    }),
+    AgentCommandAbortedError
+  );
+
+  const shutdownPattern = /interrupted by daemon shutdown request/;
+  assert.match(
+    await readFile(path.join(logsDir, "run-abort.stdout.log"), "utf8"),
+    shutdownPattern
+  );
+  assert.match(mirror.text(), shutdownPattern);
 });
 
 test("inspectCliCapabilities parses help output and prefixed help output", async () => {

@@ -22,9 +22,19 @@ import {
 } from "./runArtifacts.js";
 
 export const CLI_TIMEOUT_MESSAGE_PREFIX = "[dormammu] Agent CLI process timed out after";
+export const CLI_SHUTDOWN_GRACE_MS = 2000;
+export const CLI_SHUTDOWN_MESSAGE =
+  "\n[dormammu] Agent CLI process interrupted by daemon shutdown request.\n";
 export const CLI_RETRY_DELAY_MS = 1000;
 export const CLI_RETRY_DELAY_MESSAGE =
   "Taking a short break for 1 seconds before the next agent CLI call.";
+
+export class AgentCommandAbortedError extends Error {
+  constructor() {
+    super("Agent CLI process interrupted by daemon shutdown request.");
+    this.name = "AgentCommandAbortedError";
+  }
+}
 
 export type CliInvocationOptions = {
   extraArgs?: readonly string[];
@@ -45,6 +55,7 @@ export type RunSingleAgentCommandOptions = {
   runId?: string;
   nowFactory?: () => string;
   timeoutMs?: number | null;
+  abortSignal?: AbortSignal | null;
   liveOutput?: Writable | null;
   onStarted?: (started: AgentRunStarted) => void;
 };
@@ -206,6 +217,7 @@ export async function runSingleAgentCommand(
   const stdoutStream = createWriteStream(stdoutPath, { flags: "w" });
   const stderrStream = createWriteStream(stderrPath, { flags: "w" });
   let timedOut = false;
+  let aborted = false;
   let exitCode = -1;
 
   try {
@@ -215,11 +227,15 @@ export async function runSingleAgentCommand(
       env: options.env,
       stdinInput: commandPlan.stdinInput,
       timeoutMs: options.timeoutMs,
+      abortSignal: options.abortSignal ?? null,
       stdoutStream,
       stderrStream,
       liveOutput: options.liveOutput ?? null,
       onTimedOut() {
         timedOut = true;
+      },
+      onAborted() {
+        aborted = true;
       }
     });
     if (timedOut) {
@@ -231,6 +247,11 @@ export async function runSingleAgentCommand(
       ].join("\n");
       stdoutStream.write(message);
       options.liveOutput?.write(message);
+    }
+    if (aborted) {
+      stdoutStream.write(CLI_SHUTDOWN_MESSAGE);
+      options.liveOutput?.write(CLI_SHUTDOWN_MESSAGE);
+      throw new AgentCommandAbortedError();
     }
   } finally {
     stdoutStream.end();
@@ -255,10 +276,12 @@ async function executeCommand(options: {
   env?: NodeJS.ProcessEnv;
   stdinInput: string | null;
   timeoutMs?: number | null;
+  abortSignal?: AbortSignal | null;
   stdoutStream: Writable;
   stderrStream: Writable;
   liveOutput: Writable | null;
   onTimedOut: () => void;
+  onAborted: () => void;
 }): Promise<number> {
   if (!options.argv.length) {
     throw new Error("Cannot execute an empty agent command.");
@@ -285,8 +308,19 @@ async function executeCommand(options: {
 
   return await new Promise<number>((resolve, reject) => {
     let timeout: NodeJS.Timeout | null = null;
+    let abortGraceTimeout: NodeJS.Timeout | null = null;
     let settled = false;
 
+    const abortHandler = (): void => {
+      if (settled) {
+        return;
+      }
+      options.onAborted();
+      child.kill("SIGTERM");
+      abortGraceTimeout = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, CLI_SHUTDOWN_GRACE_MS);
+    };
     const settle = (callback: () => void): void => {
       if (settled) {
         return;
@@ -295,6 +329,10 @@ async function executeCommand(options: {
       if (timeout !== null) {
         clearTimeout(timeout);
       }
+      if (abortGraceTimeout !== null) {
+        clearTimeout(abortGraceTimeout);
+      }
+      options.abortSignal?.removeEventListener("abort", abortHandler);
       callback();
     };
 
@@ -310,6 +348,11 @@ async function executeCommand(options: {
         options.onTimedOut();
         child.kill("SIGKILL");
       }, options.timeoutMs);
+    }
+    if (options.abortSignal?.aborted) {
+      abortHandler();
+    } else {
+      options.abortSignal?.addEventListener("abort", abortHandler, { once: true });
     }
   });
 }

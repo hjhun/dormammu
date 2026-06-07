@@ -37,6 +37,9 @@ Ported modules:
   CLI invocation override merging, token-exhaustion detection, and nonzero-exit
   fallback result enrichment
   -> `runtime/src/agent/cliAdapter.ts`
+- `backend/dormammu/agent/cli_adapter.py` shutdown interruption handling for
+  active agent subprocesses and operator-visible shutdown output
+  -> `runtime/src/agent/cliAdapter.ts`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -164,5 +167,4 @@ Port the remaining state repository orchestration surface:
   execution while TypeScript parity surfaces are assembled
 
 The next slice should continue the agent runtime port by wiring the fallback
-execution surface into TypeScript call sites and extending coverage for
-subprocess shutdown/stop-event semantics before Python call site removal.
+execution surface into TypeScript call sites before Python call site removal.
