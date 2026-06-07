@@ -755,7 +755,7 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(captured["request"]["prompt_text"], "Run through TypeScript.")
             self.assertEqual(captured["request"]["input_mode"], "stdin")
 
-    def test_run_once_keeps_python_path_when_started_callback_is_required(self) -> None:
+    def test_run_once_uses_typescript_events_for_started_callback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
@@ -778,10 +778,35 @@ class CliAdapterTests(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(len(started_events), 1)
-            self.assertIn("--prompt-file", result.command)
-            self.assertFalse((root / "captured-runner-payload.json").exists())
+            self.assertEqual(started_events[0].run_id, result.run_id)
+            self.assertEqual(result.command, (str(fake_cli), "--typescript-runner"))
+            self.assertTrue((root / "captured-runner-payload.json").exists())
 
-    def test_run_once_keeps_python_path_when_stop_event_is_required(self) -> None:
+    def test_run_once_propagates_typescript_started_callback_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            self._write_fake_typescript_runner(root)
+            config = AppConfig.load(repo_root=root).with_overrides(
+                typescript_agent_runner_cli=root / "ts-runner",
+            )
+
+            def fail_started(_started: AgentRunStarted) -> None:
+                raise RuntimeError("started callback failed")
+
+            with self.assertRaisesRegex(RuntimeError, "started callback failed"):
+                CliAdapter(config).run_once(
+                    AgentRunRequest(
+                        cli_path=fake_cli,
+                        prompt_text="Propagate callback errors.",
+                        repo_root=root,
+                        run_label="started-callback-error",
+                    ),
+                    on_started=fail_started,
+                )
+
+    def test_run_once_uses_typescript_events_when_stop_event_is_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
@@ -801,8 +826,71 @@ class CliAdapterTests(unittest.TestCase):
             )
 
             self.assertEqual(result.exit_code, 0)
-            self.assertIn("--prompt-file", result.command)
-            self.assertFalse((root / "captured-runner-payload.json").exists())
+            self.assertEqual(result.command, (str(fake_cli), "--typescript-runner"))
+            self.assertTrue((root / "captured-runner-payload.json").exists())
+
+    def test_run_once_streams_typescript_runner_output_to_live_stream(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            self._write_fake_typescript_runner(root)
+            config = AppConfig.load(repo_root=root).with_overrides(
+                typescript_agent_runner_cli=root / "ts-runner",
+            )
+
+            live_stream = io.StringIO()
+            result = CliAdapter(config, live_output_stream=live_stream).run_once(
+                AgentRunRequest(
+                    cli_path=fake_cli,
+                    prompt_text="Stream through TypeScript.",
+                    repo_root=root,
+                    run_label="typescript-live-output",
+                )
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("typescript runner stdout", live_stream.getvalue())
+
+    def test_run_once_stops_typescript_runner_when_stop_event_is_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            fake_cli = self._write_fake_cli(root)
+            runner_cli = root / "slow-ts-runner"
+            runner_cli.write_text(
+                textwrap.dedent(
+                    f"""\
+                    #!{sys.executable}
+                    import sys
+                    import time
+
+                    sys.stdin.read()
+                    time.sleep(30)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            runner_cli.chmod(runner_cli.stat().st_mode | stat.S_IEXEC)
+            config = AppConfig.load(repo_root=root).with_overrides(
+                typescript_agent_runner_cli=runner_cli,
+            )
+            stop_event = threading.Event()
+
+            timer = threading.Timer(0.2, stop_event.set)
+            timer.start()
+            try:
+                with self.assertRaises(KeyboardInterrupt):
+                    CliAdapter(config, stop_event=stop_event).run_once(
+                        AgentRunRequest(
+                            cli_path=fake_cli,
+                            prompt_text="Stop the TypeScript runner.",
+                            repo_root=root,
+                            run_label="typescript-stop-event",
+                        )
+                    )
+            finally:
+                timer.cancel()
 
     def test_run_once_reports_typescript_runner_process_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -888,6 +976,7 @@ class CliAdapterTests(unittest.TestCase):
             textwrap.dedent(
                 f"""\
                 #!{sys.executable}
+                import base64
                 import json
                 from pathlib import Path
                 import sys
@@ -947,6 +1036,26 @@ class CliAdapterTests(unittest.TestCase):
                         }},
                     }},
                 }}
+                if payload.get("event_stream"):
+                    started = dict(result)
+                    started.pop("exit_code")
+                    started.pop("completed_at")
+                    started.pop("requested_cli_path")
+                    started.pop("attempted_cli_paths")
+                    started.pop("fallback_trigger")
+                    started.pop("timed_out")
+                    print(
+                        "DORMAMMU_EVENT " + json.dumps({{"type": "started", "started": started}}),
+                        file=sys.stderr,
+                    )
+                    print(
+                        "DORMAMMU_EVENT "
+                        + json.dumps({{
+                            "type": "output",
+                            "data": base64.b64encode(b"typescript runner stdout\\n").decode("ascii"),
+                        }}),
+                        file=sys.stderr,
+                    )
                 print(json.dumps(result))
                 """
             ),

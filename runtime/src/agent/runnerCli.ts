@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { Writable } from "node:stream";
 
 import {
   runAgentRunnerEntrypoint,
   type AgentRunnerEntrypointPayload
 } from "./runnerEntrypoint.js";
+import type { AgentRunStarted } from "./runArtifacts.js";
+import { agentRunStartedToDict } from "./runArtifacts.js";
 
 const USAGE = [
   "Usage: dormammu-agent-runner [payload.json|-]",
@@ -21,12 +24,46 @@ export async function runAgentRunnerCli(args: string[] = process.argv.slice(2)):
       return 0;
     }
     const payload = await readPayload(args);
-    const result = await runAgentRunnerEntrypoint(payload);
+    const eventStream = payload.event_stream === true ? new RunnerEventStream() : null;
+    const abortController = new AbortController();
+    const result = await runWithSignalHandlers(payload, eventStream, abortController);
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return 0;
   } catch (error) {
     process.stderr.write(`dormammu-agent-runner: ${formatError(error)}\n`);
     return 1;
+  }
+}
+
+async function runWithSignalHandlers(
+  payload: AgentRunnerEntrypointPayload,
+  eventStream: RunnerEventStream | null,
+  abortController: AbortController
+): Promise<Awaited<ReturnType<typeof runAgentRunnerEntrypoint>>> {
+  const shutdownHandler = (): void => {
+    eventStream?.writeEvent({ type: "aborted" });
+    abortController.abort();
+  };
+  process.once("SIGINT", shutdownHandler);
+  process.once("SIGTERM", shutdownHandler);
+  try {
+    return await runAgentRunnerEntrypoint(payload, {
+      abortSignal: abortController.signal,
+      liveOutput: eventStream?.outputWriter ?? null,
+      onStarted: eventStream
+        ? (started: AgentRunStarted): void => {
+            eventStream.writeEvent({
+              type: "started",
+              started: agentRunStartedToDict(started, {
+                includeHelpText: payload.include_help_text ?? true
+              })
+            });
+          }
+        : undefined
+    });
+  } finally {
+    process.removeListener("SIGINT", shutdownHandler);
+    process.removeListener("SIGTERM", shutdownHandler);
   }
 }
 
@@ -55,6 +92,24 @@ async function readStdin(): Promise<string> {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+class RunnerEventStream {
+  readonly outputWriter = new Writable({
+    write: (chunk, _encoding, callback) => {
+      this.writeEvent({
+        type: "output",
+        data: Buffer.isBuffer(chunk)
+          ? chunk.toString("base64")
+          : Buffer.from(String(chunk)).toString("base64")
+      });
+      callback();
+    }
+  });
+
+  writeEvent(payload: Record<string, unknown>): void {
+    process.stderr.write(`DORMAMMU_EVENT ${JSON.stringify(payload)}\n`);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

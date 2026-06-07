@@ -56,6 +56,10 @@ Ported modules:
 - bridge safety fallback that keeps Python `CliAdapter` semantics for calls
   requiring `on_started` current-run timing or `stop_event` shutdown handling
   -> `backend/dormammu/agent/cli_adapter.py`
+- structured `dormammu-agent-runner` event stream for started callbacks, live
+  output forwarding, and stop-event shutdown propagation through the Python
+  bridge
+  -> `runtime/src/agent/runnerCli.ts`, `backend/dormammu/agent/cli_adapter.py`
 - setup/install wiring for building `runtime/` and exposing
   `dormammu-agent-runner` as an installed launcher
   -> `setup.sh`, `install.sh`
@@ -188,7 +192,6 @@ Port the remaining state repository orchestration surface:
 - Python runtime call sites still own daemon, supervisor, and pipeline
   execution while TypeScript parity surfaces are assembled
 
-The next slice should extend `dormammu-agent-runner` with a structured event or
-streaming protocol so Python call sites that need current-run start timing,
-live output, or stop-event shutdown handling can move to the TypeScript runner
-without falling back to the Python adapter.
+The next slice should switch selected Python `CliAdapter` call sites from the
+protected Python fallback to the event-enabled TypeScript bridge and verify
+current-run state, live output, and shutdown behavior under those paths.

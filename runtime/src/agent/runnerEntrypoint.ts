@@ -27,6 +27,7 @@ export type AgentRunnerEntrypointPayload = {
   logs_dir: string;
   timeout_ms?: number | null;
   include_help_text?: boolean;
+  event_stream?: boolean;
 };
 
 export type AgentRunnerEntrypointOptions = Omit<

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
@@ -60,6 +61,7 @@ CLI_SHUTDOWN_GRACE_SECONDS = 2.0
 CLI_SHUTDOWN_MESSAGE = (
     "\n[dormammu] Agent CLI process interrupted by daemon shutdown request.\n"
 )
+RUNNER_EVENT_PREFIX = "DORMAMMU_EVENT "
 
 
 def _mirror_pipe(
@@ -165,8 +167,8 @@ class CliAdapter:
         *,
         on_started: Callable[[AgentRunStarted], None] | None = None,
     ) -> AgentRunResult:
-        if self._can_use_typescript_runner(on_started=on_started):
-            return self._run_once_with_typescript_runner(request)
+        if self._can_use_typescript_runner():
+            return self._run_once_with_typescript_runner(request, on_started=on_started)
 
         request = self._apply_cli_override(request, cli_path=request.cli_path)
         candidates = self._build_candidate_requests(request)
@@ -206,46 +208,121 @@ class CliAdapter:
     def _run_once_with_typescript_runner(
         self,
         request: AgentRunRequest,
+        *,
+        on_started: Callable[[AgentRunStarted], None] | None = None,
     ) -> AgentRunResult:
         runner_cli = self.config.typescript_agent_runner_cli
         if runner_cli is None:
             raise RuntimeError("typescript_agent_runner_cli is not configured")
 
         payload = self._typescript_runner_payload(request)
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [str(runner_cli)],
             cwd=request.workdir or request.repo_root,
             env=self._subprocess_env(),
-            input=json.dumps(payload, ensure_ascii=True),
-            capture_output=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
+            bufsize=1,
+            start_new_session=(os.name == "posix"),
         )
-        if completed.returncode != 0:
-            message = (completed.stderr or completed.stdout or "").strip()
+        stderr_lines: list[str] = []
+        event_errors: list[Exception] = []
+        stderr_thread = Thread(
+            target=self._consume_typescript_runner_events,
+            args=(process.stderr, stderr_lines, event_errors),
+            kwargs={"on_started": on_started},
+            daemon=True,
+        )
+        stderr_thread.start()
+
+        if process.stdin is not None:
+            process.stdin.write(json.dumps(payload, ensure_ascii=True))
+            process.stdin.close()
+
+        shutdown_requested = False
+        while True:
+            return_code = process.poll()
+            if return_code is not None:
+                break
+            if self.stop_event is not None and self.stop_event.is_set():
+                shutdown_requested = True
+                self._terminate_process(process)
+                try:
+                    process.wait(timeout=CLI_SHUTDOWN_GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    self._kill_process(process)
+                    process.wait()
+                break
+            time.sleep(CLI_WAIT_POLL_INTERVAL_SECONDS)
+
+        stdout_text = process.stdout.read() if process.stdout is not None else ""
+        stderr_thread.join()
+        if shutdown_requested:
+            raise KeyboardInterrupt()
+        if event_errors:
+            raise event_errors[0]
+        if process.returncode != 0:
+            message = "\n".join(stderr_lines).strip()
             detail = f": {message}" if message else ""
             raise RuntimeError(
-                f"TypeScript agent runner failed with exit code {completed.returncode}{detail}"
+                f"TypeScript agent runner failed with exit code {process.returncode}{detail}"
             )
 
         try:
-            result_payload = json.loads(completed.stdout)
+            result_payload = json.loads(stdout_text)
         except json.JSONDecodeError as exc:
             raise RuntimeError("TypeScript agent runner returned invalid JSON") from exc
 
         result = _agent_run_result_from_payload(result_payload)
         return result
 
-    def _can_use_typescript_runner(
+    def _consume_typescript_runner_events(
         self,
+        source: TextIO | None,
+        stderr_lines: list[str],
+        event_errors: list[Exception],
         *,
         on_started: Callable[[AgentRunStarted], None] | None,
-    ) -> bool:
+    ) -> None:
+        if source is None:
+            return
+        try:
+            for line in source:
+                text = line.rstrip("\n")
+                if not text.startswith(RUNNER_EVENT_PREFIX):
+                    stderr_lines.append(text)
+                    continue
+                try:
+                    event = json.loads(text[len(RUNNER_EVENT_PREFIX):])
+                except json.JSONDecodeError:
+                    stderr_lines.append(text)
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                event_type = event.get("type")
+                if event_type == "started" and on_started is not None:
+                    started = event.get("started")
+                    try:
+                        on_started(_agent_run_started_from_payload(started))
+                    except Exception as exc:
+                        event_errors.append(exc)
+                elif event_type == "output":
+                    data = event.get("data")
+                    if isinstance(data, str) and self.live_output_stream is not None:
+                        try:
+                            self.live_output_stream.write(
+                                base64.b64decode(data).decode("utf-8")
+                            )
+                            self.live_output_stream.flush()
+                        except Exception as exc:
+                            event_errors.append(exc)
+        finally:
+            source.close()
+
+    def _can_use_typescript_runner(self) -> bool:
         if self.config.typescript_agent_runner_cli is None:
-            return False
-        if on_started is not None:
-            return False
-        if self.stop_event is not None:
             return False
         return True
 
@@ -265,6 +342,7 @@ class CliAdapter:
             },
             "logs_dir": str(self.config.logs_dir),
             "include_help_text": True,
+            "event_stream": True,
         }
 
     def _pause_before_next_cli_call_if_needed(self) -> None:
@@ -786,6 +864,25 @@ def _typescript_config_payload(config: AppConfig) -> dict[str, object]:
         "process_timeout_seconds": config.process_timeout_seconds,
         "fallback_on_nonzero_exit": config.fallback_on_nonzero_exit,
     }
+
+
+def _agent_run_started_from_payload(payload: object) -> AgentRunStarted:
+    if not isinstance(payload, dict):
+        raise RuntimeError("TypeScript agent runner started event must be a JSON object")
+    artifacts = _dict_field(payload, "artifacts")
+    return AgentRunStarted(
+        run_id=_str_field(payload, "run_id"),
+        cli_path=Path(_str_field(payload, "cli_path")),
+        workdir=Path(_str_field(payload, "workdir")),
+        prompt_mode=_str_field(payload, "prompt_mode"),
+        command=tuple(_string_list_field(payload, "command")),
+        started_at=_str_field(payload, "started_at"),
+        prompt_path=Path(_str_field(artifacts, "prompt")),
+        stdout_path=Path(_str_field(artifacts, "stdout")),
+        stderr_path=Path(_str_field(artifacts, "stderr")),
+        metadata_path=Path(_str_field(artifacts, "metadata")),
+        capabilities=_capabilities_from_payload(_dict_field(payload, "capabilities")),
+    )
 
 
 def _agent_run_result_from_payload(payload: object) -> AgentRunResult:
