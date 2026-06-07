@@ -8,7 +8,10 @@ import {
   SKILL_CONTENT_MODE_INLINE_MARKDOWN,
   SKILL_DOCUMENT_SCHEMA_VERSION,
   SKILL_SOURCE_PRECEDENCE,
+  SkillDiscoveryError,
   SkillDocumentError,
+  discoverSkills,
+  enumerateSkillCandidates,
   loadSkillDefinition,
   loadSkillDocument,
   normalizeSkillSourceScope,
@@ -40,6 +43,33 @@ function validSkillPayload(): Record<string, unknown> {
     description: "Project-specific skill for Phase 5 parsing tests.",
     metadata: { visibility: "profile_scoped", tags: ["phase5", "skill"] }
   };
+}
+
+async function writeSkill(
+  root: string,
+  relativePath: string,
+  options: { name: string; description?: string }
+): Promise<string> {
+  const skillPath = path.join(root, relativePath, "SKILL.md");
+  await mkdir(path.dirname(skillPath), { recursive: true });
+  await writeFile(
+    skillPath,
+    [
+      "---",
+      "schema_version: 1",
+      `name: ${options.name}`,
+      `description: ${options.description ?? `${options.name} description`}`,
+      'metadata: {"visibility": "profile_scoped"}',
+      "---",
+      "",
+      `# ${options.name}`,
+      "",
+      "Use this skill in discovery tests.",
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+  return skillPath;
 }
 
 test("parseSkillDocumentText parses valid inline markdown skills", () => {
@@ -187,4 +217,76 @@ test("skillSourcePrecedence follows Python source ordering", () => {
   assert.equal(skillSourcePrecedence("project"), 0);
   assert.equal(skillSourcePrecedence("user"), 1);
   assert.equal(skillSourcePrecedence("built_in"), 2);
+});
+
+test("enumerateSkillCandidates finds sorted SKILL.md files by root", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-skill-discovery-"));
+  const projectRoot = path.join(root, "project");
+  await writeSkill(projectRoot, "zeta", { name: "zeta-skill" });
+  await writeSkill(projectRoot, "alpha", { name: "alpha-skill" });
+  await writeFile(path.join(projectRoot, "notes.md"), "ignore", "utf8");
+
+  const candidates = await enumerateSkillCandidates([{ scope: "project", path: projectRoot }]);
+
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.relative_path),
+    ["alpha/SKILL.md", "zeta/SKILL.md"]
+  );
+  assert.equal(candidates[0].scope, "project");
+});
+
+test("discoverSkills selects by source precedence and records shadowed skills", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-skill-discovery-"));
+  const projectRoot = path.join(root, "project");
+  const userRoot = path.join(root, "user");
+  const builtInRoot = path.join(root, "built-in");
+  await writeSkill(projectRoot, "planner-custom", { name: "planner-custom" });
+  await writeSkill(userRoot, "planner-custom", { name: "planner-custom" });
+  await writeSkill(builtInRoot, "planner-custom", { name: "planner-custom" });
+  await writeSkill(userRoot, "reviewer-custom", { name: "reviewer-custom" });
+
+  const discovery = await discoverSkills([
+    { scope: "project", path: projectRoot },
+    { scope: "user", path: userRoot },
+    { scope: "built_in", path: builtInRoot }
+  ]);
+
+  assert.deepEqual(
+    discovery.selected.map((skill) => `${skill.name}:${skill.scope}`),
+    ["planner-custom:project", "reviewer-custom:user"]
+  );
+  assert.deepEqual(
+    discovery.shadowed.map((skill) => skill.scope),
+    ["user", "built_in"]
+  );
+});
+
+test("discoverSkills rejects duplicate names within one scope", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-skill-discovery-"));
+  const projectRoot = path.join(root, "project");
+  await writeSkill(projectRoot, "one", { name: "duplicate-skill" });
+  await writeSkill(projectRoot, "two", { name: "duplicate-skill" });
+
+  await assert.rejects(
+    () => discoverSkills([{ scope: "project", path: projectRoot }]),
+    SkillDiscoveryError
+  );
+});
+
+test("discoverSkills can collect invalid candidates when requested", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-skill-discovery-"));
+  const projectRoot = path.join(root, "project");
+  await writeSkill(projectRoot, "valid", { name: "valid-skill" });
+  const invalidPath = path.join(projectRoot, "invalid", "SKILL.md");
+  await mkdir(path.dirname(invalidPath), { recursive: true });
+  await writeFile(invalidPath, "---\nname: invalid\n---\n# Missing description\n", "utf8");
+
+  const discovery = await discoverSkills(
+    [{ scope: "project", path: projectRoot }],
+    { ignoreInvalid: true }
+  );
+
+  assert.deepEqual(discovery.selected.map((skill) => skill.name), ["valid-skill"]);
+  assert.equal(discovery.invalid.length, 1);
+  assert.match(discovery.invalid[0].error, /skill_document\.description/);
 });

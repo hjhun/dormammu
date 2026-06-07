@@ -1,5 +1,6 @@
 import { basename, resolve } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import { relative } from "node:path";
 
 export const SKILL_DOCUMENT_FILENAME = "SKILL.md";
 export const SKILL_DOCUMENT_SCHEMA_VERSION = 1;
@@ -18,6 +19,13 @@ export class SkillDocumentError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "SkillDocumentError";
+  }
+}
+
+export class SkillDiscoveryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SkillDiscoveryError";
   }
 }
 
@@ -45,6 +53,42 @@ export type LoadedSkillDefinition = {
   metadata: Record<string, unknown>;
 };
 
+export type SkillSearchRoot = {
+  scope: SkillSourceScope;
+  path: string;
+};
+
+export type SkillCandidate = {
+  scope: SkillSourceScope;
+  root_dir: string;
+  path: string;
+  relative_path: string;
+};
+
+export type DiscoveredSkill = {
+  name: string;
+  scope: SkillSourceScope;
+  path: string;
+  relative_path: string;
+  source_precedence: number;
+  description: string;
+  definition: LoadedSkillDefinition;
+  candidate: SkillCandidate;
+};
+
+export type InvalidSkillCandidate = {
+  candidate: SkillCandidate;
+  error: string;
+};
+
+export type SkillDiscovery = {
+  search_roots: SkillSearchRoot[];
+  candidates: SkillCandidate[];
+  selected: DiscoveredSkill[];
+  shadowed: DiscoveredSkill[];
+  invalid: InvalidSkillCandidate[];
+};
+
 export async function loadSkillDocument(path: string): Promise<SkillDocument> {
   const normalizedPath = resolve(path);
   if (basename(normalizedPath) !== SKILL_DOCUMENT_FILENAME) {
@@ -59,6 +103,65 @@ export async function loadSkillDocument(path: string): Promise<SkillDocument> {
     throw new SkillDocumentError(`Failed to read skill document ${normalizedPath}`);
   }
   return parseSkillDocumentText(rawText, { sourceName: normalizedPath });
+}
+
+export async function enumerateSkillCandidates(
+  searchRoots: SkillSearchRoot[]
+): Promise<SkillCandidate[]> {
+  const candidates: SkillCandidate[] = [];
+  for (const root of searchRoots) {
+    const normalizedScope = normalizeSkillSourceScope(root.scope, {
+      fieldName: "skill_search_root.scope",
+      sourceName: root.path
+    });
+    const rootPath = resolve(root.path);
+    for (const candidatePath of await findSkillDocuments(rootPath)) {
+      candidates.push({
+        scope: normalizedScope,
+        root_dir: rootPath,
+        path: candidatePath,
+        relative_path: relative(rootPath, candidatePath).split("\\").join("/")
+      });
+    }
+  }
+  return candidates;
+}
+
+export async function discoverSkills(
+  searchRoots: SkillSearchRoot[],
+  options: { ignoreInvalid?: boolean } = {}
+): Promise<SkillDiscovery> {
+  const normalizedRoots = searchRoots.map((root) => ({
+    scope: normalizeSkillSourceScope(root.scope, {
+      fieldName: "skill_search_root.scope",
+      sourceName: root.path
+    }),
+    path: resolve(root.path)
+  }));
+  const candidates = await enumerateSkillCandidates(normalizedRoots);
+  const discovered: DiscoveredSkill[] = [];
+  const invalid: InvalidSkillCandidate[] = [];
+  for (const candidate of candidates) {
+    try {
+      discovered.push(await loadDiscoveredSkill(candidate));
+    } catch (error) {
+      if (!options.ignoreInvalid) {
+        throw error;
+      }
+      invalid.push({
+        candidate,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  const [selected, shadowed] = resolveSkillPrecedence(discovered);
+  return {
+    search_roots: normalizedRoots,
+    candidates,
+    selected,
+    shadowed,
+    invalid
+  };
 }
 
 export async function loadSkillDefinition(
@@ -193,6 +296,78 @@ function splitFrontmatter(
   throw new SkillDocumentError(
     `Skill document frontmatter must terminate with --- in ${options.sourceName}`
   );
+}
+
+async function findSkillDocuments(rootPath: string): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(rootPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const discovered: string[] = [];
+  for (const entry of entries) {
+    const entryPath = resolve(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      discovered.push(...(await findSkillDocuments(entryPath)));
+    } else if (entry.isFile() && entry.name === SKILL_DOCUMENT_FILENAME) {
+      discovered.push(entryPath);
+    }
+  }
+  return discovered.sort();
+}
+
+async function loadDiscoveredSkill(candidate: SkillCandidate): Promise<DiscoveredSkill> {
+  const definition = await loadSkillDefinition(candidate.path, {
+    sourceScope: candidate.scope
+  });
+  return {
+    name: definition.name,
+    scope: candidate.scope,
+    path: candidate.path,
+    relative_path: candidate.relative_path,
+    source_precedence: definition.source_precedence,
+    description: definition.description,
+    definition,
+    candidate
+  };
+}
+
+function resolveSkillPrecedence(
+  discoveredSkills: DiscoveredSkill[]
+): [DiscoveredSkill[], DiscoveredSkill[]] {
+  const byName = new Map<string, DiscoveredSkill[]>();
+  for (const discovered of discoveredSkills) {
+    const existing = byName.get(discovered.name) ?? [];
+    existing.push(discovered);
+    byName.set(discovered.name, existing);
+  }
+
+  const selected: DiscoveredSkill[] = [];
+  const shadowed: DiscoveredSkill[] = [];
+  for (const name of [...byName.keys()].sort()) {
+    const contenders = [...(byName.get(name) ?? [])].sort((left, right) => {
+      const precedenceDelta = left.source_precedence - right.source_precedence;
+      return precedenceDelta === 0 ? left.path.localeCompare(right.path) : precedenceDelta;
+    });
+    validateUniqueScopePerSkillName(name, contenders);
+    selected.push(contenders[0]);
+    shadowed.push(...contenders.slice(1));
+  }
+  return [selected, shadowed];
+}
+
+function validateUniqueScopePerSkillName(name: string, contenders: DiscoveredSkill[]): void {
+  const seenScopes = new Map<SkillSourceScope, string>();
+  for (const contender of contenders) {
+    const existingPath = seenScopes.get(contender.scope);
+    if (existingPath !== undefined) {
+      throw new SkillDiscoveryError(
+        `Duplicate skill name '${name}' in ${contender.scope} scope: ${existingPath} and ${contender.path}`
+      );
+    }
+    seenScopes.set(contender.scope, contender.path);
+  }
 }
 
 function parseFrontmatter(
