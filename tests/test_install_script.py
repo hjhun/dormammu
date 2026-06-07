@@ -363,6 +363,53 @@ class InstallScriptTests(unittest.TestCase):
                 ["-y", "--timeout", "1200"],
             )
 
+            subprocess.run(
+                [
+                    str(binary),
+                    "set-config",
+                    "typescript_agent_runner_cli",
+                    str(runner_binary),
+                    "--global",
+                ],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            bridge_result = subprocess.run(
+                [
+                    str(binary),
+                    "run-once",
+                    "--repo-root",
+                    str(packaged_repo),
+                    "--debug",
+                    "--agent-cli",
+                    str(fake_agent),
+                    "--prompt",
+                    "Installed TypeScript bridge prompt",
+                    "--run-label",
+                    "installed-typescript-bridge",
+                    "--extra-arg=--echo-tag",
+                    "--extra-arg",
+                    "ts-bridge",
+                ],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            bridge_payload = json.loads(bridge_result.stdout)
+            bridge_stdout = Path(bridge_payload["artifacts"]["stdout"]).read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("Installed TypeScript bridge prompt", bridge_stdout)
+            self.assertIn("TAG::ts-bridge", bridge_stdout)
+
+            config_payload = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(config_payload["typescript_agent_runner_cli"], str(runner_binary))
+
             export_line = f'export PATH="{launcher_dir}:$PATH"'
             bashrc_contents = bashrc_path.read_text(encoding="utf-8")
             self.assertEqual(bashrc_contents.count(export_line), 1)
