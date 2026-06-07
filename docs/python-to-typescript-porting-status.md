@@ -53,6 +53,9 @@ Ported modules:
 - managed worktree state mutation and runtime skill resolution state recording
   from `backend/dormammu/state/repository.py`
   -> `runtime/src/state/repository.ts`
+- operator task synchronization, agent run projection, and run/stage result
+  projection from `backend/dormammu/state/repository.py`
+  -> `runtime/src/state/repository.ts`
 
 Validation:
 
@@ -133,10 +136,11 @@ Validation:
 
 Port the remaining state repository orchestration surface:
 
-- task, dashboard, and workflow-state projections that still depend on Python
-  repository methods
 - full runtime skill discovery still depends on Python `backend/dormammu/skills.py`
   and the Python agent profile/permission model
+- Python runtime call sites still own CLI, daemon, supervisor, and pipeline
+  execution while TypeScript parity surfaces are assembled
 
-The next slice should introduce TypeScript tests around task, dashboard, and
-workflow-state projections before any Python call site is removed.
+The next slice should start the agent runtime port by introducing TypeScript
+tests around CLI adapter execution artifacts or by porting the runtime skill
+discovery/profile model needed before Python call site removal.

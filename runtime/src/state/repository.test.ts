@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -727,6 +727,166 @@ test("recordRuntimeSkillResolution stores latest and by-role payloads", async ()
     assert.equal(rootRuntimeSkills.profile_name, "codex");
     assert.equal(rootRuntimeSkills.selected_count, 2);
     assert.equal(rootRuntimeSkills.interesting_for_operator, true);
+  });
+});
+
+test("syncOperatorState imports active root tasks and updates task projections", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+    const rootTasks = path.join(root, ".dev", "TASKS.md");
+    const rootPlan = path.join(root, ".dev", "PLAN.md");
+    const operatorText =
+      "# TASKS\n\n## Prompt-Derived Development Queue\n\n- [O] Phase 1. Work\n- [ ] Phase 2. Review\n";
+    await writeFile(
+      rootTasks,
+      operatorText,
+      "utf8"
+    );
+    await writeFile(rootPlan, operatorText.replace("# TASKS", "# PLAN"), "utf8");
+    const sessionTaskStats = await stat(repository.stateFile("TASKS.md"), { bigint: true });
+    const bumped = Number(sessionTaskStats.mtimeNs + 5_000_000n) / 1_000_000_000;
+    await utimes(rootTasks, bumped, bumped);
+    await utimes(rootPlan, bumped, bumped);
+
+    await repository.syncOperatorState({ timestamp: "2026-04-25T06:00:00+00:00" });
+
+    const sessionTasks = await readFile(repository.stateFile("TASKS.md"), "utf8");
+    const sessionState = await repository.readSessionState();
+    const workflowState = await repository.readWorkflowState();
+    const taskSync = requireRecord(sessionState.task_sync);
+    const workflowTaskSync = requireRecord(requireRecord(workflowState.operator_sync).tasks);
+    assert.match(sessionTasks, /Phase 2\. Review/);
+    assert.equal(taskSync.synced_at, "2026-04-25T06:00:00+00:00");
+    assert.equal(taskSync.completed_tasks, 1);
+    assert.equal(taskSync.pending_tasks, 1);
+    assert.equal(taskSync.next_pending_task, "Phase 2. Review");
+    assert.deepEqual(workflowTaskSync, taskSync);
+  });
+});
+
+test("recordCurrentRun stores current run and execution projection", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+    const started = {
+      run_id: "run-current",
+      prompt_mode: "stdin",
+      workdir: root,
+      command: ["codex", "run"],
+      started_at: "2026-04-25T07:00:00+00:00"
+    };
+
+    await repository.recordCurrentRun(started);
+
+    const sessionState = await repository.readSessionState();
+    const workflowState = await repository.readWorkflowState();
+    assert.deepEqual(sessionState.current_run, started);
+    assert.deepEqual(workflowState.current_run, started);
+    const executionCurrent = requireRecord(requireRecord(sessionState.execution).current_run);
+    assert.equal(executionCurrent.run_id, "run-current");
+    assert.equal(executionCurrent.status, "started");
+    assert.equal(executionCurrent.workdir, root);
+  });
+});
+
+test("recordLatestRun clears current run and stores latest run projection", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+    await repository.recordCurrentRun({
+      run_id: "run-latest",
+      prompt_mode: "stdin",
+      workdir: root,
+      command: ["codex", "run"],
+      started_at: "2026-04-25T07:01:00+00:00"
+    });
+    const result = {
+      run_id: "run-latest",
+      prompt_mode: "stdin",
+      workdir: root,
+      command: ["codex", "run"],
+      exit_code: 0,
+      started_at: "2026-04-25T07:01:00+00:00",
+      completed_at: "2026-04-25T07:02:00+00:00",
+      artifact_refs: [{ kind: "stdout", path: "/tmp/stdout.log" }]
+    };
+
+    await repository.recordLatestRun(result);
+
+    const sessionState = await repository.readSessionState();
+    const workflowState = await repository.readWorkflowState();
+    assert.equal(sessionState.current_run, null);
+    assert.deepEqual(sessionState.latest_run, result);
+    assert.deepEqual(workflowState.latest_run, result);
+    const execution = requireRecord(sessionState.execution);
+    assert.equal(execution.current_run, null);
+    const latestAgentRun = requireRecord(execution.latest_agent_run);
+    assert.equal(latestAgentRun.run_id, "run-latest");
+    assert.equal(latestAgentRun.status, "completed");
+    assert.deepEqual(latestAgentRun.artifacts, [{ kind: "stdout", path: "/tmp/stdout.log" }]);
+  });
+});
+
+test("recordStageResult and recordRunResult update execution projections", async () => {
+  await withTempDirectory(async (root) => {
+    const repository = await seedRepository(root);
+
+    await repository.recordStageResult(
+      {
+        role: "tester",
+        stageName: "test",
+        status: "completed",
+        verdict: "pass",
+        summary: "Tests passed",
+        timing: {
+          startedAt: "2026-04-25T08:00:00+00:00",
+          completedAt: "2026-04-25T08:01:00+00:00"
+        },
+        metadata: { pipeline_run_id: "pipeline-1" }
+      },
+      { timestamp: "2026-04-25T08:01:00+00:00" }
+    );
+
+    const afterStage = await repository.readSessionState();
+    const stageExecution = requireRecord(afterStage.execution);
+    assert.equal(stageExecution.latest_run_id, "pipeline-1");
+    assert.equal(requireRecord(stageExecution.latest_stage_result).verdict, "pass");
+    assert.equal(requireRecord(requireRecord(stageExecution.stage_results).test).summary, "Tests passed");
+
+    await repository.recordRunResult(
+      {
+        status: "completed",
+        latestRunId: "pipeline-1",
+        supervisorVerdict: "approved",
+        stageResults: [
+          {
+            role: "developer",
+            stageName: "develop",
+            status: "completed",
+            verdict: "approved",
+            summary: "Implemented"
+          },
+          {
+            role: "tester",
+            stageName: "test",
+            status: "completed",
+            verdict: "pass",
+            summary: "Tests passed"
+          }
+        ],
+        timing: {
+          startedAt: "2026-04-25T08:00:00+00:00",
+          completedAt: "2026-04-25T08:02:00+00:00"
+        }
+      },
+      { timestamp: "2026-04-25T08:02:00+00:00" }
+    );
+
+    const sessionExecution = requireRecord((await repository.readSessionState()).execution);
+    const workflowExecution = requireRecord((await repository.readWorkflowState()).execution);
+    assert.equal(sessionExecution.latest_run_id, "pipeline-1");
+    assert.equal(requireRecord(sessionExecution.latest_run).supervisor_verdict, "approved");
+    assert.equal(requireRecord(sessionExecution.stage_results).develop != null, true);
+    assert.equal(requireRecord(sessionExecution.stage_results).test != null, true);
+    assert.deepEqual(workflowExecution, sessionExecution);
   });
 });
 

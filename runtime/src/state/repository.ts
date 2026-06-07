@@ -2,7 +2,10 @@ import path from "node:path";
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 
 import {
+  projectAgentRunFact,
   projectLifecycleExecutionFact,
+  projectRunResult,
+  projectStageResult,
   type JsonRecord
 } from "./executionProjection.js";
 import { OperatorSync } from "./operatorSync.js";
@@ -26,6 +29,7 @@ import {
   summarizePromptGoal,
   upsertManagedWorktreeInState
 } from "./models.js";
+import type { RunResult, StageResult } from "../results.js";
 import { defaultWorkflowPolicyState, type RequestClass } from "../workflowPolicy.js";
 
 export type StateRepositoryOptions = {
@@ -1152,6 +1156,134 @@ export class StateRepository {
     await this.syncRootIndex(timestamp);
   }
 
+  async syncOperatorState(options: { timestamp?: string } = {}): Promise<void> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      await repository.syncOperatorState(options);
+      return;
+    }
+    await this.operatorSync.syncActiveRootOperatorMirrorsIntoSession({
+      sessionDevDir: this.devDir,
+      activeSessionId: this.sessionId
+    });
+    const timestamp = options.timestamp ?? new Date().toISOString();
+    const operatorTaskPath = await this.operatorTaskPath();
+    await this.operatorSync.syncOperatorState({
+      sessionPath: this.stateFile("session.json"),
+      workflowPath: this.stateFile("workflow_state.json"),
+      operatorTaskPath,
+      timestamp,
+      devDir: this.devDir,
+      displayStatePath: (filePath) => this.displayStatePath(filePath)
+    });
+    await this.syncRootIndex(timestamp);
+  }
+
+  async recordCurrentRun(started: Readonly<JsonObject>): Promise<void> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      await repository.recordCurrentRun(started);
+      return;
+    }
+    const timestamp = String(started.started_at ?? new Date().toISOString());
+    const currentRun = jsonObjectFrom(started);
+    const sessionState = await readJson(this.stateFile("session.json"));
+    const workflowState = await readJson(this.stateFile("workflow_state.json"));
+    for (const state of [sessionState, workflowState]) {
+      state.updated_at = timestamp;
+      state.current_run = { ...currentRun };
+      projectAgentRunFact(state as JsonRecord, {
+        status: "started",
+        runPayload: currentRun,
+        timestamp
+      });
+    }
+    await writeJson(this.stateFile("session.json"), sessionState);
+    await writeJson(this.stateFile("workflow_state.json"), workflowState);
+    await this.syncRootIndex(timestamp);
+  }
+
+  async recordLatestRun(result: Readonly<JsonObject>): Promise<void> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      await repository.recordLatestRun(result);
+      return;
+    }
+    const timestamp = String(result.completed_at ?? new Date().toISOString());
+    const latestRun = jsonObjectFrom(result);
+    const sessionState = await readJson(this.stateFile("session.json"));
+    const workflowState = await readJson(this.stateFile("workflow_state.json"));
+    for (const state of [sessionState, workflowState]) {
+      state.updated_at = timestamp;
+      state.current_run = null;
+      state.latest_run = { ...latestRun };
+      projectAgentRunFact(state as JsonRecord, {
+        status: "completed",
+        runPayload: latestRun,
+        timestamp
+      });
+    }
+    await writeJson(this.stateFile("session.json"), sessionState);
+    await writeJson(this.stateFile("workflow_state.json"), workflowState);
+    await this.syncRootIndex(timestamp);
+  }
+
+  async recordStageResult(
+    stage: StageResult,
+    options: { runId?: string | null; timestamp?: string } = {}
+  ): Promise<void> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      await repository.recordStageResult(stage, options);
+      return;
+    }
+    const timestamp =
+      options.timestamp ??
+      stage.timing?.completedAt ??
+      stage.timing?.startedAt ??
+      new Date().toISOString();
+    const sessionState = await readJson(this.stateFile("session.json"));
+    const workflowState = await readJson(this.stateFile("workflow_state.json"));
+    for (const state of [sessionState, workflowState]) {
+      projectStageResult(state as JsonRecord, {
+        stage,
+        runId: options.runId,
+        timestamp
+      });
+    }
+    await writeJson(this.stateFile("session.json"), sessionState);
+    await writeJson(this.stateFile("workflow_state.json"), workflowState);
+    await this.syncRootIndex(timestamp);
+  }
+
+  async recordRunResult(
+    result: RunResult,
+    options: { runId?: string | null; timestamp?: string } = {}
+  ): Promise<void> {
+    if (this.sessionId === null) {
+      const repository = await this.activeSessionRepository();
+      await repository.recordRunResult(result, options);
+      return;
+    }
+    const timestamp =
+      options.timestamp ??
+      result.timing?.completedAt ??
+      result.timing?.startedAt ??
+      new Date().toISOString();
+    const sessionState = await readJson(this.stateFile("session.json"));
+    const workflowState = await readJson(this.stateFile("workflow_state.json"));
+    for (const state of [sessionState, workflowState]) {
+      projectRunResult(state as JsonRecord, {
+        result,
+        runId: options.runId,
+        timestamp
+      });
+    }
+    await writeJson(this.stateFile("session.json"), sessionState);
+    await writeJson(this.stateFile("workflow_state.json"), workflowState);
+    await this.syncRootIndex(timestamp);
+  }
+
   async recordRuntimeSkillResolution(
     options: RuntimeSkillResolutionOptions
   ): Promise<JsonObject> {
@@ -1378,6 +1510,33 @@ export class StateRepository {
     if (await exists(tasksPath)) {
       await writeFile(planPath, await readFile(tasksPath, "utf8"), "utf8");
     }
+  }
+
+  private async ensureTasksFile(tasksPath: string, planPath: string): Promise<void> {
+    if (await exists(tasksPath)) {
+      return;
+    }
+    if (await exists(planPath)) {
+      await writeFile(tasksPath, await readFile(planPath, "utf8"), "utf8");
+    }
+  }
+
+  private async operatorPlanPath(): Promise<string> {
+    const planPath = this.stateFile("PLAN.md");
+    await this.ensurePlanFile(planPath);
+    if (await exists(planPath)) {
+      return planPath;
+    }
+    return this.stateFile("TASKS.md");
+  }
+
+  private async operatorTaskPath(): Promise<string> {
+    const tasksPath = this.stateFile("TASKS.md");
+    await this.ensureTasksFile(tasksPath, this.stateFile("PLAN.md"));
+    if (await exists(tasksPath)) {
+      return tasksPath;
+    }
+    return this.operatorPlanPath();
   }
 
   private async resolveActiveRoadmapPhaseIds(
