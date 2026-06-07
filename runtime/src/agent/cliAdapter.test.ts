@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,7 +8,7 @@ import { Writable } from "node:stream";
 
 import type { CliCapabilities } from "./commandBuilder.js";
 import type { AgentRunStarted } from "./runArtifacts.js";
-import { runSingleAgentCommand } from "./cliAdapter.js";
+import { inspectCliCapabilities, runSingleAgentCommand } from "./cliAdapter.js";
 
 const baseCapabilities: CliCapabilities = {
   helpFlag: "--help",
@@ -166,6 +166,33 @@ test("runSingleAgentCommand terminates timed out processes", async () => {
   assert.equal(metadata.timed_out, true);
 });
 
+test("inspectCliCapabilities parses help output and prefixed help output", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dormammu-cli-adapter-"));
+  const fakeCodex = await writeFakeCodexCli(root);
+
+  const capabilities = await inspectCliCapabilities(fakeCodex, { cwd: root });
+
+  assert.equal(capabilities.presetKey, "codex");
+  assert.equal(capabilities.presetSource, "executable_name");
+  assert.deepEqual(capabilities.commandPrefix, ["exec"]);
+  assert.equal(capabilities.promptPositional, true);
+  assert.equal(capabilities.helpExitCode, 0);
+  assert.match(capabilities.helpText, /usage: codex/);
+  assert.match(capabilities.helpText, /--skip-git-repo-check/);
+});
+
+test("inspectCliCapabilities parses generic prompt and workdir flags", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dormammu-cli-adapter-"));
+  const fakeAgent = await writeFakeHelpCli(root);
+
+  const capabilities = await inspectCliCapabilities(fakeAgent, { cwd: root });
+
+  assert.equal(capabilities.promptFileFlag, "--prompt-file");
+  assert.equal(capabilities.promptArgFlag, "--prompt");
+  assert.equal(capabilities.workdirFlag, "--workdir");
+  assert.equal(capabilities.presetKey, null);
+});
+
 async function writeFakeCli(root: string): Promise<string> {
   const script = path.join(root, "fake-cli.cjs");
   await writeFile(
@@ -209,6 +236,50 @@ setTimeout(() => {
 `,
     "utf8"
   );
+  return script;
+}
+
+async function writeFakeCodexCli(root: string): Promise<string> {
+  const script = path.join(root, "codex");
+  await writeFile(
+    script,
+    `#!${process.execPath}
+const args = process.argv.slice(2);
+if (args[0] === "exec" && args.includes("--help")) {
+  console.log("usage: codex exec [OPTIONS]");
+  console.log("  --skip-git-repo-check");
+  process.exit(0);
+}
+if (args.includes("--help")) {
+  console.log("usage: codex [OPTIONS]");
+  console.log("  codex exec");
+  process.exit(0);
+}
+process.exit(0);
+`,
+    "utf8"
+  );
+  await chmod(script, 0o755);
+  return script;
+}
+
+async function writeFakeHelpCli(root: string): Promise<string> {
+  const script = path.join(root, "fake-help-agent");
+  await writeFile(
+    script,
+    `#!${process.execPath}
+if (process.argv.includes("--help")) {
+  console.log("usage: fake-help-agent");
+  console.log("  --prompt-file PATH");
+  console.log("  --prompt TEXT");
+  console.log("  --workdir PATH");
+  process.exit(0);
+}
+process.exit(0);
+`,
+    "utf8"
+  );
+  await chmod(script, 0o755);
   return script;
 }
 

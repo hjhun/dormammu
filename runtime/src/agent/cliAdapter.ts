@@ -6,6 +6,7 @@ import { Writable } from "node:stream";
 import { finished } from "node:stream/promises";
 
 import { AgentRunRequest, buildCommandPlan, CliCapabilities } from "./commandBuilder.js";
+import { parseHelpText } from "./helpParser.js";
 import { prependCliIdentity } from "./promptIdentity.js";
 import {
   AgentRunResult,
@@ -32,6 +33,40 @@ export type RunSingleAgentCommandOptions = {
   liveOutput?: Writable | null;
   onStarted?: (started: AgentRunStarted) => void;
 };
+
+export type InspectCliCapabilitiesOptions = {
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+export async function inspectCliCapabilities(
+  cliPath: string,
+  options: InspectCliCapabilitiesOptions
+): Promise<CliCapabilities> {
+  const completed = await captureCommand([cliPath, "--help"], options);
+  const firstHelpText = completed.stdout || completed.stderr;
+  const baseCapabilities = parseHelpText(firstHelpText, {
+    executableName: cliExecutableName(cliPath),
+    helpExitCode: completed.exitCode
+  });
+  const helpTextParts = [firstHelpText];
+
+  if ((baseCapabilities.commandPrefix ?? []).length) {
+    const prefixed = await captureCommand(
+      [cliPath, ...(baseCapabilities.commandPrefix ?? []), "--help"],
+      options
+    );
+    const prefixedHelpText = prefixed.stdout || prefixed.stderr;
+    if (prefixedHelpText) {
+      helpTextParts.push(prefixedHelpText);
+    }
+  }
+
+  return parseHelpText(helpTextParts.filter(Boolean).join("\n"), {
+    executableName: cliExecutableName(cliPath),
+    helpExitCode: completed.exitCode
+  });
+}
 
 export async function runSingleAgentCommand(
   options: RunSingleAgentCommandOptions
@@ -191,6 +226,41 @@ async function executeCommand(options: {
   });
 }
 
+async function captureCommand(
+  argv: string[],
+  options: InspectCliCapabilitiesOptions
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  if (!argv.length) {
+    throw new Error("Cannot execute an empty agent command.");
+  }
+
+  const child = spawn(argv[0], argv.slice(1), {
+    cwd: options.cwd,
+    env: options.env ? { ...process.env, ...options.env } : process.env,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+  child.stdout?.on("data", (chunk: Buffer) => {
+    stdoutChunks.push(chunk);
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrChunks.push(chunk);
+  });
+
+  return await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => {
+      resolve({
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8"),
+        exitCode: code ?? -1
+      });
+    });
+  });
+}
+
 async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
@@ -200,6 +270,12 @@ function recordedCliPath(cliPath: string): string {
     return path.resolve(cliPath);
   }
   return cliPath;
+}
+
+function cliExecutableName(cliPath: string): string {
+  const normalized = cliPath.replace(/\\/g, "/");
+  const index = normalized.lastIndexOf("/");
+  return index === -1 ? normalized : normalized.slice(index + 1);
 }
 
 function generatedRunId(label: string | null | undefined): string {

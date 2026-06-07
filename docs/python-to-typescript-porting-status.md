@@ -29,6 +29,10 @@ Ported modules:
 - `backend/dormammu/agent/cli_adapter.py` default known-CLI extra argument
   injection and Gemini duplicate approval/include argument sanitization
   -> `runtime/src/agent/presetArgs.ts`
+- `backend/dormammu/agent/cli_adapter.py` help-command capability discovery,
+  prefixed help discovery for known CLI presets, and help output parsing
+  orchestration
+  -> `runtime/src/agent/cliAdapter.ts`
 - `backend/dormammu/workflow_policy.py`
   -> `runtime/src/workflowPolicy.ts`
 - pure verdict/status helpers from `backend/dormammu/results.py`
@@ -156,5 +160,5 @@ Port the remaining state repository orchestration surface:
   execution while TypeScript parity surfaces are assembled
 
 The next slice should continue the agent runtime port by adding TypeScript
-coverage for help-command capability discovery, fallback CLI selection, and
-token-exhaustion retry metadata before Python call site removal.
+coverage for fallback CLI selection and token-exhaustion retry metadata before
+Python call site removal.
