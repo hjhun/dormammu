@@ -553,6 +553,118 @@ class DaemonRunner:
             "closeProgressLog": progress_log_active,
         }
 
+    def _project_typescript_instance_lock_decision(
+        self,
+        *,
+        fcntl_available: bool,
+        lock_acquired: bool,
+        existing_pid: str | None,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_instance_lock_decision",
+            "fcntl_available": fcntl_available,
+            "lock_acquired": lock_acquired,
+            "prompt_path": str(self.daemon_config.prompt_path),
+            "existing_pid": existing_pid,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._instance_lock_expectations(
+            fcntl_available=fcntl_available,
+            lock_acquired=lock_acquired,
+            existing_pid=existing_pid,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "write_pid_file": expected["writePidFile"],
+            "error_message": expected["errorMessage"],
+        }
+
+    def _instance_lock_expectations(
+        self,
+        *,
+        fcntl_available: bool,
+        lock_acquired: bool,
+        existing_pid: str | None,
+    ) -> dict[str, object]:
+        if not fcntl_available:
+            return {
+                "action": "skip",
+                "writePidFile": False,
+                "errorMessage": None,
+            }
+        if lock_acquired:
+            return {
+                "action": "hold",
+                "writePidFile": True,
+                "errorMessage": None,
+            }
+        existing = (existing_pid or "").strip()
+        pid_info = f" (existing daemon PID: {existing})" if existing else ""
+        return {
+            "action": "reject",
+            "writePidFile": False,
+            "errorMessage": (
+                "Another dormammu daemon is already running against "
+                f"{self.daemon_config.prompt_path}{pid_info}.\n"
+                "Stop it first or use a different prompt_path."
+            ),
+        }
+
+    def _project_typescript_instance_unlock_decision(
+        self,
+        *,
+        lock_held: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_instance_unlock_decision",
+            "fcntl_available": _HAS_FCNTL,
+            "lock_held": lock_held,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._instance_unlock_expectations(
+            fcntl_available=_HAS_FCNTL,
+            lock_held=lock_held,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "unlock_fcntl": expected["unlockFcntl"],
+            "close_lock_file": expected["closeLockFile"],
+            "clear_pid_lock_file": expected["clearPidLockFile"],
+            "remove_pid_file": expected["removePidFile"],
+        }
+
+    def _instance_unlock_expectations(
+        self,
+        *,
+        fcntl_available: bool,
+        lock_held: bool,
+    ) -> dict[str, object]:
+        if not fcntl_available or not lock_held:
+            return {
+                "action": "skip",
+                "unlockFcntl": False,
+                "closeLockFile": False,
+                "clearPidLockFile": False,
+                "removePidFile": False,
+            }
+        return {
+            "action": "release",
+            "unlockFcntl": True,
+            "closeLockFile": True,
+            "clearPidLockFile": True,
+            "removePidFile": True,
+        }
+
     def _loop_iteration_expectations(
         self,
         *,
@@ -832,6 +944,11 @@ class DaemonRunner:
         identify or kill the existing daemon.
         """
         if not _HAS_FCNTL:
+            self._project_typescript_instance_lock_decision(
+                fcntl_available=False,
+                lock_acquired=False,
+                existing_pid=None,
+            )
             yield
             return
 
@@ -846,31 +963,68 @@ class DaemonRunner:
                 existing = self._pid_lock_path.read_text(encoding="utf-8").strip()
                 pid_info = f" (existing daemon PID: {existing})" if existing else ""
             except OSError:
+                existing = ""
                 pid_info = ""
+            lock_decision = self._project_typescript_instance_lock_decision(
+                fcntl_available=True,
+                lock_acquired=False,
+                existing_pid=existing,
+            )
+            if (
+                lock_decision is not None
+                and lock_decision["action"] == "reject"
+                and isinstance(lock_decision["error_message"], str)
+            ):
+                raise DaemonAlreadyRunningError(lock_decision["error_message"])
             raise DaemonAlreadyRunningError(
                 f"Another dormammu daemon is already running against "
                 f"{self.daemon_config.prompt_path}{pid_info}.\n"
                 "Stop it first or use a different prompt_path."
             )
+        lock_decision = self._project_typescript_instance_lock_decision(
+            fcntl_available=True,
+            lock_acquired=True,
+            existing_pid=None,
+        )
         # Write our PID so operators can identify the process.
-        lock_file.seek(0)
-        lock_file.truncate()
-        lock_file.write(str(os.getpid()))
-        lock_file.flush()
+        if lock_decision is None or lock_decision["write_pid_file"]:
+            lock_file.seek(0)
+            lock_file.truncate()
+            lock_file.write(str(os.getpid()))
+            lock_file.flush()
         self._pid_lock_file = lock_file
         try:
             yield
         finally:
-            try:
-                _fcntl.flock(lock_file, _fcntl.LOCK_UN)
-            except OSError:
-                pass
-            lock_file.close()
-            self._pid_lock_file = None
-            try:
-                self._pid_lock_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            unlock_decision = self._project_typescript_instance_unlock_decision(
+                lock_held=self._pid_lock_file is not None,
+            )
+            if unlock_decision is None:
+                try:
+                    _fcntl.flock(lock_file, _fcntl.LOCK_UN)
+                except OSError:
+                    pass
+                lock_file.close()
+                self._pid_lock_file = None
+                try:
+                    self._pid_lock_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            else:
+                if unlock_decision["unlock_fcntl"]:
+                    try:
+                        _fcntl.flock(lock_file, _fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                if unlock_decision["close_lock_file"]:
+                    lock_file.close()
+                if unlock_decision["clear_pid_lock_file"]:
+                    self._pid_lock_file = None
+                if unlock_decision["remove_pid_file"]:
+                    try:
+                        self._pid_lock_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
 
     def _process_prompt(self, prompt_path: Path, *, watcher_backend: str) -> DaemonPromptResult:
         if hasattr(self.progress_stream, "reset_session_log"):

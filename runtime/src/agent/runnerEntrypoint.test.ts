@@ -6,6 +6,8 @@ import test from "node:test";
 
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
+  runDaemonInstanceLockEntrypoint,
+  runDaemonInstanceUnlockEntrypoint,
   runDaemonLoopIterationEntrypoint,
   runDaemonPendingDecisionEntrypoint,
   runDaemonPromptRouteEntrypoint,
@@ -466,6 +468,48 @@ test("runDaemonShutdownEntrypoint projects daemon shutdown decisions", () => {
       removeHeartbeat: true,
       closeProgressLog: true,
       reason: "daemon_shutdown"
+    }
+  );
+});
+
+test("runDaemonInstanceLockEntrypoint projects daemon lock decisions", () => {
+  assert.deepEqual(
+    runDaemonInstanceLockEntrypoint({
+      entrypoint: "daemon_instance_lock_decision",
+      fcntl_available: true,
+      lock_acquired: false,
+      prompt_path: "/repo/prompts",
+      existing_pid: "4321"
+    }),
+    {
+      entrypoint: "daemon_instance_lock_decision",
+      action: "reject",
+      writePidFile: false,
+      errorMessage: [
+        "Another dormammu daemon is already running against "
+          + "/repo/prompts (existing daemon PID: 4321).",
+        "Stop it first or use a different prompt_path."
+      ].join("\n"),
+      reason: "instance_lock_busy"
+    }
+  );
+});
+
+test("runDaemonInstanceUnlockEntrypoint projects daemon unlock decisions", () => {
+  assert.deepEqual(
+    runDaemonInstanceUnlockEntrypoint({
+      entrypoint: "daemon_instance_unlock_decision",
+      fcntl_available: true,
+      lock_held: true
+    }),
+    {
+      entrypoint: "daemon_instance_unlock_decision",
+      action: "release",
+      unlockFcntl: true,
+      closeLockFile: true,
+      clearPidLockFile: true,
+      removePidFile: true,
+      reason: "instance_lock_release"
     }
   );
 });

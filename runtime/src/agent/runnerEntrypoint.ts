@@ -42,11 +42,15 @@ import {
   type GoalQueueCandidate
 } from "../goals/discovery.js";
 import {
+  daemonInstanceLockDecision,
+  daemonInstanceUnlockDecision,
   daemonLoopIterationDecision,
   daemonPendingDecision,
   daemonPromptRouteDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
+  type DaemonInstanceLockDecision,
+  type DaemonInstanceUnlockDecision,
   type DaemonLoopIterationDecision,
   type DaemonPendingDecision,
   type DaemonPromptRouteDecision,
@@ -331,8 +335,34 @@ export type DaemonShutdownEntrypointResultPayload = DaemonShutdownDecision & {
   entrypoint: "daemon_shutdown_decision";
 };
 
+export type DaemonInstanceLockEntrypointPayload = {
+  entrypoint: "daemon_instance_lock_decision";
+  fcntl_available: boolean;
+  lock_acquired: boolean;
+  prompt_path: string;
+  existing_pid?: string | null;
+};
+
+export type DaemonInstanceLockEntrypointResultPayload =
+  DaemonInstanceLockDecision & {
+    entrypoint: "daemon_instance_lock_decision";
+  };
+
+export type DaemonInstanceUnlockEntrypointPayload = {
+  entrypoint: "daemon_instance_unlock_decision";
+  fcntl_available: boolean;
+  lock_held: boolean;
+};
+
+export type DaemonInstanceUnlockEntrypointResultPayload =
+  DaemonInstanceUnlockDecision & {
+    entrypoint: "daemon_instance_unlock_decision";
+  };
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
+  | DaemonInstanceLockEntrypointPayload
+  | DaemonInstanceUnlockEntrypointPayload
   | DaemonLoopIterationEntrypointPayload
   | DaemonPendingDecisionEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
@@ -352,6 +382,8 @@ export type RunnerCliPayload =
   | GoalsWatchLoopDecisionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
+  | DaemonInstanceLockEntrypointResultPayload
+  | DaemonInstanceUnlockEntrypointResultPayload
   | DaemonLoopIterationEntrypointResultPayload
   | DaemonPendingDecisionEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
@@ -507,6 +539,38 @@ export function runDaemonShutdownEntrypoint(
         payload.progress_log_active,
         "progress_log_active"
       )
+    })
+  };
+}
+
+export function runDaemonInstanceLockEntrypoint(
+  payload: DaemonInstanceLockEntrypointPayload
+): DaemonInstanceLockEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_instance_lock_decision",
+    ...daemonInstanceLockDecision({
+      fcntlAvailable: parseBoolean(
+        payload.fcntl_available,
+        "fcntl_available"
+      ),
+      lockAcquired: parseBoolean(payload.lock_acquired, "lock_acquired"),
+      promptPath: parseRequiredString(payload.prompt_path, "prompt_path"),
+      existingPid: parseOptionalString(payload.existing_pid, "existing_pid") ?? null
+    })
+  };
+}
+
+export function runDaemonInstanceUnlockEntrypoint(
+  payload: DaemonInstanceUnlockEntrypointPayload
+): DaemonInstanceUnlockEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_instance_unlock_decision",
+    ...daemonInstanceUnlockDecision({
+      fcntlAvailable: parseBoolean(
+        payload.fcntl_available,
+        "fcntl_available"
+      ),
+      lockHeld: parseBoolean(payload.lock_held, "lock_held")
     })
   };
 }

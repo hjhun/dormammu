@@ -4,6 +4,8 @@ import { pathToFileURL } from "node:url";
 import { Writable } from "node:stream";
 
 import {
+  runDaemonInstanceLockEntrypoint,
+  runDaemonInstanceUnlockEntrypoint,
   runDaemonLoopIterationEntrypoint,
   runDaemonPendingDecisionEntrypoint,
   runDaemonPromptRouteEntrypoint,
@@ -23,6 +25,8 @@ import {
   runGoalsWatcherStopDecisionEntrypoint,
   runGoalsWatchLoopDecisionEntrypoint,
   type AgentRunnerEntrypointPayload,
+  type DaemonInstanceLockEntrypointPayload,
+  type DaemonInstanceUnlockEntrypointPayload,
   type DaemonLoopIterationEntrypointPayload,
   type DaemonPendingDecisionEntrypointPayload,
   type DaemonPromptRouteEntrypointPayload,
@@ -110,6 +114,12 @@ async function runWithSignalHandlers(
   if (isGoalsWatchLoopDecisionPayload(payload)) {
     return runGoalsWatchLoopDecisionEntrypoint(payload);
   }
+  if (isDaemonInstanceLockPayload(payload)) {
+    return runDaemonInstanceLockEntrypoint(payload);
+  }
+  if (isDaemonInstanceUnlockPayload(payload)) {
+    return runDaemonInstanceUnlockEntrypoint(payload);
+  }
   if (isDaemonLoopIterationPayload(payload)) {
     return runDaemonLoopIterationEntrypoint(payload);
   }
@@ -172,7 +182,9 @@ async function readPayload(args: string[]): Promise<RunnerCliPayload> {
 function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEntrypointPayload {
   return (
     !("entrypoint" in payload) ||
-    (payload.entrypoint !== "daemon_loop_iteration_decision" &&
+    (payload.entrypoint !== "daemon_instance_lock_decision" &&
+      payload.entrypoint !== "daemon_instance_unlock_decision" &&
+      payload.entrypoint !== "daemon_loop_iteration_decision" &&
       payload.entrypoint !== "daemon_pending_decision" &&
       payload.entrypoint !== "daemon_prompt_route_decision" &&
       payload.entrypoint !== "daemon_shutdown_decision" &&
@@ -189,6 +201,24 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "goals_watcher_start_decision" &&
       payload.entrypoint !== "goals_watcher_stop_decision" &&
       payload.entrypoint !== "goals_watch_loop_decision")
+  );
+}
+
+function isDaemonInstanceLockPayload(
+  payload: RunnerCliPayload
+): payload is DaemonInstanceLockEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_instance_lock_decision"
+  );
+}
+
+function isDaemonInstanceUnlockPayload(
+  payload: RunnerCliPayload
+): payload is DaemonInstanceUnlockEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_instance_unlock_decision"
   );
 }
 

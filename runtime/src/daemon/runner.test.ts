@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  daemonInstanceLockDecision,
+  daemonInstanceUnlockDecision,
   daemonLoopIterationDecision,
   daemonPendingDecision,
   daemonPromptRouteDecision,
@@ -196,6 +198,78 @@ test("daemonShutdownDecision projects cleanup actions", () => {
       removeHeartbeat: true,
       closeProgressLog: true,
       reason: "daemon_shutdown"
+    }
+  );
+});
+
+test("daemonInstanceLockDecision skips on platforms without fcntl", () => {
+  assert.deepEqual(
+    daemonInstanceLockDecision({
+      fcntlAvailable: false,
+      lockAcquired: false,
+      promptPath: "/repo/prompts",
+      existingPid: null
+    }),
+    {
+      action: "skip",
+      writePidFile: false,
+      errorMessage: null,
+      reason: "fcntl_unavailable"
+    }
+  );
+});
+
+test("daemonInstanceLockDecision holds acquired locks", () => {
+  assert.deepEqual(
+    daemonInstanceLockDecision({
+      fcntlAvailable: true,
+      lockAcquired: true,
+      promptPath: "/repo/prompts",
+      existingPid: null
+    }),
+    {
+      action: "hold",
+      writePidFile: true,
+      errorMessage: null,
+      reason: "instance_lock_acquired"
+    }
+  );
+});
+
+test("daemonInstanceLockDecision rejects busy locks with pid context", () => {
+  assert.deepEqual(
+    daemonInstanceLockDecision({
+      fcntlAvailable: true,
+      lockAcquired: false,
+      promptPath: "/repo/prompts",
+      existingPid: "1234"
+    }),
+    {
+      action: "reject",
+      writePidFile: false,
+      errorMessage: [
+        "Another dormammu daemon is already running against "
+          + "/repo/prompts (existing daemon PID: 1234).",
+        "Stop it first or use a different prompt_path."
+      ].join("\n"),
+      reason: "instance_lock_busy"
+    }
+  );
+});
+
+test("daemonInstanceUnlockDecision projects release cleanup", () => {
+  assert.deepEqual(
+    daemonInstanceUnlockDecision({
+      fcntlAvailable: true,
+      lockHeld: true
+    }),
+    {
+      action: "release",
+      unlockFcntl: true,
+      closeLockFile: true,
+      clearPidLockFile: true,
+      removePidFile: true,
+      reason: "instance_lock_release"
     }
   );
 });

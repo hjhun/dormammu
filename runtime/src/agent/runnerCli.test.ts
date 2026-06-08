@@ -534,6 +534,56 @@ test("dormammu-agent-runner can project daemon shutdown decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon instance lock decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_instance_lock_decision",
+      fcntl_available: true,
+      lock_acquired: false,
+      prompt_path: "/repo/prompts",
+      existing_pid: "4321"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_instance_lock_decision",
+    action: "reject",
+    writePidFile: false,
+    errorMessage: [
+      "Another dormammu daemon is already running against "
+        + "/repo/prompts (existing daemon PID: 4321).",
+      "Stop it first or use a different prompt_path."
+    ].join("\n"),
+    reason: "instance_lock_busy"
+  });
+});
+
+test("dormammu-agent-runner can project daemon instance unlock decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_instance_unlock_decision",
+      fcntl_available: true,
+      lock_held: true
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_instance_unlock_decision",
+    action: "release",
+    unlockFcntl: true,
+    closeLockFile: true,
+    clearPidLockFile: true,
+    removePidFile: true,
+    reason: "instance_lock_release"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

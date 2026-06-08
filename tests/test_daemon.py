@@ -21,7 +21,12 @@ if str(BACKEND) not in sys.path:
 from dormammu.config import AppConfig
 from dormammu.daemon.config import load_daemon_config
 from dormammu.daemon.models import DaemonPromptResult
-from dormammu.daemon.runner import DaemonRunner, SessionProgressLogStream
+from dormammu.daemon import runner as daemon_runner_module
+from dormammu.daemon.runner import (
+    DaemonAlreadyRunningError,
+    DaemonRunner,
+    SessionProgressLogStream,
+)
 from dormammu.daemon.watchers import InotifyWatcher
 from dormammu.agent import cli_adapter as cli_adapter_module
 from dormammu.loop_runner import LoopRunResult
@@ -857,6 +862,107 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    @unittest.skipUnless(daemon_runner_module._HAS_FCNTL, "fcntl is required")
+    def test_instance_lock_can_use_typescript_conflict_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=io.StringIO())
+            runner._pid_lock_path.parent.mkdir(parents=True, exist_ok=True)
+            runner._pid_lock_path.write_text("1234", encoding="utf-8")
+
+            with (
+                mock.patch.object(
+                    daemon_runner_module._fcntl,
+                    "flock",
+                    side_effect=OSError("busy"),
+                ),
+                self.assertRaises(DaemonAlreadyRunningError) as raised,
+            ):
+                with runner._instance_lock():
+                    self.fail("lock acquisition should fail")
+
+            self.assertIn("existing daemon PID: 1234", str(raised.exception))
+            payloads = [
+                json.loads(line)
+                for line in (root / "captured-runner-payloads.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(
+                payloads[-1],
+                {
+                    "entrypoint": "daemon_instance_lock_decision",
+                    "fcntl_available": True,
+                    "lock_acquired": False,
+                    "prompt_path": str(daemon_config.prompt_path),
+                    "existing_pid": "1234",
+                },
+            )
+
+    @unittest.skipUnless(daemon_runner_module._HAS_FCNTL, "fcntl is required")
+    def test_instance_lock_can_use_typescript_release_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=io.StringIO())
+            flock_flags: list[int] = []
+
+            def record_flock(_lock_file: object, flags: int) -> None:
+                flock_flags.append(flags)
+
+            with mock.patch.object(
+                daemon_runner_module._fcntl,
+                "flock",
+                side_effect=record_flock,
+            ):
+                with runner._instance_lock():
+                    self.assertIsNotNone(runner._pid_lock_file)
+                    self.assertEqual(
+                        runner._pid_lock_path.read_text(encoding="utf-8"),
+                        str(os.getpid()),
+                    )
+
+            self.assertIsNone(runner._pid_lock_file)
+            self.assertFalse(runner._pid_lock_path.exists())
+            self.assertEqual(
+                flock_flags,
+                [
+                    daemon_runner_module._fcntl.LOCK_EX
+                    | daemon_runner_module._fcntl.LOCK_NB,
+                    daemon_runner_module._fcntl.LOCK_UN,
+                ],
+            )
+            payloads = [
+                json.loads(line)
+                for line in (root / "captured-runner-payloads.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(
+                [payload["entrypoint"] for payload in payloads],
+                [
+                    "daemon_instance_lock_decision",
+                    "daemon_instance_unlock_decision",
+                ],
+            )
+            self.assertTrue(payloads[0]["lock_acquired"])
+            self.assertTrue(payloads[1]["lock_held"])
+
     @unittest.skipUnless(InotifyWatcher.is_available(), "inotify is only available on Linux")
     def test_daemonize_cli_smoke_processes_prompt_via_inotify(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1262,6 +1368,59 @@ class DaemonRunnerTests(unittest.TestCase):
                         "removeHeartbeat": True,
                         "closeProgressLog": payload["progress_log_active"],
                         "reason": "fake_daemon_shutdown",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_instance_lock_decision":
+                    if not payload["fcntl_available"]:
+                        response = {{
+                            "entrypoint": "daemon_instance_lock_decision",
+                            "action": "skip",
+                            "writePidFile": False,
+                            "errorMessage": None,
+                            "reason": "fake_fcntl_unavailable",
+                        }}
+                    elif payload["lock_acquired"]:
+                        response = {{
+                            "entrypoint": "daemon_instance_lock_decision",
+                            "action": "hold",
+                            "writePidFile": True,
+                            "errorMessage": None,
+                            "reason": "fake_lock_acquired",
+                        }}
+                    else:
+                        existing = (payload.get("existing_pid") or "").strip()
+                        pid_info = (
+                            f" (existing daemon PID: {{existing}})"
+                            if existing
+                            else ""
+                        )
+                        response = {{
+                            "entrypoint": "daemon_instance_lock_decision",
+                            "action": "reject",
+                            "writePidFile": False,
+                            "errorMessage": (
+                                "Another dormammu daemon is already running against "
+                                f"{{payload['prompt_path']}}{{pid_info}}.\\n"
+                                "Stop it first or use a different prompt_path."
+                            ),
+                            "reason": "fake_lock_busy",
+                        }}
+                    print(json.dumps(response, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_instance_unlock_decision":
+                    should_release = payload["fcntl_available"] and payload["lock_held"]
+                    print(json.dumps({{
+                        "entrypoint": "daemon_instance_unlock_decision",
+                        "action": "release" if should_release else "skip",
+                        "unlockFcntl": should_release,
+                        "closeLockFile": should_release,
+                        "clearPidLockFile": should_release,
+                        "removePidFile": should_release,
+                        "reason": (
+                            "fake_lock_release"
+                            if should_release
+                            else "fake_lock_skip"
+                        ),
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 raise SystemExit(2)

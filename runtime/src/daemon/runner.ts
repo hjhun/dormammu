@@ -84,6 +84,38 @@ export type DaemonShutdownDecision = {
   reason: string;
 };
 
+export type DaemonInstanceLockAction = "skip" | "hold" | "reject";
+
+export type DaemonInstanceLockDecisionInput = {
+  fcntlAvailable: boolean;
+  lockAcquired: boolean;
+  promptPath: string;
+  existingPid: string | null;
+};
+
+export type DaemonInstanceLockDecision = {
+  action: DaemonInstanceLockAction;
+  writePidFile: boolean;
+  errorMessage: string | null;
+  reason: string;
+};
+
+export type DaemonInstanceUnlockAction = "skip" | "release";
+
+export type DaemonInstanceUnlockDecisionInput = {
+  fcntlAvailable: boolean;
+  lockHeld: boolean;
+};
+
+export type DaemonInstanceUnlockDecision = {
+  action: DaemonInstanceUnlockAction;
+  unlockFcntl: boolean;
+  closeLockFile: boolean;
+  clearPidLockFile: boolean;
+  removePidFile: boolean;
+  reason: string;
+};
+
 export function daemonPendingDecision(
   input: DaemonPendingDecisionInput
 ): DaemonPendingDecision {
@@ -226,6 +258,66 @@ export function daemonShutdownDecision(
     removeHeartbeat: true,
     closeProgressLog: input.progressLogActive,
     reason: "daemon_shutdown"
+  };
+}
+
+export function daemonInstanceLockDecision(
+  input: DaemonInstanceLockDecisionInput
+): DaemonInstanceLockDecision {
+  if (!input.fcntlAvailable) {
+    return {
+      action: "skip",
+      writePidFile: false,
+      errorMessage: null,
+      reason: "fcntl_unavailable"
+    };
+  }
+
+  if (input.lockAcquired) {
+    return {
+      action: "hold",
+      writePidFile: true,
+      errorMessage: null,
+      reason: "instance_lock_acquired"
+    };
+  }
+
+  const existingPid = input.existingPid?.trim() ?? "";
+  const pidInfo = existingPid.length > 0
+    ? ` (existing daemon PID: ${existingPid})`
+    : "";
+  return {
+    action: "reject",
+    writePidFile: false,
+    errorMessage: [
+      `Another dormammu daemon is already running against ${input.promptPath}${pidInfo}.`,
+      "Stop it first or use a different prompt_path."
+    ].join("\n"),
+    reason: "instance_lock_busy"
+  };
+}
+
+export function daemonInstanceUnlockDecision(
+  input: DaemonInstanceUnlockDecisionInput
+): DaemonInstanceUnlockDecision {
+  if (!input.fcntlAvailable || !input.lockHeld) {
+    return {
+      action: "skip",
+      unlockFcntl: false,
+      closeLockFile: false,
+      clearPidLockFile: false,
+      removePidFile: false,
+      reason: !input.fcntlAvailable ? "fcntl_unavailable" : "lock_not_held"
+    };
+  }
+
+  return {
+    action: "release",
+    unlockFcntl: true,
+    closeLockFile: true,
+    clearPidLockFile: true,
+    removePidFile: true,
+    reason: "instance_lock_release"
   };
 }
 

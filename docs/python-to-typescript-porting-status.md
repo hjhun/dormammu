@@ -223,6 +223,16 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon instance lock and unlock decision helpers, plus
+  runner entrypoints and Python `DaemonRunner._instance_lock()` bridge
+  consumption for fcntl-unavailable skip, acquired-lock PID-file write,
+  duplicate-daemon rejection message projection, unlock, lock-file close,
+  PID lock reference clearing, and PID-file removal decisions with Python
+  fallback retained when the bridge is unavailable or malformed
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -408,10 +418,11 @@ Port the remaining daemon and goals orchestration surface:
   decisions, watcher lifecycle decisions, daemon pending queue decisions,
   daemon prompt route decisions, daemon loop iteration decisions, and daemon
   startup/shutdown lifecycle decisions through the TypeScript runner bridge.
-  Python fallbacks are retained.
+  TypeScript also owns daemon instance lock/unlock decisions for duplicate
+  daemon rejection and PID lock cleanup intent. Python fallbacks are retained.
 - The next slice should continue the remaining daemon lifecycle and recovery
   surface after queue dispatch, prompt route selection, loop iteration, and
-  startup/shutdown handling, with priority on deterministic daemon startup
-  guards, heartbeat/instance-lock recovery, or watcher lifecycle hardening that
-  can be exposed as TypeScript runner contracts without removing Python
-  compatibility.
+  startup/shutdown/instance-lock handling, with priority on heartbeat
+  write/remove projection, watcher lifecycle hardening, or other deterministic
+  daemon recovery contracts that can be exposed through TypeScript without
+  removing Python compatibility.
