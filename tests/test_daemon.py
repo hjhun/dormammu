@@ -1054,6 +1054,68 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIsNone(prompt_result.result_report_artifact)
             self.assertEqual(prompt_result.artifacts, ())
 
+    def test_result_report_artifact_ref_can_use_typescript_bridge(self) -> None:
+        class PromptResultWithoutArtifact:
+            result_report_artifact = None
+
+            def __init__(self, *, result_path: Path) -> None:
+                self.result_path = result_path
+                self.daemon_run_id = ""
+                self.latest_run_id = "agent:test-run"
+                self.session_id = "session-123"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            result_path = daemon_config.result_path / "001-first_RESULT.md"
+            result_path.write_text("# Result\n", encoding="utf-8")
+            runner = DaemonRunner(app_config, daemon_config)
+
+            artifact_ref = runner._result_report_artifact_ref(
+                PromptResultWithoutArtifact(result_path=result_path)  # type: ignore[arg-type]
+            )
+
+            self.assertIsNotNone(artifact_ref)
+            assert artifact_ref is not None
+            self.assertEqual(artifact_ref.kind, "result_report")
+            self.assertEqual(artifact_ref.path, result_path)
+            self.assertEqual(artifact_ref.label, "result_report")
+            self.assertEqual(artifact_ref.content_type, "text/markdown")
+            self.assertEqual(artifact_ref.run_id, "agent:test-run")
+            self.assertEqual(artifact_ref.role, "daemon")
+            self.assertEqual(artifact_ref.stage_name, "daemon")
+            self.assertEqual(artifact_ref.session_id, "session-123")
+            payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_result_artifact_ref_decision"
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_result_artifact_ref_decision",
+                    "result_path": str(result_path),
+                    "result_exists": True,
+                    "created_at": artifact_ref.created_at,
+                    "daemon_run_id": "",
+                    "latest_run_id": "agent:test-run",
+                    "session_id": "session-123",
+                },
+            )
+
     def test_process_prompt_can_use_typescript_lifecycle_skip_for_missing_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2125,6 +2187,38 @@ class DaemonRunnerTests(unittest.TestCase):
                             if payload["prompt_exists"]
                             else "fake_publish_without_prompt"
                         ),
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_result_artifact_ref_decision":
+                    if not payload["result_exists"]:
+                        print(json.dumps({{
+                            "entrypoint": "daemon_result_artifact_ref_decision",
+                            "action": "skip",
+                            "artifactRef": None,
+                            "reason": "result_report_missing",
+                        }}, ensure_ascii=True))
+                        raise SystemExit(0)
+                    run_id = (
+                        (payload.get("daemon_run_id") or "").strip()
+                        or (payload.get("latest_run_id") or "").strip()
+                        or None
+                    )
+                    session_id = (payload.get("session_id") or "").strip() or None
+                    print(json.dumps({{
+                        "entrypoint": "daemon_result_artifact_ref_decision",
+                        "action": "reference",
+                        "artifactRef": {{
+                            "kind": "result_report",
+                            "path": payload["result_path"],
+                            "label": "result_report",
+                            "contentType": "text/markdown",
+                            "createdAt": payload.get("created_at"),
+                            "runId": run_id,
+                            "role": "daemon",
+                            "stageName": "daemon",
+                            "sessionId": session_id,
+                        }},
+                        "reason": "result_report_referenced",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_run_finished_decision":

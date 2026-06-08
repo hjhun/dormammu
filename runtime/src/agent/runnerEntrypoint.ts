@@ -54,6 +54,7 @@ import {
   daemonPromptRouteDecision,
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
+  daemonResultArtifactRefDecision,
   daemonResultReportDecision,
   daemonResultStatusDecision,
   daemonRunFinishedDecision,
@@ -76,6 +77,7 @@ import {
   type DaemonPromptRouteDecision,
   type DaemonPromptSettleDecision,
   type DaemonQueueFileDecision,
+  type DaemonResultArtifactRefDecision,
   type DaemonResultReportDecision,
   type DaemonResultStatusDecision,
   type DaemonRunFinishedDecision,
@@ -370,6 +372,21 @@ export type DaemonResultReportEntrypointResultPayload =
     entrypoint: "daemon_result_report_decision";
   };
 
+export type DaemonResultArtifactRefEntrypointPayload = {
+  entrypoint: "daemon_result_artifact_ref_decision";
+  result_path: string;
+  result_exists: boolean;
+  created_at?: string | null;
+  daemon_run_id?: string | null;
+  latest_run_id?: string | null;
+  session_id?: string | null;
+};
+
+export type DaemonResultArtifactRefEntrypointResultPayload =
+  DaemonResultArtifactRefDecision & {
+    entrypoint: "daemon_result_artifact_ref_decision";
+  };
+
 export type DaemonRunFinishedEntrypointPayload = {
   entrypoint: "daemon_run_finished_decision";
   attempts_completed?: number | null;
@@ -572,6 +589,7 @@ export type RunnerCliPayload =
   | DaemonPromptRouteEntrypointPayload
   | DaemonPromptSettleEntrypointPayload
   | DaemonQueueFileEntrypointPayload
+  | DaemonResultArtifactRefEntrypointPayload
   | DaemonResultReportEntrypointPayload
   | DaemonResultStatusEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
@@ -607,6 +625,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptRouteEntrypointResultPayload
   | DaemonPromptSettleEntrypointResultPayload
   | DaemonQueueFileEntrypointResultPayload
+  | DaemonResultArtifactRefEntrypointResultPayload
   | DaemonResultReportEntrypointResultPayload
   | DaemonResultStatusEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
@@ -748,6 +767,28 @@ export function runDaemonResultReportEntrypoint(
       promptPath: parseRequiredString(payload.prompt_path, "prompt_path"),
       resultPath: parseRequiredString(payload.result_path, "result_path"),
       promptExists: parseBoolean(payload.prompt_exists, "prompt_exists"),
+      daemonRunId: parseOptionalString(
+        payload.daemon_run_id,
+        "daemon_run_id"
+      ) ?? null,
+      latestRunId: parseOptionalString(
+        payload.latest_run_id,
+        "latest_run_id"
+      ) ?? null,
+      sessionId: parseOptionalString(payload.session_id, "session_id") ?? null
+    })
+  };
+}
+
+export function runDaemonResultArtifactRefEntrypoint(
+  payload: DaemonResultArtifactRefEntrypointPayload
+): DaemonResultArtifactRefEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_result_artifact_ref_decision",
+    ...daemonResultArtifactRefDecision({
+      resultPath: parseRequiredString(payload.result_path, "result_path"),
+      resultExists: parseBoolean(payload.result_exists, "result_exists"),
+      createdAt: parseOptionalString(payload.created_at, "created_at") ?? null,
       daemonRunId: parseOptionalString(
         payload.daemon_run_id,
         "daemon_run_id"

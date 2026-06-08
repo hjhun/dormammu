@@ -14,6 +14,7 @@ import {
   daemonPromptRouteDecision,
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
+  daemonResultArtifactRefDecision,
   daemonResultReportDecision,
   daemonResultStatusDecision,
   daemonRunFinishedDecision,
@@ -228,6 +229,52 @@ test("daemonResultReportDecision falls back to latest run metadata", () => {
       sessionId: ""
     }).runId,
     "agent:run-1"
+  );
+});
+
+test("daemonResultArtifactRefDecision projects existing report refs", () => {
+  assert.deepEqual(
+    daemonResultArtifactRefDecision({
+      resultPath: "/repo/results/001-first_RESULT.md",
+      resultExists: true,
+      createdAt: "2026-06-08T04:00:00+00:00",
+      daemonRunId: "daemon:run-1",
+      latestRunId: "agent:run-1",
+      sessionId: "session-1"
+    }),
+    {
+      action: "reference",
+      artifactRef: {
+        kind: "result_report",
+        path: "/repo/results/001-first_RESULT.md",
+        label: "result_report",
+        contentType: "text/markdown",
+        createdAt: "2026-06-08T04:00:00+00:00",
+        runId: "daemon:run-1",
+        role: "daemon",
+        stageName: "daemon",
+        sessionId: "session-1"
+      },
+      reason: "result_report_referenced"
+    }
+  );
+});
+
+test("daemonResultArtifactRefDecision skips missing report refs", () => {
+  assert.deepEqual(
+    daemonResultArtifactRefDecision({
+      resultPath: "/repo/results/001-first_RESULT.md",
+      resultExists: false,
+      createdAt: null,
+      daemonRunId: null,
+      latestRunId: "agent:run-1",
+      sessionId: null
+    }),
+    {
+      action: "skip",
+      artifactRef: null,
+      reason: "result_report_missing"
+    }
   );
 });
 

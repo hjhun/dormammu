@@ -18,6 +18,7 @@ import {
   runDaemonPromptRouteEntrypoint,
   runDaemonPromptSettleEntrypoint,
   runDaemonQueueFileEntrypoint,
+  runDaemonResultArtifactRefEntrypoint,
   runDaemonResultReportEntrypoint,
   runDaemonResultStatusEntrypoint,
   runDaemonRunFinishedEntrypoint,
@@ -491,6 +492,36 @@ test("runDaemonResultReportEntrypoint projects report publication decisions", ()
       stageName: "daemon",
       sessionId: "session-1",
       reason: "publish_and_remove_prompt"
+    }
+  );
+});
+
+test("runDaemonResultArtifactRefEntrypoint projects artifact ref decisions", () => {
+  assert.deepEqual(
+    runDaemonResultArtifactRefEntrypoint({
+      entrypoint: "daemon_result_artifact_ref_decision",
+      result_path: "/repo/results/001-first_RESULT.md",
+      result_exists: true,
+      created_at: "2026-06-08T04:00:00+00:00",
+      daemon_run_id: "",
+      latest_run_id: "agent:run-1",
+      session_id: "session-1"
+    }),
+    {
+      entrypoint: "daemon_result_artifact_ref_decision",
+      action: "reference",
+      artifactRef: {
+        kind: "result_report",
+        path: "/repo/results/001-first_RESULT.md",
+        label: "result_report",
+        contentType: "text/markdown",
+        createdAt: "2026-06-08T04:00:00+00:00",
+        runId: "agent:run-1",
+        role: "daemon",
+        stageName: "daemon",
+        sessionId: "session-1"
+      },
+      reason: "result_report_referenced"
     }
   );
 });

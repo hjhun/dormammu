@@ -97,6 +97,33 @@ export type DaemonResultReportDecision = {
   reason: string;
 };
 
+export type DaemonResultArtifactRefAction = "reference" | "skip";
+
+export type DaemonResultArtifactRefDecisionInput = {
+  resultPath: string;
+  resultExists: boolean;
+  createdAt: string | null;
+  daemonRunId: string | null;
+  latestRunId: string | null;
+  sessionId: string | null;
+};
+
+export type DaemonResultArtifactRefDecision = {
+  action: DaemonResultArtifactRefAction;
+  artifactRef: {
+    kind: "result_report";
+    path: string;
+    label: "result_report";
+    contentType: "text/markdown";
+    createdAt: string | null;
+    runId: string | null;
+    role: "daemon";
+    stageName: "daemon";
+    sessionId: string | null;
+  } | null;
+  reason: string;
+};
+
 export type DaemonRunFinishedDecisionInput = {
   attemptsCompleted: number | null;
   retriesUsed: number | null;
@@ -485,6 +512,34 @@ export function daemonResultReportDecision(
     stageName: "daemon",
     sessionId: nonEmpty(input.sessionId),
     reason: input.promptExists ? "publish_and_remove_prompt" : "publish_without_prompt"
+  };
+}
+
+export function daemonResultArtifactRefDecision(
+  input: DaemonResultArtifactRefDecisionInput
+): DaemonResultArtifactRefDecision {
+  if (!input.resultExists) {
+    return {
+      action: "skip",
+      artifactRef: null,
+      reason: "result_report_missing"
+    };
+  }
+
+  return {
+    action: "reference",
+    artifactRef: {
+      kind: "result_report",
+      path: input.resultPath,
+      label: "result_report",
+      contentType: "text/markdown",
+      createdAt: nonEmpty(input.createdAt),
+      runId: nonEmpty(input.daemonRunId) ?? nonEmpty(input.latestRunId),
+      role: "daemon",
+      stageName: "daemon",
+      sessionId: nonEmpty(input.sessionId)
+    },
+    reason: "result_report_referenced"
   };
 }
 

@@ -716,6 +716,53 @@ class DaemonRunner:
             "session_id": expected["sessionId"],
         }
 
+    def _project_typescript_result_artifact_ref_decision(
+        self,
+        prompt_result: DaemonPromptResult,
+    ) -> ArtifactRef | None:
+        payload = {
+            "entrypoint": "daemon_result_artifact_ref_decision",
+            "result_path": str(prompt_result.result_path),
+            "result_exists": prompt_result.result_path.exists(),
+            "created_at": _path_created_at(prompt_result.result_path),
+            "daemon_run_id": prompt_result.daemon_run_id,
+            "latest_run_id": prompt_result.latest_run_id,
+            "session_id": prompt_result.session_id,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._result_artifact_ref_expectations(prompt_result)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        artifact_ref = expected["artifactRef"]
+        if not isinstance(artifact_ref, Mapping):
+            return None
+        return ArtifactRef.from_path(
+            kind=str(artifact_ref["kind"]),
+            path=str(artifact_ref["path"]),
+            label=str(artifact_ref["label"]),
+            content_type=str(artifact_ref["contentType"]),
+            created_at=(
+                str(artifact_ref["createdAt"])
+                if artifact_ref["createdAt"] is not None
+                else None
+            ),
+            run_id=(
+                str(artifact_ref["runId"])
+                if artifact_ref["runId"] is not None
+                else None
+            ),
+            role=str(artifact_ref["role"]),
+            stage_name=str(artifact_ref["stageName"]),
+            session_id=(
+                str(artifact_ref["sessionId"])
+                if artifact_ref["sessionId"] is not None
+                else None
+            ),
+        )
+
     @staticmethod
     def _result_report_expectations(
         prompt_result: DaemonPromptResult,
@@ -736,6 +783,36 @@ class DaemonRunner:
             "role": "daemon",
             "stageName": "daemon",
             "sessionId": session_id or None,
+        }
+
+    @staticmethod
+    def _result_artifact_ref_expectations(
+        prompt_result: DaemonPromptResult,
+    ) -> dict[str, object]:
+        if not prompt_result.result_path.exists():
+            return {
+                "action": "skip",
+                "artifactRef": None,
+                "reason": "result_report_missing",
+            }
+
+        daemon_run_id = (prompt_result.daemon_run_id or "").strip()
+        latest_run_id = (prompt_result.latest_run_id or "").strip()
+        session_id = (prompt_result.session_id or "").strip()
+        return {
+            "action": "reference",
+            "artifactRef": {
+                "kind": "result_report",
+                "path": str(prompt_result.result_path),
+                "label": "result_report",
+                "contentType": "text/markdown",
+                "createdAt": _path_created_at(prompt_result.result_path),
+                "runId": daemon_run_id or latest_run_id or None,
+                "role": "daemon",
+                "stageName": "daemon",
+                "sessionId": session_id or None,
+            },
+            "reason": "result_report_referenced",
         }
 
     def _run_finished_event_payload(
@@ -2502,6 +2579,11 @@ class DaemonRunner:
             return artifact_ref
         if not prompt_result.result_path.exists():
             return None
+        artifact_ref = self._project_typescript_result_artifact_ref_decision(
+            prompt_result,
+        )
+        if artifact_ref is not None:
+            return artifact_ref
         return self._daemon_result_artifact_writer(prompt_result).reference(
             kind="result_report",
             path=prompt_result.result_path,

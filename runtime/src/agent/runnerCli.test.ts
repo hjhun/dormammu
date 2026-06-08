@@ -543,6 +543,40 @@ test("dormammu-agent-runner can project daemon result report decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon result artifact refs", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_result_artifact_ref_decision",
+      result_path: "/repo/results/001-first_RESULT.md",
+      result_exists: true,
+      created_at: "2026-06-08T04:00:00+00:00",
+      daemon_run_id: "daemon:run-1",
+      latest_run_id: "agent:run-1",
+      session_id: "session-1"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_result_artifact_ref_decision",
+    action: "reference",
+    artifactRef: {
+      kind: "result_report",
+      path: "/repo/results/001-first_RESULT.md",
+      label: "result_report",
+      contentType: "text/markdown",
+      createdAt: "2026-06-08T04:00:00+00:00",
+      runId: "daemon:run-1",
+      role: "daemon",
+      stageName: "daemon",
+      sessionId: "session-1"
+    },
+    reason: "result_report_referenced"
+  });
+});
+
 test("dormammu-agent-runner can project daemon run-finished decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({
