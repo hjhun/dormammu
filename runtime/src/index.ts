@@ -11,6 +11,7 @@ export * from "./agent/presets.js";
 export * from "./agent/runArtifacts.js";
 export * from "./agent/runnerCli.js";
 export * from "./agent/runnerEntrypoint.js";
+export * from "./pipeline/roleStages.js";
 export * from "./results.js";
 export * from "./state/executionProjection.js";
 export * from "./state/models.js";
