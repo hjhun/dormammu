@@ -232,6 +232,27 @@ export type DaemonSupervisorHandoffDecision = {
   reason: "daemon_supervisor_prelude_handoff";
 };
 
+export type DaemonRunLifecycleEventKind = "requested" | "started";
+
+export type DaemonRunLifecycleEventDecisionInput = {
+  eventKind: DaemonRunLifecycleEventKind;
+  promptSummary: string | null;
+};
+
+export type DaemonRunLifecycleEventDecision = {
+  eventType: "run.requested" | "run.started";
+  role: "daemon";
+  stage: "daemon";
+  status: DaemonRunLifecycleEventKind;
+  payload: {
+    source: "daemon_runner";
+    entrypoint: "DaemonRunner._process_prompt";
+    trigger: "daemon_queue";
+    promptSummary: string | null;
+  };
+  reason: "daemon_run_requested" | "daemon_run_started";
+};
+
 export type DaemonResultArtifactRefAction = "reference" | "skip";
 
 export type DaemonResultArtifactRefDecisionInput = {
@@ -1079,6 +1100,40 @@ export function daemonSupervisorHandoffDecision(
       attempt
     },
     reason: "daemon_supervisor_prelude_handoff"
+  };
+}
+
+export function daemonRunLifecycleEventDecision(
+  input: DaemonRunLifecycleEventDecisionInput
+): DaemonRunLifecycleEventDecision {
+  const promptSummary = nonEmpty(input.promptSummary);
+  if (input.eventKind === "started") {
+    return {
+      eventType: "run.started",
+      role: "daemon",
+      stage: "daemon",
+      status: "started",
+      payload: {
+        source: "daemon_runner",
+        entrypoint: "DaemonRunner._process_prompt",
+        trigger: "daemon_queue",
+        promptSummary
+      },
+      reason: "daemon_run_started"
+    };
+  }
+  return {
+    eventType: "run.requested",
+    role: "daemon",
+    stage: "daemon",
+    status: "requested",
+    payload: {
+      source: "daemon_runner",
+      entrypoint: "DaemonRunner._process_prompt",
+      trigger: "daemon_queue",
+      promptSummary
+    },
+    reason: "daemon_run_requested"
   };
 }
 

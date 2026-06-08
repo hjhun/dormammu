@@ -919,6 +919,74 @@ class DaemonRunner:
             "reason": "daemon_supervisor_prelude_handoff",
         }
 
+    def _run_lifecycle_event_decision(
+        self,
+        *,
+        event_kind: str,
+        prompt_summary: str | None,
+    ) -> dict[str, object]:
+        typescript_decision = self._project_typescript_run_lifecycle_event_decision(
+            event_kind=event_kind,
+            prompt_summary=prompt_summary,
+        )
+        if typescript_decision is not None:
+            return typescript_decision
+        return self._run_lifecycle_event_expectations(
+            event_kind=event_kind,
+            prompt_summary=prompt_summary,
+        )
+
+    def _project_typescript_run_lifecycle_event_decision(
+        self,
+        *,
+        event_kind: str,
+        prompt_summary: str | None,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_run_lifecycle_event_decision",
+            "event_kind": event_kind,
+            "prompt_summary": prompt_summary,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._run_lifecycle_event_expectations(
+            event_kind=event_kind,
+            prompt_summary=prompt_summary,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    @staticmethod
+    def _run_lifecycle_event_expectations(
+        *,
+        event_kind: str,
+        prompt_summary: str | None,
+    ) -> dict[str, object]:
+        normalized_kind = "started" if event_kind == "started" else "requested"
+        prompt_summary = (prompt_summary or "").strip() or None
+        return {
+            "eventType": (
+                "run.started" if normalized_kind == "started" else "run.requested"
+            ),
+            "role": "daemon",
+            "stage": "daemon",
+            "status": normalized_kind,
+            "payload": {
+                "source": "daemon_runner",
+                "entrypoint": "DaemonRunner._process_prompt",
+                "trigger": "daemon_queue",
+                "promptSummary": prompt_summary,
+            },
+            "reason": (
+                "daemon_run_started"
+                if normalized_kind == "started"
+                else "daemon_run_requested"
+            ),
+        }
+
     @staticmethod
     def _artifact_writer_expectations(
         *,
@@ -2326,28 +2394,60 @@ class DaemonRunner:
                 label=prompt_path.stem,
                 default_metadata={"source": "daemon_runner", "entrypoint": "DaemonRunner._process_prompt"},
             )
+            prompt_summary = (
+                prompt_text.splitlines()[0].strip() if prompt_text.strip() else None
+            )
+            run_requested_event = self._run_lifecycle_event_decision(
+                event_kind="requested",
+                prompt_summary=prompt_summary,
+            )
+            run_requested_payload = run_requested_event["payload"]
+            if not isinstance(run_requested_payload, Mapping):
+                run_requested_payload = self._run_lifecycle_event_expectations(
+                    event_kind="requested",
+                    prompt_summary=prompt_summary,
+                )["payload"]
             lifecycle.emit(
                 event_type=LifecycleEventType.RUN_REQUESTED,
-                role="daemon",
-                stage="daemon",
-                status="requested",
+                role=str(run_requested_event["role"]),
+                stage=str(run_requested_event["stage"]),
+                status=str(run_requested_event["status"]),
                 payload=RunEventPayload(
-                    source="daemon_runner",
-                    entrypoint="DaemonRunner._process_prompt",
-                    trigger="daemon_queue",
-                    prompt_summary=prompt_text.splitlines()[0].strip() if prompt_text.strip() else None,
+                    source=str(run_requested_payload["source"]),
+                    entrypoint=str(run_requested_payload["entrypoint"]),
+                    trigger=str(run_requested_payload["trigger"]),
+                    prompt_summary=(
+                        str(run_requested_payload["promptSummary"])
+                        if run_requested_payload["promptSummary"] is not None
+                        else None
+                    ),
                 ),
                 metadata={"prompt_path": str(prompt_path)},
             )
+            run_started_event = self._run_lifecycle_event_decision(
+                event_kind="started",
+                prompt_summary=None,
+            )
+            run_started_payload = run_started_event["payload"]
+            if not isinstance(run_started_payload, Mapping):
+                run_started_payload = self._run_lifecycle_event_expectations(
+                    event_kind="started",
+                    prompt_summary=None,
+                )["payload"]
             lifecycle.emit(
                 event_type=LifecycleEventType.RUN_STARTED,
-                role="daemon",
-                stage="daemon",
-                status="started",
+                role=str(run_started_event["role"]),
+                stage=str(run_started_event["stage"]),
+                status=str(run_started_event["status"]),
                 payload=RunEventPayload(
-                    source="daemon_runner",
-                    entrypoint="DaemonRunner._process_prompt",
-                    trigger="daemon_queue",
+                    source=str(run_started_payload["source"]),
+                    entrypoint=str(run_started_payload["entrypoint"]),
+                    trigger=str(run_started_payload["trigger"]),
+                    prompt_summary=(
+                        str(run_started_payload["promptSummary"])
+                        if run_started_payload["promptSummary"] is not None
+                        else None
+                    ),
                 ),
             )
             prompt_artifact_event = self._artifact_persisted_event_decision(

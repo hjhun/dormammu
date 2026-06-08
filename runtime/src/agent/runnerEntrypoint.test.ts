@@ -31,6 +31,7 @@ import {
   runDaemonResultReportEntrypoint,
   runDaemonResultStatusEntrypoint,
   runDaemonRoadmapPhaseEntrypoint,
+  runDaemonRunLifecycleEventEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupBannerEntrypoint,
@@ -560,6 +561,30 @@ test("runDaemonSupervisorHandoffEntrypoint projects prelude handoff metadata", (
         attempt: 1
       },
       reason: "daemon_supervisor_prelude_handoff"
+    }
+  );
+});
+
+test("runDaemonRunLifecycleEventEntrypoint projects run event metadata", () => {
+  assert.deepEqual(
+    runDaemonRunLifecycleEventEntrypoint({
+      entrypoint: "daemon_run_lifecycle_event_decision",
+      event_kind: "requested",
+      prompt_summary: "Build the daemon bridge"
+    }),
+    {
+      entrypoint: "daemon_run_lifecycle_event_decision",
+      eventType: "run.requested",
+      role: "daemon",
+      stage: "daemon",
+      status: "requested",
+      payload: {
+        source: "daemon_runner",
+        entrypoint: "DaemonRunner._process_prompt",
+        trigger: "daemon_queue",
+        promptSummary: "Build the daemon bridge"
+      },
+      reason: "daemon_run_requested"
     }
   );
 });

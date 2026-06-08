@@ -27,6 +27,7 @@ import {
   daemonResultReportDecision,
   daemonResultStatusDecision,
   daemonRoadmapPhaseDecision,
+  daemonRunLifecycleEventDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
   daemonStartupBannerDecision,
@@ -329,6 +330,47 @@ test("daemonSupervisorHandoffDecision projects prelude handoff metadata", () => 
         attempt: 1
       },
       reason: "daemon_supervisor_prelude_handoff"
+    }
+  );
+});
+
+test("daemonRunLifecycleEventDecision projects requested and started metadata", () => {
+  assert.deepEqual(
+    daemonRunLifecycleEventDecision({
+      eventKind: "requested",
+      promptSummary: "Build the daemon bridge"
+    }),
+    {
+      eventType: "run.requested",
+      role: "daemon",
+      stage: "daemon",
+      status: "requested",
+      payload: {
+        source: "daemon_runner",
+        entrypoint: "DaemonRunner._process_prompt",
+        trigger: "daemon_queue",
+        promptSummary: "Build the daemon bridge"
+      },
+      reason: "daemon_run_requested"
+    }
+  );
+  assert.deepEqual(
+    daemonRunLifecycleEventDecision({
+      eventKind: "started",
+      promptSummary: "  "
+    }),
+    {
+      eventType: "run.started",
+      role: "daemon",
+      stage: "daemon",
+      status: "started",
+      payload: {
+        source: "daemon_runner",
+        entrypoint: "DaemonRunner._process_prompt",
+        trigger: "daemon_queue",
+        promptSummary: null
+      },
+      reason: "daemon_run_started"
     }
   );
 });

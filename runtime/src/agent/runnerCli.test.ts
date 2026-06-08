@@ -611,6 +611,34 @@ test("dormammu-agent-runner can project daemon supervisor handoff metadata", () 
   });
 });
 
+test("dormammu-agent-runner can project daemon run lifecycle metadata", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_run_lifecycle_event_decision",
+      event_kind: "started",
+      prompt_summary: null
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_run_lifecycle_event_decision",
+    eventType: "run.started",
+    role: "daemon",
+    stage: "daemon",
+    status: "started",
+    payload: {
+      source: "daemon_runner",
+      entrypoint: "DaemonRunner._process_prompt",
+      trigger: "daemon_queue",
+      promptSummary: null
+    },
+    reason: "daemon_run_started"
+  });
+});
+
 test("dormammu-agent-runner can project daemon result report decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

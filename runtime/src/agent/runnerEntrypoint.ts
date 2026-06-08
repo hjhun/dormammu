@@ -67,6 +67,7 @@ import {
   daemonResultReportDecision,
   daemonResultStatusDecision,
   daemonRoadmapPhaseDecision,
+  daemonRunLifecycleEventDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
   daemonStartupBannerDecision,
@@ -102,6 +103,7 @@ import {
   type DaemonResultReportDecision,
   type DaemonResultStatusDecision,
   type DaemonRoadmapPhaseDecision,
+  type DaemonRunLifecycleEventDecision,
   type DaemonRunFinishedDecision,
   type DaemonShutdownDecision,
   type DaemonStartupBannerDecision,
@@ -425,6 +427,17 @@ export type DaemonSupervisorHandoffEntrypointPayload = {
 export type DaemonSupervisorHandoffEntrypointResultPayload =
   DaemonSupervisorHandoffDecision & {
     entrypoint: "daemon_supervisor_handoff_decision";
+  };
+
+export type DaemonRunLifecycleEventEntrypointPayload = {
+  entrypoint: "daemon_run_lifecycle_event_decision";
+  event_kind: "requested" | "started";
+  prompt_summary?: string | null;
+};
+
+export type DaemonRunLifecycleEventEntrypointResultPayload =
+  DaemonRunLifecycleEventDecision & {
+    entrypoint: "daemon_run_lifecycle_event_decision";
   };
 
 export type DaemonResultReportEntrypointPayload = {
@@ -776,6 +789,7 @@ export type RunnerCliPayload =
   | DaemonRoadmapPhaseEntrypointPayload
   | DaemonGoalSourceEntrypointPayload
   | DaemonAgentCliEntrypointPayload
+  | DaemonRunLifecycleEventEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupBannerEntrypointPayload
@@ -824,6 +838,7 @@ export type RunnerCliResultPayload =
   | DaemonRoadmapPhaseEntrypointResultPayload
   | DaemonGoalSourceEntrypointResultPayload
   | DaemonAgentCliEntrypointResultPayload
+  | DaemonRunLifecycleEventEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupBannerEntrypointResultPayload
@@ -1005,6 +1020,19 @@ export function runDaemonSupervisorHandoffEntrypoint(
       fromRole: parseRequiredString(payload.from_role, "from_role"),
       toRole: parseRequiredString(payload.to_role, "to_role"),
       attempt: parseNumber(payload.attempt, "attempt")
+    })
+  };
+}
+
+export function runDaemonRunLifecycleEventEntrypoint(
+  payload: DaemonRunLifecycleEventEntrypointPayload
+): DaemonRunLifecycleEventEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_run_lifecycle_event_decision",
+    ...daemonRunLifecycleEventDecision({
+      eventKind: parseRunLifecycleEventKind(payload.event_kind),
+      promptSummary:
+        parseOptionalString(payload.prompt_summary, "prompt_summary") ?? null
     })
   };
 }
@@ -1860,6 +1888,13 @@ function parseHeartbeatStatus(value: unknown): DaemonHeartbeatStatus {
 function parseWatcherBackend(value: unknown): DaemonWatcherBackend {
   if (value !== "auto" && value !== "inotify" && value !== "polling") {
     throw new Error("requested_backend must be auto, inotify, or polling");
+  }
+  return value;
+}
+
+function parseRunLifecycleEventKind(value: unknown): "requested" | "started" {
+  if (value !== "requested" && value !== "started") {
+    throw new Error("event_kind must be requested or started");
   }
   return value;
 }
