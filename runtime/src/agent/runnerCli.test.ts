@@ -550,6 +550,31 @@ test("dormammu-agent-runner can project daemon run-finished decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon existing result decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_existing_result_decision",
+      prompt_path: "/repo/prompts/001-first.md",
+      result_path: "/repo/results/001-first_RESULT.md",
+      result_exists: true,
+      existing_result_status: "completed"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_existing_result_decision",
+    action: "remove",
+    removeExistingResult: true,
+    promptPath: "/repo/prompts/001-first.md",
+    resultPath: "/repo/results/001-first_RESULT.md",
+    existingResultStatus: "completed",
+    reason: "completed_result_reprocess"
+  });
+});
+
 test("dormammu-agent-runner can project daemon loop iteration decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

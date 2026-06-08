@@ -6,6 +6,7 @@ import test from "node:test";
 
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
+  runDaemonExistingResultEntrypoint,
   runDaemonHeartbeatRemoveEntrypoint,
   runDaemonHeartbeatWriteEntrypoint,
   runDaemonInstanceLockEntrypoint,
@@ -491,6 +492,27 @@ test("runDaemonRunFinishedEntrypoint projects run-finished metadata", () => {
       outcome: "completed",
       error: null,
       reason: "daemon_run_finished"
+    }
+  );
+});
+
+test("runDaemonExistingResultEntrypoint projects stale result removal", () => {
+  assert.deepEqual(
+    runDaemonExistingResultEntrypoint({
+      entrypoint: "daemon_existing_result_decision",
+      prompt_path: "/repo/prompts/001-first.md",
+      result_path: "/repo/results/001-first_RESULT.md",
+      result_exists: true,
+      existing_result_status: "completed"
+    }),
+    {
+      entrypoint: "daemon_existing_result_decision",
+      action: "remove",
+      removeExistingResult: true,
+      promptPath: "/repo/prompts/001-first.md",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      existingResultStatus: "completed",
+      reason: "completed_result_reprocess"
     }
   );
 });

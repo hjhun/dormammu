@@ -472,6 +472,56 @@ class DaemonRunner:
             "error_message": expected["errorMessage"],
         }
 
+    def _project_typescript_existing_result_decision(
+        self,
+        *,
+        prompt_path: Path,
+        result_path: Path,
+        result_exists: bool,
+        existing_result_status: str | None,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_existing_result_decision",
+            "prompt_path": str(prompt_path),
+            "result_path": str(result_path),
+            "result_exists": result_exists,
+            "existing_result_status": existing_result_status,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._existing_result_expectations(
+            prompt_path=prompt_path,
+            result_path=result_path,
+            result_exists=result_exists,
+            existing_result_status=existing_result_status,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "remove_existing_result": expected["removeExistingResult"],
+        }
+
+    @staticmethod
+    def _existing_result_expectations(
+        *,
+        prompt_path: Path,
+        result_path: Path,
+        result_exists: bool,
+        existing_result_status: str | None,
+    ) -> dict[str, object]:
+        status = (existing_result_status or "").strip() or None
+        remove_existing_result = result_exists and status == "completed"
+        return {
+            "action": "remove" if remove_existing_result else "keep",
+            "removeExistingResult": remove_existing_result,
+            "promptPath": str(prompt_path),
+            "resultPath": str(result_path),
+            "existingResultStatus": status,
+        }
+
     @staticmethod
     def _prompt_lifecycle_expectations(
         *,
@@ -1269,7 +1319,20 @@ class DaemonRunner:
             result_path = self._result_path_for_prompt(path)
             if result_path.exists():
                 existing_status = self._existing_result_status(result_path)
-                if existing_status == "completed":
+                existing_result_decision = (
+                    self._project_typescript_existing_result_decision(
+                        prompt_path=path,
+                        result_path=result_path,
+                        result_exists=True,
+                        existing_result_status=existing_status,
+                    )
+                )
+                remove_existing_result = (
+                    existing_status == "completed"
+                    if existing_result_decision is None
+                    else bool(existing_result_decision["remove_existing_result"])
+                )
+                if remove_existing_result:
                     result_path.unlink()
                     self._log(
                         "daemon queue scan: removing stale completed result for "

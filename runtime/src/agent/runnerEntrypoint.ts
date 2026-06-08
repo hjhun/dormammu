@@ -42,6 +42,7 @@ import {
   type GoalQueueCandidate
 } from "../goals/discovery.js";
 import {
+  daemonExistingResultDecision,
   daemonHeartbeatRemoveDecision,
   daemonHeartbeatWriteDecision,
   daemonInstanceLockDecision,
@@ -56,6 +57,7 @@ import {
   daemonStartupDecision,
   daemonWatcherBackendDecision,
   daemonWatcherWaitDecision,
+  type DaemonExistingResultDecision,
   type DaemonHeartbeatRemoveDecision,
   type DaemonHeartbeatStatus,
   type DaemonHeartbeatWriteDecision,
@@ -359,6 +361,19 @@ export type DaemonRunFinishedEntrypointResultPayload =
     entrypoint: "daemon_run_finished_decision";
   };
 
+export type DaemonExistingResultEntrypointPayload = {
+  entrypoint: "daemon_existing_result_decision";
+  prompt_path: string;
+  result_path: string;
+  result_exists: boolean;
+  existing_result_status?: string | null;
+};
+
+export type DaemonExistingResultEntrypointResultPayload =
+  DaemonExistingResultDecision & {
+    entrypoint: "daemon_existing_result_decision";
+  };
+
 export type DaemonLoopIterationEntrypointPayload = {
   entrypoint: "daemon_loop_iteration_decision";
   processed_count: number;
@@ -464,6 +479,7 @@ export type DaemonWatcherWaitEntrypointResultPayload =
 
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
+  | DaemonExistingResultEntrypointPayload
   | DaemonHeartbeatRemoveEntrypointPayload
   | DaemonHeartbeatWriteEntrypointPayload
   | DaemonInstanceLockEntrypointPayload
@@ -492,6 +508,7 @@ export type RunnerCliPayload =
   | GoalsWatchLoopDecisionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
+  | DaemonExistingResultEntrypointResultPayload
   | DaemonHeartbeatRemoveEntrypointResultPayload
   | DaemonHeartbeatWriteEntrypointResultPayload
   | DaemonInstanceLockEntrypointResultPayload
@@ -653,6 +670,23 @@ export function runDaemonRunFinishedEntrypoint(
       ) ?? null,
       outcome: parseRequiredString(payload.outcome, "outcome"),
       error: parseOptionalString(payload.error, "error") ?? null
+    })
+  };
+}
+
+export function runDaemonExistingResultEntrypoint(
+  payload: DaemonExistingResultEntrypointPayload
+): DaemonExistingResultEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_existing_result_decision",
+    ...daemonExistingResultDecision({
+      promptPath: parseRequiredString(payload.prompt_path, "prompt_path"),
+      resultPath: parseRequiredString(payload.result_path, "result_path"),
+      resultExists: parseBoolean(payload.result_exists, "result_exists"),
+      existingResultStatus: parseOptionalString(
+        payload.existing_result_status,
+        "existing_result_status"
+      ) ?? null
     })
   };
 }

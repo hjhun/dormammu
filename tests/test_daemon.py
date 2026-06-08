@@ -375,6 +375,59 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIn("Status: `completed`", result_path.read_text(encoding="utf-8"))
             self.assertFalse(prompt_path.exists())
 
+    def test_run_pending_once_can_use_typescript_existing_result_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            loop_cli = self._write_loop_cli(root, success_attempt=1)
+            self._write_typescript_runner_config(
+                root,
+                ts_runner,
+                active_agent_cli=loop_cli,
+            )
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+            result_path = daemon_config.result_path / "001-first_RESULT.md"
+            result_path.write_text(
+                "# Result\n\n## Summary\n\n- Status: `completed`\n",
+                encoding="utf-8",
+            )
+
+            processed = DaemonRunner(app_config, daemon_config).run_pending_once(
+                watcher_backend="polling",
+            )
+
+            self.assertEqual(processed, 1)
+            self.assertFalse(prompt_path.exists())
+            existing_result_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_existing_result_decision"
+            )
+            self.assertEqual(
+                existing_result_payload,
+                {
+                    "entrypoint": "daemon_existing_result_decision",
+                    "prompt_path": str(prompt_path),
+                    "result_path": str(result_path),
+                    "result_exists": True,
+                    "existing_result_status": "completed",
+                },
+            )
+
     def test_run_pending_once_publishes_completed_result_only_after_prompt_removal(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1678,6 +1731,29 @@ class DaemonRunnerTests(unittest.TestCase):
                             "reason": "fake_prompt_missing",
                         }}
                     print(json.dumps(response, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_existing_result_decision":
+                    status = (
+                        (payload.get("existing_result_status") or "").strip()
+                        or None
+                    )
+                    should_remove = (
+                        bool(payload.get("result_exists"))
+                        and status == "completed"
+                    )
+                    print(json.dumps({{
+                        "entrypoint": "daemon_existing_result_decision",
+                        "action": "remove" if should_remove else "keep",
+                        "removeExistingResult": should_remove,
+                        "promptPath": payload["prompt_path"],
+                        "resultPath": payload["result_path"],
+                        "existingResultStatus": status,
+                        "reason": (
+                            "fake_completed_result_reprocess"
+                            if should_remove
+                            else "fake_existing_result_keep"
+                        ),
+                    }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_result_report_decision":
                     run_id = (

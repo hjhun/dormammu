@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  daemonExistingResultDecision,
   daemonHeartbeatRemoveDecision,
   daemonHeartbeatWriteDecision,
   daemonInstanceLockDecision,
@@ -228,6 +229,37 @@ test("daemonRunFinishedDecision projects run finished metadata", () => {
       error: null,
       reason: "daemon_run_finished"
     }
+  );
+});
+
+test("daemonExistingResultDecision removes completed stale result files", () => {
+  assert.deepEqual(
+    daemonExistingResultDecision({
+      promptPath: "/repo/prompts/001-first.md",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      resultExists: true,
+      existingResultStatus: " completed "
+    }),
+    {
+      action: "remove",
+      removeExistingResult: true,
+      promptPath: "/repo/prompts/001-first.md",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      existingResultStatus: "completed",
+      reason: "completed_result_reprocess"
+    }
+  );
+});
+
+test("daemonExistingResultDecision keeps non-completed result files", () => {
+  assert.deepEqual(
+    daemonExistingResultDecision({
+      promptPath: "/repo/prompts/001-first.md",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      resultExists: true,
+      existingResultStatus: "failed"
+    }).removeExistingResult,
+    false
   );
 });
 

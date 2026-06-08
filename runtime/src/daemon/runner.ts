@@ -104,6 +104,24 @@ export type DaemonRunFinishedDecision = {
   reason: string;
 };
 
+export type DaemonExistingResultAction = "remove" | "keep";
+
+export type DaemonExistingResultDecisionInput = {
+  promptPath: string;
+  resultPath: string;
+  resultExists: boolean;
+  existingResultStatus: string | null;
+};
+
+export type DaemonExistingResultDecision = {
+  action: DaemonExistingResultAction;
+  removeExistingResult: boolean;
+  promptPath: string;
+  resultPath: string;
+  existingResultStatus: string | null;
+  reason: string;
+};
+
 export type DaemonLoopIterationAction = "continue" | "wait" | "stop";
 
 export type DaemonLoopIterationInput = {
@@ -393,6 +411,26 @@ export function daemonRunFinishedDecision(
     outcome: nonEmpty(input.outcome) ?? "unknown",
     error: nonEmpty(input.error),
     reason: "daemon_run_finished"
+  };
+}
+
+export function daemonExistingResultDecision(
+  input: DaemonExistingResultDecisionInput
+): DaemonExistingResultDecision {
+  const existingResultStatus = nonEmpty(input.existingResultStatus);
+  const removeExistingResult =
+    input.resultExists && existingResultStatus === "completed";
+  return {
+    action: removeExistingResult ? "remove" : "keep",
+    removeExistingResult,
+    promptPath: input.promptPath,
+    resultPath: input.resultPath,
+    existingResultStatus,
+    reason: removeExistingResult
+      ? "completed_result_reprocess"
+      : input.resultExists
+        ? "existing_result_not_completed"
+        : "no_existing_result"
   };
 }
 

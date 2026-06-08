@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Writable } from "node:stream";
 
 import {
+  runDaemonExistingResultEntrypoint,
   runDaemonHeartbeatRemoveEntrypoint,
   runDaemonHeartbeatWriteEntrypoint,
   runDaemonInstanceLockEntrypoint,
@@ -32,6 +33,7 @@ import {
   runGoalsWatcherStopDecisionEntrypoint,
   runGoalsWatchLoopDecisionEntrypoint,
   type AgentRunnerEntrypointPayload,
+  type DaemonExistingResultEntrypointPayload,
   type DaemonHeartbeatRemoveEntrypointPayload,
   type DaemonHeartbeatWriteEntrypointPayload,
   type DaemonInstanceLockEntrypointPayload,
@@ -170,6 +172,9 @@ async function runWithSignalHandlers(
   if (isDaemonRunFinishedPayload(payload)) {
     return runDaemonRunFinishedEntrypoint(payload);
   }
+  if (isDaemonExistingResultPayload(payload)) {
+    return runDaemonExistingResultEntrypoint(payload);
+  }
   if (!isAgentRunPayload(payload)) {
     return runGoalsQueueEntrypoint(payload);
   }
@@ -217,7 +222,8 @@ async function readPayload(args: string[]): Promise<RunnerCliPayload> {
 function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEntrypointPayload {
   return (
     !("entrypoint" in payload) ||
-    (payload.entrypoint !== "daemon_heartbeat_remove_decision" &&
+    (payload.entrypoint !== "daemon_existing_result_decision" &&
+      payload.entrypoint !== "daemon_heartbeat_remove_decision" &&
       payload.entrypoint !== "daemon_heartbeat_write_decision" &&
       payload.entrypoint !== "daemon_instance_lock_decision" &&
       payload.entrypoint !== "daemon_instance_unlock_decision" &&
@@ -366,6 +372,15 @@ function isDaemonRunFinishedPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_run_finished_decision"
+  );
+}
+
+function isDaemonExistingResultPayload(
+  payload: RunnerCliPayload
+): payload is DaemonExistingResultEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_existing_result_decision"
   );
 }
 
