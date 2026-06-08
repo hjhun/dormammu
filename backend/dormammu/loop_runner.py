@@ -145,6 +145,7 @@ class LoopRunRequest:
             prompt_flag=self.prompt_flag,
             extra_args=self.extra_args,
             run_label=self.run_label,
+            agent_role=self.agent_role,
         )
 
     def to_state_dict(self) -> dict[str, Any]:

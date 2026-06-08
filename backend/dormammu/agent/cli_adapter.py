@@ -330,6 +330,12 @@ class CliAdapter:
         return {
             "config": _typescript_config_payload(self.config),
             "config_path": str(self.config.config_file) if self.config.config_file else None,
+            "role": request.agent_role,
+            "agents": self.config.agents.to_dict() if self.config.agents else None,
+            "agent_manifest_search_roots": _typescript_agent_manifest_search_roots(
+                self.config
+            ),
+            "skill_search_roots": _typescript_skill_search_roots(self.config),
             "request": {
                 "cli_path": str(request.cli_path),
                 "prompt_text": request.prompt_text,
@@ -864,6 +870,36 @@ def _typescript_config_payload(config: AppConfig) -> dict[str, object]:
         "process_timeout_seconds": config.process_timeout_seconds,
         "fallback_on_nonzero_exit": config.fallback_on_nonzero_exit,
     }
+
+
+def _typescript_agent_manifest_search_roots(config: AppConfig) -> list[dict[str, str]]:
+    return [
+        {
+            "scope": "project",
+            "path": str(config.project_agent_manifests_dir),
+        },
+        {
+            "scope": "user",
+            "path": str(config.user_agent_manifests_dir),
+        },
+    ]
+
+
+def _typescript_skill_search_roots(config: AppConfig) -> list[dict[str, str]]:
+    return [
+        {
+            "scope": "project",
+            "path": str(config.project_skills_dir),
+        },
+        {
+            "scope": "user",
+            "path": str(config.user_skills_dir),
+        },
+        {
+            "scope": "built_in",
+            "path": str(config.built_in_skills_dir),
+        },
+    ]
 
 
 def _agent_run_started_from_payload(payload: object) -> AgentRunStarted:

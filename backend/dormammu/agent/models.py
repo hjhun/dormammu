@@ -98,6 +98,7 @@ class AgentRunRequest:
     prompt_flag: str | None = None
     extra_args: Sequence[str] = ()
     run_label: str | None = None
+    agent_role: str = "developer"
 
 
 @dataclass(frozen=True, slots=True)

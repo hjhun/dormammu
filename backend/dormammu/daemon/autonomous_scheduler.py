@@ -327,6 +327,7 @@ class AutonomousScheduler:
             repo_root=self._app_config.repo_root,
             extra_args=tuple(model_args(analyzer_cli.name, analyzer_profile.model_override)),
             run_label=f"autonomous-analyzer-{date_str}",
+            agent_role="analyzer",
         )
         try:
             result = adapter.run_once(request)

@@ -65,6 +65,11 @@ Ported modules:
   runtime skill summary projection
   -> `runtime/src/agent/configuredRunner.ts`,
   `runtime/src/agent/runnerEntrypoint.ts`
+- Python bridge payload role/profile context forwarding, including role name,
+  agents config, manifest search roots, and skill search roots for the
+  TypeScript runner entrypoint
+  -> `backend/dormammu/agent/models.py`,
+  `backend/dormammu/agent/cli_adapter.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -243,10 +248,11 @@ Port the remaining runtime orchestration surface:
   profiles can be normalized into TypeScript runtime role profile snapshots,
   and the TypeScript runner entrypoint can resolve role/profile-backed CLI and
   runtime skill payloads when given the required search roots
-- Python runtime call sites still own daemon, supervisor, and pipeline
-  execution while TypeScript parity surfaces are assembled
+- Python runtime call sites now forward role/profile search-root context to the
+  TypeScript runner bridge, but still own daemon, supervisor, and pipeline
+  orchestration while TypeScript parity surfaces are assembled
 
 The next slice should use the accumulated contract coverage to start replacing
 remaining Python runtime fallback internals with TypeScript-owned
-implementations, beginning with passing role/profile search-root context from
-the Python bridge into the TypeScript runner payload.
+implementations, beginning with TypeScript-owned stage result and pipeline
+role orchestration contracts.

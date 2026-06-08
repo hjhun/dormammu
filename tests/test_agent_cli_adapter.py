@@ -726,6 +726,7 @@ class CliAdapterTests(unittest.TestCase):
                     repo_root=root,
                     input_mode="stdin",
                     run_label="typescript-bridge",
+                    agent_role="planner",
                 )
             )
 
@@ -751,6 +752,41 @@ class CliAdapterTests(unittest.TestCase):
             )
             self.assertEqual(captured["config"]["process_timeout_seconds"], 13)
             self.assertEqual(captured["config"]["fallback_on_nonzero_exit"], True)
+            self.assertEqual(captured["role"], "planner")
+            self.assertEqual(
+                captured["agents"],
+                config.agents.to_dict() if config.agents is not None else None,
+            )
+            self.assertEqual(
+                captured["agent_manifest_search_roots"],
+                [
+                    {
+                        "scope": "project",
+                        "path": str(config.project_agent_manifests_dir),
+                    },
+                    {
+                        "scope": "user",
+                        "path": str(config.user_agent_manifests_dir),
+                    },
+                ],
+            )
+            self.assertEqual(
+                captured["skill_search_roots"],
+                [
+                    {
+                        "scope": "project",
+                        "path": str(config.project_skills_dir),
+                    },
+                    {
+                        "scope": "user",
+                        "path": str(config.user_skills_dir),
+                    },
+                    {
+                        "scope": "built_in",
+                        "path": str(config.built_in_skills_dir),
+                    },
+                ],
+            )
             self.assertEqual(captured["request"]["cli_path"], str(fake_cli))
             self.assertEqual(captured["request"]["prompt_text"], "Run through TypeScript.")
             self.assertEqual(captured["request"]["input_mode"], "stdin")

@@ -354,6 +354,7 @@ class GoalsScheduler:
             repo_root=self._app_config.repo_root,
             extra_args=tuple(model_args(cli.name, model)),
             run_label=f"goals-{role}",
+            agent_role=role,
         )
         try:
             result = adapter.run_once(request)
@@ -444,4 +445,3 @@ class GoalsScheduler:
     def _log(self, message: str) -> None:
         print(message, file=self._progress_stream)
         self._progress_stream.flush()
-

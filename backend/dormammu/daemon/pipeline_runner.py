@@ -713,6 +713,7 @@ class PipelineRunner:
             repo_root=self._app_config.repo_root,
             extra_args=tuple(_model_args(cli.name, profile.model_override)),
             run_label=f"pipeline-{stage_name}-{stem}",
+            agent_role="developer",
         )
         self._emit_cli_command(
             role="developer",
@@ -1341,6 +1342,7 @@ class PipelineRunner:
             repo_root=self._app_config.repo_root,
             extra_args=tuple(_model_args(cli.name, model)),
             run_label=role,
+            agent_role=role,
         )
         self._emit_cli_command(
             role=role,
