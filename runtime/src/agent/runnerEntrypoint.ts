@@ -54,6 +54,7 @@ import {
   daemonLoopIterationDecision,
   daemonPlanStateDecision,
   daemonPendingDecision,
+  daemonPromptCompletionLineDecision,
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
   daemonPromptRouteDecision,
@@ -90,6 +91,7 @@ import {
   type DaemonLoopIterationDecision,
   type DaemonPlanStateDecision,
   type DaemonPendingDecision,
+  type DaemonPromptCompletionLineDecision,
   type DaemonPromptLifecycleDecision,
   type DaemonPromptPathDecision,
   type DaemonPromptRouteDecision,
@@ -534,6 +536,18 @@ export type DaemonRunFinishedEntrypointResultPayload =
     entrypoint: "daemon_run_finished_decision";
   };
 
+export type DaemonPromptCompletionLineEntrypointPayload = {
+  entrypoint: "daemon_prompt_completion_line_decision";
+  prompt_name: string;
+  status: string;
+  result_path: string;
+};
+
+export type DaemonPromptCompletionLineEntrypointResultPayload =
+  DaemonPromptCompletionLineDecision & {
+    entrypoint: "daemon_prompt_completion_line_decision";
+  };
+
 export type DaemonRoadmapPhaseEntrypointPayload = {
   entrypoint: "daemon_roadmap_phase_decision";
   active_phase_ids?: readonly unknown[] | null;
@@ -791,6 +805,7 @@ export type RunnerCliPayload =
   | DaemonAgentCliEntrypointPayload
   | DaemonRunLifecycleEventEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
+  | DaemonPromptCompletionLineEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupBannerEntrypointPayload
   | DaemonStartupEntrypointPayload
@@ -840,6 +855,7 @@ export type RunnerCliResultPayload =
   | DaemonAgentCliEntrypointResultPayload
   | DaemonRunLifecycleEventEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
+  | DaemonPromptCompletionLineEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupBannerEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
@@ -1156,6 +1172,19 @@ export function runDaemonRunFinishedEntrypoint(
       ) ?? null,
       outcome: parseRequiredString(payload.outcome, "outcome"),
       error: parseOptionalString(payload.error, "error") ?? null
+    })
+  };
+}
+
+export function runDaemonPromptCompletionLineEntrypoint(
+  payload: DaemonPromptCompletionLineEntrypointPayload
+): DaemonPromptCompletionLineEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_prompt_completion_line_decision",
+    ...daemonPromptCompletionLineDecision({
+      promptName: parseRequiredString(payload.prompt_name, "prompt_name"),
+      status: parseRequiredString(payload.status, "status"),
+      resultPath: parseRequiredString(payload.result_path, "result_path")
     })
   };
 }

@@ -1065,6 +1065,28 @@ class DaemonRunner:
             self._run_finished_event_decision(prompt_result),
         )
 
+    def _prompt_completion_line(
+        self,
+        *,
+        prompt_path: Path,
+        status: str,
+        result_path: Path,
+    ) -> str:
+        decision = self._project_typescript_prompt_completion_line_decision(
+            prompt_path=prompt_path,
+            status=status,
+            result_path=result_path,
+        )
+        if decision is not None:
+            return str(decision["line"])
+        return str(
+            self._prompt_completion_line_expectations(
+                prompt_path=prompt_path,
+                status=status,
+                result_path=result_path,
+            )["line"]
+        )
+
     def _run_finished_event_decision(
         self,
         prompt_result: DaemonPromptResult,
@@ -1127,6 +1149,32 @@ class DaemonRunner:
         if result is None:
             return None
         expected = self._run_finished_expectations(prompt_result)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    def _project_typescript_prompt_completion_line_decision(
+        self,
+        *,
+        prompt_path: Path,
+        status: str,
+        result_path: Path,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_prompt_completion_line_decision",
+            "prompt_name": prompt_path.name,
+            "status": status,
+            "result_path": str(result_path),
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._prompt_completion_line_expectations(
+            prompt_path=prompt_path,
+            status=status,
+            result_path=result_path,
+        )
         for field_name, expected_value in expected.items():
             if result.get(field_name) != expected_value:
                 return None
@@ -1348,6 +1396,31 @@ class DaemonRunner:
             "outcome": outcome,
             "error": cls._normalize_optional_text(prompt_result.error),
             "reason": "daemon_run_finished",
+        }
+
+    @classmethod
+    def _prompt_completion_line_expectations(
+        cls,
+        *,
+        prompt_path: Path,
+        status: object,
+        result_path: Path,
+    ) -> dict[str, object]:
+        prompt_name = (
+            cls._normalize_optional_text(prompt_path.name) or "unknown-prompt"
+        )
+        normalized_status = cls._normalize_required_text(status)
+        normalized_result_path = cls._normalize_optional_text(result_path) or ""
+        return {
+            "entrypoint": "daemon_prompt_completion_line_decision",
+            "line": (
+                f"daemon prompt {prompt_name}: {normalized_status} -> "
+                f"{normalized_result_path}"
+            ),
+            "promptName": prompt_name,
+            "status": normalized_status,
+            "resultPath": normalized_result_path,
+            "reason": "daemon_prompt_completion_line_projected",
         }
 
     @staticmethod
@@ -2592,7 +2665,14 @@ class DaemonRunner:
                     payload=run_finished_payload,
                     artifact_refs=(result_report_ref,) if result_report_ref is not None else (),
                 )
-            print(f"daemon prompt {prompt_path.name}: {status} -> {result_path}", file=self.progress_stream)
+            print(
+                self._prompt_completion_line(
+                    prompt_path=prompt_path,
+                    status=status,
+                    result_path=result_path,
+                ),
+                file=self.progress_stream,
+            )
             self.progress_stream.flush()
             if interrupted:
                 raise KeyboardInterrupt()

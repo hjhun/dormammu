@@ -14,6 +14,7 @@ import {
   daemonLoopIterationDecision,
   daemonPlanStateDecision,
   daemonPendingDecision,
+  daemonPromptCompletionLineDecision,
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
   daemonPromptRouteDecision,
@@ -794,6 +795,23 @@ test("daemonRunFinishedDecision projects run finished metadata", () => {
       outcome: "completed",
       error: null,
       reason: "daemon_run_finished"
+    }
+  );
+});
+
+test("daemonPromptCompletionLineDecision projects final progress output", () => {
+  assert.deepEqual(
+    daemonPromptCompletionLineDecision({
+      promptName: " 001-first.md ",
+      status: " completed ",
+      resultPath: " /repo/results/001-first_RESULT.md "
+    }),
+    {
+      line: "daemon prompt 001-first.md: completed -> /repo/results/001-first_RESULT.md",
+      promptName: "001-first.md",
+      status: "completed",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      reason: "daemon_prompt_completion_line_projected"
     }
   );
 });

@@ -402,6 +402,14 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon prompt completion progress-line decision helper,
+  plus runner entrypoint and Python `DaemonRunner._process_prompt()` bridge
+  consumption for final operator-visible prompt/status/result-path output
+  while Python retains progress stream IO, flushing, and fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon expected roadmap phase decision helper, plus runner
   entrypoint and Python `DaemonRunner._expected_roadmap_phase_id()` bridge
   consumption for active roadmap phase selection while Python retains workflow
@@ -703,8 +711,10 @@ Port the remaining daemon and goals orchestration surface:
   existing report lifecycle refs. TypeScript also owns
   daemon run-finished lifecycle metadata and event envelope projection for
   event type, role/stage/status, attempts, retries, supervisor verdict,
-  outcome, and error. TypeScript also owns daemon expected roadmap phase
-  selection for loop configuration.
+  outcome, and error. TypeScript also owns daemon prompt completion
+  progress-line projection for final operator-visible prompt/status/result
+  output. TypeScript also owns daemon expected roadmap phase selection for
+  loop configuration.
   TypeScript also owns daemon goal-source metadata parsing for
   goals-scheduler prompt tags. TypeScript also owns daemon active-agent-CLI
   resolution for configured CLI use and missing-config daemonize errors.
@@ -723,6 +733,6 @@ Port the remaining daemon and goals orchestration surface:
 - The next slice should continue the remaining daemon lifecycle and recovery
   surface after queue dispatch, prompt route selection, loop iteration, and
   startup/shutdown/instance-lock/heartbeat/watcher-backend handling, with
-  priority on remaining deterministic daemon prompt/result finalization
-  contracts that can be exposed through TypeScript without removing Python
-  compatibility.
+  priority on remaining deterministic daemon prompt/result finalization and
+  recovery contracts that can be exposed through TypeScript without removing
+  Python compatibility.

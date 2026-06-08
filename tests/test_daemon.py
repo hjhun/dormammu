@@ -955,7 +955,8 @@ class DaemonRunnerTests(unittest.TestCase):
             daemon_config.result_path.mkdir(parents=True, exist_ok=True)
             prompt_path = daemon_config.prompt_path / "001-first.md"
             prompt_path.write_text("First prompt\n", encoding="utf-8")
-            runner = DaemonRunner(app_config, daemon_config)
+            progress = io.StringIO()
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=progress)
             lifecycle = mock.MagicMock()
             lifecycle.run_id = "daemon:test-run"
             loop_result = LoopRunResult(
@@ -997,14 +998,15 @@ class DaemonRunnerTests(unittest.TestCase):
                 )
 
             self.assertEqual(prompt_result.status, "completed")
+            captured_payloads = [
+                json.loads(line)
+                for line in (root / "captured-runner-payloads.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
             run_finished_payload = next(
                 payload
-                for payload in (
-                    json.loads(line)
-                    for line in (root / "captured-runner-payloads.jsonl")
-                    .read_text(encoding="utf-8")
-                    .splitlines()
-                )
+                for payload in captured_payloads
                 if payload["entrypoint"] == "daemon_run_finished_decision"
             )
             self.assertEqual(
@@ -1017,6 +1019,29 @@ class DaemonRunnerTests(unittest.TestCase):
                     "outcome": "completed",
                     "error": None,
                 },
+            )
+            completion_payload = next(
+                payload
+                for payload in captured_payloads
+                if payload["entrypoint"] == "daemon_prompt_completion_line_decision"
+            )
+            self.assertEqual(
+                completion_payload,
+                {
+                    "entrypoint": "daemon_prompt_completion_line_decision",
+                    "prompt_name": "001-first.md",
+                    "status": "completed",
+                    "result_path": str(
+                        daemon_config.result_path / "001-first_RESULT.md"
+                    ),
+                },
+            )
+            self.assertIn(
+                (
+                    "daemon prompt 001-first.md: completed -> "
+                    f"{daemon_config.result_path / '001-first_RESULT.md'}"
+                ),
+                progress.getvalue(),
             )
 
             finished_call = next(
@@ -3012,6 +3037,34 @@ class DaemonRunnerTests(unittest.TestCase):
                             or None
                         ),
                         "reason": "daemon_run_finished",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_prompt_completion_line_decision":
+                    prompt_name = (
+                        (payload.get("prompt_name") or "").strip()
+                        or "unknown-prompt"
+                    )
+                    status = (
+                        (payload.get("status") or "").strip()
+                        or "unknown"
+                    )
+                    result_path = (
+                        (payload.get("result_path") or "").strip()
+                    )
+                    print(json.dumps({{
+                        "entrypoint": "daemon_prompt_completion_line_decision",
+                        "line": (
+                            "daemon prompt "
+                            + prompt_name
+                            + ": "
+                            + status
+                            + " -> "
+                            + result_path
+                        ),
+                        "promptName": prompt_name,
+                        "status": status,
+                        "resultPath": result_path,
+                        "reason": "daemon_prompt_completion_line_projected",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_terminal_error_decision":

@@ -303,6 +303,20 @@ export type DaemonRunFinishedDecision = {
   reason: string;
 };
 
+export type DaemonPromptCompletionLineDecisionInput = {
+  promptName: string;
+  status: string;
+  resultPath: string;
+};
+
+export type DaemonPromptCompletionLineDecision = {
+  line: string;
+  promptName: string;
+  status: string;
+  resultPath: string;
+  reason: "daemon_prompt_completion_line_projected";
+};
+
 export type DaemonRoadmapPhaseDecisionInput = {
   activePhaseIds: readonly unknown[];
 };
@@ -1186,6 +1200,21 @@ export function daemonRunFinishedDecision(
     outcome,
     error: nonEmpty(input.error),
     reason: "daemon_run_finished"
+  };
+}
+
+export function daemonPromptCompletionLineDecision(
+  input: DaemonPromptCompletionLineDecisionInput
+): DaemonPromptCompletionLineDecision {
+  const promptName = nonEmpty(input.promptName) ?? "unknown-prompt";
+  const status = nonEmpty(input.status) ?? "unknown";
+  const resultPath = nonEmpty(input.resultPath) ?? "";
+  return {
+    line: `daemon prompt ${promptName}: ${status} -> ${resultPath}`,
+    promptName,
+    status,
+    resultPath,
+    reason: "daemon_prompt_completion_line_projected"
   };
 }
 

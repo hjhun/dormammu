@@ -18,6 +18,7 @@ import {
   runDaemonLoopIterationEntrypoint,
   runDaemonPlanStateEntrypoint,
   runDaemonPendingDecisionEntrypoint,
+  runDaemonPromptCompletionLineEntrypoint,
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptPathEntrypoint,
   runDaemonPromptRouteEntrypoint,
@@ -801,6 +802,25 @@ test("runDaemonRunFinishedEntrypoint projects run-finished metadata", () => {
       outcome: "completed",
       error: null,
       reason: "daemon_run_finished"
+    }
+  );
+});
+
+test("runDaemonPromptCompletionLineEntrypoint projects progress output", () => {
+  assert.deepEqual(
+    runDaemonPromptCompletionLineEntrypoint({
+      entrypoint: "daemon_prompt_completion_line_decision",
+      prompt_name: "001-first.md",
+      status: "completed",
+      result_path: "/repo/results/001-first_RESULT.md"
+    }),
+    {
+      entrypoint: "daemon_prompt_completion_line_decision",
+      line: "daemon prompt 001-first.md: completed -> /repo/results/001-first_RESULT.md",
+      promptName: "001-first.md",
+      status: "completed",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      reason: "daemon_prompt_completion_line_projected"
     }
   );
 });
