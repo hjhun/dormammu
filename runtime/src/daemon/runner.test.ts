@@ -19,6 +19,7 @@ import {
   daemonShutdownDecision,
   daemonStartupDecision,
   daemonTerminalErrorDecision,
+  daemonTerminalStatusDecision,
   daemonWatcherBackendDecision,
   daemonWatcherWaitDecision
 } from "./runner.js";
@@ -296,6 +297,60 @@ test("daemonResultStatusDecision returns null when status is missing", () => {
     {
       status: null,
       reason: "status_line_missing"
+    }
+  );
+});
+
+test("daemonTerminalStatusDecision preserves clean completed evidence", () => {
+  assert.deepEqual(
+    daemonTerminalStatusDecision({
+      status: "completed",
+      planAllCompleted: false,
+      hasCleanTerminalStageEvidence: true,
+      nextPendingTask: "Phase 1"
+    }),
+    {
+      status: "completed",
+      error: null,
+      preserveCompleted: true,
+      reason: "clean_terminal_stage_evidence"
+    }
+  );
+});
+
+test("daemonTerminalStatusDecision fails stale completed plan syncs", () => {
+  assert.deepEqual(
+    daemonTerminalStatusDecision({
+      status: "completed",
+      planAllCompleted: null,
+      hasCleanTerminalStageEvidence: false,
+      nextPendingTask: null
+    }),
+    {
+      status: "failed",
+      error: "Loop returned completed but session PLAN.md is not fully complete.",
+      preserveCompleted: false,
+      reason: "completed_plan_incomplete"
+    }
+  );
+});
+
+test("daemonTerminalStatusDecision projects terminal errors", () => {
+  assert.deepEqual(
+    daemonTerminalStatusDecision({
+      status: "failed",
+      planAllCompleted: false,
+      hasCleanTerminalStageEvidence: false,
+      nextPendingTask: "Phase 2"
+    }),
+    {
+      status: "failed",
+      error: [
+        "Loop retry budget was exhausted before PLAN.md completed.",
+        " Next pending PLAN task: Phase 2."
+      ].join(""),
+      preserveCompleted: false,
+      reason: "terminal_error_status"
     }
   );
 });

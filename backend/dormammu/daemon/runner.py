@@ -789,6 +789,84 @@ class DaemonRunner:
             "reason": expected["reason"],
         }
 
+    def _project_typescript_terminal_status_decision(
+        self,
+        *,
+        status: str,
+        plan_all_completed: bool | None,
+        has_clean_terminal_stage_evidence: bool,
+        next_pending_task: str | None,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_terminal_status_decision",
+            "status": status,
+            "plan_all_completed": plan_all_completed,
+            "has_clean_terminal_stage_evidence": has_clean_terminal_stage_evidence,
+            "next_pending_task": next_pending_task,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._terminal_status_expectations(
+            status=status,
+            plan_all_completed=plan_all_completed,
+            has_clean_terminal_stage_evidence=has_clean_terminal_stage_evidence,
+            next_pending_task=next_pending_task,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "status": expected["status"],
+            "error": expected["error"],
+            "preserve_completed": expected["preserveCompleted"],
+            "reason": expected["reason"],
+        }
+
+    @classmethod
+    def _terminal_status_expectations(
+        cls,
+        *,
+        status: object,
+        plan_all_completed: bool | None,
+        has_clean_terminal_stage_evidence: bool,
+        next_pending_task: object,
+    ) -> dict[str, object]:
+        normalized_status = cls._normalize_required_text(status)
+        if normalized_status == "completed":
+            if plan_all_completed is True:
+                return {
+                    "status": normalized_status,
+                    "error": None,
+                    "preserveCompleted": False,
+                    "reason": "plan_complete",
+                }
+            if has_clean_terminal_stage_evidence:
+                return {
+                    "status": normalized_status,
+                    "error": None,
+                    "preserveCompleted": True,
+                    "reason": "clean_terminal_stage_evidence",
+                }
+            return {
+                "status": "failed",
+                "error": (
+                    "Loop returned completed but session PLAN.md is not fully complete."
+                ),
+                "preserveCompleted": False,
+                "reason": "completed_plan_incomplete",
+            }
+        error = cls._terminal_error_expectations(
+            status=normalized_status,
+            next_pending_task=next_pending_task,
+        )["message"]
+        return {
+            "status": normalized_status,
+            "error": error,
+            "preserveCompleted": False,
+            "reason": "terminal_error_status",
+        }
+
     def _project_typescript_result_status_decision(
         self,
         *,
@@ -1939,9 +2017,29 @@ class DaemonRunner:
                 lifecycle=lifecycle,
             )
             plan_all_completed, next_pending_task = self._sync_plan_state(session_repository)
-            status = loop_result.status
-            if status == "completed" and not plan_all_completed:
-                if run_result_has_clean_terminal_stage_evidence(loop_result):
+            status = self._normalize_required_text(loop_result.status)
+            has_clean_terminal_stage_evidence = (
+                run_result_has_clean_terminal_stage_evidence(loop_result)
+            )
+            terminal_status_decision = (
+                self._project_typescript_terminal_status_decision(
+                    status=status,
+                    plan_all_completed=plan_all_completed,
+                    has_clean_terminal_stage_evidence=has_clean_terminal_stage_evidence,
+                    next_pending_task=next_pending_task,
+                )
+            )
+            if terminal_status_decision is not None:
+                if terminal_status_decision["preserve_completed"]:
+                    self._log(
+                        f"daemon prompt {prompt_path.name}: preserving completed status "
+                        "because terminal stage results completed cleanly despite stale PLAN sync"
+                    )
+                status = str(terminal_status_decision["status"])
+                decision_error = terminal_status_decision["error"]
+                error = decision_error if isinstance(decision_error, str) else None
+            elif status == "completed" and not plan_all_completed:
+                if has_clean_terminal_stage_evidence:
                     self._log(
                         f"daemon prompt {prompt_path.name}: preserving completed status "
                         "because terminal stage results completed cleanly despite stale PLAN sync"

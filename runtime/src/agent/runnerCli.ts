@@ -21,6 +21,7 @@ import {
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
   runDaemonTerminalErrorEntrypoint,
+  runDaemonTerminalStatusEntrypoint,
   runDaemonWatcherBackendEntrypoint,
   runDaemonWatcherWaitEntrypoint,
   runAgentRunnerEntrypoint,
@@ -54,6 +55,7 @@ import {
   type DaemonShutdownEntrypointPayload,
   type DaemonStartupEntrypointPayload,
   type DaemonTerminalErrorEntrypointPayload,
+  type DaemonTerminalStatusEntrypointPayload,
   type DaemonWatcherBackendEntrypointPayload,
   type DaemonWatcherWaitEntrypointPayload,
   type GoalsProcessDecisionEntrypointPayload,
@@ -192,6 +194,9 @@ async function runWithSignalHandlers(
   if (isDaemonTerminalErrorPayload(payload)) {
     return runDaemonTerminalErrorEntrypoint(payload);
   }
+  if (isDaemonTerminalStatusPayload(payload)) {
+    return runDaemonTerminalStatusEntrypoint(payload);
+  }
   if (isDaemonExistingResultPayload(payload)) {
     return runDaemonExistingResultEntrypoint(payload);
   }
@@ -259,6 +264,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_shutdown_decision" &&
       payload.entrypoint !== "daemon_startup_decision" &&
       payload.entrypoint !== "daemon_terminal_error_decision" &&
+      payload.entrypoint !== "daemon_terminal_status_decision" &&
       payload.entrypoint !== "daemon_watcher_backend_decision" &&
       payload.entrypoint !== "daemon_watcher_wait_decision" &&
       payload.entrypoint !== "goals_queue" &&
@@ -441,6 +447,15 @@ function isDaemonTerminalErrorPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_terminal_error_decision"
+  );
+}
+
+function isDaemonTerminalStatusPayload(
+  payload: RunnerCliPayload
+): payload is DaemonTerminalStatusEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_terminal_status_decision"
   );
 }
 

@@ -920,6 +920,77 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_process_prompt_can_use_typescript_terminal_status_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+            loop_result = LoopRunResult(
+                status="completed",
+                attempts_completed=1,
+                retries_used=0,
+                max_retries=1,
+                max_iterations=2,
+                latest_run_id="pipeline-success",
+                supervisor_verdict="committed",
+                report_path=None,
+                continuation_prompt_path=None,
+                stage_results=(
+                    StageResult(role="developer", status="completed", verdict="approved"),
+                    StageResult(role="tester", status="completed", verdict="pass"),
+                    StageResult(role="reviewer", status="completed", verdict="approved"),
+                    StageResult(role="committer", status="completed", verdict="committed"),
+                ),
+            )
+            runner = DaemonRunner(
+                app_config,
+                daemon_config,
+                progress_stream=io.StringIO(),
+            )
+
+            with (
+                mock.patch.object(runner, "_run_prompt_loop", return_value=loop_result),
+                mock.patch.object(runner, "_sync_plan_state", return_value=(False, None)),
+                mock.patch.object(runner, "_render_result_report", return_value="# Result\n"),
+            ):
+                prompt_result = runner._process_prompt(
+                    prompt_path,
+                    watcher_backend="polling",
+                )
+
+            self.assertEqual(prompt_result.status, "completed")
+            self.assertIsNone(prompt_result.error)
+            terminal_status_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_terminal_status_decision"
+            )
+            self.assertEqual(
+                terminal_status_payload,
+                {
+                    "entrypoint": "daemon_terminal_status_decision",
+                    "status": "completed",
+                    "plan_all_completed": False,
+                    "has_clean_terminal_stage_evidence": True,
+                    "next_pending_task": None,
+                },
+            )
+
     def test_daemon_prompt_result_omits_result_report_artifact_when_file_was_not_written(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2066,6 +2137,90 @@ class DaemonRunnerTests(unittest.TestCase):
                         "message": message,
                         "reason": reason,
                     }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_terminal_status_decision":
+                    status = (payload.get("status") or "").strip() or "unknown"
+                    plan_all_completed = payload.get("plan_all_completed")
+                    has_clean_evidence = bool(
+                        payload.get("has_clean_terminal_stage_evidence")
+                    )
+                    next_pending_task = (
+                        (payload.get("next_pending_task") or "").strip()
+                        or None
+                    )
+                    if status == "completed":
+                        if plan_all_completed is True:
+                            response = {{
+                                "status": status,
+                                "error": None,
+                                "preserveCompleted": False,
+                                "reason": "plan_complete",
+                            }}
+                        elif has_clean_evidence:
+                            response = {{
+                                "status": status,
+                                "error": None,
+                                "preserveCompleted": True,
+                                "reason": "clean_terminal_stage_evidence",
+                            }}
+                        else:
+                            response = {{
+                                "status": "failed",
+                                "error": (
+                                    "Loop returned completed but session "
+                                    "PLAN.md is not fully complete."
+                                ),
+                                "preserveCompleted": False,
+                                "reason": "completed_plan_incomplete",
+                            }}
+                    elif status == "failed":
+                        suffix = (
+                            " Next pending PLAN task: "
+                            + next_pending_task
+                            + "."
+                            if next_pending_task
+                            else ""
+                        )
+                        response = {{
+                            "status": status,
+                            "error": (
+                                "Loop retry budget was exhausted before "
+                                "PLAN.md completed."
+                                + suffix
+                            ),
+                            "preserveCompleted": False,
+                            "reason": "terminal_error_status",
+                        }}
+                    elif status == "blocked":
+                        response = {{
+                            "status": status,
+                            "error": (
+                                "Loop stopped because the configured "
+                                "coding-agent CLIs were blocked."
+                            ),
+                            "preserveCompleted": False,
+                            "reason": "terminal_error_status",
+                        }}
+                    elif status == "manual_review_needed":
+                        response = {{
+                            "status": status,
+                            "error": "Loop stopped because manual review is required.",
+                            "preserveCompleted": False,
+                            "reason": "terminal_error_status",
+                        }}
+                    else:
+                        response = {{
+                            "status": status,
+                            "error": (
+                                "Loop finished with terminal status: "
+                                + status
+                                + "."
+                            ),
+                            "preserveCompleted": False,
+                            "reason": "terminal_error_status",
+                        }}
+                    response["entrypoint"] = "daemon_terminal_status_decision"
+                    print(json.dumps(response, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_prompt_route_decision":
                     if payload["has_agents_config"]:

@@ -23,6 +23,7 @@ import {
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
   runDaemonTerminalErrorEntrypoint,
+  runDaemonTerminalStatusEntrypoint,
   runDaemonWatcherBackendEntrypoint,
   runDaemonWatcherWaitEntrypoint,
   runAgentRunnerEntrypoint,
@@ -516,6 +517,25 @@ test("runDaemonTerminalErrorEntrypoint projects terminal errors", () => {
         " Next pending PLAN task: Phase 3. Fix."
       ].join(""),
       reason: "retry_budget_exhausted"
+    }
+  );
+});
+
+test("runDaemonTerminalStatusEntrypoint projects terminal status reconciliation", () => {
+  assert.deepEqual(
+    runDaemonTerminalStatusEntrypoint({
+      entrypoint: "daemon_terminal_status_decision",
+      status: "completed",
+      plan_all_completed: false,
+      has_clean_terminal_stage_evidence: false,
+      next_pending_task: null
+    }),
+    {
+      entrypoint: "daemon_terminal_status_decision",
+      status: "failed",
+      error: "Loop returned completed but session PLAN.md is not fully complete.",
+      preserveCompleted: false,
+      reason: "completed_plan_incomplete"
     }
   );
 });

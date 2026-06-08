@@ -59,6 +59,7 @@ import {
   daemonShutdownDecision,
   daemonStartupDecision,
   daemonTerminalErrorDecision,
+  daemonTerminalStatusDecision,
   daemonWatcherBackendDecision,
   daemonWatcherWaitDecision,
   type DaemonExistingResultDecision,
@@ -79,6 +80,7 @@ import {
   type DaemonShutdownDecision,
   type DaemonStartupDecision,
   type DaemonTerminalErrorDecision,
+  type DaemonTerminalStatusDecision,
   type DaemonWatcherBackend,
   type DaemonWatcherBackendDecision,
   type DaemonWatcherWaitDecision
@@ -380,6 +382,19 @@ export type DaemonTerminalErrorEntrypointResultPayload =
     entrypoint: "daemon_terminal_error_decision";
   };
 
+export type DaemonTerminalStatusEntrypointPayload = {
+  entrypoint: "daemon_terminal_status_decision";
+  status: string;
+  plan_all_completed?: boolean | null;
+  has_clean_terminal_stage_evidence: boolean;
+  next_pending_task?: string | null;
+};
+
+export type DaemonTerminalStatusEntrypointResultPayload =
+  DaemonTerminalStatusDecision & {
+    entrypoint: "daemon_terminal_status_decision";
+  };
+
 export type DaemonExistingResultEntrypointPayload = {
   entrypoint: "daemon_existing_result_decision";
   prompt_path: string;
@@ -549,6 +564,7 @@ export type RunnerCliPayload =
   | DaemonShutdownEntrypointPayload
   | DaemonStartupEntrypointPayload
   | DaemonTerminalErrorEntrypointPayload
+  | DaemonTerminalStatusEntrypointPayload
   | DaemonWatcherBackendEntrypointPayload
   | DaemonWatcherWaitEntrypointPayload
   | GoalsQueueEntrypointPayload
@@ -582,6 +598,7 @@ export type RunnerCliResultPayload =
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
   | DaemonTerminalErrorEntrypointResultPayload
+  | DaemonTerminalStatusEntrypointResultPayload
   | DaemonWatcherBackendEntrypointResultPayload
   | DaemonWatcherWaitEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
@@ -742,6 +759,27 @@ export function runDaemonTerminalErrorEntrypoint(
     entrypoint: "daemon_terminal_error_decision",
     ...daemonTerminalErrorDecision({
       status: parseRequiredString(payload.status, "status"),
+      nextPendingTask:
+        parseOptionalString(payload.next_pending_task, "next_pending_task") ?? null
+    })
+  };
+}
+
+export function runDaemonTerminalStatusEntrypoint(
+  payload: DaemonTerminalStatusEntrypointPayload
+): DaemonTerminalStatusEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_terminal_status_decision",
+    ...daemonTerminalStatusDecision({
+      status: parseRequiredString(payload.status, "status"),
+      planAllCompleted:
+        payload.plan_all_completed === null || payload.plan_all_completed === undefined
+          ? null
+          : parseBoolean(payload.plan_all_completed, "plan_all_completed"),
+      hasCleanTerminalStageEvidence: parseBoolean(
+        payload.has_clean_terminal_stage_evidence,
+        "has_clean_terminal_stage_evidence"
+      ),
       nextPendingTask:
         parseOptionalString(payload.next_pending_task, "next_pending_task") ?? null
     })

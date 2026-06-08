@@ -116,6 +116,20 @@ export type DaemonTerminalErrorDecision = {
   reason: string;
 };
 
+export type DaemonTerminalStatusDecisionInput = {
+  status: string;
+  planAllCompleted: boolean | null;
+  hasCleanTerminalStageEvidence: boolean;
+  nextPendingTask: string | null;
+};
+
+export type DaemonTerminalStatusDecision = {
+  status: string;
+  error: string | null;
+  preserveCompleted: boolean;
+  reason: string;
+};
+
 export type DaemonResultStatusDecisionInput = {
   resultText: string;
 };
@@ -503,6 +517,45 @@ export function daemonTerminalErrorDecision(
     nextPendingTask,
     message: `Loop finished with terminal status: ${status}.`,
     reason: "terminal_status_fallback"
+  };
+}
+
+export function daemonTerminalStatusDecision(
+  input: DaemonTerminalStatusDecisionInput
+): DaemonTerminalStatusDecision {
+  const status = nonEmpty(input.status) ?? "unknown";
+  if (status === "completed") {
+    if (input.planAllCompleted === true) {
+      return {
+        status,
+        error: null,
+        preserveCompleted: false,
+        reason: "plan_complete"
+      };
+    }
+    if (input.hasCleanTerminalStageEvidence) {
+      return {
+        status,
+        error: null,
+        preserveCompleted: true,
+        reason: "clean_terminal_stage_evidence"
+      };
+    }
+    return {
+      status: "failed",
+      error: "Loop returned completed but session PLAN.md is not fully complete.",
+      preserveCompleted: false,
+      reason: "completed_plan_incomplete"
+    };
+  }
+  return {
+    status,
+    error: daemonTerminalErrorDecision({
+      status,
+      nextPendingTask: input.nextPendingTask
+    }).message,
+    preserveCompleted: false,
+    reason: "terminal_error_status"
   };
 }
 
