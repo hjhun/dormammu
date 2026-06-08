@@ -17,6 +17,7 @@ import {
   daemonResultArtifactRefDecision,
   daemonResultReportDecision,
   daemonResultStatusDecision,
+  daemonRoadmapPhaseDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
@@ -296,6 +297,30 @@ test("daemonRunFinishedDecision projects run finished metadata", () => {
       outcome: "completed",
       error: null,
       reason: "daemon_run_finished"
+    }
+  );
+});
+
+test("daemonRoadmapPhaseDecision selects the first active phase", () => {
+  assert.deepEqual(
+    daemonRoadmapPhaseDecision({
+      activePhaseIds: ["", 42, "phase_5", "phase_6"]
+    }),
+    {
+      expectedRoadmapPhaseId: "phase_5",
+      reason: "active_phase_selected"
+    }
+  );
+});
+
+test("daemonRoadmapPhaseDecision falls back to phase 4", () => {
+  assert.deepEqual(
+    daemonRoadmapPhaseDecision({
+      activePhaseIds: [null, "", "   "]
+    }),
+    {
+      expectedRoadmapPhaseId: "phase_4",
+      reason: "default_phase_selected"
     }
   );
 });

@@ -305,6 +305,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon expected roadmap phase decision helper, plus runner
+  entrypoint and Python `DaemonRunner._expected_roadmap_phase_id()` bridge
+  consumption for active roadmap phase selection while Python retains workflow
+  state repository IO, malformed-bridge fallback behavior, and loop execution
+  configuration
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon existing-result recovery decision helper, plus
   runner entrypoint and Python `DaemonRunner._scan_prompt_queue()` bridge
   consumption for stale completed result removal before prompt reprocessing
@@ -556,7 +565,9 @@ Port the remaining daemon and goals orchestration surface:
   reference decisions for existing report lifecycle refs. TypeScript also owns
   daemon run-finished lifecycle metadata projection for
   attempts, retries, supervisor verdict, outcome, and error. TypeScript also
-  owns daemon existing-result recovery decisions for stale completed result
+  owns daemon expected roadmap phase selection for loop configuration.
+  TypeScript also owns daemon existing-result recovery decisions for stale
+  completed result
   removal before prompt reprocessing, plus daemon prompt settle-window
   decisions for ready/defer and retry-after projection. TypeScript also owns
   daemon queue file decisions for in-progress skip, non-candidate skip, and

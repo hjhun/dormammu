@@ -1116,6 +1116,50 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_expected_roadmap_phase_id_can_use_typescript_bridge(self) -> None:
+        class WorkflowStateRepository:
+            def read_workflow_state(self) -> dict[str, object]:
+                return {
+                    "roadmap": {
+                        "active_phase_ids": ["", "phase_6", "phase_7"],
+                    },
+                }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+
+            phase_id = runner._expected_roadmap_phase_id(  # type: ignore[arg-type]
+                WorkflowStateRepository()
+            )
+
+            self.assertEqual(phase_id, "phase_6")
+            payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_roadmap_phase_decision"
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_roadmap_phase_decision",
+                    "active_phase_ids": ["", "phase_6", "phase_7"],
+                },
+            )
+
     def test_process_prompt_can_use_typescript_lifecycle_skip_for_missing_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2219,6 +2263,20 @@ class DaemonRunnerTests(unittest.TestCase):
                             "sessionId": session_id,
                         }},
                         "reason": "result_report_referenced",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_roadmap_phase_decision":
+                    phase_id = "phase_4"
+                    reason = "default_phase_selected"
+                    for candidate in payload.get("active_phase_ids", []):
+                        if isinstance(candidate, str) and candidate.strip():
+                            phase_id = candidate
+                            reason = "active_phase_selected"
+                            break
+                    print(json.dumps({{
+                        "entrypoint": "daemon_roadmap_phase_decision",
+                        "expectedRoadmapPhaseId": phase_id,
+                        "reason": reason,
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_run_finished_decision":

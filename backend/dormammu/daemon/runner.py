@@ -2409,6 +2409,11 @@ class DaemonRunner:
         workflow_state = repository.read_workflow_state()
         roadmap = workflow_state.get("roadmap", {})
         active_phase_ids = roadmap.get("active_phase_ids", [])
+        roadmap_phase_decision = self._project_typescript_roadmap_phase_decision(
+            active_phase_ids,
+        )
+        if roadmap_phase_decision is not None:
+            return roadmap_phase_decision
         if isinstance(active_phase_ids, list):
             for phase_id in active_phase_ids:
                 if isinstance(phase_id, str) and phase_id.strip():
@@ -2464,6 +2469,39 @@ class DaemonRunner:
                 next_pending_task=normalized_next_pending_task,
             )["message"]
         )
+
+    def _project_typescript_roadmap_phase_decision(
+        self,
+        active_phase_ids: object,
+    ) -> str | None:
+        payload = {
+            "entrypoint": "daemon_roadmap_phase_decision",
+            "active_phase_ids": (
+                active_phase_ids if isinstance(active_phase_ids, list) else []
+            ),
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._roadmap_phase_expectations(active_phase_ids)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return str(expected["expectedRoadmapPhaseId"])
+
+    @staticmethod
+    def _roadmap_phase_expectations(active_phase_ids: object) -> dict[str, object]:
+        if isinstance(active_phase_ids, list):
+            for phase_id in active_phase_ids:
+                if isinstance(phase_id, str) and phase_id.strip():
+                    return {
+                        "expectedRoadmapPhaseId": phase_id,
+                        "reason": "active_phase_selected",
+                    }
+        return {
+            "expectedRoadmapPhaseId": "phase_4",
+            "reason": "default_phase_selected",
+        }
 
     def _render_result_report(
         self,

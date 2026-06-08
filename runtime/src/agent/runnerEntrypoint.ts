@@ -57,6 +57,7 @@ import {
   daemonResultArtifactRefDecision,
   daemonResultReportDecision,
   daemonResultStatusDecision,
+  daemonRoadmapPhaseDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
@@ -80,6 +81,7 @@ import {
   type DaemonResultArtifactRefDecision,
   type DaemonResultReportDecision,
   type DaemonResultStatusDecision,
+  type DaemonRoadmapPhaseDecision,
   type DaemonRunFinishedDecision,
   type DaemonShutdownDecision,
   type DaemonStartupDecision,
@@ -401,6 +403,16 @@ export type DaemonRunFinishedEntrypointResultPayload =
     entrypoint: "daemon_run_finished_decision";
   };
 
+export type DaemonRoadmapPhaseEntrypointPayload = {
+  entrypoint: "daemon_roadmap_phase_decision";
+  active_phase_ids?: readonly unknown[] | null;
+};
+
+export type DaemonRoadmapPhaseEntrypointResultPayload =
+  DaemonRoadmapPhaseDecision & {
+    entrypoint: "daemon_roadmap_phase_decision";
+  };
+
 export type DaemonTerminalErrorEntrypointPayload = {
   entrypoint: "daemon_terminal_error_decision";
   status: string;
@@ -592,6 +604,7 @@ export type RunnerCliPayload =
   | DaemonResultArtifactRefEntrypointPayload
   | DaemonResultReportEntrypointPayload
   | DaemonResultStatusEntrypointPayload
+  | DaemonRoadmapPhaseEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupEntrypointPayload
@@ -628,6 +641,7 @@ export type RunnerCliResultPayload =
   | DaemonResultArtifactRefEntrypointResultPayload
   | DaemonResultReportEntrypointResultPayload
   | DaemonResultStatusEntrypointResultPayload
+  | DaemonRoadmapPhaseEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
@@ -819,6 +833,19 @@ export function runDaemonRunFinishedEntrypoint(
       ) ?? null,
       outcome: parseRequiredString(payload.outcome, "outcome"),
       error: parseOptionalString(payload.error, "error") ?? null
+    })
+  };
+}
+
+export function runDaemonRoadmapPhaseEntrypoint(
+  payload: DaemonRoadmapPhaseEntrypointPayload
+): DaemonRoadmapPhaseEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_roadmap_phase_decision",
+    ...daemonRoadmapPhaseDecision({
+      activePhaseIds: Array.isArray(payload.active_phase_ids)
+        ? payload.active_phase_ids
+        : []
     })
   };
 }

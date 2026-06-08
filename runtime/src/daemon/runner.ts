@@ -143,6 +143,15 @@ export type DaemonRunFinishedDecision = {
   reason: string;
 };
 
+export type DaemonRoadmapPhaseDecisionInput = {
+  activePhaseIds: readonly unknown[];
+};
+
+export type DaemonRoadmapPhaseDecision = {
+  expectedRoadmapPhaseId: string;
+  reason: string;
+};
+
 export type DaemonTerminalErrorDecisionInput = {
   status: string;
   nextPendingTask: string | null;
@@ -555,6 +564,26 @@ export function daemonRunFinishedDecision(
     outcome: nonEmpty(input.outcome) ?? "unknown",
     error: nonEmpty(input.error),
     reason: "daemon_run_finished"
+  };
+}
+
+export function daemonRoadmapPhaseDecision(
+  input: DaemonRoadmapPhaseDecisionInput
+): DaemonRoadmapPhaseDecision {
+  for (const phaseId of input.activePhaseIds) {
+    if (typeof phaseId !== "string") {
+      continue;
+    }
+    if (phaseId.trim().length > 0) {
+      return {
+        expectedRoadmapPhaseId: phaseId,
+        reason: "active_phase_selected"
+      };
+    }
+  }
+  return {
+    expectedRoadmapPhaseId: "phase_4",
+    reason: "default_phase_selected"
   };
 }
 

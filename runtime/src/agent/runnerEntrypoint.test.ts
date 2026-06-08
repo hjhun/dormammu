@@ -21,6 +21,7 @@ import {
   runDaemonResultArtifactRefEntrypoint,
   runDaemonResultReportEntrypoint,
   runDaemonResultStatusEntrypoint,
+  runDaemonRoadmapPhaseEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
@@ -546,6 +547,20 @@ test("runDaemonRunFinishedEntrypoint projects run-finished metadata", () => {
       outcome: "completed",
       error: null,
       reason: "daemon_run_finished"
+    }
+  );
+});
+
+test("runDaemonRoadmapPhaseEntrypoint projects phase decisions", () => {
+  assert.deepEqual(
+    runDaemonRoadmapPhaseEntrypoint({
+      entrypoint: "daemon_roadmap_phase_decision",
+      active_phase_ids: ["", "phase_6"]
+    }),
+    {
+      entrypoint: "daemon_roadmap_phase_decision",
+      expectedRoadmapPhaseId: "phase_6",
+      reason: "active_phase_selected"
     }
   );
 });

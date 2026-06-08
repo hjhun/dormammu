@@ -19,6 +19,7 @@ import {
   runDaemonResultArtifactRefEntrypoint,
   runDaemonResultReportEntrypoint,
   runDaemonResultStatusEntrypoint,
+  runDaemonRoadmapPhaseEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
@@ -55,6 +56,7 @@ import {
   type DaemonResultArtifactRefEntrypointPayload,
   type DaemonResultReportEntrypointPayload,
   type DaemonResultStatusEntrypointPayload,
+  type DaemonRoadmapPhaseEntrypointPayload,
   type DaemonRunFinishedEntrypointPayload,
   type DaemonShutdownEntrypointPayload,
   type DaemonStartupEntrypointPayload,
@@ -198,6 +200,9 @@ async function runWithSignalHandlers(
   if (isDaemonResultStatusPayload(payload)) {
     return runDaemonResultStatusEntrypoint(payload);
   }
+  if (isDaemonRoadmapPhasePayload(payload)) {
+    return runDaemonRoadmapPhaseEntrypoint(payload);
+  }
   if (isDaemonRunFinishedPayload(payload)) {
     return runDaemonRunFinishedEntrypoint(payload);
   }
@@ -272,6 +277,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_result_artifact_ref_decision" &&
       payload.entrypoint !== "daemon_result_report_decision" &&
       payload.entrypoint !== "daemon_result_status_decision" &&
+      payload.entrypoint !== "daemon_roadmap_phase_decision" &&
       payload.entrypoint !== "daemon_run_finished_decision" &&
       payload.entrypoint !== "daemon_shutdown_decision" &&
       payload.entrypoint !== "daemon_startup_decision" &&
@@ -423,6 +429,15 @@ function isDaemonResultArtifactRefPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_result_artifact_ref_decision"
+  );
+}
+
+function isDaemonRoadmapPhasePayload(
+  payload: RunnerCliPayload
+): payload is DaemonRoadmapPhaseEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_roadmap_phase_decision"
   );
 }
 
