@@ -54,6 +54,10 @@ import {
   type GoalsPreludeRole,
   type GoalsRoleStep
 } from "../goals/roleSequence.js";
+import {
+  goalsTimerDecision,
+  type GoalsTimerDecision
+} from "../goals/scheduler.js";
 import { stageResultToDict, type StageResult } from "../results.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
@@ -159,18 +163,31 @@ export type GoalsRoleSequenceEntrypointResultPayload = {
   next_step: GoalsRoleStep | null;
 };
 
+export type GoalsTimerDecisionEntrypointPayload = {
+  entrypoint: "goals_timer_decision";
+  has_goal_files: boolean;
+  timer_active: boolean;
+  interval_minutes: number;
+};
+
+export type GoalsTimerDecisionEntrypointResultPayload = GoalsTimerDecision & {
+  entrypoint: "goals_timer_decision";
+};
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
   | GoalsQueueEntrypointPayload
   | GoalsPromptProjectionEntrypointPayload
   | GoalsRoleDocumentProjectionEntrypointPayload
-  | GoalsRoleSequenceEntrypointPayload;
+  | GoalsRoleSequenceEntrypointPayload
+  | GoalsTimerDecisionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
   | GoalsPromptProjectionEntrypointResultPayload
   | GoalsRoleDocumentProjectionEntrypointResultPayload
-  | GoalsRoleSequenceEntrypointResultPayload;
+  | GoalsRoleSequenceEntrypointResultPayload
+  | GoalsTimerDecisionEntrypointResultPayload;
 
 export type AgentRunnerEntrypointOptions = Omit<
   RunConfiguredAgentCommandOptions,
@@ -275,6 +292,19 @@ export function runGoalsRoleSequenceEntrypoint(
       planText: parseOptionalString(payload.plan_text, "plan_text"),
       designText: parseOptionalString(payload.design_text, "design_text"),
       roles: parseGoalsRoleAvailability(payload.roles ?? null)
+    })
+  };
+}
+
+export function runGoalsTimerDecisionEntrypoint(
+  payload: GoalsTimerDecisionEntrypointPayload
+): GoalsTimerDecisionEntrypointResultPayload {
+  return {
+    entrypoint: "goals_timer_decision",
+    ...goalsTimerDecision({
+      hasGoalFiles: parseBoolean(payload.has_goal_files, "has_goal_files"),
+      timerActive: parseBoolean(payload.timer_active, "timer_active"),
+      intervalMinutes: parseNumber(payload.interval_minutes, "interval_minutes")
     })
   };
 }
@@ -467,6 +497,20 @@ function parseRequiredString(value: unknown, fieldName: string): string {
 function parseString(value: unknown, fieldName: string): string {
   if (typeof value !== "string") {
     throw new Error(`${fieldName} must be a string`);
+  }
+  return value;
+}
+
+function parseBoolean(value: unknown, fieldName: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${fieldName} must be a boolean`);
+  }
+  return value;
+}
+
+function parseNumber(value: unknown, fieldName: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${fieldName} must be a finite number`);
   }
   return value;
 }

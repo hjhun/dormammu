@@ -252,6 +252,27 @@ test("dormammu-agent-runner can project goals role sequence payloads", () => {
   assert.match(result.next_step.prompt, /# Requirements Analysis/);
 });
 
+test("dormammu-agent-runner can project goals timer decision payloads", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "goals_timer_decision",
+      has_goal_files: false,
+      timer_active: true,
+      interval_minutes: 7
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "goals_timer_decision",
+    action: "cancel",
+    intervalSeconds: null,
+    reason: "no_goal_files_with_active_timer"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

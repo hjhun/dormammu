@@ -81,6 +81,21 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                 encoding="utf-8",
             ) as handle:
                 handle.write(json.dumps(payload, ensure_ascii=True) + "\\n")
+            if payload.get("entrypoint") == "goals_timer_decision":
+                action = "none"
+                interval_seconds = None
+                if payload["has_goal_files"] and not payload["timer_active"]:
+                    action = "schedule"
+                    interval_seconds = payload["interval_minutes"] * 60
+                elif not payload["has_goal_files"] and payload["timer_active"]:
+                    action = "cancel"
+                print(json.dumps({{
+                    "entrypoint": "goals_timer_decision",
+                    "action": action,
+                    "intervalSeconds": interval_seconds,
+                    "reason": "fake_timer_decision",
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
             if payload.get("entrypoint") == "goals_queue":
                 goals_path = Path(payload["goals_path"])
                 prompt_path = Path(payload["prompt_path"])
@@ -450,6 +465,59 @@ class TestTimerLifecycle:
         with sched._timer_lock:
             assert sched._timer is not None
         sched._cancel_timer()
+
+    def test_sync_timer_can_use_typescript_decision_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        prompt_path = tmp_path / "prompts"
+        goals_dir.mkdir()
+        prompt_path.mkdir()
+        (goals_dir / "goal.md").write_text("content", encoding="utf-8")
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            prompt_path,
+            app,
+        )
+
+        sched._sync_timer()
+        with sched._timer_lock:
+            assert sched._timer is not None
+        captured = json.loads(
+            (tmp_path / "captured-runner-payload.json").read_text(encoding="utf-8")
+        )
+        assert captured["entrypoint"] == "goals_timer_decision"
+        assert captured["has_goal_files"] is True
+        assert captured["timer_active"] is False
+
+        (goals_dir / "goal.md").unlink()
+        sched._sync_timer()
+        with sched._timer_lock:
+            assert sched._timer is None
+        captured_payloads = [
+            json.loads(line)
+            for line in (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert captured_payloads[-1]["entrypoint"] == "goals_timer_decision"
+        assert captured_payloads[-1]["has_goal_files"] is False
+        assert captured_payloads[-1]["timer_active"] is True
 
     def test_no_duplicate_timer_on_second_sync(self, tmp_path: Path) -> None:
         sched, goals_dir, _ = _make_scheduler(tmp_path)

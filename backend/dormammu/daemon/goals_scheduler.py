@@ -126,6 +126,20 @@ class GoalsScheduler:
         """Align timer state with goals directory contents."""
         has_goals = self._has_goal_files()
         with self._timer_lock:
+            timer_active = self._timer is not None
+            decision = self._project_typescript_timer_decision(
+                has_goal_files=has_goals,
+                timer_active=timer_active,
+            )
+            if decision is not None:
+                if decision["action"] == "schedule" and self._timer is None:
+                    self._schedule_timer_locked(decision["interval_seconds"])
+                elif decision["action"] == "cancel" and self._timer is not None:
+                    self._timer.cancel()
+                    self._timer = None
+                    self._log("goals scheduler: no goal files — timer cancelled")
+                return
+
             if has_goals and self._timer is None:
                 self._schedule_timer_locked()
             elif not has_goals and self._timer is not None:
@@ -137,9 +151,13 @@ class GoalsScheduler:
     # Internal — timer management
     # ------------------------------------------------------------------
 
-    def _schedule_timer_locked(self) -> None:
+    def _schedule_timer_locked(self, interval_seconds: float | None = None) -> None:
         """Create and start a new timer. Caller must hold ``_timer_lock``."""
-        interval = self._goals_config.interval_minutes * 60
+        interval = (
+            interval_seconds
+            if interval_seconds is not None
+            else self._goals_config.interval_minutes * 60
+        )
         self._timer = threading.Timer(interval, self._on_timer_fired)
         self._timer.daemon = True
         self._timer.start()
@@ -672,6 +690,37 @@ class GoalsScheduler:
             "cli": cli,
             "model": model,
             "prompt": prompt,
+        }
+
+    def _project_typescript_timer_decision(
+        self,
+        *,
+        has_goal_files: bool,
+        timer_active: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "goals_timer_decision",
+            "has_goal_files": has_goal_files,
+            "timer_active": timer_active,
+            "interval_minutes": self._goals_config.interval_minutes,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        action = result.get("action")
+        interval_seconds = result.get("intervalSeconds")
+        if action not in {"schedule", "cancel", "none"}:
+            return None
+        if action == "schedule":
+            if not isinstance(interval_seconds, (int, float)):
+                return None
+            if interval_seconds < 0:
+                return None
+        else:
+            interval_seconds = None
+        return {
+            "action": action,
+            "interval_seconds": interval_seconds,
         }
 
     def _run_typescript_runner_payload(

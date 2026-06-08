@@ -10,7 +10,8 @@ import {
   runGoalsPromptProjectionEntrypoint,
   runGoalsQueueEntrypoint,
   runGoalsRoleDocumentProjectionEntrypoint,
-  runGoalsRoleSequenceEntrypoint
+  runGoalsRoleSequenceEntrypoint,
+  runGoalsTimerDecisionEntrypoint
 } from "./runnerEntrypoint.js";
 
 test("runAgentRunnerEntrypoint runs configured agent payloads and returns dicts", async () => {
@@ -397,6 +398,23 @@ test("runGoalsRoleSequenceEntrypoint projects the next goals role step", () => {
     result.next_step?.prompt.includes(
       "# Requirements Analysis\n\nAnalysis output"
     )
+  );
+});
+
+test("runGoalsTimerDecisionEntrypoint projects timer decisions", () => {
+  assert.deepEqual(
+    runGoalsTimerDecisionEntrypoint({
+      entrypoint: "goals_timer_decision",
+      has_goal_files: true,
+      timer_active: false,
+      interval_minutes: 3
+    }),
+    {
+      entrypoint: "goals_timer_decision",
+      action: "schedule",
+      intervalSeconds: 180,
+      reason: "goal_files_present_without_active_timer"
+    }
   );
 });
 
