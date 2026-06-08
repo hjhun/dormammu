@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import type { AgentRunResult } from "./runArtifacts.js";
@@ -84,6 +87,108 @@ test("runAgentRunnerEntrypoint runs configured agent payloads and returns dicts"
   assert.deepEqual(call.tokenExhaustionPatterns, ["quota exceeded"]);
   assert.equal(call.fallbackOnNonzeroExit, true);
   assert.equal(call.timeoutMs, 7000);
+});
+
+test("runAgentRunnerEntrypoint resolves manifest profiles and runtime skills", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-runner-entrypoint-"));
+  const manifestRoot = path.join(root, "repo", ".dormammu", "agent-manifests");
+  const skillRoot = path.join(root, "repo", ".agents", "skills");
+  await mkdir(manifestRoot, { recursive: true });
+  await mkdir(path.join(skillRoot, "planning-agent"), { recursive: true });
+  const manifestPath = path.join(manifestRoot, "planner.agent.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schema_version: 1,
+      name: "planner-custom",
+      description: "Project planner",
+      prompt: "Plan from the project manifest.",
+      source: "project",
+      cli: "./bin/project-planner",
+      skills: ["planning-agent"]
+    }),
+    "utf8"
+  );
+  await writeFile(
+    path.join(skillRoot, "planning-agent", "SKILL.md"),
+    [
+      "---",
+      "schema_version: 1",
+      "name: planning-agent",
+      "description: Planning skill",
+      "---",
+      "Plan the active slice."
+    ].join("\n"),
+    "utf8"
+  );
+  const calls: unknown[] = [];
+
+  const payload = await runAgentRunnerEntrypoint(
+    {
+      config: {
+        active_agent_cli: "codex"
+      },
+      role: "planner",
+      agents: {
+        planner: {
+          profile: "planner-custom"
+        }
+      },
+      agent_manifest_search_roots: [{ scope: "project", path: manifestRoot }],
+      skill_search_roots: [{ scope: "project", path: skillRoot }],
+      request: {
+        prompt_text: "Build with the manifest profile.",
+        repo_root: path.join(root, "repo")
+      },
+      logs_dir: path.join(root, "repo", ".dev", "logs"),
+      include_help_text: false
+    },
+    {
+      runner: async (options) => {
+        calls.push(options);
+        return {
+          runId: "run-1",
+          cliPath: options.request.cliPath,
+          workdir: options.request.workdir ?? path.join(root, "repo"),
+          promptMode: "stdin",
+          command: [options.request.cliPath],
+          startedAt: "2026-04-25T00:00:00.000Z",
+          completedAt: "2026-04-25T00:00:01.000Z",
+          promptPath: path.join(root, "repo", ".dev", "logs", "run-1.prompt.txt"),
+          stdoutPath: path.join(root, "repo", ".dev", "logs", "run-1.stdout.log"),
+          stderrPath: path.join(root, "repo", ".dev", "logs", "run-1.stderr.log"),
+          metadataPath: path.join(root, "repo", ".dev", "logs", "run-1.meta.json"),
+          capabilities: {
+            helpFlag: "--help",
+            promptFileFlag: null,
+            promptArgFlag: null,
+            workdirFlag: null,
+            helpText: "usage: project-planner",
+            helpExitCode: 0
+          },
+          exitCode: 0,
+          timedOut: false,
+          requestedCliPath: path.join(manifestRoot, "bin", "project-planner"),
+          attemptedCliPaths: [path.join(manifestRoot, "bin", "project-planner")],
+          fallbackTrigger: null
+        } satisfies AgentRunResult;
+      }
+    }
+  );
+
+  const call = calls[0] as {
+    request: { cliPath: string };
+  };
+  assert.equal(call.request.cliPath, path.join(manifestRoot, "bin", "project-planner"));
+  assert.equal(payload.runtime_skills?.profile.name, "planner-custom");
+  assert.equal(payload.runtime_skills?.profile.runtime_metadata.manifest_scope, "project");
+  assert.equal(payload.runtime_skills?.profile.runtime_metadata.manifest_path, manifestPath);
+  assert.equal(payload.runtime_skills?.summary.preloaded_count, 1);
+  assert.deepEqual(payload.runtime_skills?.prompt_lines, [
+    "Runtime skills for planner / planner-custom (project profile):",
+    "Visible project/user skills: planning-agent [project]",
+    "Preloaded skills: planning-agent"
+  ]);
 });
 
 test("runAgentRunnerEntrypoint validates request payloads", async () => {

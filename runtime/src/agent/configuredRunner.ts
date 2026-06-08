@@ -8,6 +8,7 @@ import {
   type FallbackCliOptions,
   type RunAgentCommandOptions
 } from "./cliAdapter.js";
+import type { AgentProfile } from "./profiles.js";
 import type { AgentRunResult } from "./runArtifacts.js";
 
 const DEFAULT_FALLBACK_AGENT_CLIS = ["codex", "claude", "gemini"] as const;
@@ -45,6 +46,7 @@ export type RunConfiguredAgentCommandOptions = Omit<
 > & {
   config: AgentRuntimeConfig;
   request: Omit<AgentRunRequest, "cliPath"> & { cliPath?: string | null };
+  profile?: AgentProfile | null;
   timeoutMs?: number | null;
   runner?: typeof runAgentCommand;
 };
@@ -80,8 +82,15 @@ export function parseAgentRuntimeConfig(
 export async function runConfiguredAgentCommand(
   options: RunConfiguredAgentCommandOptions
 ): Promise<AgentRunResult> {
-  const { config, request: rawRequest, runner: injectedRunner, timeoutMs, ...runOptions } = options;
-  const cliPath = rawRequest.cliPath ?? config.activeAgentCli;
+  const {
+    config,
+    request: rawRequest,
+    profile,
+    runner: injectedRunner,
+    timeoutMs,
+    ...runOptions
+  } = options;
+  const cliPath = rawRequest.cliPath ?? profile?.cli_override ?? config.activeAgentCli;
   if (!cliPath) {
     throw new Error("No CLI is configured. Set active_agent_cli or request.cliPath.");
   }

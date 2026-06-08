@@ -5,15 +5,35 @@ import {
   type RunConfiguredAgentCommandOptions
 } from "./configuredRunner.js";
 import {
+  normalizeManifestBackedAgentProfiles,
+  type AgentManifestSearchRoot
+} from "./manifests.js";
+import {
+  parseAgentsConfig,
+  resolveRuntimeRoleProfile,
+  type AgentProfile,
+  type AgentsConfig
+} from "./profiles.js";
+import {
   agentRunResultToDict,
   type AgentRunResultPayload
 } from "./runArtifacts.js";
+import {
+  discoverSkills,
+  resolveRuntimeSkillResolution,
+  type RuntimeSkillResolution,
+  type SkillSearchRoot
+} from "./skills.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
 
 export type AgentRunnerEntrypointPayload = {
   config?: unknown;
   config_path?: string | null;
+  role?: string | null;
+  agents?: unknown;
+  agent_manifest_search_roots?: AgentManifestSearchRoot[] | null;
+  skill_search_roots?: SkillSearchRoot[] | null;
   request: {
     cli_path?: string | null;
     prompt_text: string;
@@ -30,6 +50,10 @@ export type AgentRunnerEntrypointPayload = {
   event_stream?: boolean;
 };
 
+export type AgentRunnerEntrypointResultPayload = AgentRunResultPayload & {
+  runtime_skills?: RuntimeSkillResolution;
+};
+
 export type AgentRunnerEntrypointOptions = Omit<
   RunConfiguredAgentCommandOptions,
   "config" | "request" | "logsDir" | "timeoutMs"
@@ -38,20 +62,30 @@ export type AgentRunnerEntrypointOptions = Omit<
 export async function runAgentRunnerEntrypoint(
   payload: AgentRunnerEntrypointPayload,
   options: AgentRunnerEntrypointOptions = {}
-): Promise<AgentRunResultPayload> {
+): Promise<AgentRunnerEntrypointResultPayload> {
   const config = parseAgentRuntimeConfig(payload.config ?? {}, {
     configPath: payload.config_path ?? null
   });
+  const agentsConfig = parseAgentsConfig(payload.agents, {
+    configPath: payload.config_path ?? null
+  });
+  const profile = await resolveEntrypointProfile(payload, agentsConfig);
   const result = await runConfiguredAgentCommand({
     ...options,
     config,
+    profile,
     request: parseEntrypointRequest(payload.request),
     logsDir: parseRequiredString(payload.logs_dir, "logs_dir"),
     timeoutMs: payload.timeout_ms
   });
-  return agentRunResultToDict(result, {
+  const resultPayload: AgentRunnerEntrypointResultPayload = agentRunResultToDict(result, {
     includeHelpText: payload.include_help_text ?? true
   });
+  const runtimeSkills = await resolveEntrypointRuntimeSkills(payload, profile);
+  if (runtimeSkills !== null) {
+    resultPayload.runtime_skills = runtimeSkills;
+  }
+  return resultPayload;
 }
 
 function parseEntrypointRequest(
@@ -84,6 +118,42 @@ function parseEntrypointRequest(
     extraArgs,
     runLabel: payload.run_label ?? null
   };
+}
+
+async function resolveEntrypointProfile(
+  payload: AgentRunnerEntrypointPayload,
+  agentsConfig: AgentsConfig | null
+): Promise<AgentProfile | null> {
+  if (payload.role === undefined || payload.role === null || !payload.role.trim()) {
+    return null;
+  }
+  const manifestResolution = await normalizeManifestBackedAgentProfiles(
+    payload.agent_manifest_search_roots ?? [],
+    { agentsConfig }
+  );
+  return resolveRuntimeRoleProfile(payload.role, {
+    agentsConfig,
+    normalizedProfiles: manifestResolution.profiles
+  });
+}
+
+async function resolveEntrypointRuntimeSkills(
+  payload: AgentRunnerEntrypointPayload,
+  profile: AgentProfile | null
+): Promise<RuntimeSkillResolution | null> {
+  if (profile === null || payload.role === undefined || payload.role === null || !payload.role.trim()) {
+    return null;
+  }
+  if (!payload.skill_search_roots || payload.skill_search_roots.length === 0) {
+    return null;
+  }
+  const discovery = await discoverSkills(payload.skill_search_roots, {
+    ignoreInvalid: true
+  });
+  return resolveRuntimeSkillResolution(discovery, {
+    role: payload.role,
+    profile
+  });
 }
 
 function parseRequiredString(value: unknown, fieldName: string): string {

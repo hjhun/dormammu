@@ -8,6 +8,7 @@ import {
   parseAgentRuntimeConfig,
   runConfiguredAgentCommand
 } from "./configuredRunner.js";
+import { builtInProfileForRole } from "./profiles.js";
 
 test("parseAgentRuntimeConfig normalizes Python-compatible agent runtime fields", () => {
   const configPath = path.join(os.tmpdir(), "dormammu-config", "dormammu.json");
@@ -195,6 +196,52 @@ test("runConfiguredAgentCommand preserves explicit timeout overrides", async () 
   });
 
   assert.equal((calls[0] as { timeoutMs: null }).timeoutMs, null);
+});
+
+test("runConfiguredAgentCommand uses profile cli before active config cli", async () => {
+  const calls: unknown[] = [];
+  const profile = {
+    ...builtInProfileForRole("planner"),
+    cli_override: "/repo/bin/planner"
+  };
+
+  await runConfiguredAgentCommand({
+    config: parseAgentRuntimeConfig({ active_agent_cli: "codex" }),
+    profile,
+    request: {
+      promptText: "Use profile CLI.",
+      repoRoot: "/repo"
+    },
+    logsDir: "/repo/.dev/logs",
+    runner: async (options) => {
+      calls.push(options);
+      return {
+        runId: "run-1",
+        cliPath: options.request.cliPath,
+        workdir: "/repo",
+        promptMode: "stdin",
+        command: [options.request.cliPath],
+        startedAt: "2026-04-25T00:00:00.000Z",
+        completedAt: "2026-04-25T00:00:01.000Z",
+        promptPath: "/repo/.dev/logs/run-1.prompt.txt",
+        stdoutPath: "/repo/.dev/logs/run-1.stdout.log",
+        stderrPath: "/repo/.dev/logs/run-1.stderr.log",
+        metadataPath: "/repo/.dev/logs/run-1.meta.json",
+        capabilities: {
+          helpFlag: "--help",
+          promptFileFlag: null,
+          promptArgFlag: null,
+          workdirFlag: null,
+          helpText: "",
+          helpExitCode: 0
+        },
+        exitCode: 0,
+        timedOut: false
+      } satisfies AgentRunResult;
+    }
+  });
+
+  assert.equal((calls[0] as { request: { cliPath: string } }).request.cliPath, "/repo/bin/planner");
 });
 
 test("runConfiguredAgentCommand requires a request or config CLI", async () => {
