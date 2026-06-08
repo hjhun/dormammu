@@ -15,6 +15,7 @@ import {
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptRouteEntrypoint,
   runDaemonResultReportEntrypoint,
+  runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
   runDaemonWatcherBackendEntrypoint,
@@ -466,6 +467,30 @@ test("runDaemonResultReportEntrypoint projects report publication decisions", ()
       stageName: "daemon",
       sessionId: "session-1",
       reason: "publish_and_remove_prompt"
+    }
+  );
+});
+
+test("runDaemonRunFinishedEntrypoint projects run-finished metadata", () => {
+  assert.deepEqual(
+    runDaemonRunFinishedEntrypoint({
+      entrypoint: "daemon_run_finished_decision",
+      attempts_completed: 2,
+      retries_used: 1,
+      supervisor_verdict: " approved ",
+      outcome: "completed",
+      error: ""
+    }),
+    {
+      entrypoint: "daemon_run_finished_decision",
+      source: "daemon_runner",
+      runEntrypoint: "DaemonRunner._process_prompt",
+      attemptsCompleted: 2,
+      retriesUsed: 1,
+      supervisorVerdict: "approved",
+      outcome: "completed",
+      error: null,
+      reason: "daemon_run_finished"
     }
   );
 });

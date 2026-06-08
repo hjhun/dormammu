@@ -11,6 +11,7 @@ import {
   daemonPromptLifecycleDecision,
   daemonPromptRouteDecision,
   daemonResultReportDecision,
+  daemonRunFinishedDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
   daemonWatcherBackendDecision,
@@ -205,6 +206,28 @@ test("daemonResultReportDecision falls back to latest run metadata", () => {
       sessionId: ""
     }).runId,
     "agent:run-1"
+  );
+});
+
+test("daemonRunFinishedDecision projects run finished metadata", () => {
+  assert.deepEqual(
+    daemonRunFinishedDecision({
+      attemptsCompleted: 2.8,
+      retriesUsed: 1,
+      supervisorVerdict: " approved ",
+      outcome: "completed",
+      error: ""
+    }),
+    {
+      source: "daemon_runner",
+      runEntrypoint: "DaemonRunner._process_prompt",
+      attemptsCompleted: 2,
+      retriesUsed: 1,
+      supervisorVerdict: "approved",
+      outcome: "completed",
+      error: null,
+      reason: "daemon_run_finished"
+    }
   );
 });
 

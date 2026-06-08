@@ -618,6 +618,99 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_process_prompt_can_use_typescript_run_finished_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+            runner = DaemonRunner(app_config, daemon_config)
+            lifecycle = mock.MagicMock()
+            lifecycle.run_id = "daemon:test-run"
+            loop_result = LoopRunResult(
+                status="completed",
+                attempts_completed=2,
+                retries_used=1,
+                max_retries=3,
+                max_iterations=4,
+                latest_run_id="agent:test-run",
+                supervisor_verdict="approved",
+                report_path=None,
+                continuation_prompt_path=None,
+            )
+
+            with (
+                mock.patch(
+                    "dormammu.daemon.runner.LifecycleRecorder.for_execution",
+                    return_value=lifecycle,
+                ),
+                mock.patch.object(
+                    runner,
+                    "_run_prompt_loop",
+                    return_value=loop_result,
+                ),
+                mock.patch.object(
+                    runner,
+                    "_sync_plan_state",
+                    return_value=(True, None),
+                ),
+                mock.patch.object(
+                    runner,
+                    "_render_result_report",
+                    return_value="# Result\n",
+                ),
+            ):
+                prompt_result = runner._process_prompt(
+                    prompt_path,
+                    watcher_backend="polling",
+                )
+
+            self.assertEqual(prompt_result.status, "completed")
+            run_finished_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_run_finished_decision"
+            )
+            self.assertEqual(
+                run_finished_payload,
+                {
+                    "entrypoint": "daemon_run_finished_decision",
+                    "attempts_completed": 2,
+                    "retries_used": 1,
+                    "supervisor_verdict": "approved",
+                    "outcome": "completed",
+                    "error": None,
+                },
+            )
+
+            finished_call = next(
+                call_args.kwargs
+                for call_args in lifecycle.emit.call_args_list
+                if call_args.kwargs.get("event_type").value == "run.finished"
+            )
+            payload = finished_call["payload"]
+            self.assertEqual(payload.source, "daemon_runner")
+            self.assertEqual(payload.entrypoint, "DaemonRunner._process_prompt")
+            self.assertEqual(payload.attempts_completed, 2)
+            self.assertEqual(payload.retries_used, 1)
+            self.assertEqual(payload.supervisor_verdict, "approved")
+            self.assertEqual(payload.outcome, "completed")
+            self.assertIsNone(payload.error)
+
     def test_daemon_prompt_result_omits_result_report_artifact_when_file_was_not_written(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1612,6 +1705,37 @@ class DaemonRunnerTests(unittest.TestCase):
                             if payload["prompt_exists"]
                             else "fake_publish_without_prompt"
                         ),
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_run_finished_decision":
+                    def non_negative_int_or_none(value):
+                        if value is None:
+                            return None
+                        return max(0, int(value))
+
+                    print(json.dumps({{
+                        "entrypoint": "daemon_run_finished_decision",
+                        "source": "daemon_runner",
+                        "runEntrypoint": "DaemonRunner._process_prompt",
+                        "attemptsCompleted": non_negative_int_or_none(
+                            payload.get("attempts_completed")
+                        ),
+                        "retriesUsed": non_negative_int_or_none(
+                            payload.get("retries_used")
+                        ),
+                        "supervisorVerdict": (
+                            (payload.get("supervisor_verdict") or "").strip()
+                            or None
+                        ),
+                        "outcome": (
+                            (payload.get("outcome") or "").strip()
+                            or "unknown"
+                        ),
+                        "error": (
+                            (payload.get("error") or "").strip()
+                            or None
+                        ),
+                        "reason": "fake_daemon_run_finished",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_prompt_route_decision":

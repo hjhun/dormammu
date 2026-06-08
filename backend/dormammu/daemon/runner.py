@@ -550,6 +550,113 @@ class DaemonRunner:
             "sessionId": session_id or None,
         }
 
+    def _run_finished_event_payload(
+        self,
+        prompt_result: DaemonPromptResult,
+    ) -> RunEventPayload:
+        run_finished_decision = self._project_typescript_run_finished_decision(
+            prompt_result
+        )
+        if run_finished_decision is not None:
+            return RunEventPayload(
+                source=str(run_finished_decision["source"]),
+                entrypoint=str(run_finished_decision["run_entrypoint"]),
+                attempts_completed=run_finished_decision["attempts_completed"],
+                retries_used=run_finished_decision["retries_used"],
+                supervisor_verdict=run_finished_decision["supervisor_verdict"],
+                outcome=str(run_finished_decision["outcome"]),
+                error=run_finished_decision["error"],
+            )
+        run_result = prompt_result.run_result
+        return RunEventPayload(
+            source="daemon_runner",
+            entrypoint="DaemonRunner._process_prompt",
+            attempts_completed=(
+                run_result.attempts_completed if run_result is not None else None
+            ),
+            retries_used=(run_result.retries_used if run_result is not None else None),
+            supervisor_verdict=self._normalize_optional_text(
+                run_result.supervisor_verdict if run_result is not None else None
+            ),
+            outcome=self._normalize_required_text(prompt_result.status),
+            error=self._normalize_optional_text(prompt_result.error),
+        )
+
+    def _project_typescript_run_finished_decision(
+        self,
+        prompt_result: DaemonPromptResult,
+    ) -> dict[str, object] | None:
+        run_result = prompt_result.run_result
+        payload = {
+            "entrypoint": "daemon_run_finished_decision",
+            "attempts_completed": (
+                run_result.attempts_completed if run_result is not None else None
+            ),
+            "retries_used": run_result.retries_used if run_result is not None else None,
+            "supervisor_verdict": self._normalize_optional_text(
+                run_result.supervisor_verdict if run_result is not None else None
+            ),
+            "outcome": self._normalize_required_text(prompt_result.status),
+            "error": self._normalize_optional_text(prompt_result.error),
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._run_finished_expectations(prompt_result)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "source": expected["source"],
+            "run_entrypoint": expected["runEntrypoint"],
+            "attempts_completed": expected["attemptsCompleted"],
+            "retries_used": expected["retriesUsed"],
+            "supervisor_verdict": expected["supervisorVerdict"],
+            "outcome": expected["outcome"],
+            "error": expected["error"],
+        }
+
+    @classmethod
+    def _run_finished_expectations(
+        cls,
+        prompt_result: DaemonPromptResult,
+    ) -> dict[str, object]:
+        run_result = prompt_result.run_result
+        return {
+            "entrypoint": "daemon_run_finished_decision",
+            "source": "daemon_runner",
+            "runEntrypoint": "DaemonRunner._process_prompt",
+            "attemptsCompleted": cls._non_negative_int_or_none(
+                run_result.attempts_completed if run_result is not None else None
+            ),
+            "retriesUsed": cls._non_negative_int_or_none(
+                run_result.retries_used if run_result is not None else None
+            ),
+            "supervisorVerdict": cls._normalize_optional_text(
+                run_result.supervisor_verdict if run_result is not None else None
+            ),
+            "outcome": cls._normalize_required_text(prompt_result.status),
+            "error": cls._normalize_optional_text(prompt_result.error),
+        }
+
+    @staticmethod
+    def _non_negative_int_or_none(value: object) -> int | None:
+        if value is None:
+            return None
+        return max(0, int(value))
+
+    @staticmethod
+    def _normalize_optional_text(value: object) -> str | None:
+        if value is None:
+            return None
+        value = getattr(value, "value", value)
+        text = str(value).strip()
+        return text or None
+
+    @classmethod
+    def _normalize_required_text(cls, value: object) -> str:
+        return cls._normalize_optional_text(value) or "unknown"
+
     def _project_typescript_prompt_route_decision(
         self,
         *,
@@ -1595,20 +1702,13 @@ class DaemonRunner:
                     artifact_refs=(result_report_ref,),
                 )
             if lifecycle is not None:
+                run_finished_payload = self._run_finished_event_payload(prompt_result)
                 lifecycle.emit(
                     event_type=LifecycleEventType.RUN_FINISHED,
                     role="daemon",
                     stage="daemon",
                     status=status,
-                    payload=RunEventPayload(
-                        source="daemon_runner",
-                        entrypoint="DaemonRunner._process_prompt",
-                        attempts_completed=(loop_result.attempts_completed if loop_result else None),
-                        retries_used=(loop_result.retries_used if loop_result else None),
-                        supervisor_verdict=(loop_result.supervisor_verdict if loop_result else None),
-                        outcome=status,
-                        error=error,
-                    ),
+                    payload=run_finished_payload,
                     artifact_refs=(result_report_ref,) if result_report_ref is not None else (),
                 )
             print(f"daemon prompt {prompt_path.name}: {status} -> {result_path}", file=self.progress_stream)

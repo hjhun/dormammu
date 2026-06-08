@@ -51,6 +51,7 @@ import {
   daemonPromptLifecycleDecision,
   daemonPromptRouteDecision,
   daemonResultReportDecision,
+  daemonRunFinishedDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
   daemonWatcherBackendDecision,
@@ -65,6 +66,7 @@ import {
   type DaemonPromptLifecycleDecision,
   type DaemonPromptRouteDecision,
   type DaemonResultReportDecision,
+  type DaemonRunFinishedDecision,
   type DaemonShutdownDecision,
   type DaemonStartupDecision,
   type DaemonWatcherBackend,
@@ -343,6 +345,20 @@ export type DaemonResultReportEntrypointResultPayload =
     entrypoint: "daemon_result_report_decision";
   };
 
+export type DaemonRunFinishedEntrypointPayload = {
+  entrypoint: "daemon_run_finished_decision";
+  attempts_completed?: number | null;
+  retries_used?: number | null;
+  supervisor_verdict?: string | null;
+  outcome: string;
+  error?: string | null;
+};
+
+export type DaemonRunFinishedEntrypointResultPayload =
+  DaemonRunFinishedDecision & {
+    entrypoint: "daemon_run_finished_decision";
+  };
+
 export type DaemonLoopIterationEntrypointPayload = {
   entrypoint: "daemon_loop_iteration_decision";
   processed_count: number;
@@ -457,6 +473,7 @@ export type RunnerCliPayload =
   | DaemonPromptLifecycleEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
   | DaemonResultReportEntrypointPayload
+  | DaemonRunFinishedEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupEntrypointPayload
   | DaemonWatcherBackendEntrypointPayload
@@ -484,6 +501,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptLifecycleEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
   | DaemonResultReportEntrypointResultPayload
+  | DaemonRunFinishedEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
   | DaemonWatcherBackendEntrypointResultPayload
@@ -614,6 +632,27 @@ export function runDaemonResultReportEntrypoint(
         "latest_run_id"
       ) ?? null,
       sessionId: parseOptionalString(payload.session_id, "session_id") ?? null
+    })
+  };
+}
+
+export function runDaemonRunFinishedEntrypoint(
+  payload: DaemonRunFinishedEntrypointPayload
+): DaemonRunFinishedEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_run_finished_decision",
+    ...daemonRunFinishedDecision({
+      attemptsCompleted: parseOptionalNumber(
+        payload.attempts_completed,
+        "attempts_completed"
+      ) ?? null,
+      retriesUsed: parseOptionalNumber(payload.retries_used, "retries_used") ?? null,
+      supervisorVerdict: parseOptionalString(
+        payload.supervisor_verdict,
+        "supervisor_verdict"
+      ) ?? null,
+      outcome: parseRequiredString(payload.outcome, "outcome"),
+      error: parseOptionalString(payload.error, "error") ?? null
     })
   };
 }

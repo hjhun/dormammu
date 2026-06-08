@@ -85,6 +85,25 @@ export type DaemonResultReportDecision = {
   reason: string;
 };
 
+export type DaemonRunFinishedDecisionInput = {
+  attemptsCompleted: number | null;
+  retriesUsed: number | null;
+  supervisorVerdict: string | null;
+  outcome: string;
+  error: string | null;
+};
+
+export type DaemonRunFinishedDecision = {
+  source: "daemon_runner";
+  runEntrypoint: "DaemonRunner._process_prompt";
+  attemptsCompleted: number | null;
+  retriesUsed: number | null;
+  supervisorVerdict: string | null;
+  outcome: string;
+  error: string | null;
+  reason: string;
+};
+
 export type DaemonLoopIterationAction = "continue" | "wait" | "stop";
 
 export type DaemonLoopIterationInput = {
@@ -362,6 +381,21 @@ export function daemonResultReportDecision(
   };
 }
 
+export function daemonRunFinishedDecision(
+  input: DaemonRunFinishedDecisionInput
+): DaemonRunFinishedDecision {
+  return {
+    source: "daemon_runner",
+    runEntrypoint: "DaemonRunner._process_prompt",
+    attemptsCompleted: nonNegativeIntegerOrNull(input.attemptsCompleted),
+    retriesUsed: nonNegativeIntegerOrNull(input.retriesUsed),
+    supervisorVerdict: nonEmpty(input.supervisorVerdict),
+    outcome: nonEmpty(input.outcome) ?? "unknown",
+    error: nonEmpty(input.error),
+    reason: "daemon_run_finished"
+  };
+}
+
 export function daemonLoopIterationDecision(
   input: DaemonLoopIterationInput
 ): DaemonLoopIterationDecision {
@@ -611,4 +645,11 @@ function basename(path: string): string {
 function nonEmpty(value: string | null): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function nonNegativeIntegerOrNull(value: number | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  return Math.max(0, Math.trunc(value));
 }

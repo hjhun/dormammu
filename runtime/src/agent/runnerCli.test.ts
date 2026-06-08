@@ -522,6 +522,34 @@ test("dormammu-agent-runner can project daemon result report decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon run-finished decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_run_finished_decision",
+      attempts_completed: 2.8,
+      retries_used: 1,
+      supervisor_verdict: "approved",
+      outcome: "completed",
+      error: null
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_run_finished_decision",
+    source: "daemon_runner",
+    runEntrypoint: "DaemonRunner._process_prompt",
+    attemptsCompleted: 2,
+    retriesUsed: 1,
+    supervisorVerdict: "approved",
+    outcome: "completed",
+    error: null,
+    reason: "daemon_run_finished"
+  });
+});
+
 test("dormammu-agent-runner can project daemon loop iteration decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({
