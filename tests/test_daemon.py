@@ -859,6 +859,70 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_result_report_fallback_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            result_path = daemon_config.result_path / "001-first_RESULT.md"
+            prompt_result = DaemonPromptResult(
+                prompt_path=prompt_path,
+                result_path=result_path,
+                status="failed",
+                started_at="2026-06-08T03:00:00+00:00",
+                completed_at="2026-06-08T03:00:01+00:00",
+                watcher_backend="polling",
+                sort_key=(0, "001-first.md", "001-first.md"),
+                session_id="session-123",
+                error="Loop failed",
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+
+            with mock.patch.object(
+                runner,
+                "_render_result_report",
+                side_effect=RuntimeError("agent unavailable"),
+            ):
+                fallback_result, markdown = runner._render_result_report_with_fallback(
+                    prompt_result,
+                )
+
+            expected_note = (
+                "Configured CLI result report authoring failed; "
+                "wrote fallback report instead. Cause: agent unavailable"
+            )
+            self.assertEqual(
+                fallback_result.error,
+                f"Loop failed\n\n{expected_note}",
+            )
+            self.assertIn(expected_note, markdown)
+            payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_result_report_fallback_decision"
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_result_report_fallback_decision",
+                    "prompt_name": "001-first.md",
+                    "existing_error": "Loop failed",
+                    "cause": "agent unavailable",
+                },
+            )
+
     def test_process_prompt_can_use_typescript_run_finished_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2418,6 +2482,32 @@ class DaemonRunnerTests(unittest.TestCase):
                             if payload["prompt_exists"]
                             else "fake_publish_without_prompt"
                         ),
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_result_report_fallback_decision":
+                    fallback_note = (
+                        "Configured CLI result report authoring failed; "
+                        "wrote fallback report instead. Cause: "
+                        + payload["cause"]
+                    )
+                    existing_error = payload.get("existing_error")
+                    combined_error = (
+                        existing_error + "\\n\\n" + fallback_note
+                        if existing_error
+                        else fallback_note
+                    )
+                    print(json.dumps({{
+                        "entrypoint": "daemon_result_report_fallback_decision",
+                        "logMessage": (
+                            "daemon result report fallback: configured CLI "
+                            "authoring failed for "
+                            + payload["prompt_name"]
+                            + ": "
+                            + payload["cause"]
+                        ),
+                        "fallbackNote": fallback_note,
+                        "combinedError": combined_error,
+                        "reason": "result_report_authoring_failed",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_result_artifact_ref_decision":

@@ -21,6 +21,7 @@ import {
   runDaemonPromptSettleEntrypoint,
   runDaemonQueueFileEntrypoint,
   runDaemonResultArtifactRefEntrypoint,
+  runDaemonResultReportFallbackEntrypoint,
   runDaemonResultReportEntrypoint,
   runDaemonResultStatusEntrypoint,
   runDaemonRoadmapPhaseEntrypoint,
@@ -496,6 +497,33 @@ test("runDaemonResultReportEntrypoint projects report publication decisions", ()
       stageName: "daemon",
       sessionId: "session-1",
       reason: "publish_and_remove_prompt"
+    }
+  );
+});
+
+test("runDaemonResultReportFallbackEntrypoint projects fallback errors", () => {
+  assert.deepEqual(
+    runDaemonResultReportFallbackEntrypoint({
+      entrypoint: "daemon_result_report_fallback_decision",
+      prompt_name: "001-first.md",
+      existing_error: null,
+      cause: "agent unavailable"
+    }),
+    {
+      entrypoint: "daemon_result_report_fallback_decision",
+      logMessage: [
+        "daemon result report fallback: configured CLI authoring failed for ",
+        "001-first.md: agent unavailable"
+      ].join(""),
+      fallbackNote: [
+        "Configured CLI result report authoring failed; ",
+        "wrote fallback report instead. Cause: agent unavailable"
+      ].join(""),
+      combinedError: [
+        "Configured CLI result report authoring failed; ",
+        "wrote fallback report instead. Cause: agent unavailable"
+      ].join(""),
+      reason: "result_report_authoring_failed"
     }
   );
 });

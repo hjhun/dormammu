@@ -543,6 +543,41 @@ test("dormammu-agent-runner can project daemon result report decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon result report fallbacks", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_result_report_fallback_decision",
+      prompt_name: "001-first.md",
+      existing_error: "Loop failed",
+      cause: "agent unavailable"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_result_report_fallback_decision",
+    logMessage: [
+      "daemon result report fallback: configured CLI authoring failed for ",
+      "001-first.md: agent unavailable"
+    ].join(""),
+    fallbackNote: [
+      "Configured CLI result report authoring failed; ",
+      "wrote fallback report instead. Cause: agent unavailable"
+    ].join(""),
+    combinedError: [
+      "Loop failed",
+      "",
+      [
+        "Configured CLI result report authoring failed; ",
+        "wrote fallback report instead. Cause: agent unavailable"
+      ].join("")
+    ].join("\n"),
+    reason: "result_report_authoring_failed"
+  });
+});
+
 test("dormammu-agent-runner can project daemon result artifact refs", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

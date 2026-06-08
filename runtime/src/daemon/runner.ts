@@ -97,6 +97,19 @@ export type DaemonResultReportDecision = {
   reason: string;
 };
 
+export type DaemonResultReportFallbackDecisionInput = {
+  promptName: string;
+  existingError: string | null;
+  cause: string;
+};
+
+export type DaemonResultReportFallbackDecision = {
+  logMessage: string;
+  fallbackNote: string;
+  combinedError: string;
+  reason: "result_report_authoring_failed";
+};
+
 export type DaemonResultArtifactRefAction = "reference" | "skip";
 
 export type DaemonResultArtifactRefDecisionInput = {
@@ -568,6 +581,27 @@ export function daemonResultReportDecision(
     stageName: "daemon",
     sessionId: nonEmpty(input.sessionId),
     reason: input.promptExists ? "publish_and_remove_prompt" : "publish_without_prompt"
+  };
+}
+
+export function daemonResultReportFallbackDecision(
+  input: DaemonResultReportFallbackDecisionInput
+): DaemonResultReportFallbackDecision {
+  const fallbackNote = [
+    "Configured CLI result report authoring failed; ",
+    `wrote fallback report instead. Cause: ${input.cause}`
+  ].join("");
+  return {
+    logMessage: [
+      "daemon result report fallback: configured CLI authoring failed for ",
+      `${input.promptName}: ${input.cause}`
+    ].join(""),
+    fallbackNote,
+    combinedError:
+      input.existingError !== null && input.existingError.length > 0
+        ? `${input.existingError}\n\n${fallbackNote}`
+        : fallbackNote,
+    reason: "result_report_authoring_failed"
   };
 }
 

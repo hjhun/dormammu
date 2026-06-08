@@ -2689,19 +2689,69 @@ class DaemonRunner:
         try:
             return prompt_result, self._render_result_report(prompt_result)
         except Exception as exc:
-            self._log(
-                "daemon result report fallback: configured CLI authoring failed for "
-                f"{prompt_result.prompt_path.name}: {exc}"
+            cause = str(exc)
+            fallback_decision = (
+                self._project_typescript_result_report_fallback_decision(
+                    prompt_result,
+                    cause,
+                )
             )
-            fallback_note = (
-                "Configured CLI result report authoring failed; "
-                f"wrote fallback report instead. Cause: {exc}"
+            if fallback_decision is None:
+                fallback_decision = self._result_report_fallback_expectations(
+                    prompt_result,
+                    cause,
+                )
+            self._log(str(fallback_decision["logMessage"]))
+            fallback_result = replace(
+                prompt_result,
+                error=str(fallback_decision["combinedError"]),
             )
-            combined_error = fallback_note
-            if prompt_result.error:
-                combined_error = f"{prompt_result.error}\n\n{fallback_note}"
-            fallback_result = replace(prompt_result, error=combined_error)
             return fallback_result, render_result_markdown(fallback_result)
+
+    def _project_typescript_result_report_fallback_decision(
+        self,
+        prompt_result: DaemonPromptResult,
+        cause: str,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_result_report_fallback_decision",
+            "prompt_name": prompt_result.prompt_path.name,
+            "existing_error": prompt_result.error,
+            "cause": cause,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._result_report_fallback_expectations(
+            prompt_result,
+            cause,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    @staticmethod
+    def _result_report_fallback_expectations(
+        prompt_result: DaemonPromptResult,
+        cause: str,
+    ) -> dict[str, object]:
+        fallback_note = (
+            "Configured CLI result report authoring failed; "
+            f"wrote fallback report instead. Cause: {cause}"
+        )
+        combined_error = fallback_note
+        if prompt_result.error:
+            combined_error = f"{prompt_result.error}\n\n{fallback_note}"
+        return {
+            "logMessage": (
+                "daemon result report fallback: configured CLI authoring failed for "
+                f"{prompt_result.prompt_path.name}: {cause}"
+            ),
+            "fallbackNote": fallback_note,
+            "combinedError": combined_error,
+            "reason": "result_report_authoring_failed",
+        }
 
     def _publish_result_report(
         self,

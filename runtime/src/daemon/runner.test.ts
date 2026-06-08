@@ -17,6 +17,7 @@ import {
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
+  daemonResultReportFallbackDecision,
   daemonResultReportDecision,
   daemonResultStatusDecision,
   daemonRoadmapPhaseDecision,
@@ -233,6 +234,35 @@ test("daemonResultReportDecision falls back to latest run metadata", () => {
       sessionId: ""
     }).runId,
     "agent:run-1"
+  );
+});
+
+test("daemonResultReportFallbackDecision projects fallback errors", () => {
+  assert.deepEqual(
+    daemonResultReportFallbackDecision({
+      promptName: "001-first.md",
+      existingError: "Loop failed",
+      cause: "agent unavailable"
+    }),
+    {
+      logMessage: [
+        "daemon result report fallback: configured CLI authoring failed for ",
+        "001-first.md: agent unavailable"
+      ].join(""),
+      fallbackNote: [
+        "Configured CLI result report authoring failed; ",
+        "wrote fallback report instead. Cause: agent unavailable"
+      ].join(""),
+      combinedError: [
+        "Loop failed",
+        "",
+        [
+          "Configured CLI result report authoring failed; ",
+          "wrote fallback report instead. Cause: agent unavailable"
+        ].join("")
+      ].join("\n"),
+      reason: "result_report_authoring_failed"
+    }
   );
 });
 

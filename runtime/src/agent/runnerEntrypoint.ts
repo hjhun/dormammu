@@ -57,6 +57,7 @@ import {
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
+  daemonResultReportFallbackDecision,
   daemonResultReportDecision,
   daemonResultStatusDecision,
   daemonRoadmapPhaseDecision,
@@ -84,6 +85,7 @@ import {
   type DaemonPromptSettleDecision,
   type DaemonQueueFileDecision,
   type DaemonResultArtifactRefDecision,
+  type DaemonResultReportFallbackDecision,
   type DaemonResultReportDecision,
   type DaemonResultStatusDecision,
   type DaemonRoadmapPhaseDecision,
@@ -380,6 +382,18 @@ export type DaemonResultReportEntrypointResultPayload =
     entrypoint: "daemon_result_report_decision";
   };
 
+export type DaemonResultReportFallbackEntrypointPayload = {
+  entrypoint: "daemon_result_report_fallback_decision";
+  prompt_name: string;
+  existing_error?: string | null;
+  cause: string;
+};
+
+export type DaemonResultReportFallbackEntrypointResultPayload =
+  DaemonResultReportFallbackDecision & {
+    entrypoint: "daemon_result_report_fallback_decision";
+  };
+
 export type DaemonResultArtifactRefEntrypointPayload = {
   entrypoint: "daemon_result_artifact_ref_decision";
   result_path: string;
@@ -652,6 +666,7 @@ export type RunnerCliPayload =
   | DaemonPromptSettleEntrypointPayload
   | DaemonQueueFileEntrypointPayload
   | DaemonResultArtifactRefEntrypointPayload
+  | DaemonResultReportFallbackEntrypointPayload
   | DaemonResultReportEntrypointPayload
   | DaemonResultStatusEntrypointPayload
   | DaemonRoadmapPhaseEntrypointPayload
@@ -692,6 +707,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptSettleEntrypointResultPayload
   | DaemonQueueFileEntrypointResultPayload
   | DaemonResultArtifactRefEntrypointResultPayload
+  | DaemonResultReportFallbackEntrypointResultPayload
   | DaemonResultReportEntrypointResultPayload
   | DaemonResultStatusEntrypointResultPayload
   | DaemonRoadmapPhaseEntrypointResultPayload
@@ -846,6 +862,20 @@ export function runDaemonResultReportEntrypoint(
         "latest_run_id"
       ) ?? null,
       sessionId: parseOptionalString(payload.session_id, "session_id") ?? null
+    })
+  };
+}
+
+export function runDaemonResultReportFallbackEntrypoint(
+  payload: DaemonResultReportFallbackEntrypointPayload
+): DaemonResultReportFallbackEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_result_report_fallback_decision",
+    ...daemonResultReportFallbackDecision({
+      promptName: parseRequiredString(payload.prompt_name, "prompt_name"),
+      existingError:
+        parseOptionalString(payload.existing_error, "existing_error") ?? null,
+      cause: parseString(payload.cause, "cause")
     })
   };
 }
