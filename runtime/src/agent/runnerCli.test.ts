@@ -484,6 +484,7 @@ test("dormammu-agent-runner can project daemon prompt lifecycle decisions", () =
     resultPath: "/repo/results/001-first_RESULT.md",
     removeExistingResult: false,
     errorMessage: "Prompt file was deleted before processing.",
+    logMessage: "daemon prompt 001-first.md: prompt file was deleted before processing; skipping",
     reason: "prompt_missing"
   });
 });

@@ -470,6 +470,7 @@ class DaemonRunner:
             "status": expected["status"],
             "remove_existing_result": expected["removeExistingResult"],
             "error_message": expected["errorMessage"],
+            "log_message": expected["logMessage"],
         }
 
     def _project_typescript_prompt_path_decision(
@@ -659,6 +660,10 @@ class DaemonRunner:
                 "resultPath": str(result_path),
                 "removeExistingResult": False,
                 "errorMessage": "Prompt file was deleted before processing.",
+                "logMessage": (
+                    f"daemon prompt {prompt_path.name}: prompt file was deleted "
+                    "before processing; skipping"
+                ),
             }
         return {
             "action": "process",
@@ -667,6 +672,7 @@ class DaemonRunner:
             "resultPath": str(result_path),
             "removeExistingResult": True,
             "errorMessage": None,
+            "logMessage": None,
         }
 
     @staticmethod
@@ -2441,9 +2447,7 @@ class DaemonRunner:
                 prompt_exists=prompt_path.exists(),
             )
             if prompt_lifecycle is not None and prompt_lifecycle["action"] == "skip":
-                self._log(
-                    f"daemon prompt {prompt_path.name}: prompt file was deleted before processing; skipping"
-                )
+                self._log(str(prompt_lifecycle["log_message"]))
                 skipped = True
                 status = str(prompt_lifecycle["status"])
                 error = str(prompt_lifecycle["error_message"])
@@ -2459,9 +2463,23 @@ class DaemonRunner:
             try:
                 prompt_text = prompt_path.read_text(encoding="utf-8")
             except FileNotFoundError:
-                self._log(
-                    f"daemon prompt {prompt_path.name}: prompt file was deleted before processing; skipping"
+                missing_lifecycle = self._project_typescript_prompt_lifecycle_decision(
+                    prompt_path=prompt_path,
+                    result_path=result_path,
+                    prompt_exists=False,
                 )
+                if missing_lifecycle is None:
+                    self._log(
+                        str(
+                            self._prompt_lifecycle_expectations(
+                                prompt_path=prompt_path,
+                                result_path=result_path,
+                                prompt_exists=False,
+                            )["logMessage"]
+                        )
+                    )
+                else:
+                    self._log(str(missing_lifecycle["log_message"]))
                 skipped = True
                 status = "skipped"
                 error = "Prompt file was deleted before processing."

@@ -458,6 +458,7 @@ test("runDaemonPromptLifecycleEntrypoint projects prompt lifecycle decisions", (
       resultPath: "/repo/results/001-first_RESULT.md",
       removeExistingResult: true,
       errorMessage: null,
+      logMessage: null,
       reason: "prompt_ready"
     }
   );

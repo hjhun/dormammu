@@ -55,6 +55,7 @@ export type DaemonPromptLifecycleDecision = {
   resultPath: string;
   removeExistingResult: boolean;
   errorMessage: string | null;
+  logMessage: string | null;
   reason: string;
 };
 
@@ -695,6 +696,7 @@ export function daemonPromptLifecycleDecision(
       resultPath: input.resultPath,
       removeExistingResult: false,
       errorMessage: "Prompt file was deleted before processing.",
+      logMessage: `daemon prompt ${basename(input.promptPath)}: prompt file was deleted before processing; skipping`,
       reason: "prompt_missing"
     };
   }
@@ -706,6 +708,7 @@ export function daemonPromptLifecycleDecision(
     resultPath: input.resultPath,
     removeExistingResult: true,
     errorMessage: null,
+    logMessage: null,
     reason: "prompt_ready"
   };
 }

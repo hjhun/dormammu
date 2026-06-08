@@ -271,9 +271,10 @@ Ported modules:
   `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon prompt lifecycle decision helper, plus runner
   entrypoint and Python `DaemonRunner._process_prompt()` bridge consumption
-  for missing-prompt skip, process start, and stale result cleanup intent while
-  Python retains prompt IO, session creation, loop execution, lifecycle event
-  emission, and fallback behavior
+  for missing-prompt skip, process start, stale result cleanup intent, and
+  missing-prompt operator log message projection while Python retains prompt
+  IO, session creation, loop execution, lifecycle event emission, progress
+  stream IO, and fallback behavior
   -> `runtime/src/daemon/runner.ts`,
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
@@ -683,11 +684,12 @@ Port the remaining daemon and goals orchestration surface:
   daemon watcher backend selection for polling, inotify, and auto fallback,
   daemon watcher wait decisions for wait/skip orchestration, and daemon prompt
   lifecycle decisions for missing-prompt skip and process-start cleanup
-  intent. TypeScript also owns daemon prompt path projection decisions for
-  prompt result and progress log paths. TypeScript also owns daemon plan-state
-  synchronization decisions for `direct_response`, missing task sync, PLAN
-  completion, and next-pending-task normalization. TypeScript also owns daemon
-  artifact writer binding decisions for base/log/run/session/role/stage
+  intent, including the missing-prompt operator log message. TypeScript also
+  owns daemon prompt path projection decisions for prompt result and progress
+  log paths. TypeScript also owns daemon plan-state synchronization decisions
+  for `direct_response`, missing task sync, PLAN completion, and
+  next-pending-task normalization. TypeScript also owns daemon artifact writer
+  binding decisions for base/log/run/session/role/stage
   metadata while Python keeps writer construction and report file IO.
   TypeScript also owns daemon artifact-persisted lifecycle event metadata for
   input prompts and result reports while Python keeps lifecycle emission,

@@ -1611,8 +1611,13 @@ class DaemonRunnerTests(unittest.TestCase):
             daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
             daemon_config.result_path.mkdir(parents=True, exist_ok=True)
             prompt_path = daemon_config.prompt_path / "001-missing.md"
+            progress = io.StringIO()
 
-            prompt_result = DaemonRunner(app_config, daemon_config)._process_prompt(
+            prompt_result = DaemonRunner(
+                app_config,
+                daemon_config,
+                progress_stream=progress,
+            )._process_prompt(
                 prompt_path,
                 watcher_backend="polling",
             )
@@ -1641,6 +1646,13 @@ class DaemonRunnerTests(unittest.TestCase):
                     "result_path": str(prompt_result.result_path),
                     "prompt_exists": False,
                 },
+            )
+            self.assertIn(
+                (
+                    "daemon prompt 001-missing.md: prompt file was deleted "
+                    "before processing; skipping"
+                ),
+                progress.getvalue(),
             )
 
     def test_process_prompt_does_not_emit_missing_result_report_artifact_on_interrupt(self) -> None:
@@ -2629,6 +2641,7 @@ class DaemonRunnerTests(unittest.TestCase):
                             "resultPath": payload["result_path"],
                             "removeExistingResult": True,
                             "errorMessage": None,
+                            "logMessage": None,
                             "reason": "fake_prompt_ready",
                         }}
                     else:
@@ -2641,6 +2654,12 @@ class DaemonRunnerTests(unittest.TestCase):
                             "removeExistingResult": False,
                             "errorMessage": (
                                 "Prompt file was deleted before processing."
+                            ),
+                            "logMessage": (
+                                "daemon prompt "
+                                + Path(payload["prompt_path"]).name
+                                + ": prompt file was deleted before "
+                                "processing; skipping"
                             ),
                             "reason": "fake_prompt_missing",
                         }}
