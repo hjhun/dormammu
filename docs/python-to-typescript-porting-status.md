@@ -121,6 +121,10 @@ Ported modules:
   extraction, queued prompt filename derivation, duplicate queued prompt
   detection, and goal-source metadata prompt content projection
   -> `runtime/src/goals/queue.ts`
+- TypeScript-owned goals file discovery and queue candidate listing for
+  Python-compatible `.md` goal filtering, deterministic ordering, missing-path
+  tolerance, queued prompt filename projection, and already-queued detection
+  -> `runtime/src/goals/discovery.ts`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -295,8 +299,9 @@ Validation:
 Port the remaining daemon and goals orchestration surface:
 
 - TypeScript now owns deterministic goals prompt construction and queue prompt
-  projection contracts, but Python still owns goals file discovery, analyzer /
-  planner / designer execution sequencing, and prompt file writes.
-- The next slice should port goal file discovery and queue candidate listing
-  into TypeScript, then connect those helpers through the Python bridge before
-  moving the scheduler execution loop itself.
+  projection contracts, plus goal file discovery and queue candidate listing.
+  Python still owns analyzer / planner / designer execution sequencing and
+  prompt file writes.
+- The next slice should connect these deterministic goals helpers through the
+  Python bridge, then move scheduler prompt writes or the scheduler execution
+  loop itself into TypeScript.
