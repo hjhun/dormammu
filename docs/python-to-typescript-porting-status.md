@@ -109,6 +109,10 @@ Ported modules:
   `backend/dormammu/agent/models.py`,
   `backend/dormammu/agent/cli_adapter.py`,
   `backend/dormammu/daemon/pipeline_runner.py`
+- TypeScript-owned pure tester/reviewer role-loop executor surface that drives
+  bounded stage attempts, retry callbacks, skip/proceed handling, failure
+  termination, and exhausted manual-review terminal stages
+  -> `runtime/src/pipeline/roleLoopExecutor.ts`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -291,7 +295,6 @@ Port the remaining runtime orchestration surface:
   TypeScript runner bridge, but still own daemon, supervisor, and pipeline
   orchestration while TypeScript parity surfaces are assembled
 
-The next slice should use the accumulated decision and transition contracts to
-lift more of the tester/reviewer retry loop executor itself into TypeScript, or
-start porting the daemon/goals orchestration contracts that feed pipeline
-execution.
+The next slice should connect the TypeScript role-loop executor surface to the
+Python pipeline bridge for tester/reviewer loops, or start porting the
+daemon/goals orchestration contracts that feed pipeline execution.
