@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Writable } from "node:stream";
 
 import {
+  runDaemonArtifactPersistedEventEntrypoint,
   runDaemonArtifactWriterEntrypoint,
   runDaemonAgentCliEntrypoint,
   runDaemonExistingResultEntrypoint,
@@ -50,6 +51,7 @@ import {
   runGoalsWatcherStopDecisionEntrypoint,
   runGoalsWatchLoopDecisionEntrypoint,
   type AgentRunnerEntrypointPayload,
+  type DaemonArtifactPersistedEventEntrypointPayload,
   type DaemonArtifactWriterEntrypointPayload,
   type DaemonAgentCliEntrypointPayload,
   type DaemonExistingResultEntrypointPayload,
@@ -206,6 +208,9 @@ async function runWithSignalHandlers(
   if (isDaemonArtifactWriterPayload(payload)) {
     return runDaemonArtifactWriterEntrypoint(payload);
   }
+  if (isDaemonArtifactPersistedEventPayload(payload)) {
+    return runDaemonArtifactPersistedEventEntrypoint(payload);
+  }
   if (isDaemonPromptRoutePayload(payload)) {
     return runDaemonPromptRouteEntrypoint(payload);
   }
@@ -328,6 +333,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_roadmap_phase_decision" &&
       payload.entrypoint !== "daemon_goal_source_decision" &&
       payload.entrypoint !== "daemon_agent_cli_decision" &&
+      payload.entrypoint !== "daemon_artifact_persisted_event_decision" &&
       payload.entrypoint !== "daemon_run_finished_decision" &&
       payload.entrypoint !== "daemon_shutdown_decision" &&
       payload.entrypoint !== "daemon_startup_banner_decision" &&
@@ -480,6 +486,15 @@ function isDaemonArtifactWriterPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_artifact_writer_decision"
+  );
+}
+
+function isDaemonArtifactPersistedEventPayload(
+  payload: RunnerCliPayload
+): payload is DaemonArtifactPersistedEventEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_artifact_persisted_event_decision"
   );
 }
 

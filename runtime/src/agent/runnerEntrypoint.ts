@@ -42,6 +42,7 @@ import {
   type GoalQueueCandidate
 } from "../goals/discovery.js";
 import {
+  daemonArtifactPersistedEventDecision,
   daemonArtifactWriterDecision,
   daemonAgentCliDecision,
   daemonExistingResultDecision,
@@ -74,6 +75,7 @@ import {
   daemonTerminalStatusDecision,
   daemonWatcherBackendDecision,
   daemonWatcherWaitDecision,
+  type DaemonArtifactPersistedEventDecision,
   type DaemonArtifactWriterDecision,
   type DaemonAgentCliDecision,
   type DaemonExistingResultDecision,
@@ -401,6 +403,16 @@ export type DaemonArtifactWriterEntrypointResultPayload =
     entrypoint: "daemon_artifact_writer_decision";
   };
 
+export type DaemonArtifactPersistedEventEntrypointPayload = {
+  entrypoint: "daemon_artifact_persisted_event_decision";
+  artifact_kind: string;
+};
+
+export type DaemonArtifactPersistedEventEntrypointResultPayload =
+  DaemonArtifactPersistedEventDecision & {
+    entrypoint: "daemon_artifact_persisted_event_decision";
+  };
+
 export type DaemonResultReportEntrypointPayload = {
   entrypoint: "daemon_result_report_decision";
   prompt_path: string;
@@ -725,6 +737,7 @@ export type DaemonWatcherWaitEntrypointResultPayload =
 
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
+  | DaemonArtifactPersistedEventEntrypointPayload
   | DaemonArtifactWriterEntrypointPayload
   | DaemonExistingResultEntrypointPayload
   | DaemonHeartbeatRemoveEntrypointPayload
@@ -771,6 +784,7 @@ export type RunnerCliPayload =
   | GoalsWatchLoopDecisionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
+  | DaemonArtifactPersistedEventEntrypointResultPayload
   | DaemonArtifactWriterEntrypointResultPayload
   | DaemonExistingResultEntrypointResultPayload
   | DaemonHeartbeatRemoveEntrypointResultPayload
@@ -951,6 +965,17 @@ export function runDaemonArtifactWriterEntrypoint(
       logsDir: parseOptionalString(payload.logs_dir, "logs_dir") ?? null,
       runId: parseOptionalString(payload.run_id, "run_id") ?? null,
       sessionId: parseOptionalString(payload.session_id, "session_id") ?? null
+    })
+  };
+}
+
+export function runDaemonArtifactPersistedEventEntrypoint(
+  payload: DaemonArtifactPersistedEventEntrypointPayload
+): DaemonArtifactPersistedEventEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_artifact_persisted_event_decision",
+    ...daemonArtifactPersistedEventDecision({
+      artifactKind: parseRequiredString(payload.artifact_kind, "artifact_kind")
     })
   };
 }

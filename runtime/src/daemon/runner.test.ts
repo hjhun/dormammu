@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  daemonArtifactPersistedEventDecision,
   daemonArtifactWriterDecision,
   daemonAgentCliDecision,
   daemonExistingResultDecision,
@@ -272,6 +273,37 @@ test("daemonArtifactWriterDecision preserves daemon writer bindings", () => {
       stageName: "daemon",
       sessionId: null,
       reason: "daemon_artifact_writer_bound"
+    }
+  );
+});
+
+test("daemonArtifactPersistedEventDecision projects lifecycle event metadata", () => {
+  assert.deepEqual(
+    daemonArtifactPersistedEventDecision({
+      artifactKind: "input_prompt"
+    }),
+    {
+      eventType: "artifact_persisted",
+      role: "daemon",
+      stage: "daemon",
+      status: "persisted",
+      artifactKind: "input_prompt",
+      summary: "Persisted the daemon prompt into the active session workspace.",
+      reason: "input_prompt_artifact_persisted"
+    }
+  );
+  assert.deepEqual(
+    daemonArtifactPersistedEventDecision({
+      artifactKind: "result_report"
+    }),
+    {
+      eventType: "artifact_persisted",
+      role: "daemon",
+      stage: "daemon",
+      status: "persisted",
+      artifactKind: "result_report",
+      summary: "Persisted the daemon result report.",
+      reason: "result_report_artifact_persisted"
     }
   );
 });

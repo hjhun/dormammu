@@ -1322,6 +1322,46 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_daemon_artifact_persisted_event_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+
+            decision = runner._artifact_persisted_event_decision("result_report")
+
+            self.assertEqual(
+                decision,
+                {
+                    "eventType": "artifact_persisted",
+                    "role": "daemon",
+                    "stage": "daemon",
+                    "status": "persisted",
+                    "artifactKind": "result_report",
+                    "summary": "Persisted the daemon result report.",
+                    "reason": "result_report_artifact_persisted",
+                },
+            )
+            payload = json.loads(
+                (root / "captured-runner-payload.json").read_text(
+                    encoding="utf-8",
+                )
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_artifact_persisted_event_decision",
+                    "artifact_kind": "result_report",
+                },
+            )
+
     def test_result_report_artifact_ref_can_use_typescript_bridge(self) -> None:
         class PromptResultWithoutArtifact:
             result_report_artifact = None
@@ -2542,6 +2582,28 @@ class DaemonRunnerTests(unittest.TestCase):
                         "stageName": "daemon",
                         "sessionId": payload.get("session_id"),
                         "reason": "daemon_artifact_writer_bound",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_artifact_persisted_event_decision":
+                    artifact_kind = payload["artifact_kind"].strip()
+                    if artifact_kind == "input_prompt":
+                        summary = "Persisted the daemon prompt into the active session workspace."
+                        reason = "input_prompt_artifact_persisted"
+                    elif artifact_kind == "result_report":
+                        summary = "Persisted the daemon result report."
+                        reason = "result_report_artifact_persisted"
+                    else:
+                        summary = f"Persisted daemon artifact: {{artifact_kind}}."
+                        reason = "daemon_artifact_persisted"
+                    print(json.dumps({{
+                        "entrypoint": "daemon_artifact_persisted_event_decision",
+                        "eventType": "artifact_persisted",
+                        "role": "daemon",
+                        "stage": "daemon",
+                        "status": "persisted",
+                        "artifactKind": artifact_kind,
+                        "summary": summary,
+                        "reason": reason,
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_existing_result_decision":

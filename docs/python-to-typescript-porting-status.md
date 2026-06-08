@@ -305,6 +305,16 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon artifact-persisted lifecycle event decision helper,
+  plus runner entrypoint and Python `DaemonRunner._process_prompt()` bridge
+  consumption for input-prompt and result-report event role/stage/status,
+  artifact kind, summary, and reason metadata while Python retains
+  `LifecycleRecorder.emit()`, enum mapping, artifact refs, filesystem IO, and
+  malformed-bridge fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon result report publication decision helper, plus
   runner entrypoint and Python `DaemonRunner._publish_result_report()` bridge
   consumption for result report write intent, prompt cleanup intent, and
@@ -650,6 +660,9 @@ Port the remaining daemon and goals orchestration surface:
   completion, and next-pending-task normalization. TypeScript also owns daemon
   artifact writer binding decisions for base/log/run/session/role/stage
   metadata while Python keeps writer construction and report file IO.
+  TypeScript also owns daemon artifact-persisted lifecycle event metadata for
+  input prompts and result reports while Python keeps lifecycle emission,
+  artifact refs, enum mapping, and file IO.
   TypeScript also owns daemon result report publication decisions for report
   write intent, prompt cleanup intent, and artifact metadata projection, plus
   daemon result report fallback decisions for configured-authoring failure

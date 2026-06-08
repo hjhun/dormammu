@@ -792,6 +792,60 @@ class DaemonRunner:
                 return None
         return expected
 
+    def _artifact_persisted_event_decision(
+        self,
+        artifact_kind: str,
+    ) -> dict[str, object]:
+        typescript_decision = self._project_typescript_artifact_persisted_event_decision(
+            artifact_kind,
+        )
+        if typescript_decision is not None:
+            return typescript_decision
+        return self._artifact_persisted_event_expectations(artifact_kind)
+
+    def _project_typescript_artifact_persisted_event_decision(
+        self,
+        artifact_kind: str,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_artifact_persisted_event_decision",
+            "artifact_kind": artifact_kind,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._artifact_persisted_event_expectations(artifact_kind)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    @staticmethod
+    def _artifact_persisted_event_expectations(
+        artifact_kind: str,
+    ) -> dict[str, object]:
+        artifact_kind = artifact_kind.strip()
+        if artifact_kind == "input_prompt":
+            summary = (
+                "Persisted the daemon prompt into the active session workspace."
+            )
+            reason = "input_prompt_artifact_persisted"
+        elif artifact_kind == "result_report":
+            summary = "Persisted the daemon result report."
+            reason = "result_report_artifact_persisted"
+        else:
+            summary = f"Persisted daemon artifact: {artifact_kind}."
+            reason = "daemon_artifact_persisted"
+        return {
+            "eventType": "artifact_persisted",
+            "role": "daemon",
+            "stage": "daemon",
+            "status": "persisted",
+            "artifactKind": artifact_kind,
+            "summary": summary,
+            "reason": reason,
+        }
+
     @staticmethod
     def _artifact_writer_expectations(
         *,
@@ -2223,14 +2277,17 @@ class DaemonRunner:
                     trigger="daemon_queue",
                 ),
             )
+            prompt_artifact_event = self._artifact_persisted_event_decision(
+                "input_prompt",
+            )
             lifecycle.emit(
                 event_type=LifecycleEventType.ARTIFACT_PERSISTED,
-                role="daemon",
-                stage="daemon",
-                status="persisted",
+                role=str(prompt_artifact_event["role"]),
+                stage=str(prompt_artifact_event["stage"]),
+                status=str(prompt_artifact_event["status"]),
                 payload=ArtifactPersistedPayload(
-                    artifact_kind="input_prompt",
-                    summary="Persisted the daemon prompt into the active session workspace.",
+                    artifact_kind=str(prompt_artifact_event["artifactKind"]),
+                    summary=str(prompt_artifact_event["summary"]),
                 ),
                 artifact_refs=(
                     self._daemon_artifact_writer(
@@ -2320,14 +2377,17 @@ class DaemonRunner:
                 self._in_progress.discard(prompt_path)
             result_report_ref = self._result_report_artifact_ref(prompt_result)
             if lifecycle is not None and result_report_ref is not None:
+                result_artifact_event = self._artifact_persisted_event_decision(
+                    "result_report",
+                )
                 lifecycle.emit(
                     event_type=LifecycleEventType.ARTIFACT_PERSISTED,
-                    role="daemon",
-                    stage="daemon",
-                    status="persisted",
+                    role=str(result_artifact_event["role"]),
+                    stage=str(result_artifact_event["stage"]),
+                    status=str(result_artifact_event["status"]),
                     payload=ArtifactPersistedPayload(
-                        artifact_kind="result_report",
-                        summary="Persisted the daemon result report.",
+                        artifact_kind=str(result_artifact_event["artifactKind"]),
+                        summary=str(result_artifact_event["summary"]),
                     ),
                     artifact_refs=(result_report_ref,),
                 )

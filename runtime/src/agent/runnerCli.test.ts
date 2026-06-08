@@ -558,6 +558,29 @@ test("dormammu-agent-runner can project daemon artifact writer bindings", () => 
   });
 });
 
+test("dormammu-agent-runner can project daemon artifact event metadata", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_artifact_persisted_event_decision",
+      artifact_kind: "input_prompt"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_artifact_persisted_event_decision",
+    eventType: "artifact_persisted",
+    role: "daemon",
+    stage: "daemon",
+    status: "persisted",
+    artifactKind: "input_prompt",
+    summary: "Persisted the daemon prompt into the active session workspace.",
+    reason: "input_prompt_artifact_persisted"
+  });
+});
+
 test("dormammu-agent-runner can project daemon result report decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

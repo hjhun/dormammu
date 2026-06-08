@@ -6,6 +6,7 @@ import test from "node:test";
 
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
+  runDaemonArtifactPersistedEventEntrypoint,
   runDaemonArtifactWriterEntrypoint,
   runDaemonAgentCliEntrypoint,
   runDaemonExistingResultEntrypoint,
@@ -513,6 +514,25 @@ test("runDaemonArtifactWriterEntrypoint projects writer bindings", () => {
       stageName: "daemon",
       sessionId: "session-1",
       reason: "daemon_artifact_writer_bound"
+    }
+  );
+});
+
+test("runDaemonArtifactPersistedEventEntrypoint projects event metadata", () => {
+  assert.deepEqual(
+    runDaemonArtifactPersistedEventEntrypoint({
+      entrypoint: "daemon_artifact_persisted_event_decision",
+      artifact_kind: "result_report"
+    }),
+    {
+      entrypoint: "daemon_artifact_persisted_event_decision",
+      eventType: "artifact_persisted",
+      role: "daemon",
+      stage: "daemon",
+      status: "persisted",
+      artifactKind: "result_report",
+      summary: "Persisted the daemon result report.",
+      reason: "result_report_artifact_persisted"
     }
   );
 });

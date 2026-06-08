@@ -195,6 +195,23 @@ export type DaemonArtifactWriterDecision = {
   reason: "daemon_artifact_writer_bound";
 };
 
+export type DaemonArtifactPersistedEventDecisionInput = {
+  artifactKind: string;
+};
+
+export type DaemonArtifactPersistedEventDecision = {
+  eventType: "artifact_persisted";
+  role: "daemon";
+  stage: "daemon";
+  status: "persisted";
+  artifactKind: string;
+  summary: string;
+  reason:
+    | "input_prompt_artifact_persisted"
+    | "result_report_artifact_persisted"
+    | "daemon_artifact_persisted";
+};
+
 export type DaemonResultArtifactRefAction = "reference" | "skip";
 
 export type DaemonResultArtifactRefDecisionInput = {
@@ -982,6 +999,43 @@ export function daemonArtifactWriterDecision(
     stageName: "daemon",
     sessionId: input.sessionId,
     reason: "daemon_artifact_writer_bound"
+  };
+}
+
+export function daemonArtifactPersistedEventDecision(
+  input: DaemonArtifactPersistedEventDecisionInput
+): DaemonArtifactPersistedEventDecision {
+  const artifactKind = input.artifactKind.trim();
+  if (artifactKind === "input_prompt") {
+    return {
+      eventType: "artifact_persisted",
+      role: "daemon",
+      stage: "daemon",
+      status: "persisted",
+      artifactKind,
+      summary: "Persisted the daemon prompt into the active session workspace.",
+      reason: "input_prompt_artifact_persisted"
+    };
+  }
+  if (artifactKind === "result_report") {
+    return {
+      eventType: "artifact_persisted",
+      role: "daemon",
+      stage: "daemon",
+      status: "persisted",
+      artifactKind,
+      summary: "Persisted the daemon result report.",
+      reason: "result_report_artifact_persisted"
+    };
+  }
+  return {
+    eventType: "artifact_persisted",
+    role: "daemon",
+    stage: "daemon",
+    status: "persisted",
+    artifactKind,
+    summary: `Persisted daemon artifact: ${artifactKind}.`,
+    reason: "daemon_artifact_persisted"
   };
 }
 
