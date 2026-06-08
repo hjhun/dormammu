@@ -206,7 +206,8 @@ Ported modules:
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon request-class resolution helper, plus runner
-  entrypoint and Python `DaemonRunner._run_prompt_loop()` bridge consumption
+  entrypoint and Python `DaemonRunner._run_prompt_loop()` /
+  `DaemonRunner._sync_plan_state()` bridge consumption
   for workflow-state intake precedence, low-confidence `direct_response`
   promotion, prompt directive parsing, and deterministic intake heuristic
   classification while Python fallback validation is retained when the bridge
@@ -717,7 +718,8 @@ Port the remaining daemon and goals orchestration surface:
   startup/shutdown lifecycle decisions through the TypeScript runner bridge.
   TypeScript also owns daemon request-class resolution for workflow-state
   intake precedence, prompt directives, low-confidence direct-response
-  promotion, and deterministic prompt classification before route selection.
+  promotion, and deterministic prompt classification before route selection
+  and plan-state synchronization.
   TypeScript also owns daemon startup banner projection for operator-visible
   startup text and allowed-extension descriptions.
   TypeScript also owns daemon instance lock/unlock decisions for duplicate

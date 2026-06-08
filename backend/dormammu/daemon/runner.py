@@ -3574,7 +3574,14 @@ class DaemonRunner:
         workflow_state = session_repository.read_workflow_state()
         task_sync = session_state.get("task_sync")
         task_sync_mapping = task_sync if isinstance(task_sync, Mapping) else None
-        request_class = resolve_request_class("", workflow_state=workflow_state)
+        request_class_decision = self._project_typescript_request_class_decision(
+            prompt_text="",
+            workflow_state=workflow_state,
+        )
+        if request_class_decision is None:
+            request_class = resolve_request_class("", workflow_state=workflow_state)
+        else:
+            request_class = str(request_class_decision["request_class"])
         plan_state_decision = self._project_typescript_plan_state_decision(
             request_class=request_class,
             task_sync=task_sync_mapping,

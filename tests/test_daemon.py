@@ -1374,6 +1374,21 @@ class DaemonRunnerTests(unittest.TestCase):
                     },
                 },
             )
+            request_class_payload = next(
+                captured
+                for captured in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if captured["entrypoint"] == "daemon_request_class_decision"
+            )
+            self.assertEqual(request_class_payload["prompt_text"], "")
+            self.assertEqual(
+                request_class_payload["workflow_state"]["intake"]["request_class"],
+                "full_workflow",
+            )
 
     def test_daemon_prompt_result_omits_result_report_artifact_when_file_was_not_written(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
