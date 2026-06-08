@@ -547,6 +547,77 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertEqual(finished_ref["stage_name"], "daemon")
             self.assertEqual(finished_ref["session_id"], prompt_result.session_id)
 
+    def test_publish_result_report_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            result_path = daemon_config.result_path / "001-first_RESULT.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+            prompt_result = DaemonPromptResult(
+                prompt_path=prompt_path,
+                result_path=result_path,
+                status="completed",
+                started_at="2026-06-08T03:00:00+00:00",
+                completed_at="2026-06-08T03:00:01+00:00",
+                watcher_backend="polling",
+                sort_key=(0, "001-first.md", "001-first.md"),
+                session_id="session-123",
+                daemon_run_id="daemon:test-run",
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+
+            with mock.patch.object(
+                runner,
+                "_render_result_report",
+                return_value="# Result\n",
+            ):
+                published = runner._publish_result_report(prompt_result)
+
+            self.assertFalse(prompt_path.exists())
+            self.assertEqual(result_path.read_text(encoding="utf-8"), "# Result\n")
+            result_ref = published.result_report_artifact
+            self.assertIsNotNone(result_ref)
+            assert result_ref is not None
+            self.assertEqual(result_ref.kind, "result_report")
+            self.assertEqual(result_ref.label, "result_report")
+            self.assertEqual(result_ref.content_type, "text/markdown")
+            self.assertEqual(result_ref.run_id, "daemon:test-run")
+            self.assertEqual(result_ref.role, "daemon")
+            self.assertEqual(result_ref.stage_name, "daemon")
+            self.assertEqual(result_ref.session_id, "session-123")
+            payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_result_report_decision"
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_result_report_decision",
+                    "prompt_path": str(prompt_path),
+                    "result_path": str(result_path),
+                    "prompt_exists": True,
+                    "daemon_run_id": "daemon:test-run",
+                    "latest_run_id": None,
+                    "session_id": "session-123",
+                },
+            )
+
     def test_daemon_prompt_result_omits_result_report_artifact_when_file_was_not_written(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1514,6 +1585,34 @@ class DaemonRunnerTests(unittest.TestCase):
                             "reason": "fake_prompt_missing",
                         }}
                     print(json.dumps(response, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_result_report_decision":
+                    run_id = (
+                        (payload.get("daemon_run_id") or "").strip()
+                        or (payload.get("latest_run_id") or "").strip()
+                        or None
+                    )
+                    session_id = (payload.get("session_id") or "").strip() or None
+                    print(json.dumps({{
+                        "entrypoint": "daemon_result_report_decision",
+                        "action": "publish",
+                        "writeReport": True,
+                        "removePrompt": payload["prompt_exists"],
+                        "promptPath": payload["prompt_path"],
+                        "resultPath": payload["result_path"],
+                        "artifactKind": "result_report",
+                        "artifactLabel": "result_report",
+                        "contentType": "text/markdown",
+                        "runId": run_id,
+                        "role": "daemon",
+                        "stageName": "daemon",
+                        "sessionId": session_id,
+                        "reason": (
+                            "fake_publish_and_remove_prompt"
+                            if payload["prompt_exists"]
+                            else "fake_publish_without_prompt"
+                        ),
+                    }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_prompt_route_decision":
                     if payload["has_agents_config"]:

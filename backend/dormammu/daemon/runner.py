@@ -497,6 +497,59 @@ class DaemonRunner:
             "errorMessage": None,
         }
 
+    def _project_typescript_result_report_decision(
+        self,
+        prompt_result: DaemonPromptResult,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_result_report_decision",
+            "prompt_path": str(prompt_result.prompt_path),
+            "result_path": str(prompt_result.result_path),
+            "prompt_exists": prompt_result.prompt_path.exists(),
+            "daemon_run_id": prompt_result.daemon_run_id,
+            "latest_run_id": prompt_result.latest_run_id,
+            "session_id": prompt_result.session_id,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._result_report_expectations(prompt_result)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "write_report": expected["writeReport"],
+            "remove_prompt": expected["removePrompt"],
+            "artifact_kind": expected["artifactKind"],
+            "artifact_label": expected["artifactLabel"],
+            "content_type": expected["contentType"],
+            "run_id": expected["runId"],
+            "session_id": expected["sessionId"],
+        }
+
+    @staticmethod
+    def _result_report_expectations(
+        prompt_result: DaemonPromptResult,
+    ) -> dict[str, object]:
+        daemon_run_id = (prompt_result.daemon_run_id or "").strip()
+        latest_run_id = (prompt_result.latest_run_id or "").strip()
+        session_id = (prompt_result.session_id or "").strip()
+        return {
+            "action": "publish",
+            "writeReport": True,
+            "removePrompt": prompt_result.prompt_path.exists(),
+            "promptPath": str(prompt_result.prompt_path),
+            "resultPath": str(prompt_result.result_path),
+            "artifactKind": "result_report",
+            "artifactLabel": "result_report",
+            "contentType": "text/markdown",
+            "runId": daemon_run_id or latest_run_id or None,
+            "role": "daemon",
+            "stageName": "daemon",
+            "sessionId": session_id or None,
+        }
+
     def _project_typescript_prompt_route_decision(
         self,
         *,
@@ -1828,28 +1881,46 @@ class DaemonRunner:
         prompt_result: DaemonPromptResult,
     ) -> DaemonPromptResult:
         prompt_result, markdown = self._render_result_report_with_fallback(prompt_result)
-        writer = self._daemon_result_artifact_writer(prompt_result)
+        report_decision = self._project_typescript_result_report_decision(prompt_result)
+        if report_decision is None:
+            writer = self._daemon_result_artifact_writer(prompt_result)
+            artifact_kind = "result_report"
+            artifact_label = "result_report"
+            content_type = "text/markdown"
+            remove_prompt = True
+        elif not report_decision["write_report"]:
+            return prompt_result
+        else:
+            writer = self._daemon_artifact_writer(
+                base_dir=prompt_result.result_path.parent,
+                run_id=report_decision["run_id"],
+                session_id=report_decision["session_id"],
+            )
+            artifact_kind = str(report_decision["artifact_kind"])
+            artifact_label = str(report_decision["artifact_label"])
+            content_type = str(report_decision["content_type"])
+            remove_prompt = bool(report_decision["remove_prompt"])
         temp_result_path = prompt_result.result_path.with_name(
             f".{prompt_result.result_path.name}.tmp"
         )
         temp_ref = writer.write_markdown_report(
-            kind="result_report",
+            kind=artifact_kind,
             markdown=markdown,
             path=temp_result_path,
-            label="result_report",
+            label=artifact_label,
         )
         try:
-            if prompt_result.prompt_path.exists():
+            if remove_prompt and prompt_result.prompt_path.exists():
                 prompt_result.prompt_path.unlink()
             temp_result_path.replace(prompt_result.result_path)
         except Exception:
             temp_result_path.unlink(missing_ok=True)
             raise
         artifact_ref = writer.reference(
-            kind="result_report",
+            kind=artifact_kind,
             path=prompt_result.result_path,
-            label="result_report",
-            content_type="text/markdown",
+            label=artifact_label,
+            content_type=content_type,
             created_at=temp_ref.created_at,
         )
         return replace(prompt_result, daemon_artifacts=(artifact_ref,))

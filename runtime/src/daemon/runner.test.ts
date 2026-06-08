@@ -10,6 +10,7 @@ import {
   daemonPendingDecision,
   daemonPromptLifecycleDecision,
   daemonPromptRouteDecision,
+  daemonResultReportDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
   daemonWatcherBackendDecision,
@@ -162,6 +163,48 @@ test("daemonPromptLifecycleDecision skips missing prompt files", () => {
       errorMessage: "Prompt file was deleted before processing.",
       reason: "prompt_missing"
     }
+  );
+});
+
+test("daemonResultReportDecision publishes report metadata", () => {
+  assert.deepEqual(
+    daemonResultReportDecision({
+      promptPath: "/repo/prompts/001-first.md",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      promptExists: true,
+      daemonRunId: "daemon:run-1",
+      latestRunId: "agent:run-1",
+      sessionId: "session-1"
+    }),
+    {
+      action: "publish",
+      writeReport: true,
+      removePrompt: true,
+      promptPath: "/repo/prompts/001-first.md",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      artifactKind: "result_report",
+      artifactLabel: "result_report",
+      contentType: "text/markdown",
+      runId: "daemon:run-1",
+      role: "daemon",
+      stageName: "daemon",
+      sessionId: "session-1",
+      reason: "publish_and_remove_prompt"
+    }
+  );
+});
+
+test("daemonResultReportDecision falls back to latest run metadata", () => {
+  assert.deepEqual(
+    daemonResultReportDecision({
+      promptPath: "/repo/prompts/001-first.md",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      promptExists: false,
+      daemonRunId: "",
+      latestRunId: "agent:run-1",
+      sessionId: ""
+    }).runId,
+    "agent:run-1"
   );
 });
 

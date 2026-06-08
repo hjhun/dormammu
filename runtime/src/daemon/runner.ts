@@ -58,6 +58,33 @@ export type DaemonPromptLifecycleDecision = {
   reason: string;
 };
 
+export type DaemonResultReportAction = "publish" | "skip";
+
+export type DaemonResultReportDecisionInput = {
+  promptPath: string;
+  resultPath: string;
+  promptExists: boolean;
+  daemonRunId: string | null;
+  latestRunId: string | null;
+  sessionId: string | null;
+};
+
+export type DaemonResultReportDecision = {
+  action: DaemonResultReportAction;
+  writeReport: boolean;
+  removePrompt: boolean;
+  promptPath: string;
+  resultPath: string;
+  artifactKind: "result_report";
+  artifactLabel: "result_report";
+  contentType: "text/markdown";
+  runId: string | null;
+  role: "daemon";
+  stageName: "daemon";
+  sessionId: string | null;
+  reason: string;
+};
+
 export type DaemonLoopIterationAction = "continue" | "wait" | "stop";
 
 export type DaemonLoopIterationInput = {
@@ -313,6 +340,28 @@ export function daemonPromptLifecycleDecision(
   };
 }
 
+export function daemonResultReportDecision(
+  input: DaemonResultReportDecisionInput
+): DaemonResultReportDecision {
+  const runId = nonEmpty(input.daemonRunId) ?? nonEmpty(input.latestRunId);
+
+  return {
+    action: "publish",
+    writeReport: true,
+    removePrompt: input.promptExists,
+    promptPath: input.promptPath,
+    resultPath: input.resultPath,
+    artifactKind: "result_report",
+    artifactLabel: "result_report",
+    contentType: "text/markdown",
+    runId,
+    role: "daemon",
+    stageName: "daemon",
+    sessionId: nonEmpty(input.sessionId),
+    reason: input.promptExists ? "publish_and_remove_prompt" : "publish_without_prompt"
+  };
+}
+
 export function daemonLoopIterationDecision(
   input: DaemonLoopIterationInput
 ): DaemonLoopIterationDecision {
@@ -557,4 +606,9 @@ function basename(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   const slashIndex = normalized.lastIndexOf("/");
   return slashIndex >= 0 ? normalized.slice(slashIndex + 1) : normalized;
+}
+
+function nonEmpty(value: string | null): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
 }
