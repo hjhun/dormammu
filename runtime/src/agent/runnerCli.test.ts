@@ -463,6 +463,28 @@ test("dormammu-agent-runner can project daemon prompt route decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon loop iteration decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_loop_iteration_decision",
+      processed_count: 1,
+      in_progress_count: 0,
+      shutdown_requested: false
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_loop_iteration_decision",
+    action: "continue",
+    heartbeatStatus: "idle",
+    waitForChanges: false,
+    reason: "prompt_processed"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

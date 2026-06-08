@@ -225,8 +225,22 @@ class DaemonRunner:
             try:
                 while not self._shutdown_requested.is_set():
                     processed = self.run_pending_once(watcher_backend=watcher.backend_name)
+                    in_progress_count = len(self.in_progress_snapshot())
+                    loop_decision = self._project_typescript_loop_iteration_decision(
+                        processed_count=processed,
+                        in_progress_count=in_progress_count,
+                        shutdown_requested=self._shutdown_requested.is_set(),
+                    )
+                    if loop_decision is not None:
+                        self._write_heartbeat(status=loop_decision["heartbeat_status"])
+                        if loop_decision["action"] == "stop":
+                            break
+                        if loop_decision["wait_for_changes"]:
+                            watcher.wait_for_changes()
+                        continue
+
                     self._write_heartbeat(
-                        status="busy" if self.in_progress_snapshot() else "idle"
+                        status="busy" if in_progress_count else "idle"
                     )
                     if processed == 0:
                         if self._shutdown_requested.is_set():
@@ -392,6 +406,62 @@ class DaemonRunner:
         return {
             "action": action,
             "reason": reason if isinstance(reason, str) and reason else "typescript",
+        }
+
+    def _project_typescript_loop_iteration_decision(
+        self,
+        *,
+        processed_count: int,
+        in_progress_count: int,
+        shutdown_requested: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_loop_iteration_decision",
+            "processed_count": processed_count,
+            "in_progress_count": in_progress_count,
+            "shutdown_requested": shutdown_requested,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._loop_iteration_expectations(
+            processed_count=processed_count,
+            in_progress_count=in_progress_count,
+            shutdown_requested=shutdown_requested,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "heartbeat_status": expected["heartbeatStatus"],
+            "wait_for_changes": expected["waitForChanges"],
+        }
+
+    def _loop_iteration_expectations(
+        self,
+        *,
+        processed_count: int,
+        in_progress_count: int,
+        shutdown_requested: bool,
+    ) -> dict[str, object]:
+        heartbeat_status = "busy" if max(in_progress_count, 0) > 0 else "idle"
+        if shutdown_requested:
+            return {
+                "action": "stop",
+                "heartbeatStatus": heartbeat_status,
+                "waitForChanges": False,
+            }
+        if max(processed_count, 0) == 0:
+            return {
+                "action": "wait",
+                "heartbeatStatus": heartbeat_status,
+                "waitForChanges": True,
+            }
+        return {
+            "action": "continue",
+            "heartbeatStatus": heartbeat_status,
+            "waitForChanges": False,
         }
 
     def _prompt_route_action(

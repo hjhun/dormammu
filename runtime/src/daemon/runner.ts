@@ -38,6 +38,21 @@ export type DaemonPromptRouteDecision = {
   reason: string;
 };
 
+export type DaemonLoopIterationAction = "continue" | "wait" | "stop";
+
+export type DaemonLoopIterationInput = {
+  processedCount: number;
+  inProgressCount: number;
+  shutdownRequested: boolean;
+};
+
+export type DaemonLoopIterationDecision = {
+  action: DaemonLoopIterationAction;
+  heartbeatStatus: "busy" | "idle";
+  waitForChanges: boolean;
+  reason: string;
+};
+
 export function daemonPendingDecision(
   input: DaemonPendingDecisionInput
 ): DaemonPendingDecision {
@@ -119,6 +134,39 @@ export function daemonPromptRouteDecision(
     enablePlanEvaluator: input.hasGoalFile,
     useGoalsEvaluatorConfig: false,
     reason: `${input.requestClass}_requires_supervised_loop`
+  };
+}
+
+export function daemonLoopIterationDecision(
+  input: DaemonLoopIterationInput
+): DaemonLoopIterationDecision {
+  const processedCount = Math.max(0, Math.trunc(input.processedCount));
+  const inProgressCount = Math.max(0, Math.trunc(input.inProgressCount));
+  const heartbeatStatus = inProgressCount > 0 ? "busy" : "idle";
+
+  if (input.shutdownRequested) {
+    return {
+      action: "stop",
+      heartbeatStatus,
+      waitForChanges: false,
+      reason: "shutdown_requested"
+    };
+  }
+
+  if (processedCount === 0) {
+    return {
+      action: "wait",
+      heartbeatStatus,
+      waitForChanges: true,
+      reason: "no_prompt_processed"
+    };
+  }
+
+  return {
+    action: "continue",
+    heartbeatStatus,
+    waitForChanges: false,
+    reason: "prompt_processed"
   };
 }
 

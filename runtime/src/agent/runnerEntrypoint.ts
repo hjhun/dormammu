@@ -42,8 +42,10 @@ import {
   type GoalQueueCandidate
 } from "../goals/discovery.js";
 import {
+  daemonLoopIterationDecision,
   daemonPendingDecision,
   daemonPromptRouteDecision,
+  type DaemonLoopIterationDecision,
   type DaemonPendingDecision,
   type DaemonPromptRouteDecision
 } from "../daemon/runner.js";
@@ -292,8 +294,21 @@ export type DaemonPromptRouteEntrypointResultPayload =
     entrypoint: "daemon_prompt_route_decision";
   };
 
+export type DaemonLoopIterationEntrypointPayload = {
+  entrypoint: "daemon_loop_iteration_decision";
+  processed_count: number;
+  in_progress_count: number;
+  shutdown_requested: boolean;
+};
+
+export type DaemonLoopIterationEntrypointResultPayload =
+  DaemonLoopIterationDecision & {
+    entrypoint: "daemon_loop_iteration_decision";
+  };
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
+  | DaemonLoopIterationEntrypointPayload
   | DaemonPendingDecisionEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
   | GoalsQueueEntrypointPayload
@@ -310,6 +325,7 @@ export type RunnerCliPayload =
   | GoalsWatchLoopDecisionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
+  | DaemonLoopIterationEntrypointResultPayload
   | DaemonPendingDecisionEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
@@ -403,6 +419,25 @@ export function runDaemonPromptRouteEntrypoint(
       ),
       requestClass: parseRequestClass(payload.request_class),
       hasGoalFile: parseBoolean(payload.has_goal_file, "has_goal_file")
+    })
+  };
+}
+
+export function runDaemonLoopIterationEntrypoint(
+  payload: DaemonLoopIterationEntrypointPayload
+): DaemonLoopIterationEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_loop_iteration_decision",
+    ...daemonLoopIterationDecision({
+      processedCount: parseNumber(payload.processed_count, "processed_count"),
+      inProgressCount: parseNumber(
+        payload.in_progress_count,
+        "in_progress_count"
+      ),
+      shutdownRequested: parseBoolean(
+        payload.shutdown_requested,
+        "shutdown_requested"
+      )
     })
   };
 }

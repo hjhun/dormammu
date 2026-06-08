@@ -6,6 +6,7 @@ import test from "node:test";
 
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
+  runDaemonLoopIterationEntrypoint,
   runDaemonPendingDecisionEntrypoint,
   runDaemonPromptRouteEntrypoint,
   runAgentRunnerEntrypoint,
@@ -404,6 +405,24 @@ test("runDaemonPromptRouteEntrypoint projects daemon route decisions", () => {
       enablePlanEvaluator: false,
       useGoalsEvaluatorConfig: false,
       reason: "planning_only_pipeline"
+    }
+  );
+});
+
+test("runDaemonLoopIterationEntrypoint projects daemon loop decisions", () => {
+  assert.deepEqual(
+    runDaemonLoopIterationEntrypoint({
+      entrypoint: "daemon_loop_iteration_decision",
+      processed_count: 0,
+      in_progress_count: 0,
+      shutdown_requested: false
+    }),
+    {
+      entrypoint: "daemon_loop_iteration_decision",
+      action: "wait",
+      heartbeatStatus: "idle",
+      waitForChanges: true,
+      reason: "no_prompt_processed"
     }
   );
 });

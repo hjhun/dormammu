@@ -707,6 +707,63 @@ class DaemonRunnerTests(unittest.TestCase):
                 "Watcher readiness must be established before the daemon advertises watcher startup.",
             )
 
+    def test_run_forever_can_use_typescript_loop_iteration_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            progress_stream = io.StringIO()
+
+            class RecordingWatcher:
+                backend_name = "polling"
+
+                def __init__(self, owner: DaemonRunner) -> None:
+                    self._owner = owner
+                    self.wait_count = 0
+
+                def start(self) -> None:
+                    return None
+
+                def close(self) -> None:
+                    return None
+
+                def wait_for_changes(self) -> list[Path]:
+                    self.wait_count += 1
+                    self._owner.request_shutdown()
+                    return []
+
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=progress_stream)
+            watcher = RecordingWatcher(runner)
+            runner.watcher = watcher
+            heartbeat_statuses: list[str] = []
+
+            with (
+                mock.patch.object(
+                    runner,
+                    "_write_heartbeat",
+                    side_effect=lambda *, status: heartbeat_statuses.append(status),
+                ),
+                mock.patch.object(runner, "_remove_heartbeat"),
+                mock.patch.object(runner, "run_pending_once", return_value=0),
+            ):
+                self.assertIsNone(runner.run_forever())
+
+            self.assertEqual(watcher.wait_count, 1)
+            self.assertEqual(heartbeat_statuses, ["idle", "idle"])
+            captured = json.loads(
+                (root / "captured-runner-payload.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(captured["entrypoint"], "daemon_loop_iteration_decision")
+            self.assertEqual(captured["processed_count"], 0)
+            self.assertEqual(captured["in_progress_count"], 0)
+            self.assertFalse(captured["shutdown_requested"])
+
     @unittest.skipUnless(InotifyWatcher.is_available(), "inotify is only available on Linux")
     def test_daemonize_cli_smoke_processes_prompt_via_inotify(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1054,6 +1111,30 @@ class DaemonRunnerTests(unittest.TestCase):
                         "action": action,
                     }})
                     print(json.dumps(response, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_loop_iteration_decision":
+                    heartbeat_status = (
+                        "busy" if payload["in_progress_count"] > 0 else "idle"
+                    )
+                    if payload["shutdown_requested"]:
+                        action = "stop"
+                        wait = False
+                        reason = "fake_shutdown_requested"
+                    elif payload["processed_count"] == 0:
+                        action = "wait"
+                        wait = True
+                        reason = "fake_no_prompt_processed"
+                    else:
+                        action = "continue"
+                        wait = False
+                        reason = "fake_prompt_processed"
+                    print(json.dumps({{
+                        "entrypoint": "daemon_loop_iteration_decision",
+                        "action": action,
+                        "heartbeatStatus": heartbeat_status,
+                        "waitForChanges": wait,
+                        "reason": reason,
+                    }}, ensure_ascii=True))
                     raise SystemExit(0)
                 raise SystemExit(2)
                 """

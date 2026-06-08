@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { daemonPendingDecision, daemonPromptRouteDecision } from "./runner.js";
+import {
+  daemonLoopIterationDecision,
+  daemonPendingDecision,
+  daemonPromptRouteDecision
+} from "./runner.js";
 
 test("daemonPendingDecision processes the first ready prompt", () => {
   assert.deepEqual(
@@ -111,5 +115,48 @@ test("daemonPromptRouteDecision maps implementation requests to prelude loop", (
       useGoalsEvaluatorConfig: false,
       reason: "full_workflow_requires_supervised_loop"
     }
+  );
+});
+
+test("daemonLoopIterationDecision waits after an idle scan", () => {
+  assert.deepEqual(
+    daemonLoopIterationDecision({
+      processedCount: 0,
+      inProgressCount: 0,
+      shutdownRequested: false
+    }),
+    {
+      action: "wait",
+      heartbeatStatus: "idle",
+      waitForChanges: true,
+      reason: "no_prompt_processed"
+    }
+  );
+});
+
+test("daemonLoopIterationDecision continues after processed work", () => {
+  assert.deepEqual(
+    daemonLoopIterationDecision({
+      processedCount: 1,
+      inProgressCount: 1,
+      shutdownRequested: false
+    }),
+    {
+      action: "continue",
+      heartbeatStatus: "busy",
+      waitForChanges: false,
+      reason: "prompt_processed"
+    }
+  );
+});
+
+test("daemonLoopIterationDecision stops when shutdown is requested", () => {
+  assert.deepEqual(
+    daemonLoopIterationDecision({
+      processedCount: 0,
+      inProgressCount: 0,
+      shutdownRequested: true
+    }).action,
+    "stop"
   );
 });
