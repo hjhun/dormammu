@@ -428,6 +428,48 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_scan_prompt_queue_can_use_typescript_settle_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            config_path = self._write_daemon_config(root)
+            config_payload = json.loads(config_path.read_text(encoding="utf-8"))
+            config_payload["watch"]["settle_seconds"] = 5
+            config_path.write_text(
+                json.dumps(config_payload, indent=2, ensure_ascii=True) + "\n",
+                encoding="utf-8",
+            )
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(config_path, app_config=app_config)
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            prompt_path.write_text("First prompt\n", encoding="utf-8")
+
+            ready_prompt_paths, retry_after_seconds = DaemonRunner(
+                app_config,
+                daemon_config,
+            )._scan_prompt_queue()
+
+            self.assertEqual(ready_prompt_paths, [])
+            self.assertIsNotNone(retry_after_seconds)
+            assert retry_after_seconds is not None
+            self.assertGreater(retry_after_seconds, 0)
+            settle_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_prompt_settle_decision"
+            )
+            self.assertEqual(settle_payload["prompt_path"], str(prompt_path))
+            self.assertEqual(settle_payload["settle_seconds"], 5)
+            self.assertGreaterEqual(settle_payload["age_seconds"], 0)
+
     def test_run_pending_once_publishes_completed_result_only_after_prompt_removal(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1752,6 +1794,23 @@ class DaemonRunnerTests(unittest.TestCase):
                             "fake_completed_result_reprocess"
                             if should_remove
                             else "fake_existing_result_keep"
+                        ),
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_prompt_settle_decision":
+                    settle_seconds = max(float(payload["settle_seconds"]), 0.0)
+                    age_seconds = max(float(payload["age_seconds"]), 0.0)
+                    remaining = max(settle_seconds - age_seconds, 0.0)
+                    should_defer = settle_seconds > 0 and remaining > 0
+                    print(json.dumps({{
+                        "entrypoint": "daemon_prompt_settle_decision",
+                        "action": "defer" if should_defer else "ready",
+                        "promptPath": payload["prompt_path"],
+                        "retryAfterSeconds": remaining if should_defer else None,
+                        "reason": (
+                            "fake_settle_window_pending"
+                            if should_defer
+                            else "fake_settle_window_elapsed"
                         ),
                     }}, ensure_ascii=True))
                     raise SystemExit(0)

@@ -15,6 +15,7 @@ import {
   runDaemonPendingDecisionEntrypoint,
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptRouteEntrypoint,
+  runDaemonPromptSettleEntrypoint,
   runDaemonResultReportEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
@@ -513,6 +514,24 @@ test("runDaemonExistingResultEntrypoint projects stale result removal", () => {
       resultPath: "/repo/results/001-first_RESULT.md",
       existingResultStatus: "completed",
       reason: "completed_result_reprocess"
+    }
+  );
+});
+
+test("runDaemonPromptSettleEntrypoint projects settle-window decisions", () => {
+  assert.deepEqual(
+    runDaemonPromptSettleEntrypoint({
+      entrypoint: "daemon_prompt_settle_decision",
+      prompt_path: "/repo/prompts/001-first.md",
+      settle_seconds: 3,
+      age_seconds: 1.5
+    }),
+    {
+      entrypoint: "daemon_prompt_settle_decision",
+      action: "defer",
+      promptPath: "/repo/prompts/001-first.md",
+      retryAfterSeconds: 1.5,
+      reason: "settle_window_pending"
     }
   );
 });

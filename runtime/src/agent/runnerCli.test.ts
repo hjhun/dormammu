@@ -575,6 +575,28 @@ test("dormammu-agent-runner can project daemon existing result decisions", () =>
   });
 });
 
+test("dormammu-agent-runner can project daemon prompt settle decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_prompt_settle_decision",
+      prompt_path: "/repo/prompts/001-first.md",
+      settle_seconds: 4,
+      age_seconds: 1.25
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_prompt_settle_decision",
+    action: "defer",
+    promptPath: "/repo/prompts/001-first.md",
+    retryAfterSeconds: 2.75,
+    reason: "settle_window_pending"
+  });
+});
+
 test("dormammu-agent-runner can project daemon loop iteration decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

@@ -122,6 +122,21 @@ export type DaemonExistingResultDecision = {
   reason: string;
 };
 
+export type DaemonPromptSettleAction = "ready" | "defer";
+
+export type DaemonPromptSettleDecisionInput = {
+  promptPath: string;
+  settleSeconds: number;
+  ageSeconds: number;
+};
+
+export type DaemonPromptSettleDecision = {
+  action: DaemonPromptSettleAction;
+  promptPath: string;
+  retryAfterSeconds: number | null;
+  reason: string;
+};
+
 export type DaemonLoopIterationAction = "continue" | "wait" | "stop";
 
 export type DaemonLoopIterationInput = {
@@ -431,6 +446,21 @@ export function daemonExistingResultDecision(
       : input.resultExists
         ? "existing_result_not_completed"
         : "no_existing_result"
+  };
+}
+
+export function daemonPromptSettleDecision(
+  input: DaemonPromptSettleDecisionInput
+): DaemonPromptSettleDecision {
+  const settleSeconds = Math.max(0, input.settleSeconds);
+  const ageSeconds = Math.max(0, input.ageSeconds);
+  const remainingSeconds = Math.max(settleSeconds - ageSeconds, 0);
+  const shouldDefer = settleSeconds > 0 && remainingSeconds > 0;
+  return {
+    action: shouldDefer ? "defer" : "ready",
+    promptPath: input.promptPath,
+    retryAfterSeconds: shouldDefer ? remainingSeconds : null,
+    reason: shouldDefer ? "settle_window_pending" : "settle_window_elapsed"
   };
 }
 

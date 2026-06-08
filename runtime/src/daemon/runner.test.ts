@@ -11,6 +11,7 @@ import {
   daemonPendingDecision,
   daemonPromptLifecycleDecision,
   daemonPromptRouteDecision,
+  daemonPromptSettleDecision,
   daemonResultReportDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
@@ -260,6 +261,38 @@ test("daemonExistingResultDecision keeps non-completed result files", () => {
       existingResultStatus: "failed"
     }).removeExistingResult,
     false
+  );
+});
+
+test("daemonPromptSettleDecision defers prompts still in the settle window", () => {
+  assert.deepEqual(
+    daemonPromptSettleDecision({
+      promptPath: "/repo/prompts/001-first.md",
+      settleSeconds: 5,
+      ageSeconds: 2.25
+    }),
+    {
+      action: "defer",
+      promptPath: "/repo/prompts/001-first.md",
+      retryAfterSeconds: 2.75,
+      reason: "settle_window_pending"
+    }
+  );
+});
+
+test("daemonPromptSettleDecision marks old prompts ready", () => {
+  assert.deepEqual(
+    daemonPromptSettleDecision({
+      promptPath: "/repo/prompts/001-first.md",
+      settleSeconds: 5,
+      ageSeconds: 5
+    }),
+    {
+      action: "ready",
+      promptPath: "/repo/prompts/001-first.md",
+      retryAfterSeconds: null,
+      reason: "settle_window_elapsed"
+    }
   );
 });
 

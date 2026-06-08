@@ -522,6 +522,52 @@ class DaemonRunner:
             "existingResultStatus": status,
         }
 
+    def _project_typescript_prompt_settle_decision(
+        self,
+        *,
+        prompt_path: Path,
+        settle_seconds: float,
+        age_seconds: float,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_prompt_settle_decision",
+            "prompt_path": str(prompt_path),
+            "settle_seconds": settle_seconds,
+            "age_seconds": age_seconds,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._prompt_settle_expectations(
+            prompt_path=prompt_path,
+            settle_seconds=settle_seconds,
+            age_seconds=age_seconds,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "retry_after_seconds": expected["retryAfterSeconds"],
+        }
+
+    @staticmethod
+    def _prompt_settle_expectations(
+        *,
+        prompt_path: Path,
+        settle_seconds: float,
+        age_seconds: float,
+    ) -> dict[str, object]:
+        normalized_settle_seconds = max(float(settle_seconds), 0.0)
+        normalized_age_seconds = max(float(age_seconds), 0.0)
+        remaining = max(normalized_settle_seconds - normalized_age_seconds, 0.0)
+        should_defer = normalized_settle_seconds > 0 and remaining > 0
+        return {
+            "action": "defer" if should_defer else "ready",
+            "promptPath": str(prompt_path),
+            "retryAfterSeconds": remaining if should_defer else None,
+        }
+
     @staticmethod
     def _prompt_lifecycle_expectations(
         *,
@@ -1342,8 +1388,19 @@ class DaemonRunner:
                 stat_result = path.stat()
             except FileNotFoundError:
                 continue
-            if settle_seconds > 0 and now - stat_result.st_mtime < settle_seconds:
-                remaining = settle_seconds - (now - stat_result.st_mtime)
+            age_seconds = now - stat_result.st_mtime
+            settle_decision = self._project_typescript_prompt_settle_decision(
+                prompt_path=path,
+                settle_seconds=settle_seconds,
+                age_seconds=age_seconds,
+            )
+            if settle_decision is None:
+                should_defer = settle_seconds > 0 and age_seconds < settle_seconds
+                remaining = settle_seconds - age_seconds if should_defer else 0.0
+            else:
+                should_defer = settle_decision["action"] == "defer"
+                remaining = float(settle_decision["retry_after_seconds"] or 0.0)
+            if should_defer:
                 if retry_after_seconds is None or remaining < retry_after_seconds:
                     retry_after_seconds = max(remaining, 0.0)
                 self._log(

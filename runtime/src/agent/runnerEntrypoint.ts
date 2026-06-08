@@ -51,6 +51,7 @@ import {
   daemonPendingDecision,
   daemonPromptLifecycleDecision,
   daemonPromptRouteDecision,
+  daemonPromptSettleDecision,
   daemonResultReportDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
@@ -67,6 +68,7 @@ import {
   type DaemonPendingDecision,
   type DaemonPromptLifecycleDecision,
   type DaemonPromptRouteDecision,
+  type DaemonPromptSettleDecision,
   type DaemonResultReportDecision,
   type DaemonRunFinishedDecision,
   type DaemonShutdownDecision,
@@ -374,6 +376,18 @@ export type DaemonExistingResultEntrypointResultPayload =
     entrypoint: "daemon_existing_result_decision";
   };
 
+export type DaemonPromptSettleEntrypointPayload = {
+  entrypoint: "daemon_prompt_settle_decision";
+  prompt_path: string;
+  settle_seconds: number;
+  age_seconds: number;
+};
+
+export type DaemonPromptSettleEntrypointResultPayload =
+  DaemonPromptSettleDecision & {
+    entrypoint: "daemon_prompt_settle_decision";
+  };
+
 export type DaemonLoopIterationEntrypointPayload = {
   entrypoint: "daemon_loop_iteration_decision";
   processed_count: number;
@@ -488,6 +502,7 @@ export type RunnerCliPayload =
   | DaemonPendingDecisionEntrypointPayload
   | DaemonPromptLifecycleEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
+  | DaemonPromptSettleEntrypointPayload
   | DaemonResultReportEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
   | DaemonShutdownEntrypointPayload
@@ -517,6 +532,7 @@ export type RunnerCliResultPayload =
   | DaemonPendingDecisionEntrypointResultPayload
   | DaemonPromptLifecycleEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
+  | DaemonPromptSettleEntrypointResultPayload
   | DaemonResultReportEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
@@ -687,6 +703,19 @@ export function runDaemonExistingResultEntrypoint(
         payload.existing_result_status,
         "existing_result_status"
       ) ?? null
+    })
+  };
+}
+
+export function runDaemonPromptSettleEntrypoint(
+  payload: DaemonPromptSettleEntrypointPayload
+): DaemonPromptSettleEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_prompt_settle_decision",
+    ...daemonPromptSettleDecision({
+      promptPath: parseRequiredString(payload.prompt_path, "prompt_path"),
+      settleSeconds: parseNumber(payload.settle_seconds, "settle_seconds"),
+      ageSeconds: parseNumber(payload.age_seconds, "age_seconds")
     })
   };
 }
