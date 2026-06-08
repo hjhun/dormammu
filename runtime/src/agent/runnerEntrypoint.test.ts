@@ -789,6 +789,10 @@ test("runDaemonRunFinishedEntrypoint projects run-finished metadata", () => {
     }),
     {
       entrypoint: "daemon_run_finished_decision",
+      eventType: "run.finished",
+      role: "daemon",
+      stage: "daemon",
+      status: "completed",
       source: "daemon_runner",
       runEntrypoint: "DaemonRunner._process_prompt",
       attemptsCompleted: 2,

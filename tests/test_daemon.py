@@ -1024,6 +1024,9 @@ class DaemonRunnerTests(unittest.TestCase):
                 for call_args in lifecycle.emit.call_args_list
                 if call_args.kwargs.get("event_type").value == "run.finished"
             )
+            self.assertEqual(finished_call["role"], "daemon")
+            self.assertEqual(finished_call["stage"], "daemon")
+            self.assertEqual(finished_call["status"], "completed")
             payload = finished_call["payload"]
             self.assertEqual(payload.source, "daemon_runner")
             self.assertEqual(payload.entrypoint, "DaemonRunner._process_prompt")
@@ -2981,8 +2984,16 @@ class DaemonRunnerTests(unittest.TestCase):
                             return None
                         return max(0, int(value))
 
+                    outcome = (
+                        (payload.get("outcome") or "").strip()
+                        or "unknown"
+                    )
                     print(json.dumps({{
                         "entrypoint": "daemon_run_finished_decision",
+                        "eventType": "run.finished",
+                        "role": "daemon",
+                        "stage": "daemon",
+                        "status": outcome,
                         "source": "daemon_runner",
                         "runEntrypoint": "DaemonRunner._process_prompt",
                         "attemptsCompleted": non_negative_int_or_none(
@@ -2995,15 +3006,12 @@ class DaemonRunnerTests(unittest.TestCase):
                             (payload.get("supervisor_verdict") or "").strip()
                             or None
                         ),
-                        "outcome": (
-                            (payload.get("outcome") or "").strip()
-                            or "unknown"
-                        ),
+                        "outcome": outcome,
                         "error": (
                             (payload.get("error") or "").strip()
                             or None
                         ),
-                        "reason": "fake_daemon_run_finished",
+                        "reason": "daemon_run_finished",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_terminal_error_decision":

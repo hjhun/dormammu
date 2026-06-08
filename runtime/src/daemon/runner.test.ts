@@ -782,6 +782,10 @@ test("daemonRunFinishedDecision projects run finished metadata", () => {
       error: ""
     }),
     {
+      eventType: "run.finished",
+      role: "daemon",
+      stage: "daemon",
+      status: "completed",
       source: "daemon_runner",
       runEntrypoint: "DaemonRunner._process_prompt",
       attemptsCompleted: 2,

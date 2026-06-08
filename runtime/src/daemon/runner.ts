@@ -289,6 +289,10 @@ export type DaemonRunFinishedDecisionInput = {
 };
 
 export type DaemonRunFinishedDecision = {
+  eventType: "run.finished";
+  role: "daemon";
+  stage: "daemon";
+  status: string;
   source: "daemon_runner";
   runEntrypoint: "DaemonRunner._process_prompt";
   attemptsCompleted: number | null;
@@ -1168,13 +1172,18 @@ export function daemonResultArtifactRefDecision(
 export function daemonRunFinishedDecision(
   input: DaemonRunFinishedDecisionInput
 ): DaemonRunFinishedDecision {
+  const outcome = nonEmpty(input.outcome) ?? "unknown";
   return {
+    eventType: "run.finished",
+    role: "daemon",
+    stage: "daemon",
+    status: outcome,
     source: "daemon_runner",
     runEntrypoint: "DaemonRunner._process_prompt",
     attemptsCompleted: nonNegativeIntegerOrNull(input.attemptsCompleted),
     retriesUsed: nonNegativeIntegerOrNull(input.retriesUsed),
     supervisorVerdict: nonEmpty(input.supervisorVerdict),
-    outcome: nonEmpty(input.outcome) ?? "unknown",
+    outcome,
     error: nonEmpty(input.error),
     reason: "daemon_run_finished"
   };
