@@ -42,6 +42,10 @@ import {
   type GoalQueueCandidate
 } from "../goals/discovery.js";
 import {
+  daemonPendingDecision,
+  type DaemonPendingDecision
+} from "../daemon/runner.js";
+import {
   projectQueuedGoalPrompt,
   type GoalQueueProjection
 } from "../goals/queue.js";
@@ -261,8 +265,21 @@ export type GoalsWatchLoopDecisionEntrypointResultPayload =
     entrypoint: "goals_watch_loop_decision";
   };
 
+export type DaemonPendingDecisionEntrypointPayload = {
+  entrypoint: "daemon_pending_decision";
+  processed_count: number;
+  ready_prompt_paths: string[];
+  retry_after_seconds?: number | null;
+};
+
+export type DaemonPendingDecisionEntrypointResultPayload =
+  DaemonPendingDecision & {
+    entrypoint: "daemon_pending_decision";
+  };
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
+  | DaemonPendingDecisionEntrypointPayload
   | GoalsQueueEntrypointPayload
   | GoalsPromptProjectionEntrypointPayload
   | GoalsRoleDocumentProjectionEntrypointPayload
@@ -277,6 +294,7 @@ export type RunnerCliPayload =
   | GoalsWatchLoopDecisionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
+  | DaemonPendingDecisionEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
   | GoalsPromptProjectionEntrypointResultPayload
   | GoalsRoleDocumentProjectionEntrypointResultPayload
@@ -335,6 +353,25 @@ export async function runAgentRunnerEntrypoint(
     }
   }
   return resultPayload;
+}
+
+export function runDaemonPendingDecisionEntrypoint(
+  payload: DaemonPendingDecisionEntrypointPayload
+): DaemonPendingDecisionEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_pending_decision",
+    ...daemonPendingDecision({
+      processedCount: parseNumber(payload.processed_count, "processed_count"),
+      readyPromptPaths: parseStringArray(
+        payload.ready_prompt_paths,
+        "ready_prompt_paths"
+      ),
+      retryAfterSeconds: parseOptionalNumber(
+        payload.retry_after_seconds ?? null,
+        "retry_after_seconds"
+      )
+    })
+  };
 }
 
 export async function runGoalsQueueEntrypoint(
@@ -692,6 +729,20 @@ function parseBoolean(value: unknown, fieldName: string): boolean {
 function parseNumber(value: unknown, fieldName: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`${fieldName} must be a finite number`);
+  }
+  return value;
+}
+
+function parseOptionalNumber(value: unknown, fieldName: string): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return parseNumber(value, fieldName);
+}
+
+function parseStringArray(value: unknown, fieldName: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`${fieldName} must be a JSON array of strings`);
   }
   return value;
 }

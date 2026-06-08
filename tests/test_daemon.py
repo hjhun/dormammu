@@ -232,6 +232,42 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertEqual(runner.run_pending_once(watcher_backend="polling"), 1)
             self.assertTrue((daemon_config.result_path / "002-second_RESULT.md").exists())
 
+    def test_run_pending_once_can_use_typescript_pending_decision_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            first = daemon_config.prompt_path / "001-first.md"
+            second = daemon_config.prompt_path / "002-second.md"
+            first.write_text("First prompt\n", encoding="utf-8")
+            second.write_text("Second prompt\n", encoding="utf-8")
+            progress = io.StringIO()
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=progress)
+
+            with mock.patch.object(runner, "_process_prompt") as process_prompt:
+                processed = runner.run_pending_once(watcher_backend="polling")
+
+            self.assertEqual(processed, 1)
+            process_prompt.assert_called_once_with(first, watcher_backend="polling")
+            self.assertIn(
+                "keeping queued prompts pending until the current prompt finishes: 002-second.md",
+                progress.getvalue(),
+            )
+            captured = json.loads(
+                (root / "captured-runner-payload.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(captured["entrypoint"], "daemon_pending_decision")
+            self.assertEqual(captured["processed_count"], 0)
+            self.assertEqual(captured["ready_prompt_paths"], [str(first), str(second)])
+
     def test_run_pending_once_writes_terminal_failed_result_when_loop_budget_is_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -842,6 +878,79 @@ class DaemonRunnerTests(unittest.TestCase):
             json.dumps({"active_agent_cli": str(cli_path)}, indent=2, ensure_ascii=True) + "\n",
             encoding="utf-8",
         )
+
+    def _write_typescript_runner_config(self, root: Path, runner_cli: Path) -> None:
+        (root / "dormammu.json").write_text(
+            json.dumps(
+                {"typescript_agent_runner_cli": str(runner_cli)},
+                indent=2,
+                ensure_ascii=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_fake_typescript_runner(self, root: Path) -> Path:
+        script = root / "ts-runner"
+        script.write_text(
+            textwrap.dedent(
+                f"""\
+                #!{sys.executable}
+                import json
+                from pathlib import Path
+
+                ROOT = Path({str(root)!r})
+                payload = json.loads(__import__("sys").stdin.read())
+                (ROOT / "captured-runner-payload.json").write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
+                    encoding="utf-8",
+                )
+                if payload.get("entrypoint") == "daemon_pending_decision":
+                    ready = [
+                        item
+                        for item in payload["ready_prompt_paths"]
+                        if isinstance(item, str) and item
+                    ]
+                    if ready:
+                        print(json.dumps({{
+                            "entrypoint": "daemon_pending_decision",
+                            "action": "process",
+                            "promptPath": ready[0],
+                            "queuedPromptNames": [
+                                Path(item).name for item in ready[1:]
+                            ],
+                            "retryAfterSeconds": None,
+                            "reason": "fake_ready_prompt_available",
+                        }}, ensure_ascii=True))
+                    elif (
+                        payload["processed_count"] == 0
+                        and payload.get("retry_after_seconds") is not None
+                    ):
+                        print(json.dumps({{
+                            "entrypoint": "daemon_pending_decision",
+                            "action": "wait",
+                            "promptPath": None,
+                            "queuedPromptNames": [],
+                            "retryAfterSeconds": payload["retry_after_seconds"],
+                            "reason": "fake_settle_window_pending",
+                        }}, ensure_ascii=True))
+                    else:
+                        print(json.dumps({{
+                            "entrypoint": "daemon_pending_decision",
+                            "action": "idle",
+                            "promptPath": None,
+                            "queuedPromptNames": [],
+                            "retryAfterSeconds": None,
+                            "reason": "fake_no_ready_prompts",
+                        }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                raise SystemExit(2)
+                """
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return script
 
     def _write_daemon_config(self, root: Path, *, watch_backend: str = "polling") -> Path:
         config_path = root / "daemonize.json"

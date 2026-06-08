@@ -3,8 +3,10 @@ from __future__ import annotations
 import contextlib
 from dataclasses import replace
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import threading
 from typing import Generator, Mapping, TextIO
@@ -249,6 +251,37 @@ class DaemonRunner:
         processed = 0
         while True:
             ready_prompt_paths, retry_after_seconds = self._scan_prompt_queue()
+            decision = self._project_typescript_pending_decision(
+                processed_count=processed,
+                ready_prompt_paths=ready_prompt_paths,
+                retry_after_seconds=retry_after_seconds,
+            )
+            if decision is not None:
+                if decision["action"] == "wait":
+                    retry_after = decision["retry_after_seconds"]
+                    self._log(
+                        "daemon queue scan: waiting for prompt settle window "
+                        f"before retry ({retry_after:.2f}s)"
+                    )
+                    if self._shutdown_requested.wait(timeout=retry_after):
+                        return processed
+                    continue
+                if decision["action"] == "idle":
+                    return processed
+                prompt_path = decision["prompt_path"]
+                queued_names = decision["queued_prompt_names"]
+                if queued_names:
+                    self._log(
+                        "daemon queue scan: keeping queued prompts pending "
+                        "until the current prompt finishes: "
+                        f"{', '.join(queued_names)}"
+                    )
+                self._process_prompt(
+                    prompt_path,
+                    watcher_backend=watcher_backend or self.daemon_config.watch.backend,
+                )
+                return processed + 1
+
             if not ready_prompt_paths:
                 if processed == 0 and retry_after_seconds is not None:
                     self._log(
@@ -271,6 +304,113 @@ class DaemonRunner:
                 watcher_backend=watcher_backend or self.daemon_config.watch.backend,
             )
             return processed + 1
+
+    def _project_typescript_pending_decision(
+        self,
+        *,
+        processed_count: int,
+        ready_prompt_paths: list[Path],
+        retry_after_seconds: float | None,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_pending_decision",
+            "processed_count": processed_count,
+            "ready_prompt_paths": [str(path) for path in ready_prompt_paths],
+            "retry_after_seconds": retry_after_seconds,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        action = result.get("action")
+        if action not in {"idle", "wait", "process"}:
+            return None
+        if action == "wait":
+            retry_after = result.get("retryAfterSeconds")
+            if not isinstance(retry_after, (int, float)) or retry_after < 0:
+                return None
+            return {
+                "action": action,
+                "retry_after_seconds": retry_after,
+            }
+        if action == "idle":
+            return {"action": action}
+
+        prompt_path_text = result.get("promptPath")
+        queued_prompt_names = result.get("queuedPromptNames")
+        if not isinstance(prompt_path_text, str) or not prompt_path_text:
+            return None
+        prompt_path = Path(prompt_path_text)
+        ready_prompt_set = {path.resolve() for path in ready_prompt_paths}
+        try:
+            resolved_prompt = prompt_path.resolve()
+        except OSError:
+            return None
+        if resolved_prompt not in ready_prompt_set:
+            return None
+        if (
+            not isinstance(queued_prompt_names, list)
+            or any(not isinstance(item, str) for item in queued_prompt_names)
+        ):
+            return None
+        return {
+            "action": action,
+            "prompt_path": prompt_path,
+            "queued_prompt_names": queued_prompt_names,
+        }
+
+    def _run_typescript_runner_payload(
+        self,
+        payload: dict[str, object],
+    ) -> dict[str, object] | None:
+        runner_cli = getattr(self.app_config, "typescript_agent_runner_cli", None)
+        if not isinstance(runner_cli, (str, Path)):
+            return None
+
+        try:
+            completed = subprocess.run(
+                [str(runner_cli)],
+                cwd=self.app_config.repo_root,
+                env=self._typescript_runner_env(),
+                input=json.dumps(payload, ensure_ascii=True),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            self._log(f"daemon TypeScript runner bridge failed: {exc}")
+            return None
+
+        if completed.returncode != 0:
+            message = (completed.stderr or completed.stdout).strip()
+            detail = f": {message}" if message else ""
+            self._log(
+                "daemon TypeScript runner bridge exited "
+                f"with {completed.returncode}{detail}"
+            )
+            return None
+
+        try:
+            result = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            self._log("daemon TypeScript runner bridge returned invalid JSON")
+            return None
+        return result if isinstance(result, dict) else None
+
+    def _typescript_runner_env(self) -> dict[str, str]:
+        env = dict(os.environ)
+        for name, attr in (
+            ("HOME", "home_dir"),
+            ("DORMAMMU_SESSIONS_DIR", "sessions_dir"),
+            ("DORMAMMU_BASE_DEV_DIR", "base_dev_dir"),
+            ("DORMAMMU_WORKSPACE_ROOT", "workspace_root"),
+            ("DORMAMMU_WORKSPACE_PROJECT_ROOT", "workspace_project_root"),
+            ("DORMAMMU_TMP_DIR", "workspace_tmp_dir"),
+            ("DORMAMMU_RESULTS_DIR", "results_dir"),
+        ):
+            value = getattr(self.app_config, attr, None)
+            if isinstance(value, (str, Path)):
+                env[name] = str(value)
+        return env
 
     def _scan_prompt_queue(self) -> tuple[list[Path], float | None]:
         candidates: list[Path] = []

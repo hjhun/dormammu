@@ -412,6 +412,32 @@ test("dormammu-agent-runner can project goals watch loop payloads", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon pending decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_pending_decision",
+      processed_count: 0,
+      ready_prompt_paths: [
+        "/repo/prompts/001-first.md",
+        "/repo/prompts/002-second.md"
+      ],
+      retry_after_seconds: null
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_pending_decision",
+    action: "process",
+    promptPath: "/repo/prompts/001-first.md",
+    queuedPromptNames: ["002-second.md"],
+    retryAfterSeconds: null,
+    reason: "ready_prompt_available"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

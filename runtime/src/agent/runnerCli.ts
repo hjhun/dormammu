@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Writable } from "node:stream";
 
 import {
+  runDaemonPendingDecisionEntrypoint,
   runAgentRunnerEntrypoint,
   runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
@@ -18,6 +19,7 @@ import {
   runGoalsWatcherStopDecisionEntrypoint,
   runGoalsWatchLoopDecisionEntrypoint,
   type AgentRunnerEntrypointPayload,
+  type DaemonPendingDecisionEntrypointPayload,
   type GoalsProcessDecisionEntrypointPayload,
   type GoalsPromptProjectionEntrypointPayload,
   type GoalsRoleDocumentProjectionEntrypointPayload,
@@ -100,6 +102,9 @@ async function runWithSignalHandlers(
   if (isGoalsWatchLoopDecisionPayload(payload)) {
     return runGoalsWatchLoopDecisionEntrypoint(payload);
   }
+  if (isDaemonPendingDecisionPayload(payload)) {
+    return runDaemonPendingDecisionEntrypoint(payload);
+  }
   if (!isAgentRunPayload(payload)) {
     return runGoalsQueueEntrypoint(payload);
   }
@@ -147,7 +152,8 @@ async function readPayload(args: string[]): Promise<RunnerCliPayload> {
 function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEntrypointPayload {
   return (
     !("entrypoint" in payload) ||
-    (payload.entrypoint !== "goals_queue" &&
+    (payload.entrypoint !== "daemon_pending_decision" &&
+      payload.entrypoint !== "goals_queue" &&
       payload.entrypoint !== "goals_prompt_projection" &&
       payload.entrypoint !== "goals_role_document_projection" &&
       payload.entrypoint !== "goals_role_sequence" &&
@@ -159,6 +165,14 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "goals_watcher_start_decision" &&
       payload.entrypoint !== "goals_watcher_stop_decision" &&
       payload.entrypoint !== "goals_watch_loop_decision")
+  );
+}
+
+function isDaemonPendingDecisionPayload(
+  payload: RunnerCliPayload
+): payload is DaemonPendingDecisionEntrypointPayload {
+  return (
+    "entrypoint" in payload && payload.entrypoint === "daemon_pending_decision"
   );
 }
 

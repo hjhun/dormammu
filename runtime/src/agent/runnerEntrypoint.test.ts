@@ -6,6 +6,7 @@ import test from "node:test";
 
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
+  runDaemonPendingDecisionEntrypoint,
   runAgentRunnerEntrypoint,
   runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
@@ -363,6 +364,25 @@ test("runAgentRunnerEntrypoint validates request payloads", async () => {
       logs_dir: "/repo/.dev/logs"
     }),
     /Unsupported pipeline_stage.kind/
+  );
+});
+
+test("runDaemonPendingDecisionEntrypoint projects daemon queue decisions", () => {
+  assert.deepEqual(
+    runDaemonPendingDecisionEntrypoint({
+      entrypoint: "daemon_pending_decision",
+      processed_count: 0,
+      ready_prompt_paths: ["/repo/prompts/001-first.md"],
+      retry_after_seconds: null
+    }),
+    {
+      entrypoint: "daemon_pending_decision",
+      action: "process",
+      promptPath: "/repo/prompts/001-first.md",
+      queuedPromptNames: [],
+      retryAfterSeconds: null,
+      reason: "ready_prompt_available"
+    }
   );
 });
 
