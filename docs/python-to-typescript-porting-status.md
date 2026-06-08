@@ -411,6 +411,16 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon prompt interruption recovery decision helper, plus
+  runner entrypoint and Python `DaemonRunner._process_prompt()` bridge
+  consumption for interrupted status, user-interruption error text, source
+  prompt preservation intent, and operator-visible interruption log message
+  while Python retains prompt preservation, lifecycle emission, progress stream
+  IO, re-raising, and fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon expected roadmap phase decision helper, plus runner
   entrypoint and Python `DaemonRunner._expected_roadmap_phase_id()` bridge
   consumption for active roadmap phase selection while Python retains workflow
@@ -715,8 +725,10 @@ Port the remaining daemon and goals orchestration surface:
   event type, role/stage/status, attempts, retries, supervisor verdict,
   outcome, and error. TypeScript also owns daemon prompt completion
   progress-line projection for final operator-visible prompt/status/result
-  output. TypeScript also owns daemon expected roadmap phase selection for
-  loop configuration.
+  output. TypeScript also owns daemon prompt interruption recovery projection
+  for interrupted status, user-interruption error text, source prompt
+  preservation intent, and interruption log output. TypeScript also owns daemon
+  expected roadmap phase selection for loop configuration.
   TypeScript also owns daemon goal-source metadata parsing for
   goals-scheduler prompt tags. TypeScript also owns daemon active-agent-CLI
   resolution for configured CLI use and missing-config daemonize errors.

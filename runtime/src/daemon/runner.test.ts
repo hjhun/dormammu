@@ -15,6 +15,7 @@ import {
   daemonPlanStateDecision,
   daemonPendingDecision,
   daemonPromptCompletionLineDecision,
+  daemonPromptInterruptionDecision,
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
   daemonPromptRouteDecision,
@@ -814,6 +815,21 @@ test("daemonPromptCompletionLineDecision projects final progress output", () => 
       status: "completed",
       resultPath: "/repo/results/001-first_RESULT.md",
       reason: "daemon_prompt_completion_line_projected"
+    }
+  );
+});
+
+test("daemonPromptInterruptionDecision projects interruption recovery output", () => {
+  assert.deepEqual(
+    daemonPromptInterruptionDecision({
+      promptName: " 001-interrupt.md "
+    }),
+    {
+      status: "interrupted",
+      errorMessage: "Interrupted by user.",
+      logMessage: "daemon prompt 001-interrupt.md: interrupted by user; preserving source prompt file",
+      preservePrompt: true,
+      reason: "daemon_prompt_interrupted"
     }
   );
 });

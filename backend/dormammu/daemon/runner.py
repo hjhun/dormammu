@@ -1093,6 +1093,18 @@ class DaemonRunner:
             )["line"]
         )
 
+    def _prompt_interruption_decision(
+        self,
+        *,
+        prompt_path: Path,
+    ) -> dict[str, object]:
+        decision = self._project_typescript_prompt_interruption_decision(
+            prompt_path=prompt_path,
+        )
+        if decision is not None:
+            return decision
+        return self._prompt_interruption_expectations(prompt_path=prompt_path)
+
     def _run_finished_event_decision(
         self,
         prompt_result: DaemonPromptResult,
@@ -1181,6 +1193,24 @@ class DaemonRunner:
             status=status,
             result_path=result_path,
         )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    def _project_typescript_prompt_interruption_decision(
+        self,
+        *,
+        prompt_path: Path,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_prompt_interruption_decision",
+            "prompt_name": prompt_path.name,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._prompt_interruption_expectations(prompt_path=prompt_path)
         for field_name, expected_value in expected.items():
             if result.get(field_name) != expected_value:
                 return None
@@ -1427,6 +1457,25 @@ class DaemonRunner:
             "status": normalized_status,
             "resultPath": normalized_result_path,
             "reason": "daemon_prompt_completion_line_projected",
+        }
+
+    @classmethod
+    def _prompt_interruption_expectations(
+        cls,
+        *,
+        prompt_path: Path,
+    ) -> dict[str, object]:
+        prompt_name = cls._normalize_optional_text(prompt_path.name) or "unknown-prompt"
+        return {
+            "entrypoint": "daemon_prompt_interruption_decision",
+            "status": "interrupted",
+            "errorMessage": "Interrupted by user.",
+            "logMessage": (
+                f"daemon prompt {prompt_name}: interrupted by user; "
+                "preserving source prompt file"
+            ),
+            "preservePrompt": True,
+            "reason": "daemon_prompt_interrupted",
         }
 
     @staticmethod
@@ -2626,10 +2675,13 @@ class DaemonRunner:
         except _PromptSkipped:
             pass  # status/error already set; handled cleanly in finally
         except KeyboardInterrupt:
+            interruption_decision = self._prompt_interruption_decision(
+                prompt_path=prompt_path,
+            )
             interrupted = True
-            status = "interrupted"
-            error = "Interrupted by user."
-            self._log(f"daemon prompt {prompt_path.name}: interrupted by user; preserving source prompt file")
+            status = str(interruption_decision["status"])
+            error = str(interruption_decision["errorMessage"])
+            self._log(str(interruption_decision["logMessage"]))
         except Exception as exc:
             status = "failed"
             error = str(exc)

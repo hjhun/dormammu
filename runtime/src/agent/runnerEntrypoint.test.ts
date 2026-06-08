@@ -19,6 +19,7 @@ import {
   runDaemonPlanStateEntrypoint,
   runDaemonPendingDecisionEntrypoint,
   runDaemonPromptCompletionLineEntrypoint,
+  runDaemonPromptInterruptionEntrypoint,
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptPathEntrypoint,
   runDaemonPromptRouteEntrypoint,
@@ -822,6 +823,23 @@ test("runDaemonPromptCompletionLineEntrypoint projects progress output", () => {
       status: "completed",
       resultPath: "/repo/results/001-first_RESULT.md",
       reason: "daemon_prompt_completion_line_projected"
+    }
+  );
+});
+
+test("runDaemonPromptInterruptionEntrypoint projects recovery output", () => {
+  assert.deepEqual(
+    runDaemonPromptInterruptionEntrypoint({
+      entrypoint: "daemon_prompt_interruption_decision",
+      prompt_name: "001-interrupt.md"
+    }),
+    {
+      entrypoint: "daemon_prompt_interruption_decision",
+      status: "interrupted",
+      errorMessage: "Interrupted by user.",
+      logMessage: "daemon prompt 001-interrupt.md: interrupted by user; preserving source prompt file",
+      preservePrompt: true,
+      reason: "daemon_prompt_interrupted"
     }
   );
 });

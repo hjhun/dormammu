@@ -912,6 +912,27 @@ test("dormammu-agent-runner can project daemon completion progress lines", () =>
   });
 });
 
+test("dormammu-agent-runner can project daemon interruption decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_prompt_interruption_decision",
+      prompt_name: "001-interrupt.md"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_prompt_interruption_decision",
+    status: "interrupted",
+    errorMessage: "Interrupted by user.",
+    logMessage: "daemon prompt 001-interrupt.md: interrupted by user; preserving source prompt file",
+    preservePrompt: true,
+    reason: "daemon_prompt_interrupted"
+  });
+});
+
 test("dormammu-agent-runner can project daemon roadmap phase decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

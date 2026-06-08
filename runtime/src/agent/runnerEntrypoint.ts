@@ -55,6 +55,7 @@ import {
   daemonPlanStateDecision,
   daemonPendingDecision,
   daemonPromptCompletionLineDecision,
+  daemonPromptInterruptionDecision,
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
   daemonPromptRouteDecision,
@@ -92,6 +93,7 @@ import {
   type DaemonPlanStateDecision,
   type DaemonPendingDecision,
   type DaemonPromptCompletionLineDecision,
+  type DaemonPromptInterruptionDecision,
   type DaemonPromptLifecycleDecision,
   type DaemonPromptPathDecision,
   type DaemonPromptRouteDecision,
@@ -548,6 +550,16 @@ export type DaemonPromptCompletionLineEntrypointResultPayload =
     entrypoint: "daemon_prompt_completion_line_decision";
   };
 
+export type DaemonPromptInterruptionEntrypointPayload = {
+  entrypoint: "daemon_prompt_interruption_decision";
+  prompt_name: string;
+};
+
+export type DaemonPromptInterruptionEntrypointResultPayload =
+  DaemonPromptInterruptionDecision & {
+    entrypoint: "daemon_prompt_interruption_decision";
+  };
+
 export type DaemonRoadmapPhaseEntrypointPayload = {
   entrypoint: "daemon_roadmap_phase_decision";
   active_phase_ids?: readonly unknown[] | null;
@@ -806,6 +818,7 @@ export type RunnerCliPayload =
   | DaemonRunLifecycleEventEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
   | DaemonPromptCompletionLineEntrypointPayload
+  | DaemonPromptInterruptionEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupBannerEntrypointPayload
   | DaemonStartupEntrypointPayload
@@ -856,6 +869,7 @@ export type RunnerCliResultPayload =
   | DaemonRunLifecycleEventEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonPromptCompletionLineEntrypointResultPayload
+  | DaemonPromptInterruptionEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupBannerEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
@@ -1185,6 +1199,17 @@ export function runDaemonPromptCompletionLineEntrypoint(
       promptName: parseRequiredString(payload.prompt_name, "prompt_name"),
       status: parseRequiredString(payload.status, "status"),
       resultPath: parseRequiredString(payload.result_path, "result_path")
+    })
+  };
+}
+
+export function runDaemonPromptInterruptionEntrypoint(
+  payload: DaemonPromptInterruptionEntrypointPayload
+): DaemonPromptInterruptionEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_prompt_interruption_decision",
+    ...daemonPromptInterruptionDecision({
+      promptName: parseRequiredString(payload.prompt_name, "prompt_name")
     })
   };
 }

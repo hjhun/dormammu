@@ -17,6 +17,7 @@ import {
   runDaemonPlanStateEntrypoint,
   runDaemonPendingDecisionEntrypoint,
   runDaemonPromptCompletionLineEntrypoint,
+  runDaemonPromptInterruptionEntrypoint,
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptPathEntrypoint,
   runDaemonPromptRouteEntrypoint,
@@ -67,6 +68,7 @@ import {
   type DaemonPlanStateEntrypointPayload,
   type DaemonPendingDecisionEntrypointPayload,
   type DaemonPromptCompletionLineEntrypointPayload,
+  type DaemonPromptInterruptionEntrypointPayload,
   type DaemonPromptLifecycleEntrypointPayload,
   type DaemonPromptPathEntrypointPayload,
   type DaemonPromptRouteEntrypointPayload,
@@ -268,6 +270,9 @@ async function runWithSignalHandlers(
   if (isDaemonPromptCompletionLinePayload(payload)) {
     return runDaemonPromptCompletionLineEntrypoint(payload);
   }
+  if (isDaemonPromptInterruptionPayload(payload)) {
+    return runDaemonPromptInterruptionEntrypoint(payload);
+  }
   if (isDaemonStartupBannerPayload(payload)) {
     return runDaemonStartupBannerEntrypoint(payload);
   }
@@ -352,6 +357,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_run_lifecycle_event_decision" &&
       payload.entrypoint !== "daemon_run_finished_decision" &&
       payload.entrypoint !== "daemon_prompt_completion_line_decision" &&
+      payload.entrypoint !== "daemon_prompt_interruption_decision" &&
       payload.entrypoint !== "daemon_shutdown_decision" &&
       payload.entrypoint !== "daemon_startup_banner_decision" &&
       payload.entrypoint !== "daemon_startup_decision" &&
@@ -657,6 +663,15 @@ function isDaemonPromptCompletionLinePayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_prompt_completion_line_decision"
+  );
+}
+
+function isDaemonPromptInterruptionPayload(
+  payload: RunnerCliPayload
+): payload is DaemonPromptInterruptionEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_prompt_interruption_decision"
   );
 }
 

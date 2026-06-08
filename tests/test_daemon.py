@@ -1659,8 +1659,13 @@ class DaemonRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
             loop_cli = self._write_loop_cli(root, success_attempt=1)
-            self._write_active_cli_config(root, loop_cli)
+            self._write_typescript_runner_config(
+                root,
+                ts_runner,
+                active_agent_cli=loop_cli,
+            )
             app_config = self._app_config(root)
             daemon_config = load_daemon_config(self._write_daemon_config(root), app_config=app_config)
             daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
@@ -1670,7 +1675,8 @@ class DaemonRunnerTests(unittest.TestCase):
 
             lifecycle = mock.MagicMock()
             lifecycle.run_id = "daemon:test-run"
-            runner = DaemonRunner(app_config, daemon_config)
+            progress = io.StringIO()
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=progress)
 
             with (
                 mock.patch(
@@ -1703,6 +1709,30 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertEqual(daemon_finished_calls[0]["status"], "interrupted")
             self.assertEqual(daemon_finished_calls[0]["artifact_refs"], ())
             self.assertFalse((daemon_config.result_path / "001-interrupt_RESULT.md").exists())
+            payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_prompt_interruption_decision"
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_prompt_interruption_decision",
+                    "prompt_name": "001-interrupt.md",
+                },
+            )
+            self.assertIn(
+                (
+                    "daemon prompt 001-interrupt.md: interrupted by user; "
+                    "preserving source prompt file"
+                ),
+                progress.getvalue(),
+            )
 
     def test_debug_progress_log_is_written_per_prompt_and_contains_runtime_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3084,6 +3114,25 @@ class DaemonRunnerTests(unittest.TestCase):
                         "status": status,
                         "resultPath": result_path,
                         "reason": "daemon_prompt_completion_line_projected",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_prompt_interruption_decision":
+                    prompt_name = (
+                        (payload.get("prompt_name") or "").strip()
+                        or "unknown-prompt"
+                    )
+                    print(json.dumps({{
+                        "entrypoint": "daemon_prompt_interruption_decision",
+                        "status": "interrupted",
+                        "errorMessage": "Interrupted by user.",
+                        "logMessage": (
+                            "daemon prompt "
+                            + prompt_name
+                            + ": interrupted by user; preserving source "
+                            "prompt file"
+                        ),
+                        "preservePrompt": True,
+                        "reason": "daemon_prompt_interrupted",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_terminal_error_decision":

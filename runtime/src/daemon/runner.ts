@@ -318,6 +318,18 @@ export type DaemonPromptCompletionLineDecision = {
   reason: "daemon_prompt_completion_line_projected";
 };
 
+export type DaemonPromptInterruptionDecisionInput = {
+  promptName: string;
+};
+
+export type DaemonPromptInterruptionDecision = {
+  status: "interrupted";
+  errorMessage: "Interrupted by user.";
+  logMessage: string;
+  preservePrompt: true;
+  reason: "daemon_prompt_interrupted";
+};
+
 export type DaemonRoadmapPhaseDecisionInput = {
   activePhaseIds: readonly unknown[];
 };
@@ -1218,6 +1230,19 @@ export function daemonPromptCompletionLineDecision(
     status,
     resultPath,
     reason: "daemon_prompt_completion_line_projected"
+  };
+}
+
+export function daemonPromptInterruptionDecision(
+  input: DaemonPromptInterruptionDecisionInput
+): DaemonPromptInterruptionDecision {
+  const promptName = nonEmpty(input.promptName) ?? "unknown-prompt";
+  return {
+    status: "interrupted",
+    errorMessage: "Interrupted by user.",
+    logMessage: `daemon prompt ${promptName}: interrupted by user; preserving source prompt file`,
+    preservePrompt: true,
+    reason: "daemon_prompt_interrupted"
   };
 }
 
