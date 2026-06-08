@@ -332,6 +332,36 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertEqual(captured["request_class"], "planning_only")
             self.assertFalse(captured["has_goal_file"])
 
+    def test_extract_goal_file_path_can_use_typescript_goal_source_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            goal_file = root / "goals" / "ship-it.md"
+            goal_file.parent.mkdir(parents=True, exist_ok=True)
+            goal_file.write_text("# Goal\n\nShip it\n", encoding="utf-8")
+            prompt_text = (
+                f"<!-- dormammu:goal_source={goal_file} -->\n\n"
+                "# Generated prompt\n"
+            )
+
+            result = DaemonRunner(app_config, daemon_config)._extract_goal_file_path(
+                prompt_text,
+            )
+
+            self.assertEqual(result, goal_file)
+            captured = json.loads(
+                (root / "captured-runner-payload.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(captured["entrypoint"], "daemon_goal_source_decision")
+            self.assertEqual(captured["prompt_text"], prompt_text)
+
     def test_run_pending_once_writes_terminal_failed_result_when_loop_budget_is_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2085,6 +2115,7 @@ class DaemonRunnerTests(unittest.TestCase):
                 f"""\
                 #!{sys.executable}
                 import json
+                import re
                 from pathlib import Path
 
                 ROOT = Path({str(root)!r})
@@ -2098,6 +2129,23 @@ class DaemonRunnerTests(unittest.TestCase):
                     encoding="utf-8",
                 ) as stream:
                     stream.write(json.dumps(payload, ensure_ascii=True) + "\\n")
+                if payload.get("entrypoint") == "daemon_goal_source_decision":
+                    match = re.search(
+                        r"^<!--\\s*dormammu:goal_source=([^\\s>]+)\\s*-->",
+                        payload["prompt_text"],
+                        re.MULTILINE,
+                    )
+                    raw_path = match.group(1).strip() if match else ""
+                    print(json.dumps({{
+                        "entrypoint": "daemon_goal_source_decision",
+                        "goalSourcePath": raw_path or None,
+                        "reason": (
+                            "goal_source_found"
+                            if raw_path
+                            else "goal_source_missing"
+                        ),
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_pending_decision":
                     ready = [
                         item

@@ -323,6 +323,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon goal-source metadata parsing decision helper, plus
+  runner entrypoint and Python `DaemonRunner._extract_goal_file_path()` bridge
+  consumption for `dormammu:goal_source` scheduler prompt tag parsing while
+  Python retains goal file existence validation, mandatory evaluator error
+  handling, and malformed-bridge fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon existing-result recovery decision helper, plus
   runner entrypoint and Python `DaemonRunner._scan_prompt_queue()` bridge
   consumption for stale completed result removal before prompt reprocessing
@@ -577,6 +586,8 @@ Port the remaining daemon and goals orchestration surface:
   daemon run-finished lifecycle metadata projection for
   attempts, retries, supervisor verdict, outcome, and error. TypeScript also
   owns daemon expected roadmap phase selection for loop configuration.
+  TypeScript also owns daemon goal-source metadata parsing for
+  goals-scheduler prompt tags.
   TypeScript also owns daemon existing-result recovery decisions for stale
   completed result
   removal before prompt reprocessing, plus daemon prompt settle-window

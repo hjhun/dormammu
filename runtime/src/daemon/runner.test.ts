@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   daemonExistingResultDecision,
+  daemonGoalSourceDecision,
   daemonHeartbeatRemoveDecision,
   daemonHeartbeatWriteDecision,
   daemonInstanceLockDecision,
@@ -322,6 +323,36 @@ test("daemonRoadmapPhaseDecision falls back to phase 4", () => {
     {
       expectedRoadmapPhaseId: "phase_4",
       reason: "default_phase_selected"
+    }
+  );
+});
+
+test("daemonGoalSourceDecision extracts scheduler metadata", () => {
+  assert.deepEqual(
+    daemonGoalSourceDecision({
+      promptText: [
+        "<!-- dormammu:goal_source=/repo/goals/ship-it.md -->",
+        "",
+        "# Goal",
+        "",
+        "Ship it"
+      ].join("\n")
+    }),
+    {
+      goalSourcePath: "/repo/goals/ship-it.md",
+      reason: "goal_source_found"
+    }
+  );
+});
+
+test("daemonGoalSourceDecision reports missing scheduler metadata", () => {
+  assert.deepEqual(
+    daemonGoalSourceDecision({
+      promptText: "# Goal\n\nShip it"
+    }),
+    {
+      goalSourcePath: null,
+      reason: "goal_source_missing"
     }
   );
 });

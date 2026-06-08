@@ -7,6 +7,7 @@ import test from "node:test";
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
   runDaemonExistingResultEntrypoint,
+  runDaemonGoalSourceEntrypoint,
   runDaemonHeartbeatRemoveEntrypoint,
   runDaemonHeartbeatWriteEntrypoint,
   runDaemonInstanceLockEntrypoint,
@@ -562,6 +563,24 @@ test("runDaemonRoadmapPhaseEntrypoint projects phase decisions", () => {
       entrypoint: "daemon_roadmap_phase_decision",
       expectedRoadmapPhaseId: "phase_6",
       reason: "active_phase_selected"
+    }
+  );
+});
+
+test("runDaemonGoalSourceEntrypoint projects goal-source metadata", () => {
+  assert.deepEqual(
+    runDaemonGoalSourceEntrypoint({
+      entrypoint: "daemon_goal_source_decision",
+      prompt_text: [
+        "<!-- dormammu:goal_source=/repo/goals/ship-it.md -->",
+        "",
+        "# Goal"
+      ].join("\n")
+    }),
+    {
+      entrypoint: "daemon_goal_source_decision",
+      goalSourcePath: "/repo/goals/ship-it.md",
+      reason: "goal_source_found"
     }
   );
 });

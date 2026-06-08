@@ -152,6 +152,15 @@ export type DaemonRoadmapPhaseDecision = {
   reason: string;
 };
 
+export type DaemonGoalSourceDecisionInput = {
+  promptText: string;
+};
+
+export type DaemonGoalSourceDecision = {
+  goalSourcePath: string | null;
+  reason: "goal_source_found" | "goal_source_missing";
+};
+
 export type DaemonTerminalErrorDecisionInput = {
   status: string;
   nextPendingTask: string | null;
@@ -609,6 +618,25 @@ export function daemonRoadmapPhaseDecision(
   return {
     expectedRoadmapPhaseId: "phase_4",
     reason: "default_phase_selected"
+  };
+}
+
+export function daemonGoalSourceDecision(
+  input: DaemonGoalSourceDecisionInput
+): DaemonGoalSourceDecision {
+  const match = /^<!--\s*dormammu:goal_source=([^\s>]+)\s*-->/m.exec(
+    input.promptText
+  );
+  const goalSourcePath = match?.[1]?.trim() ?? "";
+  if (goalSourcePath.length === 0) {
+    return {
+      goalSourcePath: null,
+      reason: "goal_source_missing"
+    };
+  }
+  return {
+    goalSourcePath,
+    reason: "goal_source_found"
   };
 }
 

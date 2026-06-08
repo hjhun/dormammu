@@ -623,6 +623,28 @@ test("dormammu-agent-runner can project daemon roadmap phase decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon goal-source decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_goal_source_decision",
+      prompt_text: [
+        "<!-- dormammu:goal_source=/repo/goals/ship-it.md -->",
+        "",
+        "# Goal"
+      ].join("\n")
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_goal_source_decision",
+    goalSourcePath: "/repo/goals/ship-it.md",
+    reason: "goal_source_found"
+  });
+});
+
 test("dormammu-agent-runner can project daemon terminal error decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

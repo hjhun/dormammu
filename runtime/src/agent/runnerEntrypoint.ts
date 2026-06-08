@@ -43,6 +43,7 @@ import {
 } from "../goals/discovery.js";
 import {
   daemonExistingResultDecision,
+  daemonGoalSourceDecision,
   daemonHeartbeatRemoveDecision,
   daemonHeartbeatWriteDecision,
   daemonInstanceLockDecision,
@@ -67,6 +68,7 @@ import {
   daemonWatcherBackendDecision,
   daemonWatcherWaitDecision,
   type DaemonExistingResultDecision,
+  type DaemonGoalSourceDecision,
   type DaemonHeartbeatRemoveDecision,
   type DaemonHeartbeatStatus,
   type DaemonHeartbeatWriteDecision,
@@ -415,6 +417,16 @@ export type DaemonRoadmapPhaseEntrypointResultPayload =
     entrypoint: "daemon_roadmap_phase_decision";
   };
 
+export type DaemonGoalSourceEntrypointPayload = {
+  entrypoint: "daemon_goal_source_decision";
+  prompt_text: string;
+};
+
+export type DaemonGoalSourceEntrypointResultPayload =
+  DaemonGoalSourceDecision & {
+    entrypoint: "daemon_goal_source_decision";
+  };
+
 export type DaemonTerminalErrorEntrypointPayload = {
   entrypoint: "daemon_terminal_error_decision";
   status: string;
@@ -632,6 +644,7 @@ export type RunnerCliPayload =
   | DaemonResultReportEntrypointPayload
   | DaemonResultStatusEntrypointPayload
   | DaemonRoadmapPhaseEntrypointPayload
+  | DaemonGoalSourceEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupBannerEntrypointPayload
@@ -670,6 +683,7 @@ export type RunnerCliResultPayload =
   | DaemonResultReportEntrypointResultPayload
   | DaemonResultStatusEntrypointResultPayload
   | DaemonRoadmapPhaseEntrypointResultPayload
+  | DaemonGoalSourceEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupBannerEntrypointResultPayload
@@ -875,6 +889,17 @@ export function runDaemonRoadmapPhaseEntrypoint(
       activePhaseIds: Array.isArray(payload.active_phase_ids)
         ? payload.active_phase_ids
         : []
+    })
+  };
+}
+
+export function runDaemonGoalSourceEntrypoint(
+  payload: DaemonGoalSourceEntrypointPayload
+): DaemonGoalSourceEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_goal_source_decision",
+    ...daemonGoalSourceDecision({
+      promptText: parseRequiredString(payload.prompt_text, "prompt_text")
     })
   };
 }

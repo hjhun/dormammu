@@ -2509,12 +2509,58 @@ class DaemonRunner:
         file no longer exists, because post-commit evaluation is mandatory for
         goals-scheduler prompts.
         """
+        goal_source_decision = self._project_typescript_goal_source_decision(
+            prompt_text,
+        )
+        if goal_source_decision is not None:
+            raw_goal_source = goal_source_decision["goal_source_path"]
+            if raw_goal_source is None:
+                return None
+            return self._validate_goal_source_path(str(raw_goal_source))
+
         match = _GOAL_SOURCE_RE.search(prompt_text)
         if match is None:
             return None
         raw_path = match.group(1).strip()
         if not raw_path:
             return None
+        return self._validate_goal_source_path(raw_path)
+
+    def _project_typescript_goal_source_decision(
+        self,
+        prompt_text: str,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_goal_source_decision",
+            "prompt_text": prompt_text,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._goal_source_expectations(prompt_text)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "goal_source_path": expected["goalSourcePath"],
+        }
+
+    @staticmethod
+    def _goal_source_expectations(prompt_text: str) -> dict[str, object]:
+        match = _GOAL_SOURCE_RE.search(prompt_text)
+        raw_path = match.group(1).strip() if match is not None else ""
+        if raw_path:
+            return {
+                "goalSourcePath": raw_path,
+                "reason": "goal_source_found",
+            }
+        return {
+            "goalSourcePath": None,
+            "reason": "goal_source_missing",
+        }
+
+    @staticmethod
+    def _validate_goal_source_path(raw_path: str) -> Path:
         candidate = Path(raw_path)
         if not candidate.exists():
             raise RuntimeError(
