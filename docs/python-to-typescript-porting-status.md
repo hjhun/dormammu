@@ -332,6 +332,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon active-agent-CLI resolution decision helper, plus
+  runner entrypoint and Python `DaemonRunner._resolve_agent_cli()` bridge
+  consumption for configured CLI use vs missing-config daemonize errors while
+  Python retains `AppConfig` loading, `Path` construction, and fallback
+  behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon existing-result recovery decision helper, plus
   runner entrypoint and Python `DaemonRunner._scan_prompt_queue()` bridge
   consumption for stale completed result removal before prompt reprocessing
@@ -587,7 +596,8 @@ Port the remaining daemon and goals orchestration surface:
   attempts, retries, supervisor verdict, outcome, and error. TypeScript also
   owns daemon expected roadmap phase selection for loop configuration.
   TypeScript also owns daemon goal-source metadata parsing for
-  goals-scheduler prompt tags.
+  goals-scheduler prompt tags. TypeScript also owns daemon active-agent-CLI
+  resolution for configured CLI use and missing-config daemonize errors.
   TypeScript also owns daemon existing-result recovery decisions for stale
   completed result
   removal before prompt reprocessing, plus daemon prompt settle-window

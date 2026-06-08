@@ -645,6 +645,29 @@ test("dormammu-agent-runner can project daemon goal-source decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon agent CLI decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_agent_cli_decision",
+      active_agent_cli: null
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_agent_cli_decision",
+    action: "error",
+    agentCli: null,
+    errorMessage: [
+      "daemonize requires active_agent_cli in dormammu.json or ~/.dormammu/config. ",
+      "It now reuses the normal dormammu run loop instead of per-phase daemon CLI settings."
+    ].join(""),
+    reason: "active_agent_cli_missing"
+  });
+});
+
 test("dormammu-agent-runner can project daemon terminal error decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

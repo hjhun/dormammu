@@ -6,6 +6,7 @@ import test from "node:test";
 
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
+  runDaemonAgentCliEntrypoint,
   runDaemonExistingResultEntrypoint,
   runDaemonGoalSourceEntrypoint,
   runDaemonHeartbeatRemoveEntrypoint,
@@ -581,6 +582,22 @@ test("runDaemonGoalSourceEntrypoint projects goal-source metadata", () => {
       entrypoint: "daemon_goal_source_decision",
       goalSourcePath: "/repo/goals/ship-it.md",
       reason: "goal_source_found"
+    }
+  );
+});
+
+test("runDaemonAgentCliEntrypoint projects active agent CLI decisions", () => {
+  assert.deepEqual(
+    runDaemonAgentCliEntrypoint({
+      entrypoint: "daemon_agent_cli_decision",
+      active_agent_cli: "/usr/local/bin/codex"
+    }),
+    {
+      entrypoint: "daemon_agent_cli_decision",
+      action: "use",
+      agentCli: "/usr/local/bin/codex",
+      errorMessage: null,
+      reason: "active_agent_cli_configured"
     }
   );
 });

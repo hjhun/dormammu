@@ -161,6 +161,19 @@ export type DaemonGoalSourceDecision = {
   reason: "goal_source_found" | "goal_source_missing";
 };
 
+export type DaemonAgentCliAction = "use" | "error";
+
+export type DaemonAgentCliDecisionInput = {
+  activeAgentCli: string | null;
+};
+
+export type DaemonAgentCliDecision = {
+  action: DaemonAgentCliAction;
+  agentCli: string | null;
+  errorMessage: string | null;
+  reason: "active_agent_cli_configured" | "active_agent_cli_missing";
+};
+
 export type DaemonTerminalErrorDecisionInput = {
   status: string;
   nextPendingTask: string | null;
@@ -637,6 +650,29 @@ export function daemonGoalSourceDecision(
   return {
     goalSourcePath,
     reason: "goal_source_found"
+  };
+}
+
+export function daemonAgentCliDecision(
+  input: DaemonAgentCliDecisionInput
+): DaemonAgentCliDecision {
+  const agentCli = nonEmpty(input.activeAgentCli);
+  if (agentCli !== null) {
+    return {
+      action: "use",
+      agentCli,
+      errorMessage: null,
+      reason: "active_agent_cli_configured"
+    };
+  }
+  return {
+    action: "error",
+    agentCli: null,
+    errorMessage: [
+      "daemonize requires active_agent_cli in dormammu.json or ~/.dormammu/config. ",
+      "It now reuses the normal dormammu run loop instead of per-phase daemon CLI settings."
+    ].join(""),
+    reason: "active_agent_cli_missing"
   };
 }
 

@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Writable } from "node:stream";
 
 import {
+  runDaemonAgentCliEntrypoint,
   runDaemonExistingResultEntrypoint,
   runDaemonGoalSourceEntrypoint,
   runDaemonHeartbeatRemoveEntrypoint,
@@ -43,6 +44,7 @@ import {
   runGoalsWatcherStopDecisionEntrypoint,
   runGoalsWatchLoopDecisionEntrypoint,
   type AgentRunnerEntrypointPayload,
+  type DaemonAgentCliEntrypointPayload,
   type DaemonExistingResultEntrypointPayload,
   type DaemonGoalSourceEntrypointPayload,
   type DaemonHeartbeatRemoveEntrypointPayload,
@@ -210,6 +212,9 @@ async function runWithSignalHandlers(
   if (isDaemonGoalSourcePayload(payload)) {
     return runDaemonGoalSourceEntrypoint(payload);
   }
+  if (isDaemonAgentCliPayload(payload)) {
+    return runDaemonAgentCliEntrypoint(payload);
+  }
   if (isDaemonRunFinishedPayload(payload)) {
     return runDaemonRunFinishedEntrypoint(payload);
   }
@@ -289,6 +294,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_result_status_decision" &&
       payload.entrypoint !== "daemon_roadmap_phase_decision" &&
       payload.entrypoint !== "daemon_goal_source_decision" &&
+      payload.entrypoint !== "daemon_agent_cli_decision" &&
       payload.entrypoint !== "daemon_run_finished_decision" &&
       payload.entrypoint !== "daemon_shutdown_decision" &&
       payload.entrypoint !== "daemon_startup_banner_decision" &&
@@ -459,6 +465,15 @@ function isDaemonGoalSourcePayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_goal_source_decision"
+  );
+}
+
+function isDaemonAgentCliPayload(
+  payload: RunnerCliPayload
+): payload is DaemonAgentCliEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_agent_cli_decision"
   );
 }
 

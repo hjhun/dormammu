@@ -42,6 +42,7 @@ import {
   type GoalQueueCandidate
 } from "../goals/discovery.js";
 import {
+  daemonAgentCliDecision,
   daemonExistingResultDecision,
   daemonGoalSourceDecision,
   daemonHeartbeatRemoveDecision,
@@ -67,6 +68,7 @@ import {
   daemonTerminalStatusDecision,
   daemonWatcherBackendDecision,
   daemonWatcherWaitDecision,
+  type DaemonAgentCliDecision,
   type DaemonExistingResultDecision,
   type DaemonGoalSourceDecision,
   type DaemonHeartbeatRemoveDecision,
@@ -427,6 +429,15 @@ export type DaemonGoalSourceEntrypointResultPayload =
     entrypoint: "daemon_goal_source_decision";
   };
 
+export type DaemonAgentCliEntrypointPayload = {
+  entrypoint: "daemon_agent_cli_decision";
+  active_agent_cli?: string | null;
+};
+
+export type DaemonAgentCliEntrypointResultPayload = DaemonAgentCliDecision & {
+  entrypoint: "daemon_agent_cli_decision";
+};
+
 export type DaemonTerminalErrorEntrypointPayload = {
   entrypoint: "daemon_terminal_error_decision";
   status: string;
@@ -645,6 +656,7 @@ export type RunnerCliPayload =
   | DaemonResultStatusEntrypointPayload
   | DaemonRoadmapPhaseEntrypointPayload
   | DaemonGoalSourceEntrypointPayload
+  | DaemonAgentCliEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupBannerEntrypointPayload
@@ -684,6 +696,7 @@ export type RunnerCliResultPayload =
   | DaemonResultStatusEntrypointResultPayload
   | DaemonRoadmapPhaseEntrypointResultPayload
   | DaemonGoalSourceEntrypointResultPayload
+  | DaemonAgentCliEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupBannerEntrypointResultPayload
@@ -900,6 +913,18 @@ export function runDaemonGoalSourceEntrypoint(
     entrypoint: "daemon_goal_source_decision",
     ...daemonGoalSourceDecision({
       promptText: parseRequiredString(payload.prompt_text, "prompt_text")
+    })
+  };
+}
+
+export function runDaemonAgentCliEntrypoint(
+  payload: DaemonAgentCliEntrypointPayload
+): DaemonAgentCliEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_agent_cli_decision",
+    ...daemonAgentCliDecision({
+      activeAgentCli:
+        parseOptionalString(payload.active_agent_cli, "active_agent_cli") ?? null
     })
   };
 }

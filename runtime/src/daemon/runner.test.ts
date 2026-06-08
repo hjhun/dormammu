@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  daemonAgentCliDecision,
   daemonExistingResultDecision,
   daemonGoalSourceDecision,
   daemonHeartbeatRemoveDecision,
@@ -353,6 +354,37 @@ test("daemonGoalSourceDecision reports missing scheduler metadata", () => {
     {
       goalSourcePath: null,
       reason: "goal_source_missing"
+    }
+  );
+});
+
+test("daemonAgentCliDecision uses configured active agent CLI", () => {
+  assert.deepEqual(
+    daemonAgentCliDecision({
+      activeAgentCli: "/usr/local/bin/codex"
+    }),
+    {
+      action: "use",
+      agentCli: "/usr/local/bin/codex",
+      errorMessage: null,
+      reason: "active_agent_cli_configured"
+    }
+  );
+});
+
+test("daemonAgentCliDecision reports missing active agent CLI", () => {
+  assert.deepEqual(
+    daemonAgentCliDecision({
+      activeAgentCli: null
+    }),
+    {
+      action: "error",
+      agentCli: null,
+      errorMessage: [
+        "daemonize requires active_agent_cli in dormammu.json or ~/.dormammu/config. ",
+        "It now reuses the normal dormammu run loop instead of per-phase daemon CLI settings."
+      ].join(""),
+      reason: "active_agent_cli_missing"
     }
   );
 });

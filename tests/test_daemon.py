@@ -324,8 +324,15 @@ class DaemonRunnerTests(unittest.TestCase):
                 "source=typescript, reason=fake_planning_pipeline",
                 progress.getvalue(),
             )
-            captured = json.loads(
-                (root / "captured-runner-payload.json").read_text(encoding="utf-8")
+            captured = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_prompt_route_decision"
             )
             self.assertEqual(captured["entrypoint"], "daemon_prompt_route_decision")
             self.assertFalse(captured["has_agents_config"])
@@ -361,6 +368,56 @@ class DaemonRunnerTests(unittest.TestCase):
             )
             self.assertEqual(captured["entrypoint"], "daemon_goal_source_decision")
             self.assertEqual(captured["prompt_text"], prompt_text)
+
+    def test_resolve_agent_cli_can_use_typescript_agent_cli_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            active_cli = root / "agent-cli"
+            self._write_typescript_runner_config(
+                root,
+                ts_runner,
+                active_agent_cli=active_cli,
+            )
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+
+            result = DaemonRunner(app_config, daemon_config)._resolve_agent_cli(
+                app_config,
+            )
+
+            self.assertEqual(result, active_cli)
+            captured = json.loads(
+                (root / "captured-runner-payload.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(captured["entrypoint"], "daemon_agent_cli_decision")
+            self.assertEqual(captured["active_agent_cli"], str(active_cli))
+
+    def test_resolve_agent_cli_can_use_typescript_missing_cli_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+
+            with self.assertRaisesRegex(RuntimeError, "active_agent_cli"):
+                runner._resolve_agent_cli(app_config)
+
+            captured = json.loads(
+                (root / "captured-runner-payload.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(captured["entrypoint"], "daemon_agent_cli_decision")
+            self.assertIsNone(captured["active_agent_cli"])
 
     def test_run_pending_once_writes_terminal_failed_result_when_loop_budget_is_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2145,6 +2202,33 @@ class DaemonRunnerTests(unittest.TestCase):
                             else "goal_source_missing"
                         ),
                     }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_agent_cli_decision":
+                    agent_cli = (
+                        (payload.get("active_agent_cli") or "").strip()
+                        or None
+                    )
+                    if agent_cli is not None:
+                        print(json.dumps({{
+                            "entrypoint": "daemon_agent_cli_decision",
+                            "action": "use",
+                            "agentCli": agent_cli,
+                            "errorMessage": None,
+                            "reason": "active_agent_cli_configured",
+                        }}, ensure_ascii=True))
+                    else:
+                        print(json.dumps({{
+                            "entrypoint": "daemon_agent_cli_decision",
+                            "action": "error",
+                            "agentCli": None,
+                            "errorMessage": (
+                                "daemonize requires active_agent_cli in "
+                                "dormammu.json or ~/.dormammu/config. "
+                                "It now reuses the normal dormammu run loop "
+                                "instead of per-phase daemon CLI settings."
+                            ),
+                            "reason": "active_agent_cli_missing",
+                        }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_pending_decision":
                     ready = [

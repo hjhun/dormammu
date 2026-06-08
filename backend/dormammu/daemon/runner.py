@@ -2494,9 +2494,59 @@ class DaemonRunner:
         return "phase_4"
 
     def _resolve_agent_cli(self, config: AppConfig) -> Path:
+        agent_cli_decision = self._project_typescript_agent_cli_decision(config)
+        if agent_cli_decision is not None:
+            if agent_cli_decision["action"] == "use":
+                return Path(str(agent_cli_decision["agent_cli"]))
+            raise RuntimeError(str(agent_cli_decision["error_message"]))
         if config.active_agent_cli is not None:
             return config.active_agent_cli
-        raise RuntimeError(
+        raise RuntimeError(self._missing_agent_cli_error_message())
+
+    def _project_typescript_agent_cli_decision(
+        self,
+        config: AppConfig,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_agent_cli_decision",
+            "active_agent_cli": (
+                str(config.active_agent_cli)
+                if config.active_agent_cli is not None
+                else None
+            ),
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._agent_cli_expectations(config)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "agent_cli": expected["agentCli"],
+            "error_message": expected["errorMessage"],
+        }
+
+    @classmethod
+    def _agent_cli_expectations(cls, config: AppConfig) -> dict[str, object]:
+        if config.active_agent_cli is not None:
+            return {
+                "action": "use",
+                "agentCli": str(config.active_agent_cli),
+                "errorMessage": None,
+                "reason": "active_agent_cli_configured",
+            }
+        return {
+            "action": "error",
+            "agentCli": None,
+            "errorMessage": cls._missing_agent_cli_error_message(),
+            "reason": "active_agent_cli_missing",
+        }
+
+    @staticmethod
+    def _missing_agent_cli_error_message() -> str:
+        return (
             "daemonize requires active_agent_cli in dormammu.json or ~/.dormammu/config. "
             "It now reuses the normal dormammu run loop instead of per-phase daemon CLI settings."
         )
