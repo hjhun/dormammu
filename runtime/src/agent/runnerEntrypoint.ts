@@ -54,6 +54,7 @@ import {
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
   daemonResultReportDecision,
+  daemonResultStatusDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
@@ -73,6 +74,7 @@ import {
   type DaemonPromptSettleDecision,
   type DaemonQueueFileDecision,
   type DaemonResultReportDecision,
+  type DaemonResultStatusDecision,
   type DaemonRunFinishedDecision,
   type DaemonShutdownDecision,
   type DaemonStartupDecision,
@@ -391,6 +393,16 @@ export type DaemonExistingResultEntrypointResultPayload =
     entrypoint: "daemon_existing_result_decision";
   };
 
+export type DaemonResultStatusEntrypointPayload = {
+  entrypoint: "daemon_result_status_decision";
+  result_text: string;
+};
+
+export type DaemonResultStatusEntrypointResultPayload =
+  DaemonResultStatusDecision & {
+    entrypoint: "daemon_result_status_decision";
+  };
+
 export type DaemonPromptSettleEntrypointPayload = {
   entrypoint: "daemon_prompt_settle_decision";
   prompt_path: string;
@@ -532,6 +544,7 @@ export type RunnerCliPayload =
   | DaemonPromptSettleEntrypointPayload
   | DaemonQueueFileEntrypointPayload
   | DaemonResultReportEntrypointPayload
+  | DaemonResultStatusEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupEntrypointPayload
@@ -564,6 +577,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptSettleEntrypointResultPayload
   | DaemonQueueFileEntrypointResultPayload
   | DaemonResultReportEntrypointResultPayload
+  | DaemonResultStatusEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
@@ -747,6 +761,17 @@ export function runDaemonExistingResultEntrypoint(
         payload.existing_result_status,
         "existing_result_status"
       ) ?? null
+    })
+  };
+}
+
+export function runDaemonResultStatusEntrypoint(
+  payload: DaemonResultStatusEntrypointPayload
+): DaemonResultStatusEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_result_status_decision",
+    ...daemonResultStatusDecision({
+      resultText: parseString(payload.result_text, "result_text")
     })
   };
 }

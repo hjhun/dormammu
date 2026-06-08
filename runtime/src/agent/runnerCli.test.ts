@@ -599,6 +599,24 @@ test("dormammu-agent-runner can project daemon existing result decisions", () =>
   });
 });
 
+test("dormammu-agent-runner can project daemon result status decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_result_status_decision",
+      result_text: "# Result\n\n- Status: `blocked`\n"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_result_status_decision",
+    status: "blocked",
+    reason: "status_line_found"
+  });
+});
+
 test("dormammu-agent-runner can project daemon prompt settle decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

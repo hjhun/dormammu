@@ -18,6 +18,7 @@ import {
   runDaemonPromptSettleEntrypoint,
   runDaemonQueueFileEntrypoint,
   runDaemonResultReportEntrypoint,
+  runDaemonResultStatusEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
@@ -536,6 +537,20 @@ test("runDaemonExistingResultEntrypoint projects stale result removal", () => {
       resultPath: "/repo/results/001-first_RESULT.md",
       existingResultStatus: "completed",
       reason: "completed_result_reprocess"
+    }
+  );
+});
+
+test("runDaemonResultStatusEntrypoint projects result status parsing", () => {
+  assert.deepEqual(
+    runDaemonResultStatusEntrypoint({
+      entrypoint: "daemon_result_status_decision",
+      result_text: "# Result\n\n- Status: `failed`\n"
+    }),
+    {
+      entrypoint: "daemon_result_status_decision",
+      status: "failed",
+      reason: "status_line_found"
     }
   );
 });

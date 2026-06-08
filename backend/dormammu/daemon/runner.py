@@ -789,6 +789,43 @@ class DaemonRunner:
             "reason": expected["reason"],
         }
 
+    def _project_typescript_result_status_decision(
+        self,
+        *,
+        result_text: str,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_result_status_decision",
+            "result_text": result_text,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._result_status_expectations(result_text=result_text)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "status": expected["status"],
+            "reason": expected["reason"],
+        }
+
+    @staticmethod
+    def _result_status_expectations(
+        *,
+        result_text: str,
+    ) -> dict[str, object]:
+        match = _RESULT_STATUS_RE.search(result_text)
+        if match is None:
+            return {
+                "status": None,
+                "reason": "status_line_missing",
+            }
+        return {
+            "status": match.group(1).strip(),
+            "reason": "status_line_found",
+        }
+
     @classmethod
     def _terminal_error_expectations(
         cls,
@@ -2354,6 +2391,12 @@ class DaemonRunner:
             text = result_path.read_text(encoding="utf-8")
         except OSError:
             return None
+        result_status_decision = self._project_typescript_result_status_decision(
+            result_text=text,
+        )
+        if result_status_decision is not None:
+            status = result_status_decision["status"]
+            return status if isinstance(status, str) else None
         match = _RESULT_STATUS_RE.search(text)
         if match is None:
             return None

@@ -427,6 +427,23 @@ class DaemonRunnerTests(unittest.TestCase):
                     "existing_result_status": "completed",
                 },
             )
+            result_status_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_result_status_decision"
+            )
+            self.assertEqual(
+                result_status_payload,
+                {
+                    "entrypoint": "daemon_result_status_decision",
+                    "result_text": "# Result\n\n## Summary\n\n- Status: `completed`\n",
+                },
+            )
 
     def test_scan_prompt_queue_can_use_typescript_settle_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1891,6 +1908,25 @@ class DaemonRunnerTests(unittest.TestCase):
                             "fake_completed_result_reprocess"
                             if should_remove
                             else "fake_existing_result_keep"
+                        ),
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_result_status_decision":
+                    status = None
+                    for line in payload.get("result_text", "").splitlines():
+                        prefix = "- Status: `"
+                        if line.startswith(prefix) and line.endswith("`"):
+                            raw_status = line[len(prefix):-1]
+                            if raw_status:
+                                status = raw_status.strip()
+                                break
+                    print(json.dumps({{
+                        "entrypoint": "daemon_result_status_decision",
+                        "status": status,
+                        "reason": (
+                            "status_line_found"
+                            if status is not None
+                            else "status_line_missing"
                         ),
                     }}, ensure_ascii=True))
                     raise SystemExit(0)

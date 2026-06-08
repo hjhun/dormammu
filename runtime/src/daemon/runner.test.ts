@@ -14,6 +14,7 @@ import {
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
   daemonResultReportDecision,
+  daemonResultStatusDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
@@ -271,6 +272,30 @@ test("daemonTerminalErrorDecision projects blocked and fallback statuses", () =>
       nextPendingTask: null,
       message: "Loop finished with terminal status: interrupted.",
       reason: "terminal_status_fallback"
+    }
+  );
+});
+
+test("daemonResultStatusDecision extracts rendered result statuses", () => {
+  assert.deepEqual(
+    daemonResultStatusDecision({
+      resultText: "# Result\n\n- Status: ` completed `\n"
+    }),
+    {
+      status: "completed",
+      reason: "status_line_found"
+    }
+  );
+});
+
+test("daemonResultStatusDecision returns null when status is missing", () => {
+  assert.deepEqual(
+    daemonResultStatusDecision({
+      resultText: "# Result\n\nNo status yet.\n"
+    }),
+    {
+      status: null,
+      reason: "status_line_missing"
     }
   );
 });

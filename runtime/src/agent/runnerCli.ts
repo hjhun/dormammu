@@ -16,6 +16,7 @@ import {
   runDaemonPromptSettleEntrypoint,
   runDaemonQueueFileEntrypoint,
   runDaemonResultReportEntrypoint,
+  runDaemonResultStatusEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
@@ -48,6 +49,7 @@ import {
   type DaemonPromptSettleEntrypointPayload,
   type DaemonQueueFileEntrypointPayload,
   type DaemonResultReportEntrypointPayload,
+  type DaemonResultStatusEntrypointPayload,
   type DaemonRunFinishedEntrypointPayload,
   type DaemonShutdownEntrypointPayload,
   type DaemonStartupEntrypointPayload,
@@ -181,6 +183,9 @@ async function runWithSignalHandlers(
   if (isDaemonResultReportPayload(payload)) {
     return runDaemonResultReportEntrypoint(payload);
   }
+  if (isDaemonResultStatusPayload(payload)) {
+    return runDaemonResultStatusEntrypoint(payload);
+  }
   if (isDaemonRunFinishedPayload(payload)) {
     return runDaemonRunFinishedEntrypoint(payload);
   }
@@ -249,6 +254,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_prompt_settle_decision" &&
       payload.entrypoint !== "daemon_queue_file_decision" &&
       payload.entrypoint !== "daemon_result_report_decision" &&
+      payload.entrypoint !== "daemon_result_status_decision" &&
       payload.entrypoint !== "daemon_run_finished_decision" &&
       payload.entrypoint !== "daemon_shutdown_decision" &&
       payload.entrypoint !== "daemon_startup_decision" &&
@@ -408,6 +414,15 @@ function isDaemonRunFinishedPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_run_finished_decision"
+  );
+}
+
+function isDaemonResultStatusPayload(
+  payload: RunnerCliPayload
+): payload is DaemonResultStatusEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_result_status_decision"
   );
 }
 

@@ -116,6 +116,15 @@ export type DaemonTerminalErrorDecision = {
   reason: string;
 };
 
+export type DaemonResultStatusDecisionInput = {
+  resultText: string;
+};
+
+export type DaemonResultStatusDecision = {
+  status: string | null;
+  reason: string;
+};
+
 export type DaemonExistingResultAction = "remove" | "keep";
 
 export type DaemonExistingResultDecisionInput = {
@@ -494,6 +503,22 @@ export function daemonTerminalErrorDecision(
     nextPendingTask,
     message: `Loop finished with terminal status: ${status}.`,
     reason: "terminal_status_fallback"
+  };
+}
+
+export function daemonResultStatusDecision(
+  input: DaemonResultStatusDecisionInput
+): DaemonResultStatusDecision {
+  const match = /^- Status: `([^`]+)`$/m.exec(input.resultText);
+  if (match === null) {
+    return {
+      status: null,
+      reason: "status_line_missing"
+    };
+  }
+  return {
+    status: match[1]?.trim() ?? "",
+    reason: "status_line_found"
   };
 }
 
