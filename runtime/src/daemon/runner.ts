@@ -284,6 +284,15 @@ export type DaemonSupervisorHandoffDecision = {
 
 export type DaemonRunLifecycleEventKind = "requested" | "started";
 
+export type DaemonPromptSummaryDecisionInput = {
+  promptText: string;
+};
+
+export type DaemonPromptSummaryDecision = {
+  promptSummary: string | null;
+  reason: "daemon_prompt_summary_projected";
+};
+
 export type DaemonRunLifecycleEventDecisionInput = {
   eventKind: DaemonRunLifecycleEventKind;
   promptSummary: string | null;
@@ -1230,6 +1239,22 @@ export function daemonSupervisorHandoffDecision(
       attempt
     },
     reason: "daemon_supervisor_prelude_handoff"
+  };
+}
+
+export function daemonPromptSummaryDecision(
+  input: DaemonPromptSummaryDecisionInput
+): DaemonPromptSummaryDecision {
+  const promptText = input.promptText;
+  if (promptText.trim().length === 0) {
+    return {
+      promptSummary: null,
+      reason: "daemon_prompt_summary_projected"
+    };
+  }
+  return {
+    promptSummary: nonEmpty(promptText.split(/\r\n|\n|\r/u)[0] ?? ""),
+    reason: "daemon_prompt_summary_projected"
   };
 }
 

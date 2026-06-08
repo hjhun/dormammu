@@ -63,6 +63,7 @@ import {
   daemonPromptRouteDecision,
   daemonPromptSessionDecision,
   daemonPromptSettleDecision,
+  daemonPromptSummaryDecision,
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
   daemonResultMarkdownProjection,
@@ -104,6 +105,7 @@ import {
   type DaemonPromptRouteDecision,
   type DaemonPromptSessionDecision,
   type DaemonPromptSettleDecision,
+  type DaemonPromptSummaryDecision,
   type DaemonQueueFileDecision,
   type DaemonResultArtifactRefDecision,
   type DaemonResultMarkdownProjection,
@@ -485,6 +487,16 @@ export type DaemonRunLifecycleEventEntrypointResultPayload =
     entrypoint: "daemon_run_lifecycle_event_decision";
   };
 
+export type DaemonPromptSummaryEntrypointPayload = {
+  entrypoint: "daemon_prompt_summary_decision";
+  prompt_text: string;
+};
+
+export type DaemonPromptSummaryEntrypointResultPayload =
+  DaemonPromptSummaryDecision & {
+    entrypoint: "daemon_prompt_summary_decision";
+  };
+
 export type DaemonResultReportEntrypointPayload = {
   entrypoint: "daemon_result_report_decision";
   prompt_path: string;
@@ -860,6 +872,7 @@ export type RunnerCliPayload =
   | DaemonGoalSourceEntrypointPayload
   | DaemonAgentCliEntrypointPayload
   | DaemonRunLifecycleEventEntrypointPayload
+  | DaemonPromptSummaryEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
   | DaemonPromptCompletionLineEntrypointPayload
   | DaemonPromptInterruptionEntrypointPayload
@@ -914,6 +927,7 @@ export type RunnerCliResultPayload =
   | DaemonGoalSourceEntrypointResultPayload
   | DaemonAgentCliEntrypointResultPayload
   | DaemonRunLifecycleEventEntrypointResultPayload
+  | DaemonPromptSummaryEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonPromptCompletionLineEntrypointResultPayload
   | DaemonPromptInterruptionEntrypointResultPayload
@@ -1154,6 +1168,17 @@ export function runDaemonRunLifecycleEventEntrypoint(
       eventKind: parseRunLifecycleEventKind(payload.event_kind),
       promptSummary:
         parseOptionalString(payload.prompt_summary, "prompt_summary") ?? null
+    })
+  };
+}
+
+export function runDaemonPromptSummaryEntrypoint(
+  payload: DaemonPromptSummaryEntrypointPayload
+): DaemonPromptSummaryEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_prompt_summary_decision",
+    ...daemonPromptSummaryDecision({
+      promptText: parseString(payload.prompt_text, "prompt_text")
     })
   };
 }

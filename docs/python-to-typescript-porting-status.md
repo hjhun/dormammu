@@ -361,7 +361,9 @@ Ported modules:
   bridge consumption for run event type, role/stage/status, source,
   entrypoint, trigger, prompt summary, and decision reason metadata while
   Python retains `LifecycleRecorder.emit()`, lifecycle enum mapping, prompt
-  path metadata, and malformed-bridge fallback behavior
+  path metadata, and malformed-bridge fallback behavior. TypeScript also owns
+  daemon run lifecycle prompt summary projection for requested events before
+  the run lifecycle event envelope is projected
   -> `runtime/src/daemon/runner.ts`,
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
@@ -746,8 +748,8 @@ Port the remaining daemon and goals orchestration surface:
   the refine/plan prelude handoff while Python keeps lifecycle emission,
   `SupervisorHandoffPayload` construction, and handoff prompt generation.
   TypeScript also owns daemon run requested/started lifecycle event metadata
-  while Python keeps lifecycle emission, enum mapping, and prompt path
-  metadata.
+  and requested-event prompt summary projection while Python keeps lifecycle
+  emission, enum mapping, and prompt path metadata.
   TypeScript also owns daemon result report publication decisions for report
   write intent, prompt cleanup intent, and artifact metadata projection, plus
   daemon result report fallback decisions for configured-authoring failure

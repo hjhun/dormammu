@@ -707,6 +707,24 @@ test("dormammu-agent-runner can project daemon run lifecycle metadata", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon prompt summaries", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_prompt_summary_decision",
+      prompt_text: " Build the daemon bridge \n\nDetails"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_prompt_summary_decision",
+    promptSummary: "Build the daemon bridge",
+    reason: "daemon_prompt_summary_projected"
+  });
+});
+
 test("dormammu-agent-runner can project daemon result report decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

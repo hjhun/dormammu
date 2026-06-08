@@ -36,6 +36,7 @@ import {
   runDaemonRoadmapPhaseEntrypoint,
   runDaemonRunLifecycleEventEntrypoint,
   runDaemonRunFinishedEntrypoint,
+  runDaemonPromptSummaryEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupBannerEntrypoint,
   runDaemonStartupEntrypoint,
@@ -90,6 +91,7 @@ import {
   type DaemonRoadmapPhaseEntrypointPayload,
   type DaemonRunLifecycleEventEntrypointPayload,
   type DaemonRunFinishedEntrypointPayload,
+  type DaemonPromptSummaryEntrypointPayload,
   type DaemonShutdownEntrypointPayload,
   type DaemonStartupBannerEntrypointPayload,
   type DaemonStartupEntrypointPayload,
@@ -240,6 +242,9 @@ async function runWithSignalHandlers(
   if (isDaemonRunLifecycleEventPayload(payload)) {
     return runDaemonRunLifecycleEventEntrypoint(payload);
   }
+  if (isDaemonPromptSummaryPayload(payload)) {
+    return runDaemonPromptSummaryEntrypoint(payload);
+  }
   if (isDaemonPromptRoutePayload(payload)) {
     return runDaemonPromptRouteEntrypoint(payload);
   }
@@ -373,6 +378,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_agent_cli_decision" &&
       payload.entrypoint !== "daemon_artifact_persisted_event_decision" &&
       payload.entrypoint !== "daemon_run_lifecycle_event_decision" &&
+      payload.entrypoint !== "daemon_prompt_summary_decision" &&
       payload.entrypoint !== "daemon_run_finished_decision" &&
       payload.entrypoint !== "daemon_prompt_completion_line_decision" &&
       payload.entrypoint !== "daemon_prompt_interruption_decision" &&
@@ -582,6 +588,15 @@ function isDaemonRunLifecycleEventPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_run_lifecycle_event_decision"
+  );
+}
+
+function isDaemonPromptSummaryPayload(
+  payload: RunnerCliPayload
+): payload is DaemonPromptSummaryEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_prompt_summary_decision"
   );
 }
 

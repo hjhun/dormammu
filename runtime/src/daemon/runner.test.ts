@@ -23,6 +23,7 @@ import {
   daemonPromptRouteDecision,
   daemonPromptSessionDecision,
   daemonPromptSettleDecision,
+  daemonPromptSummaryDecision,
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
   daemonResultMarkdownProjection,
@@ -493,6 +494,27 @@ test("daemonRunLifecycleEventDecision projects requested and started metadata", 
         promptSummary: null
       },
       reason: "daemon_run_started"
+    }
+  );
+});
+
+test("daemonPromptSummaryDecision projects first-line prompt summaries", () => {
+  assert.deepEqual(
+    daemonPromptSummaryDecision({
+      promptText: "  Build the daemon bridge  \n\nDetails"
+    }),
+    {
+      promptSummary: "Build the daemon bridge",
+      reason: "daemon_prompt_summary_projected"
+    }
+  );
+  assert.deepEqual(
+    daemonPromptSummaryDecision({
+      promptText: "\n\nDetails"
+    }),
+    {
+      promptSummary: null,
+      reason: "daemon_prompt_summary_projected"
     }
   );
 });

@@ -1081,6 +1081,41 @@ class DaemonRunner:
             prompt_summary=prompt_summary,
         )
 
+    def _prompt_summary_decision(self, prompt_text: str) -> dict[str, object]:
+        decision = self._project_typescript_prompt_summary_decision(prompt_text)
+        if decision is not None:
+            return decision
+        return self._prompt_summary_expectations(prompt_text)
+
+    def _project_typescript_prompt_summary_decision(
+        self,
+        prompt_text: str,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_prompt_summary_decision",
+            "prompt_text": prompt_text,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._prompt_summary_expectations(prompt_text)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    @staticmethod
+    def _prompt_summary_expectations(prompt_text: str) -> dict[str, object]:
+        if not prompt_text.strip():
+            prompt_summary = None
+        else:
+            prompt_summary = prompt_text.splitlines()[0].strip() or None
+        return {
+            "entrypoint": "daemon_prompt_summary_decision",
+            "promptSummary": prompt_summary,
+            "reason": "daemon_prompt_summary_projected",
+        }
+
     def _project_typescript_run_lifecycle_event_decision(
         self,
         *,
@@ -2723,18 +2758,20 @@ class DaemonRunner:
                 label=prompt_path.stem,
                 default_metadata={"source": "daemon_runner", "entrypoint": "DaemonRunner._process_prompt"},
             )
-            prompt_summary = (
-                prompt_text.splitlines()[0].strip() if prompt_text.strip() else None
-            )
+            prompt_summary = self._prompt_summary_decision(prompt_text)["promptSummary"]
             run_requested_event = self._run_lifecycle_event_decision(
                 event_kind="requested",
-                prompt_summary=prompt_summary,
+                prompt_summary=(
+                    str(prompt_summary) if prompt_summary is not None else None
+                ),
             )
             run_requested_payload = run_requested_event["payload"]
             if not isinstance(run_requested_payload, Mapping):
                 run_requested_payload = self._run_lifecycle_event_expectations(
                     event_kind="requested",
-                    prompt_summary=prompt_summary,
+                    prompt_summary=(
+                        str(prompt_summary) if prompt_summary is not None else None
+                    ),
                 )["payload"]
             lifecycle.emit(
                 event_type=LifecycleEventType.RUN_REQUESTED,

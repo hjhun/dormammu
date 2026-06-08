@@ -1600,6 +1600,44 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_prompt_summary_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+
+            decision = runner._prompt_summary_decision(
+                " Build the daemon bridge \n\nDetails",
+            )
+
+            self.assertEqual(
+                decision,
+                {
+                    "entrypoint": "daemon_prompt_summary_decision",
+                    "promptSummary": "Build the daemon bridge",
+                    "reason": "daemon_prompt_summary_projected",
+                },
+            )
+            payload = json.loads(
+                (root / "captured-runner-payload.json").read_text(
+                    encoding="utf-8",
+                )
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_prompt_summary_decision",
+                    "prompt_text": " Build the daemon bridge \n\nDetails",
+                },
+            )
+
     def test_result_report_artifact_ref_can_use_typescript_bridge(self) -> None:
         class PromptResultWithoutArtifact:
             result_report_artifact = None
@@ -3026,6 +3064,18 @@ class DaemonRunnerTests(unittest.TestCase):
                             "attempt": attempt,
                         }},
                         "reason": "daemon_supervisor_prelude_handoff",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_prompt_summary_decision":
+                    prompt_text = payload.get("prompt_text") or ""
+                    if prompt_text.strip():
+                        prompt_summary = prompt_text.splitlines()[0].strip() or None
+                    else:
+                        prompt_summary = None
+                    print(json.dumps({{
+                        "entrypoint": "daemon_prompt_summary_decision",
+                        "promptSummary": prompt_summary,
+                        "reason": "daemon_prompt_summary_projected",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_run_lifecycle_event_decision":

@@ -38,6 +38,7 @@ import {
   runDaemonRoadmapPhaseEntrypoint,
   runDaemonRunLifecycleEventEntrypoint,
   runDaemonRunFinishedEntrypoint,
+  runDaemonPromptSummaryEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupBannerEntrypoint,
   runDaemonStartupEntrypoint,
@@ -651,6 +652,20 @@ test("runDaemonRunLifecycleEventEntrypoint projects run event metadata", () => {
         promptSummary: "Build the daemon bridge"
       },
       reason: "daemon_run_requested"
+    }
+  );
+});
+
+test("runDaemonPromptSummaryEntrypoint projects run prompt summaries", () => {
+  assert.deepEqual(
+    runDaemonPromptSummaryEntrypoint({
+      entrypoint: "daemon_prompt_summary_decision",
+      prompt_text: "# Ship the bridge\n\nBody"
+    }),
+    {
+      entrypoint: "daemon_prompt_summary_decision",
+      promptSummary: "# Ship the bridge",
+      reason: "daemon_prompt_summary_projected"
     }
   );
 });
