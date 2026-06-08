@@ -584,6 +584,52 @@ test("dormammu-agent-runner can project daemon instance unlock decisions", () =>
   });
 });
 
+test("dormammu-agent-runner can project daemon heartbeat write decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_heartbeat_write_decision",
+      heartbeat_path_configured: true,
+      pid: 42,
+      status: "idle",
+      timestamp: "2026-06-08T03:10:00+00:00"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_heartbeat_write_decision",
+    action: "write",
+    ensureParent: true,
+    heartbeatPayload: {
+      pid: 42,
+      status: "idle",
+      ts: "2026-06-08T03:10:00+00:00"
+    },
+    reason: "heartbeat_write"
+  });
+});
+
+test("dormammu-agent-runner can project daemon heartbeat remove decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_heartbeat_remove_decision",
+      heartbeat_path_configured: true
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_heartbeat_remove_decision",
+    action: "remove",
+    removeHeartbeat: true,
+    reason: "heartbeat_remove"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

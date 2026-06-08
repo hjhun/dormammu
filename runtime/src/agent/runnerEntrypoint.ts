@@ -42,6 +42,8 @@ import {
   type GoalQueueCandidate
 } from "../goals/discovery.js";
 import {
+  daemonHeartbeatRemoveDecision,
+  daemonHeartbeatWriteDecision,
   daemonInstanceLockDecision,
   daemonInstanceUnlockDecision,
   daemonLoopIterationDecision,
@@ -49,6 +51,9 @@ import {
   daemonPromptRouteDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
+  type DaemonHeartbeatRemoveDecision,
+  type DaemonHeartbeatStatus,
+  type DaemonHeartbeatWriteDecision,
   type DaemonInstanceLockDecision,
   type DaemonInstanceUnlockDecision,
   type DaemonLoopIterationDecision,
@@ -359,8 +364,33 @@ export type DaemonInstanceUnlockEntrypointResultPayload =
     entrypoint: "daemon_instance_unlock_decision";
   };
 
+export type DaemonHeartbeatWriteEntrypointPayload = {
+  entrypoint: "daemon_heartbeat_write_decision";
+  heartbeat_path_configured: boolean;
+  pid: number;
+  status: DaemonHeartbeatStatus;
+  timestamp: string;
+};
+
+export type DaemonHeartbeatWriteEntrypointResultPayload =
+  DaemonHeartbeatWriteDecision & {
+    entrypoint: "daemon_heartbeat_write_decision";
+  };
+
+export type DaemonHeartbeatRemoveEntrypointPayload = {
+  entrypoint: "daemon_heartbeat_remove_decision";
+  heartbeat_path_configured: boolean;
+};
+
+export type DaemonHeartbeatRemoveEntrypointResultPayload =
+  DaemonHeartbeatRemoveDecision & {
+    entrypoint: "daemon_heartbeat_remove_decision";
+  };
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
+  | DaemonHeartbeatRemoveEntrypointPayload
+  | DaemonHeartbeatWriteEntrypointPayload
   | DaemonInstanceLockEntrypointPayload
   | DaemonInstanceUnlockEntrypointPayload
   | DaemonLoopIterationEntrypointPayload
@@ -382,6 +412,8 @@ export type RunnerCliPayload =
   | GoalsWatchLoopDecisionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
+  | DaemonHeartbeatRemoveEntrypointResultPayload
+  | DaemonHeartbeatWriteEntrypointResultPayload
   | DaemonInstanceLockEntrypointResultPayload
   | DaemonInstanceUnlockEntrypointResultPayload
   | DaemonLoopIterationEntrypointResultPayload
@@ -571,6 +603,37 @@ export function runDaemonInstanceUnlockEntrypoint(
         "fcntl_available"
       ),
       lockHeld: parseBoolean(payload.lock_held, "lock_held")
+    })
+  };
+}
+
+export function runDaemonHeartbeatWriteEntrypoint(
+  payload: DaemonHeartbeatWriteEntrypointPayload
+): DaemonHeartbeatWriteEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_heartbeat_write_decision",
+    ...daemonHeartbeatWriteDecision({
+      heartbeatPathConfigured: parseBoolean(
+        payload.heartbeat_path_configured,
+        "heartbeat_path_configured"
+      ),
+      pid: parseNumber(payload.pid, "pid"),
+      status: parseHeartbeatStatus(payload.status),
+      timestamp: parseRequiredString(payload.timestamp, "timestamp")
+    })
+  };
+}
+
+export function runDaemonHeartbeatRemoveEntrypoint(
+  payload: DaemonHeartbeatRemoveEntrypointPayload
+): DaemonHeartbeatRemoveEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_heartbeat_remove_decision",
+    ...daemonHeartbeatRemoveDecision({
+      heartbeatPathConfigured: parseBoolean(
+        payload.heartbeat_path_configured,
+        "heartbeat_path_configured"
+      )
     })
   };
 }
@@ -949,6 +1012,13 @@ function parseRequestClass(value: unknown): RequestClass {
     value !== "full_workflow"
   ) {
     throw new Error("request_class must be a supported request class");
+  }
+  return value;
+}
+
+function parseHeartbeatStatus(value: unknown): DaemonHeartbeatStatus {
+  if (value !== "busy" && value !== "idle") {
+    throw new Error("status must be busy or idle");
   }
   return value;
 }

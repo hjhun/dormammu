@@ -6,6 +6,8 @@ import test from "node:test";
 
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
+  runDaemonHeartbeatRemoveEntrypoint,
+  runDaemonHeartbeatWriteEntrypoint,
   runDaemonInstanceLockEntrypoint,
   runDaemonInstanceUnlockEntrypoint,
   runDaemonLoopIterationEntrypoint,
@@ -510,6 +512,44 @@ test("runDaemonInstanceUnlockEntrypoint projects daemon unlock decisions", () =>
       clearPidLockFile: true,
       removePidFile: true,
       reason: "instance_lock_release"
+    }
+  );
+});
+
+test("runDaemonHeartbeatWriteEntrypoint projects heartbeat payloads", () => {
+  assert.deepEqual(
+    runDaemonHeartbeatWriteEntrypoint({
+      entrypoint: "daemon_heartbeat_write_decision",
+      heartbeat_path_configured: true,
+      pid: 42,
+      status: "busy",
+      timestamp: "2026-06-08T03:10:00+00:00"
+    }),
+    {
+      entrypoint: "daemon_heartbeat_write_decision",
+      action: "write",
+      ensureParent: true,
+      heartbeatPayload: {
+        pid: 42,
+        status: "busy",
+        ts: "2026-06-08T03:10:00+00:00"
+      },
+      reason: "heartbeat_write"
+    }
+  );
+});
+
+test("runDaemonHeartbeatRemoveEntrypoint projects heartbeat removal", () => {
+  assert.deepEqual(
+    runDaemonHeartbeatRemoveEntrypoint({
+      entrypoint: "daemon_heartbeat_remove_decision",
+      heartbeat_path_configured: true
+    }),
+    {
+      entrypoint: "daemon_heartbeat_remove_decision",
+      action: "remove",
+      removeHeartbeat: true,
+      reason: "heartbeat_remove"
     }
   );
 });

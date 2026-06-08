@@ -963,6 +963,82 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertTrue(payloads[0]["lock_acquired"])
             self.assertTrue(payloads[1]["lock_held"])
 
+    def test_write_heartbeat_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=io.StringIO())
+            runner._heartbeat_path = root / "state" / "daemon_heartbeat.json"
+
+            with (
+                mock.patch.object(daemon_runner_module, "_get_pid", return_value=77),
+                mock.patch.object(
+                    daemon_runner_module,
+                    "_iso_now",
+                    return_value="2026-06-08T03:10:00+00:00",
+                ),
+            ):
+                runner._write_heartbeat(status="busy")
+
+            self.assertEqual(
+                json.loads(runner._heartbeat_path.read_text(encoding="utf-8")),
+                {
+                    "pid": 77,
+                    "status": "busy",
+                    "ts": "2026-06-08T03:10:00+00:00",
+                },
+            )
+            payload = json.loads(
+                (root / "captured-runner-payload.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_heartbeat_write_decision",
+                    "heartbeat_path_configured": True,
+                    "pid": 77,
+                    "status": "busy",
+                    "timestamp": "2026-06-08T03:10:00+00:00",
+                },
+            )
+
+    def test_remove_heartbeat_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=io.StringIO())
+            runner._heartbeat_path = root / "state" / "daemon_heartbeat.json"
+            runner._heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+            runner._heartbeat_path.write_text("{}", encoding="utf-8")
+
+            runner._remove_heartbeat()
+
+            self.assertFalse(runner._heartbeat_path.exists())
+            payload = json.loads(
+                (root / "captured-runner-payload.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_heartbeat_remove_decision",
+                    "heartbeat_path_configured": True,
+                },
+            )
+
     @unittest.skipUnless(InotifyWatcher.is_available(), "inotify is only available on Linux")
     def test_daemonize_cli_smoke_processes_prompt_via_inotify(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1421,6 +1497,39 @@ class DaemonRunnerTests(unittest.TestCase):
                             if should_release
                             else "fake_lock_skip"
                         ),
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_heartbeat_write_decision":
+                    if payload["heartbeat_path_configured"]:
+                        response = {{
+                            "entrypoint": "daemon_heartbeat_write_decision",
+                            "action": "write",
+                            "ensureParent": True,
+                            "heartbeatPayload": {{
+                                "pid": payload["pid"],
+                                "status": payload["status"],
+                                "ts": payload["timestamp"],
+                            }},
+                            "reason": "fake_heartbeat_write",
+                        }}
+                    else:
+                        response = {{
+                            "entrypoint": "daemon_heartbeat_write_decision",
+                            "action": "skip",
+                            "ensureParent": False,
+                            "heartbeatPayload": None,
+                            "reason": "fake_heartbeat_skip",
+                        }}
+                    print(json.dumps(response, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_heartbeat_remove_decision":
+                    print(json.dumps({{
+                        "entrypoint": "daemon_heartbeat_remove_decision",
+                        "action": (
+                            "remove" if payload["heartbeat_path_configured"] else "skip"
+                        ),
+                        "removeHeartbeat": payload["heartbeat_path_configured"],
+                        "reason": "fake_heartbeat_remove",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 raise SystemExit(2)

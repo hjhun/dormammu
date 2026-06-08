@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  daemonHeartbeatRemoveDecision,
+  daemonHeartbeatWriteDecision,
   daemonInstanceLockDecision,
   daemonInstanceUnlockDecision,
   daemonLoopIterationDecision,
@@ -270,6 +272,57 @@ test("daemonInstanceUnlockDecision projects release cleanup", () => {
       clearPidLockFile: true,
       removePidFile: true,
       reason: "instance_lock_release"
+    }
+  );
+});
+
+test("daemonHeartbeatWriteDecision projects heartbeat payloads", () => {
+  assert.deepEqual(
+    daemonHeartbeatWriteDecision({
+      heartbeatPathConfigured: true,
+      pid: 42,
+      status: "busy",
+      timestamp: "2026-06-08T03:10:00+00:00"
+    }),
+    {
+      action: "write",
+      ensureParent: true,
+      heartbeatPayload: {
+        pid: 42,
+        status: "busy",
+        ts: "2026-06-08T03:10:00+00:00"
+      },
+      reason: "heartbeat_write"
+    }
+  );
+});
+
+test("daemonHeartbeatWriteDecision skips unconfigured paths", () => {
+  assert.deepEqual(
+    daemonHeartbeatWriteDecision({
+      heartbeatPathConfigured: false,
+      pid: 42,
+      status: "idle",
+      timestamp: "2026-06-08T03:10:00+00:00"
+    }),
+    {
+      action: "skip",
+      ensureParent: false,
+      heartbeatPayload: null,
+      reason: "heartbeat_path_unconfigured"
+    }
+  );
+});
+
+test("daemonHeartbeatRemoveDecision removes configured heartbeat paths", () => {
+  assert.deepEqual(
+    daemonHeartbeatRemoveDecision({
+      heartbeatPathConfigured: true
+    }),
+    {
+      action: "remove",
+      removeHeartbeat: true,
+      reason: "heartbeat_remove"
     }
   );
 });

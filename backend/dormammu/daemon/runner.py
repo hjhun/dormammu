@@ -665,6 +665,90 @@ class DaemonRunner:
             "removePidFile": True,
         }
 
+    def _project_typescript_heartbeat_write_decision(
+        self,
+        *,
+        pid: int,
+        status: str,
+        timestamp: str,
+    ) -> dict[str, object] | None:
+        if status not in {"busy", "idle"}:
+            return None
+        payload = {
+            "entrypoint": "daemon_heartbeat_write_decision",
+            "heartbeat_path_configured": self._heartbeat_path is not None,
+            "pid": pid,
+            "status": status,
+            "timestamp": timestamp,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._heartbeat_write_expectations(
+            pid=pid,
+            status=status,
+            timestamp=timestamp,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "ensure_parent": expected["ensureParent"],
+            "heartbeat_payload": expected["heartbeatPayload"],
+        }
+
+    def _heartbeat_write_expectations(
+        self,
+        *,
+        pid: int,
+        status: str,
+        timestamp: str,
+    ) -> dict[str, object]:
+        if self._heartbeat_path is None:
+            return {
+                "action": "skip",
+                "ensureParent": False,
+                "heartbeatPayload": None,
+            }
+        return {
+            "action": "write",
+            "ensureParent": True,
+            "heartbeatPayload": {
+                "pid": pid,
+                "status": status,
+                "ts": timestamp,
+            },
+        }
+
+    def _project_typescript_heartbeat_remove_decision(self) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_heartbeat_remove_decision",
+            "heartbeat_path_configured": self._heartbeat_path is not None,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._heartbeat_remove_expectations()
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "remove_heartbeat": expected["removeHeartbeat"],
+        }
+
+    def _heartbeat_remove_expectations(self) -> dict[str, object]:
+        if self._heartbeat_path is None:
+            return {
+                "action": "skip",
+                "removeHeartbeat": False,
+            }
+        return {
+            "action": "remove",
+            "removeHeartbeat": True,
+        }
+
     def _loop_iteration_expectations(
         self,
         *,
@@ -904,16 +988,38 @@ class DaemonRunner:
         (ISO-8601 UTC timestamp).  A stale or missing file indicates the daemon
         has crashed or hung.  The file is removed on clean shutdown.
         """
+        timestamp = _iso_now()
+        pid = _get_pid()
+        decision = self._project_typescript_heartbeat_write_decision(
+            pid=pid,
+            status=status,
+            timestamp=timestamp,
+        )
+        if decision is not None:
+            if decision["action"] == "skip":
+                return
+            if self._heartbeat_path is None:
+                return
+            try:
+                if decision["ensure_parent"]:
+                    self._heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+                self._heartbeat_path.write_text(
+                    json.dumps(decision["heartbeat_payload"]),
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+            return
+
         if self._heartbeat_path is None:
             return
         try:
-            import json as _json
             self._heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
             self._heartbeat_path.write_text(
-                _json.dumps({
-                    "pid": _get_pid(),
+                json.dumps({
+                    "pid": pid,
                     "status": status,
-                    "ts": _iso_now(),
+                    "ts": timestamp,
                 }),
                 encoding="utf-8",
             )
@@ -922,6 +1028,15 @@ class DaemonRunner:
 
     def _remove_heartbeat(self) -> None:
         """Delete the heartbeat file on clean shutdown."""
+        decision = self._project_typescript_heartbeat_remove_decision()
+        if decision is not None:
+            if decision["remove_heartbeat"] and self._heartbeat_path is not None:
+                try:
+                    self._heartbeat_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return
+
         if self._heartbeat_path is not None:
             try:
                 self._heartbeat_path.unlink(missing_ok=True)

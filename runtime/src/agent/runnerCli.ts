@@ -4,6 +4,8 @@ import { pathToFileURL } from "node:url";
 import { Writable } from "node:stream";
 
 import {
+  runDaemonHeartbeatRemoveEntrypoint,
+  runDaemonHeartbeatWriteEntrypoint,
   runDaemonInstanceLockEntrypoint,
   runDaemonInstanceUnlockEntrypoint,
   runDaemonLoopIterationEntrypoint,
@@ -25,6 +27,8 @@ import {
   runGoalsWatcherStopDecisionEntrypoint,
   runGoalsWatchLoopDecisionEntrypoint,
   type AgentRunnerEntrypointPayload,
+  type DaemonHeartbeatRemoveEntrypointPayload,
+  type DaemonHeartbeatWriteEntrypointPayload,
   type DaemonInstanceLockEntrypointPayload,
   type DaemonInstanceUnlockEntrypointPayload,
   type DaemonLoopIterationEntrypointPayload,
@@ -114,6 +118,12 @@ async function runWithSignalHandlers(
   if (isGoalsWatchLoopDecisionPayload(payload)) {
     return runGoalsWatchLoopDecisionEntrypoint(payload);
   }
+  if (isDaemonHeartbeatWritePayload(payload)) {
+    return runDaemonHeartbeatWriteEntrypoint(payload);
+  }
+  if (isDaemonHeartbeatRemovePayload(payload)) {
+    return runDaemonHeartbeatRemoveEntrypoint(payload);
+  }
   if (isDaemonInstanceLockPayload(payload)) {
     return runDaemonInstanceLockEntrypoint(payload);
   }
@@ -182,7 +192,9 @@ async function readPayload(args: string[]): Promise<RunnerCliPayload> {
 function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEntrypointPayload {
   return (
     !("entrypoint" in payload) ||
-    (payload.entrypoint !== "daemon_instance_lock_decision" &&
+    (payload.entrypoint !== "daemon_heartbeat_remove_decision" &&
+      payload.entrypoint !== "daemon_heartbeat_write_decision" &&
+      payload.entrypoint !== "daemon_instance_lock_decision" &&
       payload.entrypoint !== "daemon_instance_unlock_decision" &&
       payload.entrypoint !== "daemon_loop_iteration_decision" &&
       payload.entrypoint !== "daemon_pending_decision" &&
@@ -201,6 +213,24 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "goals_watcher_start_decision" &&
       payload.entrypoint !== "goals_watcher_stop_decision" &&
       payload.entrypoint !== "goals_watch_loop_decision")
+  );
+}
+
+function isDaemonHeartbeatWritePayload(
+  payload: RunnerCliPayload
+): payload is DaemonHeartbeatWriteEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_heartbeat_write_decision"
+  );
+}
+
+function isDaemonHeartbeatRemovePayload(
+  payload: RunnerCliPayload
+): payload is DaemonHeartbeatRemoveEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_heartbeat_remove_decision"
   );
 }
 

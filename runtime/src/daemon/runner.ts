@@ -116,6 +116,42 @@ export type DaemonInstanceUnlockDecision = {
   reason: string;
 };
 
+export type DaemonHeartbeatStatus = "busy" | "idle";
+
+export type DaemonHeartbeatWriteAction = "skip" | "write";
+
+export type DaemonHeartbeatWriteDecisionInput = {
+  heartbeatPathConfigured: boolean;
+  pid: number;
+  status: DaemonHeartbeatStatus;
+  timestamp: string;
+};
+
+export type DaemonHeartbeatPayload = {
+  pid: number;
+  status: DaemonHeartbeatStatus;
+  ts: string;
+};
+
+export type DaemonHeartbeatWriteDecision = {
+  action: DaemonHeartbeatWriteAction;
+  ensureParent: boolean;
+  heartbeatPayload: DaemonHeartbeatPayload | null;
+  reason: string;
+};
+
+export type DaemonHeartbeatRemoveAction = "skip" | "remove";
+
+export type DaemonHeartbeatRemoveDecisionInput = {
+  heartbeatPathConfigured: boolean;
+};
+
+export type DaemonHeartbeatRemoveDecision = {
+  action: DaemonHeartbeatRemoveAction;
+  removeHeartbeat: boolean;
+  reason: string;
+};
+
 export function daemonPendingDecision(
   input: DaemonPendingDecisionInput
 ): DaemonPendingDecision {
@@ -318,6 +354,48 @@ export function daemonInstanceUnlockDecision(
     clearPidLockFile: true,
     removePidFile: true,
     reason: "instance_lock_release"
+  };
+}
+
+export function daemonHeartbeatWriteDecision(
+  input: DaemonHeartbeatWriteDecisionInput
+): DaemonHeartbeatWriteDecision {
+  if (!input.heartbeatPathConfigured) {
+    return {
+      action: "skip",
+      ensureParent: false,
+      heartbeatPayload: null,
+      reason: "heartbeat_path_unconfigured"
+    };
+  }
+
+  return {
+    action: "write",
+    ensureParent: true,
+    heartbeatPayload: {
+      pid: Math.trunc(input.pid),
+      status: input.status,
+      ts: input.timestamp
+    },
+    reason: "heartbeat_write"
+  };
+}
+
+export function daemonHeartbeatRemoveDecision(
+  input: DaemonHeartbeatRemoveDecisionInput
+): DaemonHeartbeatRemoveDecision {
+  if (!input.heartbeatPathConfigured) {
+    return {
+      action: "skip",
+      removeHeartbeat: false,
+      reason: "heartbeat_path_unconfigured"
+    };
+  }
+
+  return {
+    action: "remove",
+    removeHeartbeat: true,
+    reason: "heartbeat_remove"
   };
 }
 
