@@ -12,7 +12,9 @@ import {
   runGoalsQueueEntrypoint,
   runGoalsRoleDocumentProjectionEntrypoint,
   runGoalsRoleSequenceEntrypoint,
+  runGoalsSingleGoalDecisionEntrypoint,
   runGoalsTimerDecisionEntrypoint,
+  runGoalsTimerFiredDecisionEntrypoint,
   runGoalsTriggerDecisionEntrypoint
 } from "./runnerEntrypoint.js";
 
@@ -449,6 +451,36 @@ test("runGoalsProcessDecisionEntrypoint projects batch decisions", () => {
       action: "process",
       goalFileCount: 2,
       reason: "goal_files_present"
+    }
+  );
+});
+
+test("runGoalsTimerFiredDecisionEntrypoint projects callback decisions", () => {
+  assert.deepEqual(
+    runGoalsTimerFiredDecisionEntrypoint({
+      entrypoint: "goals_timer_fired_decision",
+      stop_requested: false
+    }),
+    {
+      entrypoint: "goals_timer_fired_decision",
+      action: "process",
+      clearTimerBeforeProcess: true,
+      syncTimerAfterProcess: true,
+      reason: "timer_fired"
+    }
+  );
+});
+
+test("runGoalsSingleGoalDecisionEntrypoint projects prompt write decisions", () => {
+  assert.deepEqual(
+    runGoalsSingleGoalDecisionEntrypoint({
+      entrypoint: "goals_single_goal_decision",
+      prompt_exists: true
+    }),
+    {
+      entrypoint: "goals_single_goal_decision",
+      action: "skip",
+      reason: "queued_prompt_exists"
     }
   );
 });

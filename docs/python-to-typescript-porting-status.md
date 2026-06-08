@@ -170,6 +170,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/goals_scheduler.py`
+- TypeScript-owned goals scheduler timer-fired and single-goal prompt-write
+  decision helpers, plus runner entrypoints and Python `GoalsScheduler`
+  bridge consumption for timer callback and queued-prompt skip/write
+  orchestration with Python fallbacks retained when the bridge is unavailable
+  or malformed
+  -> `runtime/src/goals/scheduler.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/goals_scheduler.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -347,11 +356,13 @@ Port the remaining daemon and goals orchestration surface:
   projection contracts, goal file discovery and queue candidate listing, and
   role output document projection. TypeScript also owns the analyzer /
   planner / designer next-role sequencing decision and prompt projection, plus
-  scheduler timer, trigger-now, and process-goals lifecycle decisions. Python
-  can consume goal file listing, prompt writes, role output document writes,
-  role sequencing, timer decisions, immediate-run decisions, and goal batch
-  processing decisions through the TypeScript runner bridge, with Python
-  fallbacks retained.
+  scheduler timer, trigger-now, process-goals, timer-fired, and single-goal
+  prompt-write lifecycle decisions. Python can consume goal file listing,
+  prompt writes, role output document writes, role sequencing, timer
+  decisions, immediate-run decisions, goal batch processing decisions, timer
+  callback decisions, and queued-prompt skip/write decisions through the
+  TypeScript runner bridge, with Python fallbacks retained.
 - The next slice should continue the goals scheduler facade by lifting
-  timer-fired and single-goal prompt-write orchestration decisions around the
-  existing deterministic goals helpers.
+  watcher start/stop and watch-loop lifecycle decisions around the existing
+  deterministic goals helpers, then move on to the remaining daemon
+  orchestration surface.

@@ -56,10 +56,14 @@ import {
 } from "../goals/roleSequence.js";
 import {
   goalsProcessDecision,
+  goalsSingleGoalDecision,
   goalsTimerDecision,
+  goalsTimerFiredDecision,
   goalsTriggerDecision,
   type GoalsProcessDecision,
+  type GoalsSingleGoalDecision,
   type GoalsTimerDecision,
+  type GoalsTimerFiredDecision,
   type GoalsTriggerDecision
 } from "../goals/scheduler.js";
 import { stageResultToDict, type StageResult } from "../results.js";
@@ -200,6 +204,26 @@ export type GoalsProcessDecisionEntrypointResultPayload =
     entrypoint: "goals_process_decision";
   };
 
+export type GoalsTimerFiredDecisionEntrypointPayload = {
+  entrypoint: "goals_timer_fired_decision";
+  stop_requested: boolean;
+};
+
+export type GoalsTimerFiredDecisionEntrypointResultPayload =
+  GoalsTimerFiredDecision & {
+    entrypoint: "goals_timer_fired_decision";
+  };
+
+export type GoalsSingleGoalDecisionEntrypointPayload = {
+  entrypoint: "goals_single_goal_decision";
+  prompt_exists: boolean;
+};
+
+export type GoalsSingleGoalDecisionEntrypointResultPayload =
+  GoalsSingleGoalDecision & {
+    entrypoint: "goals_single_goal_decision";
+  };
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
   | GoalsQueueEntrypointPayload
@@ -208,7 +232,9 @@ export type RunnerCliPayload =
   | GoalsRoleSequenceEntrypointPayload
   | GoalsTimerDecisionEntrypointPayload
   | GoalsTriggerDecisionEntrypointPayload
-  | GoalsProcessDecisionEntrypointPayload;
+  | GoalsProcessDecisionEntrypointPayload
+  | GoalsTimerFiredDecisionEntrypointPayload
+  | GoalsSingleGoalDecisionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
@@ -217,7 +243,9 @@ export type RunnerCliResultPayload =
   | GoalsRoleSequenceEntrypointResultPayload
   | GoalsTimerDecisionEntrypointResultPayload
   | GoalsTriggerDecisionEntrypointResultPayload
-  | GoalsProcessDecisionEntrypointResultPayload;
+  | GoalsProcessDecisionEntrypointResultPayload
+  | GoalsTimerFiredDecisionEntrypointResultPayload
+  | GoalsSingleGoalDecisionEntrypointResultPayload;
 
 export type AgentRunnerEntrypointOptions = Omit<
   RunConfiguredAgentCommandOptions,
@@ -359,6 +387,28 @@ export function runGoalsProcessDecisionEntrypoint(
     ...goalsProcessDecision({
       stopRequested: parseBoolean(payload.stop_requested, "stop_requested"),
       goalFileCount: parseNumber(payload.goal_file_count, "goal_file_count")
+    })
+  };
+}
+
+export function runGoalsTimerFiredDecisionEntrypoint(
+  payload: GoalsTimerFiredDecisionEntrypointPayload
+): GoalsTimerFiredDecisionEntrypointResultPayload {
+  return {
+    entrypoint: "goals_timer_fired_decision",
+    ...goalsTimerFiredDecision({
+      stopRequested: parseBoolean(payload.stop_requested, "stop_requested")
+    })
+  };
+}
+
+export function runGoalsSingleGoalDecisionEntrypoint(
+  payload: GoalsSingleGoalDecisionEntrypointPayload
+): GoalsSingleGoalDecisionEntrypointResultPayload {
+  return {
+    entrypoint: "goals_single_goal_decision",
+    ...goalsSingleGoalDecision({
+      promptExists: parseBoolean(payload.prompt_exists, "prompt_exists")
     })
   };
 }

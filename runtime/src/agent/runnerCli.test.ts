@@ -314,6 +314,44 @@ test("dormammu-agent-runner can project goals process decision payloads", () => 
   });
 });
 
+test("dormammu-agent-runner can project goals timer fired decision payloads", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "goals_timer_fired_decision",
+      stop_requested: false
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "goals_timer_fired_decision",
+    action: "process",
+    clearTimerBeforeProcess: true,
+    syncTimerAfterProcess: true,
+    reason: "timer_fired"
+  });
+});
+
+test("dormammu-agent-runner can project goals single goal decision payloads", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "goals_single_goal_decision",
+      prompt_exists: true
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "goals_single_goal_decision",
+    action: "skip",
+    reason: "queued_prompt_exists"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

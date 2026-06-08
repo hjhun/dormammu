@@ -115,6 +115,32 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                     "reason": reason,
                 }}, ensure_ascii=True))
                 raise SystemExit(0)
+            if payload.get("entrypoint") == "goals_timer_fired_decision":
+                action = "skip" if payload["stop_requested"] else "process"
+                print(json.dumps({{
+                    "entrypoint": "goals_timer_fired_decision",
+                    "action": action,
+                    "clearTimerBeforeProcess": True,
+                    "syncTimerAfterProcess": action == "process",
+                    "reason": (
+                        "fake_timer_stopped"
+                        if action == "skip"
+                        else "fake_timer_fired"
+                    ),
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
+            if payload.get("entrypoint") == "goals_single_goal_decision":
+                action = "skip" if payload["prompt_exists"] else "write"
+                print(json.dumps({{
+                    "entrypoint": "goals_single_goal_decision",
+                    "action": action,
+                    "reason": (
+                        "fake_single_goal_exists"
+                        if action == "skip"
+                        else "fake_single_goal_missing"
+                    ),
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
             if payload.get("entrypoint") == "goals_timer_decision":
                 action = "none"
                 interval_seconds = None
@@ -671,11 +697,69 @@ class TestProcessSingleGoal:
         content = (prompt_path / "20260412_alpha.md").read_text(encoding="utf-8")
         assert "TS_PROJECTED" in content
         assert "Improve performance" in content
-        captured = json.loads(
-            (tmp_path / "captured-runner-payload.json").read_text(encoding="utf-8")
-        )
+        captured_payloads = [
+            json.loads(line)
+            for line in (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert captured_payloads[0] == {
+            "entrypoint": "goals_single_goal_decision",
+            "prompt_exists": False,
+        }
+        captured = captured_payloads[-1]
         assert captured["entrypoint"] == "goals_prompt_projection"
         assert captured["goal_file_path"] == str(goal.resolve())
+
+    def test_existing_prompt_can_use_typescript_single_goal_decision_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        prompt_path = tmp_path / "prompts"
+        goals_dir.mkdir()
+        prompt_path.mkdir()
+        goal = goals_dir / "alpha.md"
+        goal.write_text("Improve performance", encoding="utf-8")
+        existing = prompt_path / "20260412_alpha.md"
+        existing.write_text("already queued", encoding="utf-8")
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            prompt_path,
+            app,
+        )
+
+        with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value.strftime.return_value = "20260412"
+            sched._process_single_goal(goal)
+
+        assert existing.read_text(encoding="utf-8") == "already queued"
+        captured_payloads = [
+            json.loads(line)
+            for line in (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert captured_payloads == [
+            {
+                "entrypoint": "goals_single_goal_decision",
+                "prompt_exists": True,
+            }
+        ]
 
 
 class TestProcessGoals:
@@ -1146,3 +1230,51 @@ class TestStartStop:
             time.sleep(0.2)  # wait for timer to fire
 
         assert len(list(prompt_path.glob("*.md"))) >= 1
+
+    def test_timer_fired_can_use_typescript_decision_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        prompt_path = tmp_path / "prompts"
+        goals_dir.mkdir()
+        prompt_path.mkdir()
+        (goals_dir / "quick.md").write_text("Quick goal", encoding="utf-8")
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            prompt_path,
+            app,
+        )
+
+        with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value.strftime.return_value = "20260412"
+            sched._on_timer_fired()
+
+        assert (prompt_path / "20260412_quick.md").exists()
+        captured_payloads = [
+            json.loads(line)
+            for line in (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        entrypoints = [payload["entrypoint"] for payload in captured_payloads]
+        assert entrypoints[0] == "goals_timer_fired_decision"
+        assert "goals_process_decision" in entrypoints
+        assert entrypoints[-1] == "goals_timer_decision"
+        with sched._timer_lock:
+            assert sched._timer is not None
+        sched._cancel_timer()

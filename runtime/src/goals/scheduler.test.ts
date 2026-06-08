@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   goalsProcessDecision,
+  goalsSingleGoalDecision,
   goalsTimerDecision,
+  goalsTimerFiredDecision,
   goalsTriggerDecision
 } from "./scheduler.js";
 
@@ -148,6 +150,58 @@ test("goalsProcessDecision clamps negative goal file counts", () => {
       action: "skip",
       goalFileCount: 0,
       reason: "no_goal_files"
+    }
+  );
+});
+
+test("goalsTimerFiredDecision processes active timer callbacks", () => {
+  assert.deepEqual(
+    goalsTimerFiredDecision({
+      stopRequested: false
+    }),
+    {
+      action: "process",
+      clearTimerBeforeProcess: true,
+      syncTimerAfterProcess: true,
+      reason: "timer_fired"
+    }
+  );
+});
+
+test("goalsTimerFiredDecision clears timer and skips stopped callbacks", () => {
+  assert.deepEqual(
+    goalsTimerFiredDecision({
+      stopRequested: true
+    }),
+    {
+      action: "skip",
+      clearTimerBeforeProcess: true,
+      syncTimerAfterProcess: false,
+      reason: "stop_requested"
+    }
+  );
+});
+
+test("goalsSingleGoalDecision writes missing queued prompts", () => {
+  assert.deepEqual(
+    goalsSingleGoalDecision({
+      promptExists: false
+    }),
+    {
+      action: "write",
+      reason: "queued_prompt_missing"
+    }
+  );
+});
+
+test("goalsSingleGoalDecision skips existing queued prompts", () => {
+  assert.deepEqual(
+    goalsSingleGoalDecision({
+      promptExists: true
+    }),
+    {
+      action: "skip",
+      reason: "queued_prompt_exists"
     }
   );
 });

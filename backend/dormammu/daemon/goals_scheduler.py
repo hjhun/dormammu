@@ -200,6 +200,20 @@ class GoalsScheduler:
 
     def _on_timer_fired(self) -> None:
         """Called by ``threading.Timer`` when the interval elapses."""
+        decision = self._project_typescript_timer_fired_decision(
+            stop_requested=self._stop_event.is_set(),
+        )
+        if decision is not None:
+            if decision["clear_timer_before_process"]:
+                with self._timer_lock:
+                    self._timer = None
+            if decision["action"] == "skip":
+                return
+            self._process_goals()
+            if decision["sync_timer_after_process"]:
+                self._sync_timer()
+            return
+
         with self._timer_lock:
             self._timer = None  # allow re-scheduling after processing
 
@@ -242,7 +256,18 @@ class GoalsScheduler:
         stem = goal_file.stem
         dest = self._prompt_path / f"{date_str}_{stem}.md"
 
-        if dest.exists():
+        prompt_exists = dest.exists()
+        decision = self._project_typescript_single_goal_decision(
+            prompt_exists=prompt_exists,
+        )
+        if decision is not None:
+            if decision["action"] == "skip":
+                self._log(
+                    f"goals scheduler: skipping {goal_file.name} "
+                    f"— {dest.name} already queued"
+                )
+                return
+        elif prompt_exists:
             self._log(
                 f"goals scheduler: skipping {goal_file.name} "
                 f"— {dest.name} already queued"
@@ -815,6 +840,50 @@ class GoalsScheduler:
             "action": action,
             "goal_file_count": projected_count,
         }
+
+    def _project_typescript_timer_fired_decision(
+        self,
+        *,
+        stop_requested: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "goals_timer_fired_decision",
+            "stop_requested": stop_requested,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        action = result.get("action")
+        clear_before = result.get("clearTimerBeforeProcess")
+        sync_after = result.get("syncTimerAfterProcess")
+        if action not in {"process", "skip"}:
+            return None
+        if not isinstance(clear_before, bool):
+            return None
+        if not isinstance(sync_after, bool):
+            return None
+        return {
+            "action": action,
+            "clear_timer_before_process": clear_before,
+            "sync_timer_after_process": sync_after,
+        }
+
+    def _project_typescript_single_goal_decision(
+        self,
+        *,
+        prompt_exists: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "goals_single_goal_decision",
+            "prompt_exists": prompt_exists,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        action = result.get("action")
+        if action not in {"write", "skip"}:
+            return None
+        return {"action": action}
 
     def _run_typescript_runner_payload(
         self,

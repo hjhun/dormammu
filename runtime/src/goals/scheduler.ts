@@ -1,6 +1,8 @@
 export type GoalsTimerDecisionAction = "schedule" | "cancel" | "none";
 export type GoalsTriggerDecisionAction = "process" | "skip";
 export type GoalsProcessDecisionAction = "process" | "skip";
+export type GoalsTimerFiredDecisionAction = "process" | "skip";
+export type GoalsSingleGoalDecisionAction = "write" | "skip";
 
 export type GoalsTimerDecisionInput = {
   hasGoalFiles: boolean;
@@ -16,6 +18,14 @@ export type GoalsTriggerDecisionInput = {
 export type GoalsProcessDecisionInput = {
   stopRequested: boolean;
   goalFileCount: number;
+};
+
+export type GoalsTimerFiredDecisionInput = {
+  stopRequested: boolean;
+};
+
+export type GoalsSingleGoalDecisionInput = {
+  promptExists: boolean;
 };
 
 export type GoalsTimerDecision = {
@@ -34,6 +44,18 @@ export type GoalsTriggerDecision = {
 export type GoalsProcessDecision = {
   action: GoalsProcessDecisionAction;
   goalFileCount: number;
+  reason: string;
+};
+
+export type GoalsTimerFiredDecision = {
+  action: GoalsTimerFiredDecisionAction;
+  clearTimerBeforeProcess: boolean;
+  syncTimerAfterProcess: boolean;
+  reason: string;
+};
+
+export type GoalsSingleGoalDecision = {
+  action: GoalsSingleGoalDecisionAction;
   reason: string;
 };
 
@@ -113,5 +135,39 @@ export function goalsProcessDecision(
     action: "process",
     goalFileCount,
     reason: "goal_files_present"
+  };
+}
+
+export function goalsTimerFiredDecision(
+  input: GoalsTimerFiredDecisionInput
+): GoalsTimerFiredDecision {
+  if (input.stopRequested) {
+    return {
+      action: "skip",
+      clearTimerBeforeProcess: true,
+      syncTimerAfterProcess: false,
+      reason: "stop_requested"
+    };
+  }
+  return {
+    action: "process",
+    clearTimerBeforeProcess: true,
+    syncTimerAfterProcess: true,
+    reason: "timer_fired"
+  };
+}
+
+export function goalsSingleGoalDecision(
+  input: GoalsSingleGoalDecisionInput
+): GoalsSingleGoalDecision {
+  if (input.promptExists) {
+    return {
+      action: "skip",
+      reason: "queued_prompt_exists"
+    };
+  }
+  return {
+    action: "write",
+    reason: "queued_prompt_missing"
   };
 }
