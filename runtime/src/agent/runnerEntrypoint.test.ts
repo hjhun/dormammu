@@ -7,6 +7,7 @@ import test from "node:test";
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
   runAgentRunnerEntrypoint,
+  runGoalsPromptProjectionEntrypoint,
   runGoalsQueueEntrypoint
 } from "./runnerEntrypoint.js";
 
@@ -392,5 +393,22 @@ test("runGoalsQueueEntrypoint projects discovery and queue candidates", async ()
         alreadyQueued: false
       }
     ]
+  );
+});
+
+test("runGoalsPromptProjectionEntrypoint projects queued prompt content", () => {
+  assert.deepEqual(
+    runGoalsPromptProjectionEntrypoint({
+      entrypoint: "goals_prompt_projection",
+      goal_file_path: "/repo/goals/ship-it.md",
+      generated_prompt: "# Goal\n\nShip it",
+      date_text: "20260412"
+    }),
+    {
+      entrypoint: "goals_prompt_projection",
+      stem: "ship-it",
+      filename: "20260412_ship-it.md",
+      content: "<!-- dormammu:goal_source=/repo/goals/ship-it.md -->\n\n# Goal\n\nShip it"
+    }
   );
 });

@@ -177,6 +177,27 @@ test("dormammu-agent-runner can project goals queue payloads", async () => {
   ]);
 });
 
+test("dormammu-agent-runner can project goals prompt payloads", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "goals_prompt_projection",
+      goal_file_path: "/repo/goals/ship-it.md",
+      generated_prompt: "# Goal\n\nShip it",
+      date_text: "20260412"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "goals_prompt_projection",
+    stem: "ship-it",
+    filename: "20260412_ship-it.md",
+    content: "<!-- dormammu:goal_source=/repo/goals/ship-it.md -->\n\n# Goal\n\nShip it"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

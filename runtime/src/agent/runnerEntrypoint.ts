@@ -41,6 +41,10 @@ import {
   type GoalFileEntry,
   type GoalQueueCandidate
 } from "../goals/discovery.js";
+import {
+  projectQueuedGoalPrompt,
+  type GoalQueueProjection
+} from "../goals/queue.js";
 import { stageResultToDict, type StageResult } from "../results.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
@@ -105,10 +109,25 @@ export type GoalsQueueEntrypointResultPayload = {
   candidates?: GoalQueueCandidate[];
 };
 
-export type RunnerCliPayload = AgentRunnerEntrypointPayload | GoalsQueueEntrypointPayload;
+export type GoalsPromptProjectionEntrypointPayload = {
+  entrypoint: "goals_prompt_projection";
+  goal_file_path: string;
+  generated_prompt: string;
+  date_text: string;
+};
+
+export type GoalsPromptProjectionEntrypointResultPayload = GoalQueueProjection & {
+  entrypoint: "goals_prompt_projection";
+};
+
+export type RunnerCliPayload =
+  | AgentRunnerEntrypointPayload
+  | GoalsQueueEntrypointPayload
+  | GoalsPromptProjectionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
-  | GoalsQueueEntrypointResultPayload;
+  | GoalsQueueEntrypointResultPayload
+  | GoalsPromptProjectionEntrypointResultPayload;
 
 export type AgentRunnerEntrypointOptions = Omit<
   RunConfiguredAgentCommandOptions,
@@ -172,6 +191,19 @@ export async function runGoalsQueueEntrypoint(
     result.candidates = await listGoalQueueCandidates(goalsPath, promptPath, dateText);
   }
   return result;
+}
+
+export function runGoalsPromptProjectionEntrypoint(
+  payload: GoalsPromptProjectionEntrypointPayload
+): GoalsPromptProjectionEntrypointResultPayload {
+  return {
+    entrypoint: "goals_prompt_projection",
+    ...projectQueuedGoalPrompt({
+      goalFilePath: parseRequiredString(payload.goal_file_path, "goal_file_path"),
+      generatedPrompt: parseRequiredString(payload.generated_prompt, "generated_prompt"),
+      dateText: parseRequiredString(payload.date_text, "date_text")
+    })
+  };
 }
 
 function parseEntrypointRequest(

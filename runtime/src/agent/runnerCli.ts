@@ -5,8 +5,10 @@ import { Writable } from "node:stream";
 
 import {
   runAgentRunnerEntrypoint,
+  runGoalsPromptProjectionEntrypoint,
   runGoalsQueueEntrypoint,
   type AgentRunnerEntrypointPayload,
+  type GoalsPromptProjectionEntrypointPayload,
   type RunnerCliPayload,
   type RunnerCliResultPayload
 } from "./runnerEntrypoint.js";
@@ -45,6 +47,9 @@ async function runWithSignalHandlers(
   eventStream: RunnerEventStream | null,
   abortController: AbortController
 ): Promise<RunnerCliResultPayload> {
+  if (isGoalsPromptProjectionPayload(payload)) {
+    return runGoalsPromptProjectionEntrypoint(payload);
+  }
   if (!isAgentRunPayload(payload)) {
     return runGoalsQueueEntrypoint(payload);
   }
@@ -90,7 +95,17 @@ async function readPayload(args: string[]): Promise<RunnerCliPayload> {
 }
 
 function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEntrypointPayload {
-  return !("entrypoint" in payload) || payload.entrypoint !== "goals_queue";
+  return (
+    !("entrypoint" in payload) ||
+    (payload.entrypoint !== "goals_queue" &&
+      payload.entrypoint !== "goals_prompt_projection")
+  );
+}
+
+function isGoalsPromptProjectionPayload(
+  payload: RunnerCliPayload
+): payload is GoalsPromptProjectionEntrypointPayload {
+  return "entrypoint" in payload && payload.entrypoint === "goals_prompt_projection";
 }
 
 async function readStdin(): Promise<string> {

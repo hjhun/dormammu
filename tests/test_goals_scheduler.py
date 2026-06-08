@@ -109,6 +109,18 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                     "candidates": candidates,
                 }}, ensure_ascii=True))
                 raise SystemExit(0)
+            if payload.get("entrypoint") == "goals_prompt_projection":
+                goal_file = Path(payload["goal_file_path"])
+                print(json.dumps({{
+                    "entrypoint": "goals_prompt_projection",
+                    "stem": goal_file.stem,
+                    "filename": f"{{payload['date_text']}}_{{goal_file.stem}}.md",
+                    "content": (
+                        f"<!-- dormammu:goal_source={{goal_file}} -->\\n\\n"
+                        f"TS_PROJECTED\\n{{payload['generated_prompt']}}"
+                    ),
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
             request = payload["request"]
             logs_dir = Path(payload["logs_dir"])
             logs_dir.mkdir(parents=True, exist_ok=True)
@@ -458,6 +470,49 @@ class TestProcessSingleGoal:
         content = (prompt_path / "20260412_alpha.md").read_text(encoding="utf-8")
         assert "# Goal" in content
         assert "Improve performance" in content
+
+    def test_prompt_write_can_use_typescript_projection_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        prompt_path = tmp_path / "prompts"
+        goals_dir.mkdir()
+        prompt_path.mkdir()
+        goal = goals_dir / "alpha.md"
+        goal.write_text("Improve performance", encoding="utf-8")
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            prompt_path,
+            app,
+        )
+
+        with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value.strftime.return_value = "20260412"
+            sched._process_single_goal(goal)
+
+        content = (prompt_path / "20260412_alpha.md").read_text(encoding="utf-8")
+        assert "TS_PROJECTED" in content
+        assert "Improve performance" in content
+        captured = json.loads(
+            (tmp_path / "captured-runner-payload.json").read_text(encoding="utf-8")
+        )
+        assert captured["entrypoint"] == "goals_prompt_projection"
+        assert captured["goal_file_path"] == str(goal.resolve())
 
 
 class TestProcessGoals:

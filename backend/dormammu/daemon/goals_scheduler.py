@@ -200,14 +200,18 @@ class GoalsScheduler:
 
         goal_text = goal_file.read_text(encoding="utf-8")
         prompt = self._generate_prompt(goal_text, stem, date_str)
-
-        # Prepend a machine-readable metadata comment so that downstream
-        # components (DaemonRunner, PipelineRunner, EvaluatorStage) can
-        # recover the original goal file path without any shared state.
-        goal_source_tag = (
-            f"<!-- dormammu:goal_source={goal_file.resolve()} -->\n\n"
-        )
-        prompt_with_meta = goal_source_tag + prompt
+        projection = self._project_typescript_goal_prompt(goal_file, prompt, date_str)
+        if projection is not None:
+            dest = self._prompt_path / projection["filename"]
+            prompt_with_meta = projection["content"]
+        else:
+            # Prepend a machine-readable metadata comment so that downstream
+            # components (DaemonRunner, PipelineRunner, EvaluatorStage) can
+            # recover the original goal file path without any shared state.
+            goal_source_tag = (
+                f"<!-- dormammu:goal_source={goal_file.resolve()} -->\n\n"
+            )
+            prompt_with_meta = goal_source_tag + prompt
 
         self._prompt_path.mkdir(parents=True, exist_ok=True)
         dest.write_text(prompt_with_meta, encoding="utf-8")
@@ -457,16 +461,43 @@ class GoalsScheduler:
             return []
 
     def _load_typescript_goals_queue(self) -> dict[str, object] | None:
-        runner_cli = getattr(self._app_config, "typescript_agent_runner_cli", None)
-        if not isinstance(runner_cli, (str, Path)):
-            return None
-
         payload = {
             "entrypoint": "goals_queue",
             "goals_path": str(self._goals_config.path),
             "prompt_path": str(self._prompt_path),
             "date_text": datetime.now(timezone.utc).strftime("%Y%m%d"),
         }
+        return self._run_typescript_runner_payload(payload)
+
+    def _project_typescript_goal_prompt(
+        self,
+        goal_file: Path,
+        generated_prompt: str,
+        date_str: str,
+    ) -> dict[str, str] | None:
+        payload = {
+            "entrypoint": "goals_prompt_projection",
+            "goal_file_path": str(goal_file.resolve()),
+            "generated_prompt": generated_prompt,
+            "date_text": date_str,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        filename = result.get("filename")
+        content = result.get("content")
+        if isinstance(filename, str) and isinstance(content, str):
+            return {"filename": filename, "content": content}
+        return None
+
+    def _run_typescript_runner_payload(
+        self,
+        payload: dict[str, object],
+    ) -> dict[str, object] | None:
+        runner_cli = getattr(self._app_config, "typescript_agent_runner_cli", None)
+        if not isinstance(runner_cli, (str, Path)):
+            return None
+
         repo_root = getattr(self._app_config, "repo_root", None)
         cwd = repo_root if isinstance(repo_root, Path) else Path.cwd()
         try:
@@ -480,14 +511,14 @@ class GoalsScheduler:
                 check=False,
             )
         except OSError as exc:
-            self._log(f"goals scheduler: TypeScript goals queue bridge failed: {exc}")
+            self._log(f"goals scheduler: TypeScript runner bridge failed: {exc}")
             return None
 
         if completed.returncode != 0:
             message = (completed.stderr or completed.stdout).strip()
             detail = f": {message}" if message else ""
             self._log(
-                "goals scheduler: TypeScript goals queue bridge exited "
+                "goals scheduler: TypeScript runner bridge exited "
                 f"with {completed.returncode}{detail}"
             )
             return None
@@ -495,7 +526,7 @@ class GoalsScheduler:
         try:
             result = json.loads(completed.stdout)
         except json.JSONDecodeError:
-            self._log("goals scheduler: TypeScript goals queue bridge returned invalid JSON")
+            self._log("goals scheduler: TypeScript runner bridge returned invalid JSON")
             return None
         return result if isinstance(result, dict) else None
 
@@ -516,5 +547,10 @@ class GoalsScheduler:
         return env
 
     def _log(self, message: str) -> None:
-        print(message, file=self._progress_stream)
-        self._progress_stream.flush()
+        try:
+            print(message, file=self._progress_stream)
+            self._progress_stream.flush()
+        except ValueError:
+            # Timer callbacks can outlive pytest's captured streams or an
+            # operator-provided stream; logging must not crash the scheduler.
+            return
