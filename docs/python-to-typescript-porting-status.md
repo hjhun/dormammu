@@ -113,6 +113,10 @@ Ported modules:
   bounded stage attempts, retry callbacks, skip/proceed handling, failure
   termination, and exhausted manual-review terminal stages
   -> `runtime/src/pipeline/roleLoopExecutor.ts`
+- TypeScript-owned goals prompt construction contracts for analyzer, planner,
+  designer, queued goal prompt assembly, goal-source metadata tags, and queued
+  prompt file naming
+  -> `runtime/src/goals/prompts.ts`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -296,5 +300,6 @@ Port the remaining runtime orchestration surface:
   orchestration while TypeScript parity surfaces are assembled
 
 The next slice should connect the TypeScript role-loop executor surface to the
-Python pipeline bridge for tester/reviewer loops, or start porting the
-daemon/goals orchestration contracts that feed pipeline execution.
+Python pipeline bridge for tester/reviewer loops, or continue porting daemon
+and goals orchestration contracts such as goal file discovery and queue prompt
+projection.
