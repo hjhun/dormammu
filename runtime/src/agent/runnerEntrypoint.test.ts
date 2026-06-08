@@ -16,6 +16,7 @@ import {
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
   runDaemonWatcherBackendEntrypoint,
+  runDaemonWatcherWaitEntrypoint,
   runAgentRunnerEntrypoint,
   runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
@@ -568,6 +569,24 @@ test("runDaemonWatcherBackendEntrypoint projects watcher backend selection", () 
       backend: "polling",
       errorMessage: null,
       reason: "auto_falls_back_to_polling"
+    }
+  );
+});
+
+test("runDaemonWatcherWaitEntrypoint projects watcher wait decisions", () => {
+  assert.deepEqual(
+    runDaemonWatcherWaitEntrypoint({
+      entrypoint: "daemon_watcher_wait_decision",
+      wait_requested: true,
+      shutdown_requested: false,
+      watcher_backend: "polling"
+    }),
+    {
+      entrypoint: "daemon_watcher_wait_decision",
+      action: "wait",
+      waitForChanges: true,
+      watcherBackend: "polling",
+      reason: "wait_requested"
     }
   );
 });

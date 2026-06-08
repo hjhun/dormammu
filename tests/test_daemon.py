@@ -775,6 +775,25 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertEqual(captured["processed_count"], 0)
             self.assertEqual(captured["in_progress_count"], 0)
             self.assertFalse(captured["shutdown_requested"])
+            watcher_wait_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_watcher_wait_decision"
+            )
+            self.assertEqual(
+                watcher_wait_payload,
+                {
+                    "entrypoint": "daemon_watcher_wait_decision",
+                    "wait_requested": True,
+                    "shutdown_requested": False,
+                    "watcher_backend": "polling",
+                },
+            )
 
     def test_run_forever_can_use_typescript_startup_shutdown_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1644,6 +1663,24 @@ class DaemonRunnerTests(unittest.TestCase):
                             "reason": "fake_watcher_backend",
                         }}
                     print(json.dumps(response, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_watcher_wait_decision":
+                    backend = (payload.get("watcher_backend") or "").strip() or "unknown"
+                    should_wait = (
+                        payload["wait_requested"]
+                        and not payload["shutdown_requested"]
+                    )
+                    print(json.dumps({{
+                        "entrypoint": "daemon_watcher_wait_decision",
+                        "action": "wait" if should_wait else "skip",
+                        "waitForChanges": should_wait,
+                        "watcherBackend": backend,
+                        "reason": (
+                            "fake_wait_requested"
+                            if should_wait
+                            else "fake_wait_skipped"
+                        ),
+                    }}, ensure_ascii=True))
                     raise SystemExit(0)
                 raise SystemExit(2)
                 """

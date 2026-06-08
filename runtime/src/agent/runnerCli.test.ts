@@ -651,6 +651,28 @@ test("dormammu-agent-runner can project daemon watcher backend decisions", () =>
   });
 });
 
+test("dormammu-agent-runner can project daemon watcher wait decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_watcher_wait_decision",
+      wait_requested: true,
+      shutdown_requested: false,
+      watcher_backend: "polling"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_watcher_wait_decision",
+    action: "wait",
+    waitForChanges: true,
+    watcherBackend: "polling",
+    reason: "wait_requested"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

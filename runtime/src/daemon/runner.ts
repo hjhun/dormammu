@@ -168,6 +168,21 @@ export type DaemonWatcherBackendDecision = {
   reason: string;
 };
 
+export type DaemonWatcherWaitAction = "skip" | "wait";
+
+export type DaemonWatcherWaitDecisionInput = {
+  waitRequested: boolean;
+  shutdownRequested: boolean;
+  watcherBackend: string;
+};
+
+export type DaemonWatcherWaitDecision = {
+  action: DaemonWatcherWaitAction;
+  waitForChanges: boolean;
+  watcherBackend: string;
+  reason: string;
+};
+
 export function daemonPendingDecision(
   input: DaemonPendingDecisionInput
 ): DaemonPendingDecision {
@@ -458,6 +473,37 @@ export function daemonWatcherBackendDecision(
     backend: "polling",
     errorMessage: null,
     reason: "auto_falls_back_to_polling"
+  };
+}
+
+export function daemonWatcherWaitDecision(
+  input: DaemonWatcherWaitDecisionInput
+): DaemonWatcherWaitDecision {
+  const watcherBackend = input.watcherBackend.trim() || "unknown";
+
+  if (input.shutdownRequested) {
+    return {
+      action: "skip",
+      waitForChanges: false,
+      watcherBackend,
+      reason: "shutdown_requested"
+    };
+  }
+
+  if (!input.waitRequested) {
+    return {
+      action: "skip",
+      waitForChanges: false,
+      watcherBackend,
+      reason: "wait_not_requested"
+    };
+  }
+
+  return {
+    action: "wait",
+    waitForChanges: true,
+    watcherBackend,
+    reason: "wait_requested"
   };
 }
 

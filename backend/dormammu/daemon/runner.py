@@ -276,7 +276,10 @@ class DaemonRunner:
                         if loop_decision["action"] == "stop":
                             break
                         if loop_decision["wait_for_changes"]:
-                            watcher.wait_for_changes()
+                            self._wait_for_watcher_changes(
+                                watcher,
+                                wait_requested=True,
+                            )
                         continue
 
                     self._write_heartbeat(
@@ -285,7 +288,10 @@ class DaemonRunner:
                     if processed == 0:
                         if self._shutdown_requested.is_set():
                             break
-                        watcher.wait_for_changes()
+                        self._wait_for_watcher_changes(
+                            watcher,
+                            wait_requested=True,
+                        )
             finally:
                 shutdown_decision = self._project_typescript_shutdown_decision()
                 if shutdown_decision is None:
@@ -825,6 +831,80 @@ class DaemonRunner:
             "action": "use",
             "backend": "polling",
             "errorMessage": None,
+        }
+
+    def _wait_for_watcher_changes(
+        self,
+        watcher: object,
+        *,
+        wait_requested: bool,
+    ) -> None:
+        wait_decision = self._project_typescript_watcher_wait_decision(
+            wait_requested=wait_requested,
+            shutdown_requested=self._shutdown_requested.is_set(),
+            watcher_backend=str(getattr(watcher, "backend_name", "")),
+        )
+        if wait_decision is None:
+            if wait_requested:
+                watcher.wait_for_changes()
+            return
+        if wait_decision["wait_for_changes"]:
+            watcher.wait_for_changes()
+
+    def _project_typescript_watcher_wait_decision(
+        self,
+        *,
+        wait_requested: bool,
+        shutdown_requested: bool,
+        watcher_backend: str,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_watcher_wait_decision",
+            "wait_requested": wait_requested,
+            "shutdown_requested": shutdown_requested,
+            "watcher_backend": watcher_backend,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._watcher_wait_expectations(
+            wait_requested=wait_requested,
+            shutdown_requested=shutdown_requested,
+            watcher_backend=watcher_backend,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "wait_for_changes": expected["waitForChanges"],
+            "watcher_backend": expected["watcherBackend"],
+        }
+
+    @staticmethod
+    def _watcher_wait_expectations(
+        *,
+        wait_requested: bool,
+        shutdown_requested: bool,
+        watcher_backend: str,
+    ) -> dict[str, object]:
+        backend = watcher_backend.strip() or "unknown"
+        if shutdown_requested:
+            return {
+                "action": "skip",
+                "waitForChanges": False,
+                "watcherBackend": backend,
+            }
+        if not wait_requested:
+            return {
+                "action": "skip",
+                "waitForChanges": False,
+                "watcherBackend": backend,
+            }
+        return {
+            "action": "wait",
+            "waitForChanges": True,
+            "watcherBackend": backend,
         }
 
     def _loop_iteration_expectations(

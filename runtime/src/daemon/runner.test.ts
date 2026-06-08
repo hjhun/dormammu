@@ -11,7 +11,8 @@ import {
   daemonPromptRouteDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
-  daemonWatcherBackendDecision
+  daemonWatcherBackendDecision,
+  daemonWatcherWaitDecision
 } from "./runner.js";
 
 test("daemonPendingDecision processes the first ready prompt", () => {
@@ -369,6 +370,38 @@ test("daemonWatcherBackendDecision rejects unavailable inotify", () => {
       backend: null,
       errorMessage: "Inotify backend is not available on this platform.",
       reason: "inotify_unavailable"
+    }
+  );
+});
+
+test("daemonWatcherWaitDecision waits only when requested and active", () => {
+  assert.deepEqual(
+    daemonWatcherWaitDecision({
+      waitRequested: true,
+      shutdownRequested: false,
+      watcherBackend: "polling"
+    }),
+    {
+      action: "wait",
+      waitForChanges: true,
+      watcherBackend: "polling",
+      reason: "wait_requested"
+    }
+  );
+});
+
+test("daemonWatcherWaitDecision skips when shutdown is requested", () => {
+  assert.deepEqual(
+    daemonWatcherWaitDecision({
+      waitRequested: true,
+      shutdownRequested: true,
+      watcherBackend: ""
+    }),
+    {
+      action: "skip",
+      waitForChanges: false,
+      watcherBackend: "unknown",
+      reason: "shutdown_requested"
     }
   );
 });

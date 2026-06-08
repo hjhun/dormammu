@@ -52,6 +52,7 @@ import {
   daemonShutdownDecision,
   daemonStartupDecision,
   daemonWatcherBackendDecision,
+  daemonWatcherWaitDecision,
   type DaemonHeartbeatRemoveDecision,
   type DaemonHeartbeatStatus,
   type DaemonHeartbeatWriteDecision,
@@ -63,7 +64,8 @@ import {
   type DaemonShutdownDecision,
   type DaemonStartupDecision,
   type DaemonWatcherBackend,
-  type DaemonWatcherBackendDecision
+  type DaemonWatcherBackendDecision,
+  type DaemonWatcherWaitDecision
 } from "../daemon/runner.js";
 import {
   projectQueuedGoalPrompt,
@@ -401,6 +403,18 @@ export type DaemonWatcherBackendEntrypointResultPayload =
     entrypoint: "daemon_watcher_backend_decision";
   };
 
+export type DaemonWatcherWaitEntrypointPayload = {
+  entrypoint: "daemon_watcher_wait_decision";
+  wait_requested: boolean;
+  shutdown_requested: boolean;
+  watcher_backend: string;
+};
+
+export type DaemonWatcherWaitEntrypointResultPayload =
+  DaemonWatcherWaitDecision & {
+    entrypoint: "daemon_watcher_wait_decision";
+  };
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
   | DaemonHeartbeatRemoveEntrypointPayload
@@ -413,6 +427,7 @@ export type RunnerCliPayload =
   | DaemonShutdownEntrypointPayload
   | DaemonStartupEntrypointPayload
   | DaemonWatcherBackendEntrypointPayload
+  | DaemonWatcherWaitEntrypointPayload
   | GoalsQueueEntrypointPayload
   | GoalsPromptProjectionEntrypointPayload
   | GoalsRoleDocumentProjectionEntrypointPayload
@@ -437,6 +452,7 @@ export type RunnerCliResultPayload =
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
   | DaemonWatcherBackendEntrypointResultPayload
+  | DaemonWatcherWaitEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
   | GoalsPromptProjectionEntrypointResultPayload
   | GoalsRoleDocumentProjectionEntrypointResultPayload
@@ -664,6 +680,25 @@ export function runDaemonWatcherBackendEntrypoint(
       inotifyAvailable: parseBoolean(
         payload.inotify_available,
         "inotify_available"
+      )
+    })
+  };
+}
+
+export function runDaemonWatcherWaitEntrypoint(
+  payload: DaemonWatcherWaitEntrypointPayload
+): DaemonWatcherWaitEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_watcher_wait_decision",
+    ...daemonWatcherWaitDecision({
+      waitRequested: parseBoolean(payload.wait_requested, "wait_requested"),
+      shutdownRequested: parseBoolean(
+        payload.shutdown_requested,
+        "shutdown_requested"
+      ),
+      watcherBackend: parseRequiredString(
+        payload.watcher_backend,
+        "watcher_backend"
       )
     })
   };
