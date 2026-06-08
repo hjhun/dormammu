@@ -74,6 +74,9 @@ Ported modules:
   committer, plan evaluator, and final evaluator verdict/status/summary
   projection
   -> `runtime/src/pipeline/roleStages.ts`
+- TypeScript runner entrypoint `pipeline_stage` payload support that projects
+  one-shot role stdout into a Python-compatible `stage_result` payload
+  -> `runtime/src/agent/runnerEntrypoint.ts`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -258,5 +261,5 @@ Port the remaining runtime orchestration surface:
 
 The next slice should use the accumulated contract coverage to start replacing
 remaining Python runtime fallback internals with TypeScript-owned
-implementations, beginning with wiring one-shot pipeline role execution through
-the TypeScript role stage result contracts.
+implementations, beginning with passing Python `PipelineRunner._call_once`
+stage context into the TypeScript runner `pipeline_stage` payload.

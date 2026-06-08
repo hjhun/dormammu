@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import type { AgentRunRequest, InputMode } from "./commandBuilder.js";
 import {
   parseAgentRuntimeConfig,
@@ -24,8 +26,28 @@ import {
   type RuntimeSkillResolution,
   type SkillSearchRoot
 } from "./skills.js";
+import {
+  buildPipelineRoleStageResult,
+  type PipelineRoleStageKind
+} from "../pipeline/roleStages.js";
+import { stageResultToDict } from "../results.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
+const VALID_PIPELINE_STAGE_KINDS = new Set<string>([
+  "tester",
+  "reviewer",
+  "committer",
+  "plan_evaluator",
+  "final_evaluator"
+]);
+
+export type PipelineStageEntrypointPayload = {
+  kind: PipelineRoleStageKind;
+  report_path?: string | null;
+  attempt?: number | null;
+  artifacts?: readonly unknown[] | null;
+  metadata?: Readonly<Record<string, unknown>> | null;
+};
 
 export type AgentRunnerEntrypointPayload = {
   config?: unknown;
@@ -34,6 +56,7 @@ export type AgentRunnerEntrypointPayload = {
   agents?: unknown;
   agent_manifest_search_roots?: AgentManifestSearchRoot[] | null;
   skill_search_roots?: SkillSearchRoot[] | null;
+  pipeline_stage?: PipelineStageEntrypointPayload | null;
   request: {
     cli_path?: string | null;
     prompt_text: string;
@@ -52,6 +75,7 @@ export type AgentRunnerEntrypointPayload = {
 
 export type AgentRunnerEntrypointResultPayload = AgentRunResultPayload & {
   runtime_skills?: RuntimeSkillResolution;
+  stage_result?: Record<string, unknown>;
 };
 
 export type AgentRunnerEntrypointOptions = Omit<
@@ -69,6 +93,7 @@ export async function runAgentRunnerEntrypoint(
   const agentsConfig = parseAgentsConfig(payload.agents, {
     configPath: payload.config_path ?? null
   });
+  const pipelineStage = parsePipelineStagePayload(payload.pipeline_stage ?? null);
   const profile = await resolveEntrypointProfile(payload, agentsConfig);
   const result = await runConfiguredAgentCommand({
     ...options,
@@ -84,6 +109,10 @@ export async function runAgentRunnerEntrypoint(
   const runtimeSkills = await resolveEntrypointRuntimeSkills(payload, profile);
   if (runtimeSkills !== null) {
     resultPayload.runtime_skills = runtimeSkills;
+  }
+  const stageResult = await resolveEntrypointStageResult(pipelineStage, result.stdoutPath);
+  if (stageResult !== null) {
+    resultPayload.stage_result = stageResult;
   }
   return resultPayload;
 }
@@ -154,6 +183,65 @@ async function resolveEntrypointRuntimeSkills(
     role: payload.role,
     profile
   });
+}
+
+async function resolveEntrypointStageResult(
+  stagePayload: PipelineStageEntrypointPayload | null,
+  stdoutPath: string
+): Promise<Record<string, unknown> | null> {
+  if (stagePayload === null) {
+    return null;
+  }
+  const output = await readFile(stdoutPath, "utf8");
+  return stageResultToDict(
+    buildPipelineRoleStageResult({
+      kind: stagePayload.kind,
+      output,
+      reportPath: stagePayload.report_path ?? null,
+      artifacts: stagePayload.artifacts ?? [],
+      attempt: stagePayload.attempt ?? null,
+      metadata: stagePayload.metadata ?? {}
+    })
+  );
+}
+
+function parsePipelineStagePayload(
+  payload: AgentRunnerEntrypointPayload["pipeline_stage"] | null
+): PipelineStageEntrypointPayload | null {
+  if (payload === null || payload === undefined) {
+    return null;
+  }
+  if (typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("pipeline_stage must be a JSON object");
+  }
+  if (typeof payload.kind !== "string" || !VALID_PIPELINE_STAGE_KINDS.has(payload.kind)) {
+    throw new Error(`Unsupported pipeline_stage.kind: ${String(payload.kind)}`);
+  }
+  if (payload.report_path !== undefined && payload.report_path !== null) {
+    parseRequiredString(payload.report_path, "pipeline_stage.report_path");
+  }
+  if (
+    payload.attempt !== undefined &&
+    payload.attempt !== null &&
+    (!Number.isInteger(payload.attempt) || payload.attempt < 0)
+  ) {
+    throw new Error("pipeline_stage.attempt must be a non-negative integer or null");
+  }
+  if (
+    payload.artifacts !== undefined &&
+    payload.artifacts !== null &&
+    !Array.isArray(payload.artifacts)
+  ) {
+    throw new Error("pipeline_stage.artifacts must be a JSON array or null");
+  }
+  if (
+    payload.metadata !== undefined &&
+    payload.metadata !== null &&
+    (typeof payload.metadata !== "object" || Array.isArray(payload.metadata))
+  ) {
+    throw new Error("pipeline_stage.metadata must be a JSON object or null");
+  }
+  return payload;
 }
 
 function parseRequiredString(value: unknown, fieldName: string): string {

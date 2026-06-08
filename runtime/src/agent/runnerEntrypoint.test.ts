@@ -191,6 +191,83 @@ test("runAgentRunnerEntrypoint resolves manifest profiles and runtime skills", a
   ]);
 });
 
+test("runAgentRunnerEntrypoint can project pipeline stage results from stdout", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-runner-stage-entrypoint-"));
+  const logsDir = path.join(root, ".dev", "logs");
+  await mkdir(logsDir, { recursive: true });
+  const stdoutPath = path.join(logsDir, "run-1.stdout.log");
+  await writeFile(stdoutPath, "pytest failed\nOVERALL: FAIL", "utf8");
+
+  const payload = await runAgentRunnerEntrypoint(
+    {
+      config: {
+        active_agent_cli: "codex"
+      },
+      role: "tester",
+      pipeline_stage: {
+        kind: "tester",
+        attempt: 2,
+        report_path: path.join(logsDir, "tester-report.md")
+      },
+      request: {
+        prompt_text: "Validate the completed slice.",
+        repo_root: root
+      },
+      logs_dir: logsDir,
+      include_help_text: false
+    },
+    {
+      runner: async (options) => {
+        return {
+          runId: "run-1",
+          cliPath: options.request.cliPath,
+          workdir: options.request.workdir ?? root,
+          promptMode: "stdin",
+          command: [options.request.cliPath],
+          startedAt: "2026-04-25T00:00:00.000Z",
+          completedAt: "2026-04-25T00:00:01.000Z",
+          promptPath: path.join(logsDir, "run-1.prompt.txt"),
+          stdoutPath,
+          stderrPath: path.join(logsDir, "run-1.stderr.log"),
+          metadataPath: path.join(logsDir, "run-1.meta.json"),
+          capabilities: {
+            helpFlag: "--help",
+            promptFileFlag: null,
+            promptArgFlag: null,
+            workdirFlag: null,
+            helpText: "usage: codex",
+            helpExitCode: 0
+          },
+          exitCode: 0,
+          timedOut: false,
+          requestedCliPath: "codex",
+          attemptedCliPaths: ["codex"],
+          fallbackTrigger: null
+        } satisfies AgentRunResult;
+      }
+    }
+  );
+
+  assert.deepEqual(payload.stage_result, {
+    role: "tester",
+    stage_name: "tester",
+    status: "completed",
+    verdict: "fail",
+    summary: null,
+    report_path: path.join(logsDir, "tester-report.md"),
+    artifacts: [],
+    retry: {
+      attempt: 2,
+      next_attempt: null,
+      retries_used: null,
+      max_retries: null,
+      max_iterations: null
+    },
+    timing: null,
+    metadata: {}
+  });
+});
+
 test("runAgentRunnerEntrypoint validates request payloads", async () => {
   await assert.rejects(
     runAgentRunnerEntrypoint({
@@ -215,5 +292,20 @@ test("runAgentRunnerEntrypoint validates request payloads", async () => {
       logs_dir: "/repo/.dev/logs"
     }),
     /Unsupported request.input_mode/
+  );
+
+  await assert.rejects(
+    runAgentRunnerEntrypoint({
+      config: {},
+      pipeline_stage: {
+        kind: "unsupported" as "tester"
+      },
+      request: {
+        prompt_text: "Prompt.",
+        repo_root: "/repo"
+      },
+      logs_dir: "/repo/.dev/logs"
+    }),
+    /Unsupported pipeline_stage.kind/
   );
 });
