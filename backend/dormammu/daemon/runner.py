@@ -846,6 +846,79 @@ class DaemonRunner:
             "reason": reason,
         }
 
+    def _supervisor_handoff_event_decision(
+        self,
+        *,
+        from_role: str,
+        to_role: str,
+        attempt: int,
+    ) -> dict[str, object]:
+        typescript_decision = self._project_typescript_supervisor_handoff_decision(
+            from_role=from_role,
+            to_role=to_role,
+            attempt=attempt,
+        )
+        if typescript_decision is not None:
+            return typescript_decision
+        return self._supervisor_handoff_expectations(
+            from_role=from_role,
+            to_role=to_role,
+            attempt=attempt,
+        )
+
+    def _project_typescript_supervisor_handoff_decision(
+        self,
+        *,
+        from_role: str,
+        to_role: str,
+        attempt: int,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_supervisor_handoff_decision",
+            "from_role": from_role,
+            "to_role": to_role,
+            "attempt": attempt,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._supervisor_handoff_expectations(
+            from_role=from_role,
+            to_role=to_role,
+            attempt=attempt,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    @staticmethod
+    def _supervisor_handoff_expectations(
+        *,
+        from_role: str,
+        to_role: str,
+        attempt: int,
+    ) -> dict[str, object]:
+        from_role = from_role.strip() or "planner"
+        to_role = to_role.strip() or "developer"
+        attempt = max(1, int(attempt))
+        return {
+            "eventType": "supervisor.handoff",
+            "role": from_role,
+            "stage": to_role,
+            "status": "handoff",
+            "payload": {
+                "fromRole": from_role,
+                "toRole": to_role,
+                "reason": (
+                    "Mandatory refine/plan prelude completed; handing off "
+                    "to the supervised developer loop."
+                ),
+                "attempt": attempt,
+            },
+            "reason": "daemon_supervisor_prelude_handoff",
+        }
+
     @staticmethod
     def _artifact_writer_expectations(
         *,
@@ -2543,16 +2616,28 @@ class DaemonRunner:
             enable_plan_evaluator=goal_file_path is not None,
         )
         if lifecycle is not None:
-            lifecycle.emit(
-                event_type=LifecycleEventType.SUPERVISOR_HANDOFF,
-                role="planner",
-                stage="developer",
-                status="handoff",
-                payload=SupervisorHandoffPayload(
+            handoff_event = self._supervisor_handoff_event_decision(
+                from_role="planner",
+                to_role="developer",
+                attempt=1,
+            )
+            handoff_payload = handoff_event["payload"]
+            if not isinstance(handoff_payload, Mapping):
+                handoff_payload = self._supervisor_handoff_expectations(
                     from_role="planner",
                     to_role="developer",
-                    reason="Mandatory refine/plan prelude completed; handing off to the supervised developer loop.",
                     attempt=1,
+                )["payload"]
+            lifecycle.emit(
+                event_type=LifecycleEventType.SUPERVISOR_HANDOFF,
+                role=str(handoff_event["role"]),
+                stage=str(handoff_event["stage"]),
+                status=str(handoff_event["status"]),
+                payload=SupervisorHandoffPayload(
+                    from_role=str(handoff_payload["fromRole"]),
+                    to_role=str(handoff_payload["toRole"]),
+                    reason=str(handoff_payload["reason"]),
+                    attempt=int(handoff_payload["attempt"]),
                 ),
             )
 

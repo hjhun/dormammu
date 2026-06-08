@@ -315,6 +315,16 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon supervisor handoff lifecycle event decision helper,
+  plus runner entrypoint and Python `DaemonRunner._run_prompt_loop()` bridge
+  consumption for refine/plan prelude handoff role/stage/status, payload
+  role/reason/attempt fields, and decision reason metadata while Python
+  retains `LifecycleRecorder.emit()`, `SupervisorHandoffPayload` creation,
+  handoff prompt construction, and malformed-bridge fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon result report publication decision helper, plus
   runner entrypoint and Python `DaemonRunner._publish_result_report()` bridge
   consumption for result report write intent, prompt cleanup intent, and
@@ -663,6 +673,9 @@ Port the remaining daemon and goals orchestration surface:
   TypeScript also owns daemon artifact-persisted lifecycle event metadata for
   input prompts and result reports while Python keeps lifecycle emission,
   artifact refs, enum mapping, and file IO.
+  TypeScript also owns daemon supervisor handoff lifecycle event metadata for
+  the refine/plan prelude handoff while Python keeps lifecycle emission,
+  `SupervisorHandoffPayload` construction, and handoff prompt generation.
   TypeScript also owns daemon result report publication decisions for report
   write intent, prompt cleanup intent, and artifact metadata projection, plus
   daemon result report fallback decisions for configured-authoring failure

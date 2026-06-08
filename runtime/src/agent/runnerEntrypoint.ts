@@ -71,6 +71,7 @@ import {
   daemonShutdownDecision,
   daemonStartupBannerDecision,
   daemonStartupDecision,
+  daemonSupervisorHandoffDecision,
   daemonTerminalErrorDecision,
   daemonTerminalStatusDecision,
   daemonWatcherBackendDecision,
@@ -105,6 +106,7 @@ import {
   type DaemonShutdownDecision,
   type DaemonStartupBannerDecision,
   type DaemonStartupDecision,
+  type DaemonSupervisorHandoffDecision,
   type DaemonTerminalErrorDecision,
   type DaemonTerminalStatusDecision,
   type DaemonWatcherBackend,
@@ -411,6 +413,18 @@ export type DaemonArtifactPersistedEventEntrypointPayload = {
 export type DaemonArtifactPersistedEventEntrypointResultPayload =
   DaemonArtifactPersistedEventDecision & {
     entrypoint: "daemon_artifact_persisted_event_decision";
+  };
+
+export type DaemonSupervisorHandoffEntrypointPayload = {
+  entrypoint: "daemon_supervisor_handoff_decision";
+  from_role: string;
+  to_role: string;
+  attempt: number;
+};
+
+export type DaemonSupervisorHandoffEntrypointResultPayload =
+  DaemonSupervisorHandoffDecision & {
+    entrypoint: "daemon_supervisor_handoff_decision";
   };
 
 export type DaemonResultReportEntrypointPayload = {
@@ -766,6 +780,7 @@ export type RunnerCliPayload =
   | DaemonShutdownEntrypointPayload
   | DaemonStartupBannerEntrypointPayload
   | DaemonStartupEntrypointPayload
+  | DaemonSupervisorHandoffEntrypointPayload
   | DaemonTerminalErrorEntrypointPayload
   | DaemonTerminalStatusEntrypointPayload
   | DaemonWatcherBackendEntrypointPayload
@@ -813,6 +828,7 @@ export type RunnerCliResultPayload =
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupBannerEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
+  | DaemonSupervisorHandoffEntrypointResultPayload
   | DaemonTerminalErrorEntrypointResultPayload
   | DaemonTerminalStatusEntrypointResultPayload
   | DaemonWatcherBackendEntrypointResultPayload
@@ -976,6 +992,19 @@ export function runDaemonArtifactPersistedEventEntrypoint(
     entrypoint: "daemon_artifact_persisted_event_decision",
     ...daemonArtifactPersistedEventDecision({
       artifactKind: parseRequiredString(payload.artifact_kind, "artifact_kind")
+    })
+  };
+}
+
+export function runDaemonSupervisorHandoffEntrypoint(
+  payload: DaemonSupervisorHandoffEntrypointPayload
+): DaemonSupervisorHandoffEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_supervisor_handoff_decision",
+    ...daemonSupervisorHandoffDecision({
+      fromRole: parseRequiredString(payload.from_role, "from_role"),
+      toRole: parseRequiredString(payload.to_role, "to_role"),
+      attempt: parseNumber(payload.attempt, "attempt")
     })
   };
 }

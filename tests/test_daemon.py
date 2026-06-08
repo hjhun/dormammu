@@ -1362,6 +1362,59 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_daemon_supervisor_handoff_event_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+
+            decision = runner._supervisor_handoff_event_decision(
+                from_role="planner",
+                to_role="developer",
+                attempt=1,
+            )
+
+            self.assertEqual(
+                decision,
+                {
+                    "eventType": "supervisor.handoff",
+                    "role": "planner",
+                    "stage": "developer",
+                    "status": "handoff",
+                    "payload": {
+                        "fromRole": "planner",
+                        "toRole": "developer",
+                        "reason": (
+                            "Mandatory refine/plan prelude completed; handing off "
+                            "to the supervised developer loop."
+                        ),
+                        "attempt": 1,
+                    },
+                    "reason": "daemon_supervisor_prelude_handoff",
+                },
+            )
+            payload = json.loads(
+                (root / "captured-runner-payload.json").read_text(
+                    encoding="utf-8",
+                )
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_supervisor_handoff_decision",
+                    "from_role": "planner",
+                    "to_role": "developer",
+                    "attempt": 1,
+                },
+            )
+
     def test_result_report_artifact_ref_can_use_typescript_bridge(self) -> None:
         class PromptResultWithoutArtifact:
             result_report_artifact = None
@@ -2604,6 +2657,28 @@ class DaemonRunnerTests(unittest.TestCase):
                         "artifactKind": artifact_kind,
                         "summary": summary,
                         "reason": reason,
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_supervisor_handoff_decision":
+                    from_role = payload["from_role"].strip() or "planner"
+                    to_role = payload["to_role"].strip() or "developer"
+                    attempt = max(1, int(payload["attempt"]))
+                    print(json.dumps({{
+                        "entrypoint": "daemon_supervisor_handoff_decision",
+                        "eventType": "supervisor.handoff",
+                        "role": from_role,
+                        "stage": to_role,
+                        "status": "handoff",
+                        "payload": {{
+                            "fromRole": from_role,
+                            "toRole": to_role,
+                            "reason": (
+                                "Mandatory refine/plan prelude completed; handing off "
+                                "to the supervised developer loop."
+                            ),
+                            "attempt": attempt,
+                        }},
+                        "reason": "daemon_supervisor_prelude_handoff",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_existing_result_decision":

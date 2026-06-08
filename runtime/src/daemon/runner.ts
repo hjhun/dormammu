@@ -212,6 +212,26 @@ export type DaemonArtifactPersistedEventDecision = {
     | "daemon_artifact_persisted";
 };
 
+export type DaemonSupervisorHandoffDecisionInput = {
+  fromRole: string;
+  toRole: string;
+  attempt: number;
+};
+
+export type DaemonSupervisorHandoffDecision = {
+  eventType: "supervisor.handoff";
+  role: string;
+  stage: string;
+  status: "handoff";
+  payload: {
+    fromRole: string;
+    toRole: string;
+    reason: string;
+    attempt: number;
+  };
+  reason: "daemon_supervisor_prelude_handoff";
+};
+
 export type DaemonResultArtifactRefAction = "reference" | "skip";
 
 export type DaemonResultArtifactRefDecisionInput = {
@@ -1036,6 +1056,29 @@ export function daemonArtifactPersistedEventDecision(
     artifactKind,
     summary: `Persisted daemon artifact: ${artifactKind}.`,
     reason: "daemon_artifact_persisted"
+  };
+}
+
+export function daemonSupervisorHandoffDecision(
+  input: DaemonSupervisorHandoffDecisionInput
+): DaemonSupervisorHandoffDecision {
+  const fromRole = nonEmpty(input.fromRole) ?? "planner";
+  const toRole = nonEmpty(input.toRole) ?? "developer";
+  const rawAttempt = Number.isFinite(input.attempt) ? input.attempt : 1;
+  const attempt = Math.max(1, Math.trunc(rawAttempt));
+  return {
+    eventType: "supervisor.handoff",
+    role: fromRole,
+    stage: toRole,
+    status: "handoff",
+    payload: {
+      fromRole,
+      toRole,
+      reason:
+        "Mandatory refine/plan prelude completed; handing off to the supervised developer loop.",
+      attempt
+    },
+    reason: "daemon_supervisor_prelude_handoff"
   };
 }
 

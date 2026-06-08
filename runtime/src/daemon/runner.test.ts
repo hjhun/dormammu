@@ -31,6 +31,7 @@ import {
   daemonShutdownDecision,
   daemonStartupBannerDecision,
   daemonStartupDecision,
+  daemonSupervisorHandoffDecision,
   daemonTerminalErrorDecision,
   daemonTerminalStatusDecision,
   daemonWatcherBackendDecision,
@@ -304,6 +305,30 @@ test("daemonArtifactPersistedEventDecision projects lifecycle event metadata", (
       artifactKind: "result_report",
       summary: "Persisted the daemon result report.",
       reason: "result_report_artifact_persisted"
+    }
+  );
+});
+
+test("daemonSupervisorHandoffDecision projects prelude handoff metadata", () => {
+  assert.deepEqual(
+    daemonSupervisorHandoffDecision({
+      fromRole: "planner",
+      toRole: "developer",
+      attempt: 1
+    }),
+    {
+      eventType: "supervisor.handoff",
+      role: "planner",
+      stage: "developer",
+      status: "handoff",
+      payload: {
+        fromRole: "planner",
+        toRole: "developer",
+        reason:
+          "Mandatory refine/plan prelude completed; handing off to the supervised developer loop.",
+        attempt: 1
+      },
+      reason: "daemon_supervisor_prelude_handoff"
     }
   );
 });

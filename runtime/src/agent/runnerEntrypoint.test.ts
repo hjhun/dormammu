@@ -35,6 +35,7 @@ import {
   runDaemonShutdownEntrypoint,
   runDaemonStartupBannerEntrypoint,
   runDaemonStartupEntrypoint,
+  runDaemonSupervisorHandoffEntrypoint,
   runDaemonTerminalErrorEntrypoint,
   runDaemonTerminalStatusEntrypoint,
   runDaemonWatcherBackendEntrypoint,
@@ -533,6 +534,32 @@ test("runDaemonArtifactPersistedEventEntrypoint projects event metadata", () => 
       artifactKind: "result_report",
       summary: "Persisted the daemon result report.",
       reason: "result_report_artifact_persisted"
+    }
+  );
+});
+
+test("runDaemonSupervisorHandoffEntrypoint projects prelude handoff metadata", () => {
+  assert.deepEqual(
+    runDaemonSupervisorHandoffEntrypoint({
+      entrypoint: "daemon_supervisor_handoff_decision",
+      from_role: "planner",
+      to_role: "developer",
+      attempt: 1
+    }),
+    {
+      entrypoint: "daemon_supervisor_handoff_decision",
+      eventType: "supervisor.handoff",
+      role: "planner",
+      stage: "developer",
+      status: "handoff",
+      payload: {
+        fromRole: "planner",
+        toRole: "developer",
+        reason:
+          "Mandatory refine/plan prelude completed; handing off to the supervised developer loop.",
+        attempt: 1
+      },
+      reason: "daemon_supervisor_prelude_handoff"
     }
   );
 });

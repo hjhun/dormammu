@@ -33,6 +33,7 @@ import {
   runDaemonShutdownEntrypoint,
   runDaemonStartupBannerEntrypoint,
   runDaemonStartupEntrypoint,
+  runDaemonSupervisorHandoffEntrypoint,
   runDaemonTerminalErrorEntrypoint,
   runDaemonTerminalStatusEntrypoint,
   runDaemonWatcherBackendEntrypoint,
@@ -80,6 +81,7 @@ import {
   type DaemonShutdownEntrypointPayload,
   type DaemonStartupBannerEntrypointPayload,
   type DaemonStartupEntrypointPayload,
+  type DaemonSupervisorHandoffEntrypointPayload,
   type DaemonTerminalErrorEntrypointPayload,
   type DaemonTerminalStatusEntrypointPayload,
   type DaemonWatcherBackendEntrypointPayload,
@@ -211,6 +213,9 @@ async function runWithSignalHandlers(
   if (isDaemonArtifactPersistedEventPayload(payload)) {
     return runDaemonArtifactPersistedEventEntrypoint(payload);
   }
+  if (isDaemonSupervisorHandoffPayload(payload)) {
+    return runDaemonSupervisorHandoffEntrypoint(payload);
+  }
   if (isDaemonPromptRoutePayload(payload)) {
     return runDaemonPromptRouteEntrypoint(payload);
   }
@@ -338,6 +343,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_shutdown_decision" &&
       payload.entrypoint !== "daemon_startup_banner_decision" &&
       payload.entrypoint !== "daemon_startup_decision" &&
+      payload.entrypoint !== "daemon_supervisor_handoff_decision" &&
       payload.entrypoint !== "daemon_terminal_error_decision" &&
       payload.entrypoint !== "daemon_terminal_status_decision" &&
       payload.entrypoint !== "daemon_watcher_backend_decision" &&
@@ -495,6 +501,15 @@ function isDaemonArtifactPersistedEventPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_artifact_persisted_event_decision"
+  );
+}
+
+function isDaemonSupervisorHandoffPayload(
+  payload: RunnerCliPayload
+): payload is DaemonSupervisorHandoffEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_supervisor_handoff_decision"
   );
 }
 

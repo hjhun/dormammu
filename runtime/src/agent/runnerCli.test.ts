@@ -581,6 +581,36 @@ test("dormammu-agent-runner can project daemon artifact event metadata", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon supervisor handoff metadata", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_supervisor_handoff_decision",
+      from_role: "planner",
+      to_role: "developer",
+      attempt: 1
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_supervisor_handoff_decision",
+    eventType: "supervisor.handoff",
+    role: "planner",
+    stage: "developer",
+    status: "handoff",
+    payload: {
+      fromRole: "planner",
+      toRole: "developer",
+      reason:
+        "Mandatory refine/plan prelude completed; handing off to the supervised developer loop.",
+      attempt: 1
+    },
+    reason: "daemon_supervisor_prelude_handoff"
+  });
+});
+
 test("dormammu-agent-runner can project daemon result report decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({
