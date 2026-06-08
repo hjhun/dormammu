@@ -17,6 +17,7 @@ import {
   daemonRunFinishedDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
+  daemonTerminalErrorDecision,
   daemonWatcherBackendDecision,
   daemonWatcherWaitDecision
 } from "./runner.js";
@@ -230,6 +231,46 @@ test("daemonRunFinishedDecision projects run finished metadata", () => {
       outcome: "completed",
       error: null,
       reason: "daemon_run_finished"
+    }
+  );
+});
+
+test("daemonTerminalErrorDecision projects retry exhaustion details", () => {
+  assert.deepEqual(
+    daemonTerminalErrorDecision({
+      status: "failed",
+      nextPendingTask: " Phase 2. Validate "
+    }),
+    {
+      status: "failed",
+      nextPendingTask: "Phase 2. Validate",
+      message: [
+        "Loop retry budget was exhausted before PLAN.md completed.",
+        " Next pending PLAN task: Phase 2. Validate."
+      ].join(""),
+      reason: "retry_budget_exhausted"
+    }
+  );
+});
+
+test("daemonTerminalErrorDecision projects blocked and fallback statuses", () => {
+  assert.deepEqual(
+    daemonTerminalErrorDecision({
+      status: "blocked",
+      nextPendingTask: null
+    }).message,
+    "Loop stopped because the configured coding-agent CLIs were blocked."
+  );
+  assert.deepEqual(
+    daemonTerminalErrorDecision({
+      status: "interrupted",
+      nextPendingTask: ""
+    }),
+    {
+      status: "interrupted",
+      nextPendingTask: null,
+      message: "Loop finished with terminal status: interrupted.",
+      reason: "terminal_status_fallback"
     }
   );
 });

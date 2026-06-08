@@ -314,6 +314,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon terminal error message decision helper, plus runner
+  entrypoint and Python `DaemonRunner._terminal_error_message()` bridge
+  consumption for retry-exhausted, blocked, manual-review, and fallback
+  terminal status messages while Python retains loop execution, plan-state
+  reconciliation, and fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -513,9 +522,12 @@ Port the remaining daemon and goals orchestration surface:
   removal before prompt reprocessing, plus daemon prompt settle-window
   decisions for ready/defer and retry-after projection. TypeScript also owns
   daemon queue file decisions for in-progress skip, non-candidate skip, and
-  candidate inspection. Python fallbacks are retained.
+  candidate inspection. TypeScript also owns daemon terminal error message
+  decisions for retry-exhausted, blocked, manual-review, and fallback terminal
+  statuses. Python fallbacks are retained.
 - The next slice should continue the remaining daemon lifecycle and recovery
   surface after queue dispatch, prompt route selection, loop iteration, and
   startup/shutdown/instance-lock/heartbeat/watcher-backend handling, with
-  priority on remaining deterministic daemon recovery/status contracts that can
-  be exposed through TypeScript without removing Python compatibility.
+  priority on remaining deterministic daemon recovery/status contracts such as
+  terminal status reconciliation and result status parsing that can be exposed
+  through TypeScript without removing Python compatibility.

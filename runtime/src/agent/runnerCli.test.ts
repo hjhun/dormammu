@@ -550,6 +550,30 @@ test("dormammu-agent-runner can project daemon run-finished decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon terminal error decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_terminal_error_decision",
+      status: "failed",
+      next_pending_task: "Phase 4. Review"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_terminal_error_decision",
+    status: "failed",
+    nextPendingTask: "Phase 4. Review",
+    message: [
+      "Loop retry budget was exhausted before PLAN.md completed.",
+      " Next pending PLAN task: Phase 4. Review."
+    ].join(""),
+    reason: "retry_budget_exhausted"
+  });
+});
+
 test("dormammu-agent-runner can project daemon existing result decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

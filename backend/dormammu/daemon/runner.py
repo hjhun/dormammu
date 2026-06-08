@@ -763,6 +763,80 @@ class DaemonRunner:
             "error": expected["error"],
         }
 
+    def _project_typescript_terminal_error_decision(
+        self,
+        *,
+        status: str,
+        next_pending_task: str | None,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_terminal_error_decision",
+            "status": status,
+            "next_pending_task": next_pending_task,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._terminal_error_expectations(
+            status=status,
+            next_pending_task=next_pending_task,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "message": expected["message"],
+            "reason": expected["reason"],
+        }
+
+    @classmethod
+    def _terminal_error_expectations(
+        cls,
+        *,
+        status: object,
+        next_pending_task: object,
+    ) -> dict[str, object]:
+        normalized_status = cls._normalize_required_text(status)
+        normalized_next_pending_task = cls._normalize_optional_text(next_pending_task)
+        if normalized_status == "failed":
+            suffix = (
+                f" Next pending PLAN task: {normalized_next_pending_task}."
+                if normalized_next_pending_task
+                else ""
+            )
+            return {
+                "status": normalized_status,
+                "nextPendingTask": normalized_next_pending_task,
+                "message": (
+                    "Loop retry budget was exhausted before PLAN.md completed."
+                    f"{suffix}"
+                ),
+                "reason": "retry_budget_exhausted",
+            }
+        if normalized_status == "blocked":
+            return {
+                "status": normalized_status,
+                "nextPendingTask": normalized_next_pending_task,
+                "message": (
+                    "Loop stopped because the configured coding-agent CLIs "
+                    "were blocked."
+                ),
+                "reason": "agent_cli_blocked",
+            }
+        if normalized_status == "manual_review_needed":
+            return {
+                "status": normalized_status,
+                "nextPendingTask": normalized_next_pending_task,
+                "message": "Loop stopped because manual review is required.",
+                "reason": "manual_review_needed",
+            }
+        return {
+            "status": normalized_status,
+            "nextPendingTask": normalized_next_pending_task,
+            "message": f"Loop finished with terminal status: {normalized_status}.",
+            "reason": "terminal_status_fallback",
+        }
+
     @classmethod
     def _run_finished_expectations(
         cls,
@@ -2118,15 +2192,25 @@ class DaemonRunner:
             )
         return candidate
 
-    def _terminal_error_message(self, loop_result: LoopRunResult, next_pending_task: str | None) -> str:
-        if loop_result.status == "failed":
-            suffix = f" Next pending PLAN task: {next_pending_task}." if next_pending_task else ""
-            return f"Loop retry budget was exhausted before PLAN.md completed.{suffix}"
-        if loop_result.status == "blocked":
-            return "Loop stopped because the configured coding-agent CLIs were blocked."
-        if loop_result.status == "manual_review_needed":
-            return "Loop stopped because manual review is required."
-        return f"Loop finished with terminal status: {loop_result.status}."
+    def _terminal_error_message(
+        self,
+        loop_result: LoopRunResult,
+        next_pending_task: str | None,
+    ) -> str:
+        status = self._normalize_required_text(loop_result.status)
+        normalized_next_pending_task = self._normalize_optional_text(next_pending_task)
+        terminal_error_decision = self._project_typescript_terminal_error_decision(
+            status=status,
+            next_pending_task=normalized_next_pending_task,
+        )
+        if terminal_error_decision is not None:
+            return str(terminal_error_decision["message"])
+        return str(
+            self._terminal_error_expectations(
+                status=status,
+                next_pending_task=normalized_next_pending_task,
+            )["message"]
+        )
 
     def _render_result_report(
         self,

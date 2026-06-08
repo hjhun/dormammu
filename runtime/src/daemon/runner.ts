@@ -104,6 +104,18 @@ export type DaemonRunFinishedDecision = {
   reason: string;
 };
 
+export type DaemonTerminalErrorDecisionInput = {
+  status: string;
+  nextPendingTask: string | null;
+};
+
+export type DaemonTerminalErrorDecision = {
+  status: string;
+  nextPendingTask: string | null;
+  message: string;
+  reason: string;
+};
+
 export type DaemonExistingResultAction = "remove" | "keep";
 
 export type DaemonExistingResultDecisionInput = {
@@ -440,6 +452,48 @@ export function daemonRunFinishedDecision(
     outcome: nonEmpty(input.outcome) ?? "unknown",
     error: nonEmpty(input.error),
     reason: "daemon_run_finished"
+  };
+}
+
+export function daemonTerminalErrorDecision(
+  input: DaemonTerminalErrorDecisionInput
+): DaemonTerminalErrorDecision {
+  const status = nonEmpty(input.status) ?? "unknown";
+  const nextPendingTask = nonEmpty(input.nextPendingTask);
+
+  if (status === "failed") {
+    const suffix =
+      nextPendingTask !== null
+        ? ` Next pending PLAN task: ${nextPendingTask}.`
+        : "";
+    return {
+      status,
+      nextPendingTask,
+      message: `Loop retry budget was exhausted before PLAN.md completed.${suffix}`,
+      reason: "retry_budget_exhausted"
+    };
+  }
+  if (status === "blocked") {
+    return {
+      status,
+      nextPendingTask,
+      message: "Loop stopped because the configured coding-agent CLIs were blocked.",
+      reason: "agent_cli_blocked"
+    };
+  }
+  if (status === "manual_review_needed") {
+    return {
+      status,
+      nextPendingTask,
+      message: "Loop stopped because manual review is required.",
+      reason: "manual_review_needed"
+    };
+  }
+  return {
+    status,
+    nextPendingTask,
+    message: `Loop finished with terminal status: ${status}.`,
+    reason: "terminal_status_fallback"
   };
 }
 

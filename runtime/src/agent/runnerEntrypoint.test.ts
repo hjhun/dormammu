@@ -21,6 +21,7 @@ import {
   runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
+  runDaemonTerminalErrorEntrypoint,
   runDaemonWatcherBackendEntrypoint,
   runDaemonWatcherWaitEntrypoint,
   runAgentRunnerEntrypoint,
@@ -494,6 +495,26 @@ test("runDaemonRunFinishedEntrypoint projects run-finished metadata", () => {
       outcome: "completed",
       error: null,
       reason: "daemon_run_finished"
+    }
+  );
+});
+
+test("runDaemonTerminalErrorEntrypoint projects terminal errors", () => {
+  assert.deepEqual(
+    runDaemonTerminalErrorEntrypoint({
+      entrypoint: "daemon_terminal_error_decision",
+      status: "failed",
+      next_pending_task: "Phase 3. Fix"
+    }),
+    {
+      entrypoint: "daemon_terminal_error_decision",
+      status: "failed",
+      nextPendingTask: "Phase 3. Fix",
+      message: [
+        "Loop retry budget was exhausted before PLAN.md completed.",
+        " Next pending PLAN task: Phase 3. Fix."
+      ].join(""),
+      reason: "retry_budget_exhausted"
     }
   );
 });

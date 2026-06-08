@@ -848,6 +848,61 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertEqual(payload.outcome, "completed")
             self.assertIsNone(payload.error)
 
+    def test_terminal_error_message_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            loop_result = LoopRunResult(
+                status="failed",
+                attempts_completed=2,
+                retries_used=2,
+                max_retries=2,
+                max_iterations=3,
+                latest_run_id="agent:test-run",
+                supervisor_verdict=None,
+                report_path=None,
+                continuation_prompt_path=None,
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+
+            message = runner._terminal_error_message(
+                loop_result,
+                " Phase 2. Validate ",
+            )
+
+            self.assertEqual(
+                message,
+                (
+                    "Loop retry budget was exhausted before PLAN.md completed."
+                    " Next pending PLAN task: Phase 2. Validate."
+                ),
+            )
+            terminal_error_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_terminal_error_decision"
+            )
+            self.assertEqual(
+                terminal_error_payload,
+                {
+                    "entrypoint": "daemon_terminal_error_decision",
+                    "status": "failed",
+                    "next_pending_task": "Phase 2. Validate",
+                },
+            )
+
     def test_daemon_prompt_result_omits_result_report_artifact_when_file_was_not_written(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1930,6 +1985,50 @@ class DaemonRunnerTests(unittest.TestCase):
                             or None
                         ),
                         "reason": "fake_daemon_run_finished",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_terminal_error_decision":
+                    status = (payload.get("status") or "").strip() or "unknown"
+                    next_pending_task = (
+                        (payload.get("next_pending_task") or "").strip()
+                        or None
+                    )
+                    if status == "failed":
+                        suffix = (
+                            " Next pending PLAN task: "
+                            + next_pending_task
+                            + "."
+                            if next_pending_task
+                            else ""
+                        )
+                        message = (
+                            "Loop retry budget was exhausted before PLAN.md "
+                            "completed."
+                            + suffix
+                        )
+                        reason = "retry_budget_exhausted"
+                    elif status == "blocked":
+                        message = (
+                            "Loop stopped because the configured coding-agent "
+                            "CLIs were blocked."
+                        )
+                        reason = "agent_cli_blocked"
+                    elif status == "manual_review_needed":
+                        message = "Loop stopped because manual review is required."
+                        reason = "manual_review_needed"
+                    else:
+                        message = (
+                            "Loop finished with terminal status: "
+                            + status
+                            + "."
+                        )
+                        reason = "terminal_status_fallback"
+                    print(json.dumps({{
+                        "entrypoint": "daemon_terminal_error_decision",
+                        "status": status,
+                        "nextPendingTask": next_pending_task,
+                        "message": message,
+                        "reason": reason,
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_prompt_route_decision":

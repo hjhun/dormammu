@@ -57,6 +57,7 @@ import {
   daemonRunFinishedDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
+  daemonTerminalErrorDecision,
   daemonWatcherBackendDecision,
   daemonWatcherWaitDecision,
   type DaemonExistingResultDecision,
@@ -75,6 +76,7 @@ import {
   type DaemonRunFinishedDecision,
   type DaemonShutdownDecision,
   type DaemonStartupDecision,
+  type DaemonTerminalErrorDecision,
   type DaemonWatcherBackend,
   type DaemonWatcherBackendDecision,
   type DaemonWatcherWaitDecision
@@ -365,6 +367,17 @@ export type DaemonRunFinishedEntrypointResultPayload =
     entrypoint: "daemon_run_finished_decision";
   };
 
+export type DaemonTerminalErrorEntrypointPayload = {
+  entrypoint: "daemon_terminal_error_decision";
+  status: string;
+  next_pending_task?: string | null;
+};
+
+export type DaemonTerminalErrorEntrypointResultPayload =
+  DaemonTerminalErrorDecision & {
+    entrypoint: "daemon_terminal_error_decision";
+  };
+
 export type DaemonExistingResultEntrypointPayload = {
   entrypoint: "daemon_existing_result_decision";
   prompt_path: string;
@@ -522,6 +535,7 @@ export type RunnerCliPayload =
   | DaemonRunFinishedEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupEntrypointPayload
+  | DaemonTerminalErrorEntrypointPayload
   | DaemonWatcherBackendEntrypointPayload
   | DaemonWatcherWaitEntrypointPayload
   | GoalsQueueEntrypointPayload
@@ -553,6 +567,7 @@ export type RunnerCliResultPayload =
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
+  | DaemonTerminalErrorEntrypointResultPayload
   | DaemonWatcherBackendEntrypointResultPayload
   | DaemonWatcherWaitEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
@@ -702,6 +717,19 @@ export function runDaemonRunFinishedEntrypoint(
       ) ?? null,
       outcome: parseRequiredString(payload.outcome, "outcome"),
       error: parseOptionalString(payload.error, "error") ?? null
+    })
+  };
+}
+
+export function runDaemonTerminalErrorEntrypoint(
+  payload: DaemonTerminalErrorEntrypointPayload
+): DaemonTerminalErrorEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_terminal_error_decision",
+    ...daemonTerminalErrorDecision({
+      status: parseRequiredString(payload.status, "status"),
+      nextPendingTask:
+        parseOptionalString(payload.next_pending_task, "next_pending_task") ?? null
     })
   };
 }
