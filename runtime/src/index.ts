@@ -12,6 +12,7 @@ export * from "./agent/runArtifacts.js";
 export * from "./agent/runnerCli.js";
 export * from "./agent/runnerEntrypoint.js";
 export * from "./goals/prompts.js";
+export * from "./goals/queue.js";
 export * from "./pipeline/roleLoopExecutor.js";
 export * from "./pipeline/roleLoops.js";
 export * from "./pipeline/roleStages.js";

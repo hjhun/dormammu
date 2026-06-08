@@ -117,6 +117,10 @@ Ported modules:
   designer, queued goal prompt assembly, goal-source metadata tags, and queued
   prompt file naming
   -> `runtime/src/goals/prompts.ts`
+- TypeScript-owned goals queue projection helpers for goal file stem
+  extraction, queued prompt filename derivation, duplicate queued prompt
+  detection, and goal-source metadata prompt content projection
+  -> `runtime/src/goals/queue.ts`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -288,18 +292,11 @@ Validation:
 
 ## Next Slice
 
-Port the remaining runtime orchestration surface:
+Port the remaining daemon and goals orchestration surface:
 
-- runtime skill resolution and manifest-backed profile discovery/loading can
-  now be projected from TypeScript search roots, selected manifest-backed
-  profiles can be normalized into TypeScript runtime role profile snapshots,
-  and the TypeScript runner entrypoint can resolve role/profile-backed CLI and
-  runtime skill payloads when given the required search roots
-- Python runtime call sites now forward role/profile search-root context to the
-  TypeScript runner bridge, but still own daemon, supervisor, and pipeline
-  orchestration while TypeScript parity surfaces are assembled
-
-The next slice should connect the TypeScript role-loop executor surface to the
-Python pipeline bridge for tester/reviewer loops, or continue porting daemon
-and goals orchestration contracts such as goal file discovery and queue prompt
-projection.
+- TypeScript now owns deterministic goals prompt construction and queue prompt
+  projection contracts, but Python still owns goals file discovery, analyzer /
+  planner / designer execution sequencing, and prompt file writes.
+- The next slice should port goal file discovery and queue candidate listing
+  into TypeScript, then connect those helpers through the Python bridge before
+  moving the scheduler execution loop itself.
