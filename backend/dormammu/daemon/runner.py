@@ -2706,7 +2706,46 @@ class DaemonRunner:
                 prompt_result,
                 error=str(fallback_decision["combinedError"]),
             )
-            return fallback_result, render_result_markdown(fallback_result)
+            return fallback_result, self._render_result_markdown_with_bridge(
+                fallback_result,
+            )
+
+    def _render_result_markdown_with_bridge(
+        self,
+        prompt_result: DaemonPromptResult,
+    ) -> str:
+        generated_at = _iso_now()
+        expected = render_result_markdown(prompt_result, generated_at=generated_at)
+        markdown = self._project_typescript_result_markdown(
+            prompt_result,
+            generated_at=generated_at,
+            expected_markdown=expected,
+        )
+        if markdown is None:
+            return expected
+        return markdown
+
+    def _project_typescript_result_markdown(
+        self,
+        prompt_result: DaemonPromptResult,
+        *,
+        generated_at: str,
+        expected_markdown: str,
+    ) -> str | None:
+        payload = {
+            "entrypoint": "daemon_result_markdown_projection",
+            "result": prompt_result.to_dict(),
+            "generated_at": generated_at,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        if result.get("reason") != "result_markdown_projected":
+            return None
+        markdown = result.get("markdown")
+        if markdown != expected_markdown:
+            return None
+        return str(markdown)
 
     def _project_typescript_result_report_fallback_decision(
         self,

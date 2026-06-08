@@ -612,6 +612,52 @@ test("dormammu-agent-runner can project daemon result artifact refs", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon result markdown", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_result_markdown_projection",
+      generated_at: "2026-06-08T03:00:02+00:00",
+      result: {
+        prompt_path: "/repo/prompts/001-first.md",
+        result_path: "/repo/results/001-first_RESULT.md",
+        status: "in_progress",
+        started_at: "2026-06-08T03:00:00+00:00",
+        completed_at: null,
+        watcher_backend: "polling",
+        sort_key: [0, "001-first.md", "001-first.md"],
+        session_id: null,
+        stage_results: [],
+        artifacts: [],
+        phase_results: []
+      }
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_result_markdown_projection",
+    markdown: [
+      "# Result: 001-first.md",
+      "",
+      "## Summary",
+      "",
+      "- Generated at: `2026-06-08T03:00:02+00:00`",
+      "- Status: `in_progress`",
+      "- Prompt path: `/repo/prompts/001-first.md`",
+      "- Result path: `/repo/results/001-first_RESULT.md`",
+      "- Session id: `unknown`",
+      "- Watcher backend: `polling`",
+      "- Started at: `2026-06-08T03:00:00+00:00`",
+      "- Completed at: `not completed`",
+      "- Queue sort key: `(0, '001-first.md', '001-first.md')`",
+      "- Processing state: `active`"
+    ].join("\n") + "\n",
+    reason: "result_markdown_projected"
+  });
+});
+
 test("dormammu-agent-runner can project daemon run-finished decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

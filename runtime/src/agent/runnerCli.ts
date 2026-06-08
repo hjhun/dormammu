@@ -19,6 +19,7 @@ import {
   runDaemonPromptSettleEntrypoint,
   runDaemonQueueFileEntrypoint,
   runDaemonResultArtifactRefEntrypoint,
+  runDaemonResultMarkdownEntrypoint,
   runDaemonResultReportFallbackEntrypoint,
   runDaemonResultReportEntrypoint,
   runDaemonResultStatusEntrypoint,
@@ -60,6 +61,7 @@ import {
   type DaemonPromptSettleEntrypointPayload,
   type DaemonQueueFileEntrypointPayload,
   type DaemonResultArtifactRefEntrypointPayload,
+  type DaemonResultMarkdownEntrypointPayload,
   type DaemonResultReportFallbackEntrypointPayload,
   type DaemonResultReportEntrypointPayload,
   type DaemonResultStatusEntrypointPayload,
@@ -202,6 +204,9 @@ async function runWithSignalHandlers(
   if (isDaemonResultArtifactRefPayload(payload)) {
     return runDaemonResultArtifactRefEntrypoint(payload);
   }
+  if (isDaemonResultMarkdownPayload(payload)) {
+    return runDaemonResultMarkdownEntrypoint(payload);
+  }
   if (isDaemonResultReportFallbackPayload(payload)) {
     return runDaemonResultReportFallbackEntrypoint(payload);
   }
@@ -295,6 +300,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_prompt_settle_decision" &&
       payload.entrypoint !== "daemon_queue_file_decision" &&
       payload.entrypoint !== "daemon_result_artifact_ref_decision" &&
+      payload.entrypoint !== "daemon_result_markdown_projection" &&
       payload.entrypoint !== "daemon_result_report_fallback_decision" &&
       payload.entrypoint !== "daemon_result_report_decision" &&
       payload.entrypoint !== "daemon_result_status_decision" &&
@@ -453,6 +459,15 @@ function isDaemonResultArtifactRefPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_result_artifact_ref_decision"
+  );
+}
+
+function isDaemonResultMarkdownPayload(
+  payload: RunnerCliPayload
+): payload is DaemonResultMarkdownEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_result_markdown_projection"
   );
 }
 

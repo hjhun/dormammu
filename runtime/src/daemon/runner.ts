@@ -110,6 +110,16 @@ export type DaemonResultReportFallbackDecision = {
   reason: "result_report_authoring_failed";
 };
 
+export type DaemonResultMarkdownProjectionInput = {
+  result: Readonly<Record<string, unknown>>;
+  generatedAt: string;
+};
+
+export type DaemonResultMarkdownProjection = {
+  markdown: string;
+  reason: "result_markdown_projected";
+};
+
 export type DaemonResultArtifactRefAction = "reference" | "skip";
 
 export type DaemonResultArtifactRefDecisionInput = {
@@ -602,6 +612,167 @@ export function daemonResultReportFallbackDecision(
         ? `${input.existingError}\n\n${fallbackNote}`
         : fallbackNote,
     reason: "result_report_authoring_failed"
+  };
+}
+
+export function daemonResultMarkdownProjection(
+  input: DaemonResultMarkdownProjectionInput
+): DaemonResultMarkdownProjection {
+  const result = input.result;
+  const lines = [
+    `# Result: ${basename(requiredText(result.prompt_path))}`,
+    "",
+    "## Summary",
+    "",
+    `- Generated at: \`${input.generatedAt}\``,
+    `- Status: \`${displayValue(result.status)}\``,
+    `- Prompt path: \`${requiredText(result.prompt_path)}\``,
+    `- Result path: \`${requiredText(result.result_path)}\``,
+    `- Session id: \`${optionalText(result.session_id) ?? "unknown"}\``,
+    `- Watcher backend: \`${requiredText(result.watcher_backend)}\``,
+    `- Started at: \`${requiredText(result.started_at)}\``,
+    `- Completed at: \`${optionalText(result.completed_at) ?? "not completed"}\``,
+    `- Queue sort key: \`${tupleDisplay(result.sort_key)}\``
+  ];
+
+  if (displayValue(result.status) === "in_progress") {
+    lines.push("- Processing state: `active`");
+  }
+  if (
+    result.plan_all_completed !== null &&
+    result.plan_all_completed !== undefined
+  ) {
+    lines.push(
+      `- PLAN complete: \`${result.plan_all_completed === true ? "yes" : "no"}\``
+    );
+  }
+  const nextPendingTask = optionalText(result.next_pending_task);
+  if (nextPendingTask !== null) {
+    lines.push(`- Next pending PLAN task: \`${nextPendingTask}\``);
+  }
+  if (
+    result.attempts_completed !== null &&
+    result.attempts_completed !== undefined
+  ) {
+    lines.push(`- Attempts completed: \`${String(result.attempts_completed)}\``);
+  }
+  const latestRunId = optionalText(result.latest_run_id);
+  if (latestRunId !== null) {
+    lines.push(`- Latest run id: \`${latestRunId}\``);
+  }
+  const supervisorVerdict = optionalText(result.supervisor_verdict);
+  if (supervisorVerdict !== null) {
+    lines.push(`- Supervisor verdict: \`${supervisorVerdict}\``);
+  }
+  const summary = optionalText(result.summary);
+  if (summary !== null) {
+    lines.push(`- Run summary: ${summary}`);
+  }
+  const supervisorReportPath = optionalText(result.supervisor_report_path);
+  if (supervisorReportPath !== null) {
+    lines.push(`- Supervisor report: \`${supervisorReportPath}\``);
+  }
+  const continuationPromptPath = optionalText(result.continuation_prompt_path);
+  if (continuationPromptPath !== null) {
+    lines.push(`- Continuation prompt: \`${continuationPromptPath}\``);
+  }
+  const error = optionalText(result.error);
+  if (error !== null) {
+    lines.push("", "## Error", "", error);
+  }
+
+  const stageResults = arrayOfRecords(result.stage_results);
+  if (stageResults.length > 0) {
+    lines.push("", "## Stage Results", "");
+    for (const stageResult of stageResults) {
+      lines.push(`### ${optionalText(stageResult.stage_name) ?? requiredText(stageResult.role)}`);
+      lines.push("");
+      lines.push(`- Role: \`${requiredText(stageResult.role)}\``);
+      lines.push(`- Status: \`${displayValue(stageResult.status)}\``);
+      lines.push(
+        `- Verdict: \`${optionalText(stageResult.verdict) ?? "n/a"}\``
+      );
+      lines.push(`- Report: \`${optionalText(stageResult.report_path) ?? "n/a"}\``);
+      const stageSummary = optionalText(stageResult.summary);
+      if (stageSummary !== null) {
+        lines.push(`- Summary: ${stageSummary}`);
+      }
+      const retry = recordOrNull(stageResult.retry);
+      if (retry !== null) {
+        lines.push(
+          [
+            "- Retry: `",
+            `attempt=${valueOrNullText(retry.attempt)}, `,
+            `retries_used=${valueOrNullText(retry.retries_used)}, `,
+            `max_retries=${valueOrNullText(retry.max_retries)}, `,
+            `max_iterations=${valueOrNullText(retry.max_iterations)}`,
+            "`"
+          ].join("")
+        );
+      }
+      const timing = recordOrNull(stageResult.timing);
+      if (timing !== null) {
+        lines.push(
+          [
+            "- Timing: `",
+            `started_at=${optionalText(timing.started_at) ?? "n/a"}, `,
+            `completed_at=${optionalText(timing.completed_at) ?? "n/a"}, `,
+            "duration_seconds=",
+            timing.duration_seconds !== null && timing.duration_seconds !== undefined
+              ? String(timing.duration_seconds)
+              : "n/a",
+            "`"
+          ].join("")
+        );
+      }
+      lines.push("");
+    }
+  }
+
+  const artifacts = arrayOfRecords(result.artifacts);
+  if (artifacts.length > 0) {
+    lines.push("", "## Artifacts", "");
+    for (const artifact of artifacts) {
+      const label = optionalText(artifact.label);
+      lines.push(
+        `- \`${requiredText(artifact.kind)}\`: \`${requiredText(artifact.path)}\`` +
+          (label !== null ? ` (${label})` : "")
+      );
+    }
+  }
+
+  const phaseResults = arrayOfRecords(result.phase_results);
+  if (phaseResults.length > 0) {
+    lines.push("", "## Phases", "");
+    for (const phaseResult of phaseResults) {
+      lines.push(`### ${requiredText(phaseResult.phase_name)}`);
+      lines.push("");
+      lines.push(`- Exit code: \`${String(phaseResult.exit_code)}\``);
+      lines.push(`- CLI: \`${requiredText(phaseResult.cli_path)}\``);
+      lines.push(`- Run id: \`${optionalText(phaseResult.run_id) ?? "n/a"}\``);
+      lines.push(
+        `- Prompt artifact: \`${optionalText(phaseResult.prompt_path) ?? "n/a"}\``
+      );
+      lines.push(
+        `- Stdout artifact: \`${optionalText(phaseResult.stdout_path) ?? "n/a"}\``
+      );
+      lines.push(
+        `- Stderr artifact: \`${optionalText(phaseResult.stderr_path) ?? "n/a"}\``
+      );
+      lines.push(
+        `- Metadata artifact: \`${optionalText(phaseResult.metadata_path) ?? "n/a"}\``
+      );
+      const phaseError = optionalText(phaseResult.error);
+      if (phaseError !== null) {
+        lines.push(`- Error: ${phaseError}`);
+      }
+      lines.push("");
+    }
+  }
+
+  return {
+    markdown: `${lines.join("\n").trimEnd()}\n`,
+    reason: "result_markdown_projected"
   };
 }
 
@@ -1218,4 +1389,72 @@ function nonNegativeIntegerOrNull(value: number | null): number | null {
     return null;
   }
   return Math.max(0, Math.trunc(value));
+}
+
+function optionalText(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const text = String(value);
+  return text.length > 0 ? text : null;
+}
+
+function requiredText(value: unknown): string {
+  return String(value);
+}
+
+function displayValue(value: unknown): string {
+  return String(value);
+}
+
+function tupleDisplay(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return String(value);
+  }
+  return `(${value.map((item) => pythonRepr(item)).join(", ")}${value.length === 1 ? "," : ""})`;
+}
+
+function pythonRepr(value: unknown): string {
+  if (typeof value === "string") {
+    return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+  }
+  if (value === null) {
+    return "None";
+  }
+  if (typeof value === "boolean") {
+    return value ? "True" : "False";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => pythonRepr(item)).join(", ")}]`;
+  }
+  return String(value);
+}
+
+function recordOrNull(value: unknown): Readonly<Record<string, unknown>> | null {
+  if (value === null || value === undefined || typeof value !== "object") {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return null;
+  }
+  return value as Readonly<Record<string, unknown>>;
+}
+
+function arrayOfRecords(
+  value: unknown
+): ReadonlyArray<Readonly<Record<string, unknown>>> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item) => {
+    const record = recordOrNull(item);
+    return record === null ? [] : [record];
+  });
+}
+
+function valueOrNullText(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "None";
+  }
+  return String(value);
 }

@@ -17,6 +17,7 @@ import {
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
+  daemonResultMarkdownProjection,
   daemonResultReportFallbackDecision,
   daemonResultReportDecision,
   daemonResultStatusDecision,
@@ -262,6 +263,138 @@ test("daemonResultReportFallbackDecision projects fallback errors", () => {
         ].join("")
       ].join("\n"),
       reason: "result_report_authoring_failed"
+    }
+  );
+});
+
+test("daemonResultMarkdownProjection renders deterministic fallback reports", () => {
+  assert.deepEqual(
+    daemonResultMarkdownProjection({
+      generatedAt: "2026-06-08T03:00:02+00:00",
+      result: {
+        prompt_path: "/repo/prompts/001-first.md",
+        result_path: "/repo/results/001-first_RESULT.md",
+        status: "failed",
+        started_at: "2026-06-08T03:00:00+00:00",
+        completed_at: "2026-06-08T03:00:01+00:00",
+        watcher_backend: "polling",
+        sort_key: [0, "001-first.md", "001-first.md"],
+        session_id: "session-123",
+        plan_all_completed: false,
+        next_pending_task: "Phase 4",
+        attempts_completed: 2,
+        latest_run_id: "agent:run-1",
+        supervisor_verdict: "needs_work",
+        summary: "Loop stopped after reviewer feedback.",
+        supervisor_report_path: "/repo/.dev/supervisor_report.md",
+        continuation_prompt_path: "/repo/.dev/continuation_prompt.txt",
+        error: "Loop failed",
+        stage_results: [
+          {
+            role: "reviewer",
+            stage_name: "review",
+            status: "failed",
+            verdict: "needs_work",
+            report_path: "/repo/.dev/logs/reviewer.md",
+            summary: "Needs follow-up.",
+            retry: {
+              attempt: 2,
+              retries_used: 1,
+              max_retries: 3,
+              max_iterations: null
+            },
+            timing: {
+              started_at: "2026-06-08T03:00:00+00:00",
+              completed_at: "2026-06-08T03:00:01+00:00",
+              duration_seconds: 1.5
+            }
+          }
+        ],
+        artifacts: [
+          {
+            kind: "supervisor_report",
+            path: "/repo/.dev/supervisor_report.md",
+            label: "supervisor_report"
+          }
+        ],
+        phase_results: [
+          {
+            phase_name: "Develop",
+            exit_code: 1,
+            cli_path: "/usr/bin/codex",
+            run_id: "agent:run-1",
+            prompt_path: "/repo/.dev/logs/run.prompt.txt",
+            stdout_path: "/repo/.dev/logs/run.stdout.log",
+            stderr_path: "/repo/.dev/logs/run.stderr.log",
+            metadata_path: "/repo/.dev/logs/run.meta.json",
+            error: "agent failed"
+          }
+        ]
+      }
+    }),
+    {
+      markdown: [
+        "# Result: 001-first.md",
+        "",
+        "## Summary",
+        "",
+        "- Generated at: `2026-06-08T03:00:02+00:00`",
+        "- Status: `failed`",
+        "- Prompt path: `/repo/prompts/001-first.md`",
+        "- Result path: `/repo/results/001-first_RESULT.md`",
+        "- Session id: `session-123`",
+        "- Watcher backend: `polling`",
+        "- Started at: `2026-06-08T03:00:00+00:00`",
+        "- Completed at: `2026-06-08T03:00:01+00:00`",
+        "- Queue sort key: `(0, '001-first.md', '001-first.md')`",
+        "- PLAN complete: `no`",
+        "- Next pending PLAN task: `Phase 4`",
+        "- Attempts completed: `2`",
+        "- Latest run id: `agent:run-1`",
+        "- Supervisor verdict: `needs_work`",
+        "- Run summary: Loop stopped after reviewer feedback.",
+        "- Supervisor report: `/repo/.dev/supervisor_report.md`",
+        "- Continuation prompt: `/repo/.dev/continuation_prompt.txt`",
+        "",
+        "## Error",
+        "",
+        "Loop failed",
+        "",
+        "## Stage Results",
+        "",
+        "### review",
+        "",
+        "- Role: `reviewer`",
+        "- Status: `failed`",
+        "- Verdict: `needs_work`",
+        "- Report: `/repo/.dev/logs/reviewer.md`",
+        "- Summary: Needs follow-up.",
+        "- Retry: `attempt=2, retries_used=1, max_retries=3, max_iterations=None`",
+        [
+          "- Timing: `started_at=2026-06-08T03:00:00+00:00, ",
+          "completed_at=2026-06-08T03:00:01+00:00, ",
+          "duration_seconds=1.5`"
+        ].join(""),
+        "",
+        "",
+        "## Artifacts",
+        "",
+        "- `supervisor_report`: `/repo/.dev/supervisor_report.md` (supervisor_report)",
+        "",
+        "## Phases",
+        "",
+        "### Develop",
+        "",
+        "- Exit code: `1`",
+        "- CLI: `/usr/bin/codex`",
+        "- Run id: `agent:run-1`",
+        "- Prompt artifact: `/repo/.dev/logs/run.prompt.txt`",
+        "- Stdout artifact: `/repo/.dev/logs/run.stdout.log`",
+        "- Stderr artifact: `/repo/.dev/logs/run.stderr.log`",
+        "- Metadata artifact: `/repo/.dev/logs/run.meta.json`",
+        "- Error: agent failed"
+      ].join("\n") + "\n",
+      reason: "result_markdown_projected"
     }
   );
 });

@@ -21,6 +21,7 @@ import {
   runDaemonPromptSettleEntrypoint,
   runDaemonQueueFileEntrypoint,
   runDaemonResultArtifactRefEntrypoint,
+  runDaemonResultMarkdownEntrypoint,
   runDaemonResultReportFallbackEntrypoint,
   runDaemonResultReportEntrypoint,
   runDaemonResultStatusEntrypoint,
@@ -524,6 +525,49 @@ test("runDaemonResultReportFallbackEntrypoint projects fallback errors", () => {
         "wrote fallback report instead. Cause: agent unavailable"
       ].join(""),
       reason: "result_report_authoring_failed"
+    }
+  );
+});
+
+test("runDaemonResultMarkdownEntrypoint projects fallback markdown", () => {
+  assert.deepEqual(
+    runDaemonResultMarkdownEntrypoint({
+      entrypoint: "daemon_result_markdown_projection",
+      generated_at: "2026-06-08T03:00:02+00:00",
+      result: {
+        prompt_path: "/repo/prompts/001-first.md",
+        result_path: "/repo/results/001-first_RESULT.md",
+        status: "completed",
+        started_at: "2026-06-08T03:00:00+00:00",
+        completed_at: null,
+        watcher_backend: "polling",
+        sort_key: [0, "001-first.md", "001-first.md"],
+        session_id: null,
+        plan_all_completed: true,
+        stage_results: [],
+        artifacts: [],
+        phase_results: []
+      }
+    }),
+    {
+      entrypoint: "daemon_result_markdown_projection",
+      markdown: [
+        "# Result: 001-first.md",
+        "",
+        "## Summary",
+        "",
+        "- Generated at: `2026-06-08T03:00:02+00:00`",
+        "- Status: `completed`",
+        "- Prompt path: `/repo/prompts/001-first.md`",
+        "- Result path: `/repo/results/001-first_RESULT.md`",
+        "- Session id: `unknown`",
+        "- Watcher backend: `polling`",
+        "- Started at: `2026-06-08T03:00:00+00:00`",
+        "- Completed at: `not completed`",
+        "- Queue sort key: `(0, '001-first.md', '001-first.md')`",
+        "- PLAN complete: `yes`"
+      ].join("\n") + "\n",
+      reason: "result_markdown_projected"
     }
   );
 });

@@ -903,7 +903,7 @@ class DaemonRunnerTests(unittest.TestCase):
                 f"Loop failed\n\n{expected_note}",
             )
             self.assertIn(expected_note, markdown)
-            payload = next(
+            payloads = [
                 payload
                 for payload in (
                     json.loads(line)
@@ -911,6 +911,10 @@ class DaemonRunnerTests(unittest.TestCase):
                     .read_text(encoding="utf-8")
                     .splitlines()
                 )
+            ]
+            payload = next(
+                payload
+                for payload in payloads
                 if payload["entrypoint"] == "daemon_result_report_fallback_decision"
             )
             self.assertEqual(
@@ -921,6 +925,19 @@ class DaemonRunnerTests(unittest.TestCase):
                     "existing_error": "Loop failed",
                     "cause": "agent unavailable",
                 },
+            )
+            markdown_payload = next(
+                payload
+                for payload in payloads
+                if payload["entrypoint"] == "daemon_result_markdown_projection"
+            )
+            self.assertEqual(
+                markdown_payload["result"]["error"],
+                f"Loop failed\n\n{expected_note}",
+            )
+            self.assertEqual(
+                markdown_payload["result"]["prompt_path"],
+                str(prompt_path),
             )
 
     def test_process_prompt_can_use_typescript_run_finished_bridge(self) -> None:
@@ -2508,6 +2525,41 @@ class DaemonRunnerTests(unittest.TestCase):
                         "fallbackNote": fallback_note,
                         "combinedError": combined_error,
                         "reason": "result_report_authoring_failed",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_result_markdown_projection":
+                    result = payload["result"]
+                    generated_at = payload["generated_at"]
+                    session_id = result.get("session_id") or "unknown"
+                    completed_at = result.get("completed_at") or "not completed"
+                    sort_key = tuple(result["sort_key"])
+                    lines = [
+                        "# Result: " + Path(result["prompt_path"]).name,
+                        "",
+                        "## Summary",
+                        "",
+                        "- Generated at: `" + generated_at + "`",
+                        "- Status: `" + result["status"] + "`",
+                        "- Prompt path: `" + result["prompt_path"] + "`",
+                        "- Result path: `" + result["result_path"] + "`",
+                        "- Session id: `" + session_id + "`",
+                        "- Watcher backend: `" + result["watcher_backend"] + "`",
+                        "- Started at: `" + result["started_at"] + "`",
+                        "- Completed at: `" + completed_at + "`",
+                        "- Queue sort key: `" + repr(sort_key) + "`",
+                    ]
+                    if result.get("plan_all_completed") is not None:
+                        lines.append(
+                            "- PLAN complete: `"
+                            + ("yes" if result["plan_all_completed"] else "no")
+                            + "`"
+                        )
+                    if result.get("error"):
+                        lines.extend(["", "## Error", "", result["error"]])
+                    print(json.dumps({{
+                        "entrypoint": "daemon_result_markdown_projection",
+                        "markdown": "\\n".join(lines).rstrip() + "\\n",
+                        "reason": "result_markdown_projected",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_result_artifact_ref_decision":

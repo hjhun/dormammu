@@ -57,6 +57,7 @@ import {
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
+  daemonResultMarkdownProjection,
   daemonResultReportFallbackDecision,
   daemonResultReportDecision,
   daemonResultStatusDecision,
@@ -85,6 +86,7 @@ import {
   type DaemonPromptSettleDecision,
   type DaemonQueueFileDecision,
   type DaemonResultArtifactRefDecision,
+  type DaemonResultMarkdownProjection,
   type DaemonResultReportFallbackDecision,
   type DaemonResultReportDecision,
   type DaemonResultStatusDecision,
@@ -394,6 +396,17 @@ export type DaemonResultReportFallbackEntrypointResultPayload =
     entrypoint: "daemon_result_report_fallback_decision";
   };
 
+export type DaemonResultMarkdownEntrypointPayload = {
+  entrypoint: "daemon_result_markdown_projection";
+  result: Record<string, unknown>;
+  generated_at: string;
+};
+
+export type DaemonResultMarkdownEntrypointResultPayload =
+  DaemonResultMarkdownProjection & {
+    entrypoint: "daemon_result_markdown_projection";
+  };
+
 export type DaemonResultArtifactRefEntrypointPayload = {
   entrypoint: "daemon_result_artifact_ref_decision";
   result_path: string;
@@ -666,6 +679,7 @@ export type RunnerCliPayload =
   | DaemonPromptSettleEntrypointPayload
   | DaemonQueueFileEntrypointPayload
   | DaemonResultArtifactRefEntrypointPayload
+  | DaemonResultMarkdownEntrypointPayload
   | DaemonResultReportFallbackEntrypointPayload
   | DaemonResultReportEntrypointPayload
   | DaemonResultStatusEntrypointPayload
@@ -707,6 +721,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptSettleEntrypointResultPayload
   | DaemonQueueFileEntrypointResultPayload
   | DaemonResultArtifactRefEntrypointResultPayload
+  | DaemonResultMarkdownEntrypointResultPayload
   | DaemonResultReportFallbackEntrypointResultPayload
   | DaemonResultReportEntrypointResultPayload
   | DaemonResultStatusEntrypointResultPayload
@@ -876,6 +891,18 @@ export function runDaemonResultReportFallbackEntrypoint(
       existingError:
         parseOptionalString(payload.existing_error, "existing_error") ?? null,
       cause: parseString(payload.cause, "cause")
+    })
+  };
+}
+
+export function runDaemonResultMarkdownEntrypoint(
+  payload: DaemonResultMarkdownEntrypointPayload
+): DaemonResultMarkdownEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_result_markdown_projection",
+    ...daemonResultMarkdownProjection({
+      result: parseRecord(payload.result, "result"),
+      generatedAt: parseRequiredString(payload.generated_at, "generated_at")
     })
   };
 }
@@ -1660,6 +1687,16 @@ function parseStringArray(value: unknown, fieldName: string): string[] {
     throw new Error(`${fieldName} must be a JSON array of strings`);
   }
   return value;
+}
+
+function parseRecord(
+  value: unknown,
+  fieldName: string
+): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${fieldName} must be a JSON object`);
+  }
+  return value as Record<string, unknown>;
 }
 
 function parseOptionalString(
