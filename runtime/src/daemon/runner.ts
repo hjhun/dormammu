@@ -134,6 +134,23 @@ export type DaemonPlanStateDecision = {
     | "task_sync_normalized";
 };
 
+export type DaemonArtifactWriterDecisionInput = {
+  baseDir: string;
+  logsDir: string | null;
+  runId: string | null;
+  sessionId: string | null;
+};
+
+export type DaemonArtifactWriterDecision = {
+  baseDir: string;
+  logsDir: string | null;
+  runId: string | null;
+  role: "daemon";
+  stageName: "daemon";
+  sessionId: string | null;
+  reason: "daemon_artifact_writer_bound";
+};
+
 export type DaemonResultArtifactRefAction = "reference" | "skip";
 
 export type DaemonResultArtifactRefDecisionInput = {
@@ -820,6 +837,20 @@ export function daemonPlanStateDecision(
         : Boolean(allCompletedRaw),
     nextPendingTask: nextPendingText.length > 0 ? nextPendingText : null,
     reason: "task_sync_normalized"
+  };
+}
+
+export function daemonArtifactWriterDecision(
+  input: DaemonArtifactWriterDecisionInput
+): DaemonArtifactWriterDecision {
+  return {
+    baseDir: input.baseDir,
+    logsDir: input.logsDir,
+    runId: input.runId,
+    role: "daemon",
+    stageName: "daemon",
+    sessionId: input.sessionId,
+    reason: "daemon_artifact_writer_bound"
   };
 }
 

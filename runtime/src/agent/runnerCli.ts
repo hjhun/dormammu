@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Writable } from "node:stream";
 
 import {
+  runDaemonArtifactWriterEntrypoint,
   runDaemonAgentCliEntrypoint,
   runDaemonExistingResultEntrypoint,
   runDaemonGoalSourceEntrypoint,
@@ -47,6 +48,7 @@ import {
   runGoalsWatcherStopDecisionEntrypoint,
   runGoalsWatchLoopDecisionEntrypoint,
   type AgentRunnerEntrypointPayload,
+  type DaemonArtifactWriterEntrypointPayload,
   type DaemonAgentCliEntrypointPayload,
   type DaemonExistingResultEntrypointPayload,
   type DaemonGoalSourceEntrypointPayload,
@@ -196,6 +198,9 @@ async function runWithSignalHandlers(
   }
   if (isDaemonPlanStatePayload(payload)) {
     return runDaemonPlanStateEntrypoint(payload);
+  }
+  if (isDaemonArtifactWriterPayload(payload)) {
+    return runDaemonArtifactWriterEntrypoint(payload);
   }
   if (isDaemonPromptRoutePayload(payload)) {
     return runDaemonPromptRouteEntrypoint(payload);
@@ -456,6 +461,15 @@ function isDaemonPlanStatePayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_plan_state_decision"
+  );
+}
+
+function isDaemonArtifactWriterPayload(
+  payload: RunnerCliPayload
+): payload is DaemonArtifactWriterEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_artifact_writer_decision"
   );
 }
 

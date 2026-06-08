@@ -1272,6 +1272,56 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIsNone(prompt_result.result_report_artifact)
             self.assertEqual(prompt_result.artifacts, ())
 
+    def test_daemon_artifact_writer_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+            base_dir = root / "results"
+            logs_dir = root / "daemon-logs"
+
+            writer = runner._daemon_artifact_writer(
+                base_dir=base_dir,
+                logs_dir=logs_dir,
+                run_id="daemon:test-run",
+                session_id="session-123",
+            )
+            artifact_ref = writer.reference(
+                kind="result_report",
+                path=base_dir / "001-first_RESULT.md",
+                label="result_report",
+                content_type="text/markdown",
+            )
+
+            self.assertEqual(writer.base_dir, base_dir)
+            self.assertEqual(writer.logs_dir, logs_dir)
+            self.assertEqual(artifact_ref.run_id, "daemon:test-run")
+            self.assertEqual(artifact_ref.role, "daemon")
+            self.assertEqual(artifact_ref.stage_name, "daemon")
+            self.assertEqual(artifact_ref.session_id, "session-123")
+            payload = json.loads(
+                (root / "captured-runner-payload.json").read_text(
+                    encoding="utf-8",
+                )
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_artifact_writer_decision",
+                    "base_dir": str(base_dir),
+                    "logs_dir": str(logs_dir),
+                    "run_id": "daemon:test-run",
+                    "session_id": "session-123",
+                },
+            )
+
     def test_result_report_artifact_ref_can_use_typescript_bridge(self) -> None:
         class PromptResultWithoutArtifact:
             result_report_artifact = None
@@ -2480,6 +2530,18 @@ class DaemonRunnerTests(unittest.TestCase):
                         ),
                         "nextPendingTask": next_pending_task,
                         "reason": "task_sync_normalized",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_artifact_writer_decision":
+                    print(json.dumps({{
+                        "entrypoint": "daemon_artifact_writer_decision",
+                        "baseDir": payload["base_dir"],
+                        "logsDir": payload.get("logs_dir"),
+                        "runId": payload.get("run_id"),
+                        "role": "daemon",
+                        "stageName": "daemon",
+                        "sessionId": payload.get("session_id"),
+                        "reason": "daemon_artifact_writer_bound",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_existing_result_decision":

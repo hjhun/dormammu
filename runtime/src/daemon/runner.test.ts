@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  daemonArtifactWriterDecision,
   daemonAgentCliDecision,
   daemonExistingResultDecision,
   daemonGoalSourceDecision,
@@ -232,6 +233,43 @@ test("daemonPlanStateDecision normalizes direct responses and task sync", () => 
       planAllCompleted: null,
       nextPendingTask: null,
       reason: "task_sync_missing"
+    }
+  );
+});
+
+test("daemonArtifactWriterDecision preserves daemon writer bindings", () => {
+  assert.deepEqual(
+    daemonArtifactWriterDecision({
+      baseDir: "/repo/results",
+      logsDir: "/repo/logs",
+      runId: "daemon:run-1",
+      sessionId: "session-1"
+    }),
+    {
+      baseDir: "/repo/results",
+      logsDir: "/repo/logs",
+      runId: "daemon:run-1",
+      role: "daemon",
+      stageName: "daemon",
+      sessionId: "session-1",
+      reason: "daemon_artifact_writer_bound"
+    }
+  );
+  assert.deepEqual(
+    daemonArtifactWriterDecision({
+      baseDir: "/repo/results",
+      logsDir: null,
+      runId: null,
+      sessionId: null
+    }),
+    {
+      baseDir: "/repo/results",
+      logsDir: null,
+      runId: null,
+      role: "daemon",
+      stageName: "daemon",
+      sessionId: null,
+      reason: "daemon_artifact_writer_bound"
     }
   );
 });

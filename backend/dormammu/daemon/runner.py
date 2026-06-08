@@ -763,6 +763,53 @@ class DaemonRunner:
             ),
         )
 
+    def _project_typescript_artifact_writer_decision(
+        self,
+        *,
+        base_dir: Path,
+        logs_dir: Path | None,
+        run_id: str | None,
+        session_id: str | None,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_artifact_writer_decision",
+            "base_dir": str(base_dir),
+            "logs_dir": str(logs_dir) if logs_dir is not None else None,
+            "run_id": run_id,
+            "session_id": session_id,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._artifact_writer_expectations(
+            base_dir=base_dir,
+            logs_dir=logs_dir,
+            run_id=run_id,
+            session_id=session_id,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    @staticmethod
+    def _artifact_writer_expectations(
+        *,
+        base_dir: Path,
+        logs_dir: Path | None,
+        run_id: str | None,
+        session_id: str | None,
+    ) -> dict[str, object]:
+        return {
+            "baseDir": str(base_dir),
+            "logsDir": str(logs_dir) if logs_dir is not None else None,
+            "runId": run_id,
+            "role": "daemon",
+            "stageName": "daemon",
+            "sessionId": session_id,
+            "reason": "daemon_artifact_writer_bound",
+        }
+
     @staticmethod
     def _result_report_expectations(
         prompt_result: DaemonPromptResult,
@@ -2849,11 +2896,40 @@ class DaemonRunner:
         run_id: str | None = None,
         session_id: str | None = None,
     ) -> ArtifactWriter:
-        return ArtifactWriter(base_dir=base_dir, logs_dir=logs_dir).bind(
+        decision = self._project_typescript_artifact_writer_decision(
+            base_dir=base_dir,
+            logs_dir=logs_dir,
             run_id=run_id,
-            role="daemon",
-            stage_name="daemon",
             session_id=session_id,
+        )
+        if decision is None:
+            decision = self._artifact_writer_expectations(
+                base_dir=base_dir,
+                logs_dir=logs_dir,
+                run_id=run_id,
+                session_id=session_id,
+            )
+        decision_logs_dir = decision["logsDir"]
+        return ArtifactWriter(
+            base_dir=Path(str(decision["baseDir"])),
+            logs_dir=(
+                Path(str(decision_logs_dir))
+                if decision_logs_dir is not None
+                else None
+            ),
+        ).bind(
+            run_id=(
+                str(decision["runId"])
+                if decision["runId"] is not None
+                else None
+            ),
+            role=str(decision["role"]),
+            stage_name=str(decision["stageName"]),
+            session_id=(
+                str(decision["sessionId"])
+                if decision["sessionId"] is not None
+                else None
+            ),
         )
 
     def _daemon_result_artifact_writer(

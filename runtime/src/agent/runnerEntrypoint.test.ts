@@ -6,6 +6,7 @@ import test from "node:test";
 
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
+  runDaemonArtifactWriterEntrypoint,
   runDaemonAgentCliEntrypoint,
   runDaemonExistingResultEntrypoint,
   runDaemonGoalSourceEntrypoint,
@@ -488,6 +489,28 @@ test("runDaemonPlanStateEntrypoint projects synced PLAN state", () => {
       planAllCompleted: true,
       nextPendingTask: "Phase 4. Review",
       reason: "task_sync_normalized"
+    }
+  );
+});
+
+test("runDaemonArtifactWriterEntrypoint projects writer bindings", () => {
+  assert.deepEqual(
+    runDaemonArtifactWriterEntrypoint({
+      entrypoint: "daemon_artifact_writer_decision",
+      base_dir: "/repo/results",
+      logs_dir: "/repo/logs",
+      run_id: "daemon:run-1",
+      session_id: "session-1"
+    }),
+    {
+      entrypoint: "daemon_artifact_writer_decision",
+      baseDir: "/repo/results",
+      logsDir: "/repo/logs",
+      runId: "daemon:run-1",
+      role: "daemon",
+      stageName: "daemon",
+      sessionId: "session-1",
+      reason: "daemon_artifact_writer_bound"
     }
   );
 });

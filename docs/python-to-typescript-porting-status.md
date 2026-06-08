@@ -296,6 +296,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon artifact writer binding decision helper, plus
+  runner entrypoint and Python `DaemonRunner._daemon_artifact_writer()` bridge
+  consumption for daemon base/log/run/session/role/stage metadata while Python
+  retains `ArtifactWriter` construction, report file IO, and malformed-bridge
+  fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon result report publication decision helper, plus
   runner entrypoint and Python `DaemonRunner._publish_result_report()` bridge
   consumption for result report write intent, prompt cleanup intent, and
@@ -619,12 +628,15 @@ Port the remaining daemon and goals orchestration surface:
   prompt result and progress log paths. TypeScript also owns daemon plan-state
   synchronization decisions for `direct_response`, missing task sync, PLAN
   completion, and next-pending-task normalization. TypeScript also owns daemon
-  result report publication decisions for report write intent, prompt cleanup
-  intent, and artifact metadata projection, plus daemon result report fallback
-  decisions for configured-authoring failure log/error text. TypeScript also
-  owns daemon result Markdown projection for deterministic fallback report
-  body rendering. TypeScript also owns daemon result report artifact reference
-  decisions for existing report lifecycle refs. TypeScript also owns
+  artifact writer binding decisions for base/log/run/session/role/stage
+  metadata while Python keeps writer construction and report file IO.
+  TypeScript also owns daemon result report publication decisions for report
+  write intent, prompt cleanup intent, and artifact metadata projection, plus
+  daemon result report fallback decisions for configured-authoring failure
+  log/error text. TypeScript also owns daemon result Markdown projection for
+  deterministic fallback report body rendering. TypeScript also owns daemon
+  result report artifact reference decisions for existing report lifecycle
+  refs. TypeScript also owns
   daemon run-finished lifecycle metadata projection for
   attempts, retries, supervisor verdict, outcome, and error. TypeScript also
   owns daemon expected roadmap phase selection for loop configuration.

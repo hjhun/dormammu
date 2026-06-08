@@ -42,6 +42,7 @@ import {
   type GoalQueueCandidate
 } from "../goals/discovery.js";
 import {
+  daemonArtifactWriterDecision,
   daemonAgentCliDecision,
   daemonExistingResultDecision,
   daemonGoalSourceDecision,
@@ -71,6 +72,7 @@ import {
   daemonTerminalStatusDecision,
   daemonWatcherBackendDecision,
   daemonWatcherWaitDecision,
+  type DaemonArtifactWriterDecision,
   type DaemonAgentCliDecision,
   type DaemonExistingResultDecision,
   type DaemonGoalSourceDecision,
@@ -382,6 +384,19 @@ export type DaemonPlanStateEntrypointResultPayload =
     entrypoint: "daemon_plan_state_decision";
   };
 
+export type DaemonArtifactWriterEntrypointPayload = {
+  entrypoint: "daemon_artifact_writer_decision";
+  base_dir: string;
+  logs_dir?: string | null;
+  run_id?: string | null;
+  session_id?: string | null;
+};
+
+export type DaemonArtifactWriterEntrypointResultPayload =
+  DaemonArtifactWriterDecision & {
+    entrypoint: "daemon_artifact_writer_decision";
+  };
+
 export type DaemonResultReportEntrypointPayload = {
   entrypoint: "daemon_result_report_decision";
   prompt_path: string;
@@ -679,6 +694,7 @@ export type DaemonWatcherWaitEntrypointResultPayload =
 
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
+  | DaemonArtifactWriterEntrypointPayload
   | DaemonExistingResultEntrypointPayload
   | DaemonHeartbeatRemoveEntrypointPayload
   | DaemonHeartbeatWriteEntrypointPayload
@@ -722,6 +738,7 @@ export type RunnerCliPayload =
   | GoalsWatchLoopDecisionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
+  | DaemonArtifactWriterEntrypointResultPayload
   | DaemonExistingResultEntrypointResultPayload
   | DaemonHeartbeatRemoveEntrypointResultPayload
   | DaemonHeartbeatWriteEntrypointResultPayload
@@ -885,6 +902,20 @@ export function runDaemonPlanStateEntrypoint(
         payload.task_sync === null || payload.task_sync === undefined
           ? null
           : parseRecord(payload.task_sync, "task_sync")
+    })
+  };
+}
+
+export function runDaemonArtifactWriterEntrypoint(
+  payload: DaemonArtifactWriterEntrypointPayload
+): DaemonArtifactWriterEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_artifact_writer_decision",
+    ...daemonArtifactWriterDecision({
+      baseDir: parseRequiredString(payload.base_dir, "base_dir"),
+      logsDir: parseOptionalString(payload.logs_dir, "logs_dir") ?? null,
+      runId: parseOptionalString(payload.run_id, "run_id") ?? null,
+      sessionId: parseOptionalString(payload.session_id, "session_id") ?? null
     })
   };
 }

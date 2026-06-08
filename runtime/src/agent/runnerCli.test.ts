@@ -532,6 +532,32 @@ test("dormammu-agent-runner can project daemon plan-state decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon artifact writer bindings", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_artifact_writer_decision",
+      base_dir: "/repo/results",
+      logs_dir: "/repo/logs",
+      run_id: "daemon:run-1",
+      session_id: "session-1"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_artifact_writer_decision",
+    baseDir: "/repo/results",
+    logsDir: "/repo/logs",
+    runId: "daemon:run-1",
+    role: "daemon",
+    stageName: "daemon",
+    sessionId: "session-1",
+    reason: "daemon_artifact_writer_bound"
+  });
+});
+
 test("dormammu-agent-runner can project daemon result report decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({
