@@ -260,6 +260,77 @@ def _project_typescript_result_report_authoring_decision(
     return expected
 
 
+def _result_report_authored_output_expectations(
+    *,
+    stdout_text: str,
+    stderr_text: str,
+    generated_at: str,
+    prompt_name: str,
+) -> dict[str, object]:
+    authored = select_agent_output(stdout_text, stderr_text).strip()
+    if not authored:
+        return {
+            "action": "error",
+            "authoredMarkdown": None,
+            "errorMessage": (
+                "Configured CLI returned no result report content "
+                f"for {prompt_name}."
+            ),
+            "reason": "authored_output_empty",
+        }
+    if "Generated at:" not in authored or generated_at not in authored:
+        return {
+            "action": "error",
+            "authoredMarkdown": None,
+            "errorMessage": (
+                "Configured CLI result report did not preserve the required "
+                "generated-at timestamp."
+            ),
+            "reason": "authored_output_missing_generated_at",
+        }
+    return {
+        "action": "accept",
+        "authoredMarkdown": authored.rstrip() + "\n",
+        "errorMessage": None,
+        "reason": "authored_output_accepted",
+    }
+
+
+def _project_typescript_result_report_authored_output_decision(
+    app_config: AppConfig,
+    *,
+    stdout_text: str,
+    stderr_text: str,
+    generated_at: str,
+    prompt_name: str,
+    progress_stream: TextIO,
+) -> dict[str, object] | None:
+    payload = {
+        "entrypoint": "daemon_result_report_authored_output_decision",
+        "stdout_text": stdout_text,
+        "stderr_text": stderr_text,
+        "generated_at": generated_at,
+        "prompt_name": prompt_name,
+    }
+    bridge_result = _run_typescript_runner_payload(
+        app_config,
+        payload,
+        progress_stream=progress_stream,
+    )
+    if bridge_result is None:
+        return None
+    expected = _result_report_authored_output_expectations(
+        stdout_text=stdout_text,
+        stderr_text=stderr_text,
+        generated_at=generated_at,
+        prompt_name=prompt_name,
+    )
+    for field_name, expected_value in expected.items():
+        if bridge_result.get(field_name) != expected_value:
+            return None
+    return expected
+
+
 class ResultReportAuthor:
     def __init__(
         self,
@@ -314,13 +385,23 @@ class ResultReportAuthor:
 
         stdout_text = run.stdout_path.read_text(encoding="utf-8") if run.stdout_path.exists() else ""
         stderr_text = run.stderr_path.read_text(encoding="utf-8") if run.stderr_path.exists() else ""
-        authored = select_agent_output(stdout_text, stderr_text).strip()
-        if not authored:
-            raise RuntimeError(
-                f"Configured CLI returned no result report content for {result.prompt_path.name}."
+        authored_output_decision = (
+            _project_typescript_result_report_authored_output_decision(
+                self._app_config,
+                stdout_text=stdout_text,
+                stderr_text=stderr_text,
+                generated_at=generated_at,
+                prompt_name=result.prompt_path.name,
+                progress_stream=self._progress_stream,
             )
-        if "Generated at:" not in authored or generated_at not in authored:
-            raise RuntimeError(
-                "Configured CLI result report did not preserve the required generated-at timestamp."
+        )
+        if authored_output_decision is None:
+            authored_output_decision = _result_report_authored_output_expectations(
+                stdout_text=stdout_text,
+                stderr_text=stderr_text,
+                generated_at=generated_at,
+                prompt_name=result.prompt_path.name,
             )
-        return authored.rstrip() + "\n"
+        if authored_output_decision["action"] == "error":
+            raise RuntimeError(str(authored_output_decision["errorMessage"]))
+        return str(authored_output_decision["authoredMarkdown"])

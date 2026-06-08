@@ -145,6 +145,25 @@ export type DaemonResultReportAuthoringDecision = {
     | "configured_cli_authoring_requested";
 };
 
+export type DaemonResultReportAuthoredOutputAction = "accept" | "error";
+
+export type DaemonResultReportAuthoredOutputDecisionInput = {
+  stdoutText: string | null;
+  stderrText: string | null;
+  generatedAt: string;
+  promptName: string;
+};
+
+export type DaemonResultReportAuthoredOutputDecision = {
+  action: DaemonResultReportAuthoredOutputAction;
+  authoredMarkdown: string | null;
+  errorMessage: string | null;
+  reason:
+    | "authored_output_accepted"
+    | "authored_output_empty"
+    | "authored_output_missing_generated_at";
+};
+
 export type DaemonPlanStateDecisionInput = {
   requestClass: string;
   taskSync: Readonly<Record<string, unknown>> | null;
@@ -883,6 +902,42 @@ export function daemonResultReportAuthoringDecision(
   };
 }
 
+export function daemonResultReportAuthoredOutputDecision(
+  input: DaemonResultReportAuthoredOutputDecisionInput
+): DaemonResultReportAuthoredOutputDecision {
+  const authored = selectAgentOutput(
+    input.stdoutText,
+    input.stderrText
+  ).trim();
+  if (authored.length === 0) {
+    return {
+      action: "error",
+      authoredMarkdown: null,
+      errorMessage:
+        `Configured CLI returned no result report content for ${input.promptName}.`,
+      reason: "authored_output_empty"
+    };
+  }
+  if (
+    !authored.includes("Generated at:") ||
+    !authored.includes(input.generatedAt)
+  ) {
+    return {
+      action: "error",
+      authoredMarkdown: null,
+      errorMessage:
+        "Configured CLI result report did not preserve the required generated-at timestamp.",
+      reason: "authored_output_missing_generated_at"
+    };
+  }
+  return {
+    action: "accept",
+    authoredMarkdown: `${authored}\n`,
+    errorMessage: null,
+    reason: "authored_output_accepted"
+  };
+}
+
 export function daemonPlanStateDecision(
   input: DaemonPlanStateDecisionInput
 ): DaemonPlanStateDecision {
@@ -1536,6 +1591,19 @@ function stem(path: string): string {
 function nonEmpty(value: string | null): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function selectAgentOutput(
+  stdoutText: string | null,
+  stderrText: string | null
+): string {
+  if (stdoutText !== null && stdoutText.trim().length > 0) {
+    return stdoutText;
+  }
+  if (stderrText !== null && stderrText.trim().length > 0) {
+    return stderrText;
+  }
+  return stdoutText ?? stderrText ?? "";
 }
 
 function nonNegativeIntegerOrNull(value: number | null): number | null {

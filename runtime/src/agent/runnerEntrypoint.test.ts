@@ -24,6 +24,7 @@ import {
   runDaemonQueueFileEntrypoint,
   runDaemonResultArtifactRefEntrypoint,
   runDaemonResultMarkdownEntrypoint,
+  runDaemonResultReportAuthoredOutputEntrypoint,
   runDaemonResultReportAuthoringEntrypoint,
   runDaemonResultReportFallbackEntrypoint,
   runDaemonResultReportEntrypoint,
@@ -645,6 +646,33 @@ test("runDaemonResultReportAuthoringEntrypoint projects CLI requests", () => {
   assert.equal(result.reason, "configured_cli_authoring_requested");
   assert.match(result.promptText ?? "", /# Runtime Paths\n\nRuntime paths summary/);
   assert.match(result.promptText ?? "", /# Structured Facts\n\n# Result: 001-first.md/);
+});
+
+test("runDaemonResultReportAuthoredOutputEntrypoint validates output", () => {
+  assert.deepEqual(
+    runDaemonResultReportAuthoredOutputEntrypoint({
+      entrypoint: "daemon_result_report_authored_output_decision",
+      stdout_text: [
+        "# CLI Authored Result",
+        "",
+        "- Generated at: `2026-06-08T03:00:02+00:00`"
+      ].join("\n"),
+      stderr_text: null,
+      generated_at: "2026-06-08T03:00:02+00:00",
+      prompt_name: "001-first.md"
+    }),
+    {
+      entrypoint: "daemon_result_report_authored_output_decision",
+      action: "accept",
+      authoredMarkdown: [
+        "# CLI Authored Result",
+        "",
+        "- Generated at: `2026-06-08T03:00:02+00:00`"
+      ].join("\n") + "\n",
+      errorMessage: null,
+      reason: "authored_output_accepted"
+    }
+  );
 });
 
 test("runDaemonResultArtifactRefEntrypoint projects artifact ref decisions", () => {

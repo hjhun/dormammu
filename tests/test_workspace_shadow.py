@@ -190,7 +190,8 @@ def _write_invalid_result_report_cli(root: Path, name: str) -> Path:
 
 def _write_result_report_authoring_runner(root: Path) -> Path:
     script = root / "fake-ts-authoring-runner"
-    captured = root / "captured-authoring-payload.json"
+    captured_authoring = root / "captured-authoring-payload.json"
+    captured_output = root / "captured-authored-output-payload.json"
     script.write_text(
         textwrap.dedent(
             f"""\
@@ -199,10 +200,16 @@ def _write_result_report_authoring_runner(root: Path) -> Path:
             import sys
             from pathlib import Path
 
-            captured = Path({str(captured)!r})
+            captured_authoring = Path({str(captured_authoring)!r})
+            captured_output = Path({str(captured_output)!r})
             payload = json.loads(sys.stdin.read())
             if payload.get("entrypoint") == "daemon_result_report_authoring_decision":
-                captured.write_text(
+                captured_authoring.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
+                    encoding="utf-8",
+                )
+            if payload.get("entrypoint") == "daemon_result_report_authored_output_decision":
+                captured_output.write_text(
                     json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
                     encoding="utf-8",
                 )
@@ -274,7 +281,46 @@ def _write_result_report_authoring_runner(root: Path) -> Path:
                 print(json.dumps(response, ensure_ascii=True))
                 raise SystemExit(0)
             if payload.get("entrypoint") != "daemon_result_report_authoring_decision":
-                raise SystemExit(2)
+                if payload.get("entrypoint") != "daemon_result_report_authored_output_decision":
+                    raise SystemExit(2)
+                stdout_text = payload.get("stdout_text") or ""
+                stderr_text = payload.get("stderr_text") or ""
+                authored = stdout_text if stdout_text.strip() else stderr_text
+                authored = authored.strip()
+                generated_at = payload["generated_at"]
+                if not authored:
+                    response = {{
+                        "entrypoint": "daemon_result_report_authored_output_decision",
+                        "action": "error",
+                        "authoredMarkdown": None,
+                        "errorMessage": (
+                            "Configured CLI returned no result report content for "
+                            + payload["prompt_name"]
+                            + "."
+                        ),
+                        "reason": "authored_output_empty",
+                    }}
+                elif "Generated at:" not in authored or generated_at not in authored:
+                    response = {{
+                        "entrypoint": "daemon_result_report_authored_output_decision",
+                        "action": "error",
+                        "authoredMarkdown": None,
+                        "errorMessage": (
+                            "Configured CLI result report did not preserve the required "
+                            "generated-at timestamp."
+                        ),
+                        "reason": "authored_output_missing_generated_at",
+                    }}
+                else:
+                    response = {{
+                        "entrypoint": "daemon_result_report_authored_output_decision",
+                        "action": "accept",
+                        "authoredMarkdown": authored.rstrip() + "\\n",
+                        "errorMessage": None,
+                        "reason": "authored_output_accepted",
+                    }}
+                print(json.dumps(response, ensure_ascii=True))
+                raise SystemExit(0)
             result = payload["result"]
             cli_path = payload.get("cli_path")
             generated_at = payload["generated_at"]
@@ -680,6 +726,20 @@ class ResultReportAuthorTests(unittest.TestCase):
                 captured_payload["result"]["prompt_path"],
                 str(result.prompt_path),
             )
+            captured_output_payload = json.loads(
+                (repo_root / "captured-authored-output-payload.json").read_text(
+                    encoding="utf-8",
+                )
+            )
+            self.assertEqual(
+                captured_output_payload["entrypoint"],
+                "daemon_result_report_authored_output_decision",
+            )
+            self.assertEqual(
+                captured_output_payload["prompt_name"],
+                result.prompt_path.name,
+            )
+            self.assertIn("# CLI Authored Result", captured_output_payload["stdout_text"])
 
     def test_result_report_author_raises_when_cli_output_omits_generated_at(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

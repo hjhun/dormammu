@@ -664,6 +664,37 @@ test("dormammu-agent-runner can project daemon result authoring requests", () =>
   assert.match(result.promptText, /# Structured Facts\n\n# Result: 001-first.md/);
 });
 
+test("dormammu-agent-runner can validate daemon result authoring output", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_result_report_authored_output_decision",
+      stdout_text: [
+        "# CLI Authored Result",
+        "",
+        "- Generated at: `2026-06-08T03:00:02+00:00`"
+      ].join("\n"),
+      stderr_text: null,
+      generated_at: "2026-06-08T03:00:02+00:00",
+      prompt_name: "001-first.md"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_result_report_authored_output_decision",
+    action: "accept",
+    authoredMarkdown: [
+      "# CLI Authored Result",
+      "",
+      "- Generated at: `2026-06-08T03:00:02+00:00`"
+    ].join("\n") + "\n",
+    errorMessage: null,
+    reason: "authored_output_accepted"
+  });
+});
+
 test("dormammu-agent-runner can project daemon result artifact refs", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

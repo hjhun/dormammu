@@ -20,6 +20,7 @@ import {
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
   daemonResultMarkdownProjection,
+  daemonResultReportAuthoredOutputDecision,
   daemonResultReportAuthoringDecision,
   daemonResultReportFallbackDecision,
   daemonResultReportDecision,
@@ -567,6 +568,61 @@ test("daemonResultReportAuthoringDecision falls back without a CLI", () => {
       runLabel: null,
       generatedAt: "2026-06-08T03:00:02+00:00",
       reason: "active_agent_cli_missing"
+    }
+  );
+});
+
+test("daemonResultReportAuthoredOutputDecision validates authored markdown", () => {
+  assert.deepEqual(
+    daemonResultReportAuthoredOutputDecision({
+      stdoutText: [
+        "# CLI Authored Result",
+        "",
+        "- Generated at: `2026-06-08T03:00:02+00:00`"
+      ].join("\n"),
+      stderrText: "ignored",
+      generatedAt: "2026-06-08T03:00:02+00:00",
+      promptName: "001-first.md"
+    }),
+    {
+      action: "accept",
+      authoredMarkdown: [
+        "# CLI Authored Result",
+        "",
+        "- Generated at: `2026-06-08T03:00:02+00:00`"
+      ].join("\n") + "\n",
+      errorMessage: null,
+      reason: "authored_output_accepted"
+    }
+  );
+  assert.deepEqual(
+    daemonResultReportAuthoredOutputDecision({
+      stdoutText: "   ",
+      stderrText: "",
+      generatedAt: "2026-06-08T03:00:02+00:00",
+      promptName: "001-first.md"
+    }),
+    {
+      action: "error",
+      authoredMarkdown: null,
+      errorMessage:
+        "Configured CLI returned no result report content for 001-first.md.",
+      reason: "authored_output_empty"
+    }
+  );
+  assert.deepEqual(
+    daemonResultReportAuthoredOutputDecision({
+      stdoutText: "# Invalid Result",
+      stderrText: null,
+      generatedAt: "2026-06-08T03:00:02+00:00",
+      promptName: "001-first.md"
+    }),
+    {
+      action: "error",
+      authoredMarkdown: null,
+      errorMessage:
+        "Configured CLI result report did not preserve the required generated-at timestamp.",
+      reason: "authored_output_missing_generated_at"
     }
   );
 });

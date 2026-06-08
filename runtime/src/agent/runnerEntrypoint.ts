@@ -60,6 +60,7 @@ import {
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
   daemonResultMarkdownProjection,
+  daemonResultReportAuthoredOutputDecision,
   daemonResultReportAuthoringDecision,
   daemonResultReportFallbackDecision,
   daemonResultReportDecision,
@@ -92,6 +93,7 @@ import {
   type DaemonQueueFileDecision,
   type DaemonResultArtifactRefDecision,
   type DaemonResultMarkdownProjection,
+  type DaemonResultReportAuthoredOutputDecision,
   type DaemonResultReportAuthoringDecision,
   type DaemonResultReportFallbackDecision,
   type DaemonResultReportDecision,
@@ -451,6 +453,19 @@ export type DaemonResultReportAuthoringEntrypointResultPayload =
     entrypoint: "daemon_result_report_authoring_decision";
   };
 
+export type DaemonResultReportAuthoredOutputEntrypointPayload = {
+  entrypoint: "daemon_result_report_authored_output_decision";
+  stdout_text?: string | null;
+  stderr_text?: string | null;
+  generated_at: string;
+  prompt_name: string;
+};
+
+export type DaemonResultReportAuthoredOutputEntrypointResultPayload =
+  DaemonResultReportAuthoredOutputDecision & {
+    entrypoint: "daemon_result_report_authored_output_decision";
+  };
+
 export type DaemonResultArtifactRefEntrypointPayload = {
   entrypoint: "daemon_result_artifact_ref_decision";
   result_path: string;
@@ -725,6 +740,7 @@ export type RunnerCliPayload =
   | DaemonPromptSettleEntrypointPayload
   | DaemonQueueFileEntrypointPayload
   | DaemonResultArtifactRefEntrypointPayload
+  | DaemonResultReportAuthoredOutputEntrypointPayload
   | DaemonResultReportAuthoringEntrypointPayload
   | DaemonResultMarkdownEntrypointPayload
   | DaemonResultReportFallbackEntrypointPayload
@@ -770,6 +786,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptSettleEntrypointResultPayload
   | DaemonQueueFileEntrypointResultPayload
   | DaemonResultArtifactRefEntrypointResultPayload
+  | DaemonResultReportAuthoredOutputEntrypointResultPayload
   | DaemonResultReportAuthoringEntrypointResultPayload
   | DaemonResultMarkdownEntrypointResultPayload
   | DaemonResultReportFallbackEntrypointResultPayload
@@ -1000,6 +1017,20 @@ export function runDaemonResultReportAuthoringEntrypoint(
       ),
       cliPath: parseOptionalString(payload.cli_path, "cli_path") ?? null,
       repoRoot: parseRequiredString(payload.repo_root, "repo_root")
+    })
+  };
+}
+
+export function runDaemonResultReportAuthoredOutputEntrypoint(
+  payload: DaemonResultReportAuthoredOutputEntrypointPayload
+): DaemonResultReportAuthoredOutputEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_result_report_authored_output_decision",
+    ...daemonResultReportAuthoredOutputDecision({
+      stdoutText: parseOptionalString(payload.stdout_text, "stdout_text") ?? null,
+      stderrText: parseOptionalString(payload.stderr_text, "stderr_text") ?? null,
+      generatedAt: parseRequiredString(payload.generated_at, "generated_at"),
+      promptName: parseRequiredString(payload.prompt_name, "prompt_name")
     })
   };
 }
