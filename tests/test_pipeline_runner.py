@@ -1646,6 +1646,13 @@ class TestDocumentWriting:
         assert captured["event_stream"] is True
         assert captured["request"]["cli_path"] == "pipeline-agent"
         assert captured["request"]["prompt_text"] == "pipeline prompt"
+        assert captured["pipeline_stage"] == {
+            "kind": "tester",
+            "report_path": str(doc),
+            "attempt": None,
+            "artifacts": [],
+            "metadata": {},
+        }
 
     def test_call_once_writes_role_doc(self, tmp_path: Path) -> None:
         agents = AgentsConfig()
@@ -1689,6 +1696,10 @@ class TestDocumentWriting:
         request = mock_run.call_args[0][0]
         assert request.prompt_text == "test prompt"
         assert request.cli_path == Path("claude")
+        assert request.pipeline_stage_kind == "tester"
+        assert request.pipeline_stage_report_path == (
+            tmp_path / ".dev" / "logs" / "20260412_tester_my-feature.md"
+        )
 
     def test_call_once_uses_stderr_when_stdout_is_blank(self, tmp_path: Path) -> None:
         agents = AgentsConfig()

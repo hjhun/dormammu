@@ -336,6 +336,7 @@ class CliAdapter:
                 self.config
             ),
             "skill_search_roots": _typescript_skill_search_roots(self.config),
+            "pipeline_stage": _typescript_pipeline_stage_payload(request),
             "request": {
                 "cli_path": str(request.cli_path),
                 "prompt_text": request.prompt_text,
@@ -900,6 +901,24 @@ def _typescript_skill_search_roots(config: AppConfig) -> list[dict[str, str]]:
             "path": str(config.built_in_skills_dir),
         },
     ]
+
+
+def _typescript_pipeline_stage_payload(
+    request: AgentRunRequest,
+) -> dict[str, object] | None:
+    if request.pipeline_stage_kind is None:
+        return None
+    return {
+        "kind": request.pipeline_stage_kind,
+        "report_path": (
+            str(request.pipeline_stage_report_path)
+            if request.pipeline_stage_report_path is not None
+            else None
+        ),
+        "attempt": request.pipeline_stage_attempt,
+        "artifacts": [],
+        "metadata": {},
+    }
 
 
 def _agent_run_started_from_payload(payload: object) -> AgentRunStarted:

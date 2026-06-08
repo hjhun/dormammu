@@ -99,6 +99,9 @@ class AgentRunRequest:
     extra_args: Sequence[str] = ()
     run_label: str | None = None
     agent_role: str = "developer"
+    pipeline_stage_kind: str | None = None
+    pipeline_stage_report_path: Path | None = None
+    pipeline_stage_attempt: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

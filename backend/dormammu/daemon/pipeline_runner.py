@@ -99,6 +99,15 @@ if TYPE_CHECKING:
 
 _DEFAULT_MAX_RETRIES = 49
 MAX_STAGE_ITERATIONS = _DEFAULT_MAX_RETRIES + 1
+_TYPESCRIPT_PIPELINE_STAGE_ROLES = frozenset({"tester", "reviewer", "committer"})
+
+
+def _typescript_pipeline_stage_kind(role: str, stage_name: str) -> str | None:
+    if stage_name == "plan_evaluator":
+        return "plan_evaluator"
+    if stage_name == role and role in _TYPESCRIPT_PIPELINE_STAGE_ROLES:
+        return role
+    return None
 
 
 class PipelineRunner:
@@ -1336,6 +1345,22 @@ class PipelineRunner:
             live_output_stream=self._progress_stream,
             stop_event=self._stop_event,
         )
+        effective_stage_name = stage_name or role
+        artifact_writer = self._artifact_writer(
+            role=role,
+            stage_name=effective_stage_name,
+        )
+        target_path = doc_path
+        if save_doc and target_path is None:
+            target_path = artifact_writer.stage_report_path(
+                role=role,
+                stem=stem,
+                date_str=date_str,
+            )
+        pipeline_stage_kind = _typescript_pipeline_stage_kind(
+            role,
+            effective_stage_name,
+        )
         request = AgentRunRequest(
             cli_path=cli,
             prompt_text=prompt,
@@ -1343,16 +1368,15 @@ class PipelineRunner:
             extra_args=tuple(_model_args(cli.name, model)),
             run_label=role,
             agent_role=role,
+            pipeline_stage_kind=pipeline_stage_kind,
+            pipeline_stage_report_path=(
+                target_path if pipeline_stage_kind is not None else None
+            ),
         )
         self._emit_cli_command(
             role=role,
             args=[str(cli)] + list(_model_args(cli.name, model)),
             cwd=self._app_config.repo_root,
-        )
-        effective_stage_name = stage_name or role
-        artifact_writer = self._artifact_writer(
-            role=role,
-            stage_name=effective_stage_name,
         )
         result = adapter.run_once(request)
         stdout_text = result.stdout_path.read_text(encoding="utf-8") if result.stdout_path.exists() else ""
@@ -1362,13 +1386,8 @@ class PipelineRunner:
         artifact_ref: ArtifactRef | None = None
 
         if save_doc:
-            target_path = doc_path
             if target_path is None:
-                target_path = artifact_writer.stage_report_path(
-                    role=role,
-                    stem=stem,
-                    date_str=date_str,
-                )
+                raise RuntimeError("stage document path was not resolved")
             artifact_ref = artifact_writer.write_markdown_report(
                 kind=artifact_kind,
                 markdown=f"# {role.capitalize()} — {stem}\n\n{output}",
