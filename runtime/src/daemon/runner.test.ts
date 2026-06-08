@@ -5,6 +5,7 @@ import {
   daemonArtifactPersistedEventDecision,
   daemonArtifactWriterDecision,
   daemonAgentCliDecision,
+  daemonCleanTerminalEvidenceDecision,
   daemonExistingResultDecision,
   daemonGoalSourceDecision,
   daemonHeartbeatRemoveDecision,
@@ -1136,6 +1137,25 @@ test("daemonTerminalStatusDecision preserves clean completed evidence", () => {
       error: null,
       preserveCompleted: true,
       reason: "clean_terminal_stage_evidence"
+    }
+  );
+});
+
+test("daemonCleanTerminalEvidenceDecision projects latest clean stages", () => {
+  assert.deepEqual(
+    daemonCleanTerminalEvidenceDecision({
+      runResult: {
+        status: "completed",
+        stage_results: [
+          { role: "developer", verdict: "fail" },
+          { role: "developer", verdict: "pass" },
+          { role: "reviewer", verdict: "approved" }
+        ]
+      }
+    }),
+    {
+      hasCleanTerminalStageEvidence: true,
+      reason: "clean_terminal_stage_evidence_projected"
     }
   );
 });

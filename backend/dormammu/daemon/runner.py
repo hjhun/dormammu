@@ -1450,6 +1450,34 @@ class DaemonRunner:
             "reason": expected["reason"],
         }
 
+    def _project_typescript_clean_terminal_evidence_decision(
+        self,
+        loop_result: LoopRunResult,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_clean_terminal_evidence_decision",
+            "run_result": loop_result.to_dict(),
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._clean_terminal_evidence_expectations(loop_result)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    @staticmethod
+    def _clean_terminal_evidence_expectations(
+        loop_result: LoopRunResult,
+    ) -> dict[str, object]:
+        return {
+            "hasCleanTerminalStageEvidence": (
+                run_result_has_clean_terminal_stage_evidence(loop_result)
+            ),
+            "reason": "clean_terminal_stage_evidence_projected",
+        }
+
     @classmethod
     def _terminal_status_expectations(
         cls,
@@ -2852,8 +2880,15 @@ class DaemonRunner:
             )
             plan_all_completed, next_pending_task = self._sync_plan_state(session_repository)
             status = self._normalize_required_text(loop_result.status)
+            clean_evidence_decision = (
+                self._project_typescript_clean_terminal_evidence_decision(
+                    loop_result,
+                )
+            )
             has_clean_terminal_stage_evidence = (
                 run_result_has_clean_terminal_stage_evidence(loop_result)
+                if clean_evidence_decision is None
+                else bool(clean_evidence_decision["hasCleanTerminalStageEvidence"])
             )
             terminal_status_decision = (
                 self._project_typescript_terminal_status_decision(

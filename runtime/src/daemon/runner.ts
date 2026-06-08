@@ -1,4 +1,8 @@
 import {
+  runResultHasCleanTerminalStageEvidence,
+  type RunResult
+} from "../results.js";
+import {
   inferPrimaryRoadmapPhaseId,
   summarizePromptGoal
 } from "../state/models.js";
@@ -443,6 +447,15 @@ export type DaemonTerminalStatusDecision = {
   error: string | null;
   preserveCompleted: boolean;
   reason: string;
+};
+
+export type DaemonCleanTerminalEvidenceDecisionInput = {
+  runResult: RunResult;
+};
+
+export type DaemonCleanTerminalEvidenceDecision = {
+  hasCleanTerminalStageEvidence: boolean;
+  reason: "clean_terminal_stage_evidence_projected";
 };
 
 export type DaemonResultStatusDecisionInput = {
@@ -1508,6 +1521,17 @@ export function daemonTerminalStatusDecision(
     }).message,
     preserveCompleted: false,
     reason: "terminal_error_status"
+  };
+}
+
+export function daemonCleanTerminalEvidenceDecision(
+  input: DaemonCleanTerminalEvidenceDecisionInput
+): DaemonCleanTerminalEvidenceDecision {
+  return {
+    hasCleanTerminalStageEvidence: runResultHasCleanTerminalStageEvidence(
+      input.runResult
+    ),
+    reason: "clean_terminal_stage_evidence_projected"
   };
 }
 

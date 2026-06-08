@@ -1260,6 +1260,27 @@ class DaemonRunnerTests(unittest.TestCase):
 
             self.assertEqual(prompt_result.status, "completed")
             self.assertIsNone(prompt_result.error)
+            clean_evidence_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"]
+                == "daemon_clean_terminal_evidence_decision"
+            )
+            self.assertEqual(clean_evidence_payload["run_result"]["status"], "completed")
+            self.assertEqual(
+                [
+                    stage["role"]
+                    for stage in clean_evidence_payload["run_result"][
+                        "stage_results"
+                    ]
+                ],
+                ["developer", "tester", "reviewer", "committer"],
+            )
             terminal_status_payload = next(
                 payload
                 for payload in (
@@ -3449,6 +3470,47 @@ class DaemonRunnerTests(unittest.TestCase):
                         "nextPendingTask": next_pending_task,
                         "message": message,
                         "reason": reason,
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_clean_terminal_evidence_decision":
+                    run_result = payload.get("run_result") or {{}}
+                    stage_results = run_result.get("stage_results") or []
+                    latest_reversed = []
+                    seen = set()
+                    for stage in reversed(stage_results):
+                        key = stage.get("stage_name") or stage.get("role")
+                        if key in seen:
+                            continue
+                        latest_reversed.append(stage)
+                        seen.add(key)
+                    latest = list(reversed(latest_reversed))
+                    failure_statuses = {{
+                        "failed",
+                        "blocked",
+                        "manual_review_needed",
+                    }}
+                    failure_verdicts = {{
+                        "fail",
+                        "needs_work",
+                        "rework",
+                        "blocked",
+                        "manual_review_needed",
+                    }}
+                    clean = (
+                        run_result.get("status") == "completed"
+                        and bool(latest)
+                        and all(
+                            (stage.get("status") or "completed") == "completed"
+                            and (stage.get("status") or "completed")
+                            not in failure_statuses
+                            and (stage.get("verdict") or "") not in failure_verdicts
+                            for stage in latest
+                        )
+                    )
+                    print(json.dumps({{
+                        "entrypoint": "daemon_clean_terminal_evidence_decision",
+                        "hasCleanTerminalStageEvidence": clean,
+                        "reason": "clean_terminal_stage_evidence_projected",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_terminal_status_decision":

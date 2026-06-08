@@ -9,6 +9,7 @@ import {
   parsePlanEvaluatorVerdict,
   parseReviewerVerdict,
   parseTesterVerdict,
+  runResultHasCleanTerminalStageEvidence,
   stageResultIsFailure,
   stageResultRequestsRetry,
   stageResultsHaveCleanTerminalEvidence
@@ -53,10 +54,24 @@ test("aggregate helpers compute terminal status and verdict from latest stages",
     { role: "reviewer", verdict: "approved" }
   ];
   assert.equal(stageResultsHaveCleanTerminalEvidence(stages), true);
+  assert.equal(
+    runResultHasCleanTerminalStageEvidence({
+      status: "completed",
+      stage_results: stages
+    }),
+    true
+  );
   assert.equal(aggregateRunStatus(stages), "completed");
   assert.equal(aggregateRunVerdict(stages), "approved");
 
   const failed = [...stages, { role: "reviewer", verdict: "needs_work" }];
   assert.equal(stageResultsHaveCleanTerminalEvidence(failed), false);
+  assert.equal(
+    runResultHasCleanTerminalStageEvidence({
+      status: "failed",
+      stage_results: stages
+    }),
+    false
+  );
   assert.equal(aggregateRunVerdict(failed), "needs_work");
 });

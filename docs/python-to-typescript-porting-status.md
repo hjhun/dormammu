@@ -520,7 +520,16 @@ Ported modules:
   runner entrypoint and Python `DaemonRunner._process_prompt()` bridge
   consumption for completed-plan, clean-terminal-evidence, stale-plan-failure,
   and non-completed terminal error status projection while Python retains plan
-  sync, clean evidence calculation, result reporting, and fallback behavior
+  sync, result reporting, and fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon clean terminal stage evidence decision helper, plus
+  runner entrypoint and Python `DaemonRunner._process_prompt()` bridge
+  consumption for projecting clean latest-stage evidence before terminal
+  status reconciliation while Python retains loop execution, plan sync,
+  result reporting, and fallback behavior
   -> `runtime/src/daemon/runner.ts`,
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
@@ -782,7 +791,9 @@ Port the remaining daemon and goals orchestration surface:
   statuses. TypeScript also owns daemon terminal status reconciliation for
   completed-plan, clean-terminal-evidence, stale-plan-failure, and
   non-completed terminal error status projection. TypeScript also owns daemon
-  result status parsing for existing result Markdown recovery decisions.
+  clean terminal stage evidence projection before terminal status
+  reconciliation. TypeScript also owns daemon result status parsing for
+  existing result Markdown recovery decisions.
   Python fallbacks are retained.
 - The next slice should continue the remaining daemon lifecycle and recovery
   surface after queue dispatch, request-class resolution, prompt route

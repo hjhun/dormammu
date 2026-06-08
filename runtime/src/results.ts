@@ -348,6 +348,12 @@ export function stageResultsHaveCleanTerminalEvidence(stageResults: readonly Sta
   );
 }
 
+export function runResultHasCleanTerminalStageEvidence(result: RunResult): boolean {
+  const status = normalizeResultStatus(result.status);
+  const stageResults = result.stageResults ?? result.stage_results ?? [];
+  return status === "completed" && stageResultsHaveCleanTerminalEvidence(stageResults);
+}
+
 export function aggregateRunVerdict(
   stageResults: readonly StageResult[],
   defaultVerdict: ResultVerdict | string | null = null

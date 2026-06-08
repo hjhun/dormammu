@@ -45,6 +45,7 @@ import {
   daemonArtifactPersistedEventDecision,
   daemonArtifactWriterDecision,
   daemonAgentCliDecision,
+  daemonCleanTerminalEvidenceDecision,
   daemonExistingResultDecision,
   daemonGoalSourceDecision,
   daemonHeartbeatRemoveDecision,
@@ -86,6 +87,7 @@ import {
   type DaemonArtifactPersistedEventDecision,
   type DaemonArtifactWriterDecision,
   type DaemonAgentCliDecision,
+  type DaemonCleanTerminalEvidenceDecision,
   type DaemonExistingResultDecision,
   type DaemonGoalSourceDecision,
   type DaemonHeartbeatRemoveDecision,
@@ -158,7 +160,11 @@ import {
   type GoalsWatcherStopDecision,
   type GoalsWatchLoopDecision
 } from "../goals/scheduler.js";
-import { stageResultToDict, type StageResult } from "../results.js";
+import {
+  stageResultToDict,
+  type RunResult,
+  type StageResult
+} from "../results.js";
 import type { RequestClass } from "../workflowPolicy.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
@@ -666,6 +672,16 @@ export type DaemonTerminalStatusEntrypointResultPayload =
     entrypoint: "daemon_terminal_status_decision";
   };
 
+export type DaemonCleanTerminalEvidenceEntrypointPayload = {
+  entrypoint: "daemon_clean_terminal_evidence_decision";
+  run_result: Record<string, unknown>;
+};
+
+export type DaemonCleanTerminalEvidenceEntrypointResultPayload =
+  DaemonCleanTerminalEvidenceDecision & {
+    entrypoint: "daemon_clean_terminal_evidence_decision";
+  };
+
 export type DaemonExistingResultEntrypointPayload = {
   entrypoint: "daemon_existing_result_decision";
   prompt_path: string;
@@ -882,6 +898,7 @@ export type RunnerCliPayload =
   | DaemonSupervisorHandoffEntrypointPayload
   | DaemonTerminalErrorEntrypointPayload
   | DaemonTerminalStatusEntrypointPayload
+  | DaemonCleanTerminalEvidenceEntrypointPayload
   | DaemonWatcherBackendEntrypointPayload
   | DaemonWatcherWaitEntrypointPayload
   | GoalsQueueEntrypointPayload
@@ -937,6 +954,7 @@ export type RunnerCliResultPayload =
   | DaemonSupervisorHandoffEntrypointResultPayload
   | DaemonTerminalErrorEntrypointResultPayload
   | DaemonTerminalStatusEntrypointResultPayload
+  | DaemonCleanTerminalEvidenceEntrypointResultPayload
   | DaemonWatcherBackendEntrypointResultPayload
   | DaemonWatcherWaitEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
@@ -1396,6 +1414,20 @@ export function runDaemonTerminalStatusEntrypoint(
       ),
       nextPendingTask:
         parseOptionalString(payload.next_pending_task, "next_pending_task") ?? null
+    })
+  };
+}
+
+export function runDaemonCleanTerminalEvidenceEntrypoint(
+  payload: DaemonCleanTerminalEvidenceEntrypointPayload
+): DaemonCleanTerminalEvidenceEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_clean_terminal_evidence_decision",
+    ...daemonCleanTerminalEvidenceDecision({
+      runResult: parseRecord(
+        payload.run_result,
+        "run_result"
+      ) as unknown as RunResult
     })
   };
 }

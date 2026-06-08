@@ -7,6 +7,7 @@ import {
   runDaemonArtifactPersistedEventEntrypoint,
   runDaemonArtifactWriterEntrypoint,
   runDaemonAgentCliEntrypoint,
+  runDaemonCleanTerminalEvidenceEntrypoint,
   runDaemonExistingResultEntrypoint,
   runDaemonGoalSourceEntrypoint,
   runDaemonHeartbeatRemoveEntrypoint,
@@ -62,6 +63,7 @@ import {
   type DaemonArtifactPersistedEventEntrypointPayload,
   type DaemonArtifactWriterEntrypointPayload,
   type DaemonAgentCliEntrypointPayload,
+  type DaemonCleanTerminalEvidenceEntrypointPayload,
   type DaemonExistingResultEntrypointPayload,
   type DaemonGoalSourceEntrypointPayload,
   type DaemonHeartbeatRemoveEntrypointPayload,
@@ -302,6 +304,9 @@ async function runWithSignalHandlers(
   if (isDaemonTerminalStatusPayload(payload)) {
     return runDaemonTerminalStatusEntrypoint(payload);
   }
+  if (isDaemonCleanTerminalEvidencePayload(payload)) {
+    return runDaemonCleanTerminalEvidenceEntrypoint(payload);
+  }
   if (isDaemonExistingResultPayload(payload)) {
     return runDaemonExistingResultEntrypoint(payload);
   }
@@ -388,6 +393,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_supervisor_handoff_decision" &&
       payload.entrypoint !== "daemon_terminal_error_decision" &&
       payload.entrypoint !== "daemon_terminal_status_decision" &&
+      payload.entrypoint !== "daemon_clean_terminal_evidence_decision" &&
       payload.entrypoint !== "daemon_watcher_backend_decision" &&
       payload.entrypoint !== "daemon_watcher_wait_decision" &&
       payload.entrypoint !== "goals_queue" &&
@@ -768,6 +774,15 @@ function isDaemonTerminalStatusPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_terminal_status_decision"
+  );
+}
+
+function isDaemonCleanTerminalEvidencePayload(
+  payload: RunnerCliPayload
+): payload is DaemonCleanTerminalEvidenceEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_clean_terminal_evidence_decision"
   );
 }
 

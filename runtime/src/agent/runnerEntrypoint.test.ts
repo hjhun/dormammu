@@ -9,6 +9,7 @@ import {
   runDaemonArtifactPersistedEventEntrypoint,
   runDaemonArtifactWriterEntrypoint,
   runDaemonAgentCliEntrypoint,
+  runDaemonCleanTerminalEvidenceEntrypoint,
   runDaemonExistingResultEntrypoint,
   runDaemonGoalSourceEntrypoint,
   runDaemonHeartbeatRemoveEntrypoint,
@@ -1005,6 +1006,26 @@ test("runDaemonTerminalStatusEntrypoint projects terminal status reconciliation"
       error: "Loop returned completed but session PLAN.md is not fully complete.",
       preserveCompleted: false,
       reason: "completed_plan_incomplete"
+    }
+  );
+});
+
+test("runDaemonCleanTerminalEvidenceEntrypoint projects clean stage evidence", () => {
+  assert.deepEqual(
+    runDaemonCleanTerminalEvidenceEntrypoint({
+      entrypoint: "daemon_clean_terminal_evidence_decision",
+      run_result: {
+        status: "completed",
+        stage_results: [
+          { role: "developer", verdict: "pass" },
+          { role: "reviewer", verdict: "approved" }
+        ]
+      }
+    }),
+    {
+      entrypoint: "daemon_clean_terminal_evidence_decision",
+      hasCleanTerminalStageEvidence: true,
+      reason: "clean_terminal_stage_evidence_projected"
     }
   );
 });

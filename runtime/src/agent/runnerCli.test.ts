@@ -1128,6 +1128,30 @@ test("dormammu-agent-runner can project daemon terminal status decisions", () =>
   });
 });
 
+test("dormammu-agent-runner can project clean terminal evidence", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_clean_terminal_evidence_decision",
+      run_result: {
+        status: "completed",
+        stage_results: [
+          { role: "developer", verdict: "pass" },
+          { role: "reviewer", verdict: "approved" }
+        ]
+      }
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_clean_terminal_evidence_decision",
+    hasCleanTerminalStageEvidence: true,
+    reason: "clean_terminal_stage_evidence_projected"
+  });
+});
+
 test("dormammu-agent-runner can project daemon existing result decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({
