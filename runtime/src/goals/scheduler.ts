@@ -3,6 +3,9 @@ export type GoalsTriggerDecisionAction = "process" | "skip";
 export type GoalsProcessDecisionAction = "process" | "skip";
 export type GoalsTimerFiredDecisionAction = "process" | "skip";
 export type GoalsSingleGoalDecisionAction = "write" | "skip";
+export type GoalsWatcherStartDecisionAction = "start";
+export type GoalsWatcherStopDecisionAction = "stop";
+export type GoalsWatchLoopDecisionAction = "sync" | "stop";
 
 export type GoalsTimerDecisionInput = {
   hasGoalFiles: boolean;
@@ -26,6 +29,19 @@ export type GoalsTimerFiredDecisionInput = {
 
 export type GoalsSingleGoalDecisionInput = {
   promptExists: boolean;
+};
+
+export type GoalsWatcherStartDecisionInput = {
+  watcherActive: boolean;
+};
+
+export type GoalsWatcherStopDecisionInput = {
+  timerActive: boolean;
+};
+
+export type GoalsWatchLoopDecisionInput = {
+  stopRequested: boolean;
+  pollSeconds: number;
 };
 
 export type GoalsTimerDecision = {
@@ -56,6 +72,26 @@ export type GoalsTimerFiredDecision = {
 
 export type GoalsSingleGoalDecision = {
   action: GoalsSingleGoalDecisionAction;
+  reason: string;
+};
+
+export type GoalsWatcherStartDecision = {
+  action: GoalsWatcherStartDecisionAction;
+  threadName: string;
+  daemon: boolean;
+  reason: string;
+};
+
+export type GoalsWatcherStopDecision = {
+  action: GoalsWatcherStopDecisionAction;
+  setStopEvent: boolean;
+  cancelTimer: boolean;
+  reason: string;
+};
+
+export type GoalsWatchLoopDecision = {
+  action: GoalsWatchLoopDecisionAction;
+  waitSeconds: number | null;
   reason: string;
 };
 
@@ -169,5 +205,48 @@ export function goalsSingleGoalDecision(
   return {
     action: "write",
     reason: "queued_prompt_missing"
+  };
+}
+
+export function goalsWatcherStartDecision(
+  input: GoalsWatcherStartDecisionInput
+): GoalsWatcherStartDecision {
+  return {
+    action: "start",
+    threadName: "dormammu-goals-watcher",
+    daemon: true,
+    reason: input.watcherActive
+      ? "watcher_already_active_start_requested"
+      : "watcher_start_requested"
+  };
+}
+
+export function goalsWatcherStopDecision(
+  input: GoalsWatcherStopDecisionInput
+): GoalsWatcherStopDecision {
+  return {
+    action: "stop",
+    setStopEvent: true,
+    cancelTimer: true,
+    reason: input.timerActive
+      ? "stop_requested_with_active_timer"
+      : "stop_requested_without_active_timer"
+  };
+}
+
+export function goalsWatchLoopDecision(
+  input: GoalsWatchLoopDecisionInput
+): GoalsWatchLoopDecision {
+  if (input.stopRequested) {
+    return {
+      action: "stop",
+      waitSeconds: null,
+      reason: "stop_requested"
+    };
+  }
+  return {
+    action: "sync",
+    waitSeconds: Math.max(0, input.pollSeconds),
+    reason: "watcher_poll"
   };
 }

@@ -15,7 +15,10 @@ import {
   runGoalsSingleGoalDecisionEntrypoint,
   runGoalsTimerDecisionEntrypoint,
   runGoalsTimerFiredDecisionEntrypoint,
-  runGoalsTriggerDecisionEntrypoint
+  runGoalsTriggerDecisionEntrypoint,
+  runGoalsWatcherStartDecisionEntrypoint,
+  runGoalsWatcherStopDecisionEntrypoint,
+  runGoalsWatchLoopDecisionEntrypoint
 } from "./runnerEntrypoint.js";
 
 test("runAgentRunnerEntrypoint runs configured agent payloads and returns dicts", async () => {
@@ -481,6 +484,54 @@ test("runGoalsSingleGoalDecisionEntrypoint projects prompt write decisions", () 
       entrypoint: "goals_single_goal_decision",
       action: "skip",
       reason: "queued_prompt_exists"
+    }
+  );
+});
+
+test("runGoalsWatcherStartDecisionEntrypoint projects start decisions", () => {
+  assert.deepEqual(
+    runGoalsWatcherStartDecisionEntrypoint({
+      entrypoint: "goals_watcher_start_decision",
+      watcher_active: false
+    }),
+    {
+      entrypoint: "goals_watcher_start_decision",
+      action: "start",
+      threadName: "dormammu-goals-watcher",
+      daemon: true,
+      reason: "watcher_start_requested"
+    }
+  );
+});
+
+test("runGoalsWatcherStopDecisionEntrypoint projects stop decisions", () => {
+  assert.deepEqual(
+    runGoalsWatcherStopDecisionEntrypoint({
+      entrypoint: "goals_watcher_stop_decision",
+      timer_active: false
+    }),
+    {
+      entrypoint: "goals_watcher_stop_decision",
+      action: "stop",
+      setStopEvent: true,
+      cancelTimer: true,
+      reason: "stop_requested_without_active_timer"
+    }
+  );
+});
+
+test("runGoalsWatchLoopDecisionEntrypoint projects loop decisions", () => {
+  assert.deepEqual(
+    runGoalsWatchLoopDecisionEntrypoint({
+      entrypoint: "goals_watch_loop_decision",
+      stop_requested: false,
+      poll_seconds: 30
+    }),
+    {
+      entrypoint: "goals_watch_loop_decision",
+      action: "sync",
+      waitSeconds: 30,
+      reason: "watcher_poll"
     }
   );
 });

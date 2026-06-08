@@ -352,6 +352,66 @@ test("dormammu-agent-runner can project goals single goal decision payloads", ()
   });
 });
 
+test("dormammu-agent-runner can project goals watcher start payloads", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "goals_watcher_start_decision",
+      watcher_active: false
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "goals_watcher_start_decision",
+    action: "start",
+    threadName: "dormammu-goals-watcher",
+    daemon: true,
+    reason: "watcher_start_requested"
+  });
+});
+
+test("dormammu-agent-runner can project goals watcher stop payloads", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "goals_watcher_stop_decision",
+      timer_active: false
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "goals_watcher_stop_decision",
+    action: "stop",
+    setStopEvent: true,
+    cancelTimer: true,
+    reason: "stop_requested_without_active_timer"
+  });
+});
+
+test("dormammu-agent-runner can project goals watch loop payloads", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "goals_watch_loop_decision",
+      stop_requested: false,
+      poll_seconds: 30
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "goals_watch_loop_decision",
+    action: "sync",
+    waitSeconds: 30,
+    reason: "watcher_poll"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

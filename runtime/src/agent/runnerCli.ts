@@ -14,6 +14,9 @@ import {
   runGoalsTimerDecisionEntrypoint,
   runGoalsTimerFiredDecisionEntrypoint,
   runGoalsTriggerDecisionEntrypoint,
+  runGoalsWatcherStartDecisionEntrypoint,
+  runGoalsWatcherStopDecisionEntrypoint,
+  runGoalsWatchLoopDecisionEntrypoint,
   type AgentRunnerEntrypointPayload,
   type GoalsProcessDecisionEntrypointPayload,
   type GoalsPromptProjectionEntrypointPayload,
@@ -23,6 +26,9 @@ import {
   type GoalsTimerDecisionEntrypointPayload,
   type GoalsTimerFiredDecisionEntrypointPayload,
   type GoalsTriggerDecisionEntrypointPayload,
+  type GoalsWatcherStartDecisionEntrypointPayload,
+  type GoalsWatcherStopDecisionEntrypointPayload,
+  type GoalsWatchLoopDecisionEntrypointPayload,
   type RunnerCliPayload,
   type RunnerCliResultPayload
 } from "./runnerEntrypoint.js";
@@ -85,6 +91,15 @@ async function runWithSignalHandlers(
   if (isGoalsSingleGoalDecisionPayload(payload)) {
     return runGoalsSingleGoalDecisionEntrypoint(payload);
   }
+  if (isGoalsWatcherStartDecisionPayload(payload)) {
+    return runGoalsWatcherStartDecisionEntrypoint(payload);
+  }
+  if (isGoalsWatcherStopDecisionPayload(payload)) {
+    return runGoalsWatcherStopDecisionEntrypoint(payload);
+  }
+  if (isGoalsWatchLoopDecisionPayload(payload)) {
+    return runGoalsWatchLoopDecisionEntrypoint(payload);
+  }
   if (!isAgentRunPayload(payload)) {
     return runGoalsQueueEntrypoint(payload);
   }
@@ -140,7 +155,10 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "goals_trigger_decision" &&
       payload.entrypoint !== "goals_process_decision" &&
       payload.entrypoint !== "goals_timer_fired_decision" &&
-      payload.entrypoint !== "goals_single_goal_decision")
+      payload.entrypoint !== "goals_single_goal_decision" &&
+      payload.entrypoint !== "goals_watcher_start_decision" &&
+      payload.entrypoint !== "goals_watcher_stop_decision" &&
+      payload.entrypoint !== "goals_watch_loop_decision")
   );
 }
 
@@ -198,6 +216,33 @@ function isGoalsSingleGoalDecisionPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "goals_single_goal_decision"
+  );
+}
+
+function isGoalsWatcherStartDecisionPayload(
+  payload: RunnerCliPayload
+): payload is GoalsWatcherStartDecisionEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "goals_watcher_start_decision"
+  );
+}
+
+function isGoalsWatcherStopDecisionPayload(
+  payload: RunnerCliPayload
+): payload is GoalsWatcherStopDecisionEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "goals_watcher_stop_decision"
+  );
+}
+
+function isGoalsWatchLoopDecisionPayload(
+  payload: RunnerCliPayload
+): payload is GoalsWatchLoopDecisionEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "goals_watch_loop_decision"
   );
 }
 

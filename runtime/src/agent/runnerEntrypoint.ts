@@ -60,11 +60,17 @@ import {
   goalsTimerDecision,
   goalsTimerFiredDecision,
   goalsTriggerDecision,
+  goalsWatcherStartDecision,
+  goalsWatcherStopDecision,
+  goalsWatchLoopDecision,
   type GoalsProcessDecision,
   type GoalsSingleGoalDecision,
   type GoalsTimerDecision,
   type GoalsTimerFiredDecision,
-  type GoalsTriggerDecision
+  type GoalsTriggerDecision,
+  type GoalsWatcherStartDecision,
+  type GoalsWatcherStopDecision,
+  type GoalsWatchLoopDecision
 } from "../goals/scheduler.js";
 import { stageResultToDict, type StageResult } from "../results.js";
 
@@ -224,6 +230,37 @@ export type GoalsSingleGoalDecisionEntrypointResultPayload =
     entrypoint: "goals_single_goal_decision";
   };
 
+export type GoalsWatcherStartDecisionEntrypointPayload = {
+  entrypoint: "goals_watcher_start_decision";
+  watcher_active: boolean;
+};
+
+export type GoalsWatcherStartDecisionEntrypointResultPayload =
+  GoalsWatcherStartDecision & {
+    entrypoint: "goals_watcher_start_decision";
+  };
+
+export type GoalsWatcherStopDecisionEntrypointPayload = {
+  entrypoint: "goals_watcher_stop_decision";
+  timer_active: boolean;
+};
+
+export type GoalsWatcherStopDecisionEntrypointResultPayload =
+  GoalsWatcherStopDecision & {
+    entrypoint: "goals_watcher_stop_decision";
+  };
+
+export type GoalsWatchLoopDecisionEntrypointPayload = {
+  entrypoint: "goals_watch_loop_decision";
+  stop_requested: boolean;
+  poll_seconds: number;
+};
+
+export type GoalsWatchLoopDecisionEntrypointResultPayload =
+  GoalsWatchLoopDecision & {
+    entrypoint: "goals_watch_loop_decision";
+  };
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
   | GoalsQueueEntrypointPayload
@@ -234,7 +271,10 @@ export type RunnerCliPayload =
   | GoalsTriggerDecisionEntrypointPayload
   | GoalsProcessDecisionEntrypointPayload
   | GoalsTimerFiredDecisionEntrypointPayload
-  | GoalsSingleGoalDecisionEntrypointPayload;
+  | GoalsSingleGoalDecisionEntrypointPayload
+  | GoalsWatcherStartDecisionEntrypointPayload
+  | GoalsWatcherStopDecisionEntrypointPayload
+  | GoalsWatchLoopDecisionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
@@ -245,7 +285,10 @@ export type RunnerCliResultPayload =
   | GoalsTriggerDecisionEntrypointResultPayload
   | GoalsProcessDecisionEntrypointResultPayload
   | GoalsTimerFiredDecisionEntrypointResultPayload
-  | GoalsSingleGoalDecisionEntrypointResultPayload;
+  | GoalsSingleGoalDecisionEntrypointResultPayload
+  | GoalsWatcherStartDecisionEntrypointResultPayload
+  | GoalsWatcherStopDecisionEntrypointResultPayload
+  | GoalsWatchLoopDecisionEntrypointResultPayload;
 
 export type AgentRunnerEntrypointOptions = Omit<
   RunConfiguredAgentCommandOptions,
@@ -409,6 +452,40 @@ export function runGoalsSingleGoalDecisionEntrypoint(
     entrypoint: "goals_single_goal_decision",
     ...goalsSingleGoalDecision({
       promptExists: parseBoolean(payload.prompt_exists, "prompt_exists")
+    })
+  };
+}
+
+export function runGoalsWatcherStartDecisionEntrypoint(
+  payload: GoalsWatcherStartDecisionEntrypointPayload
+): GoalsWatcherStartDecisionEntrypointResultPayload {
+  return {
+    entrypoint: "goals_watcher_start_decision",
+    ...goalsWatcherStartDecision({
+      watcherActive: parseBoolean(payload.watcher_active, "watcher_active")
+    })
+  };
+}
+
+export function runGoalsWatcherStopDecisionEntrypoint(
+  payload: GoalsWatcherStopDecisionEntrypointPayload
+): GoalsWatcherStopDecisionEntrypointResultPayload {
+  return {
+    entrypoint: "goals_watcher_stop_decision",
+    ...goalsWatcherStopDecision({
+      timerActive: parseBoolean(payload.timer_active, "timer_active")
+    })
+  };
+}
+
+export function runGoalsWatchLoopDecisionEntrypoint(
+  payload: GoalsWatchLoopDecisionEntrypointPayload
+): GoalsWatchLoopDecisionEntrypointResultPayload {
+  return {
+    entrypoint: "goals_watch_loop_decision",
+    ...goalsWatchLoopDecision({
+      stopRequested: parseBoolean(payload.stop_requested, "stop_requested"),
+      pollSeconds: parseNumber(payload.poll_seconds, "poll_seconds")
     })
   };
 }

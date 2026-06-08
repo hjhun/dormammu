@@ -69,6 +69,21 @@ class GoalsScheduler:
 
     def start(self) -> None:
         """Start the background watcher thread."""
+        decision = self._project_typescript_watcher_start_decision(
+            watcher_active=(
+                self._watcher_thread is not None
+                and self._watcher_thread.is_alive()
+            ),
+        )
+        if decision is not None:
+            self._watcher_thread = threading.Thread(
+                target=self._watch_loop,
+                daemon=decision["daemon"],
+                name=decision["thread_name"],
+            )
+            self._watcher_thread.start()
+            return
+
         self._watcher_thread = threading.Thread(
             target=self._watch_loop,
             daemon=True,
@@ -78,6 +93,18 @@ class GoalsScheduler:
 
     def stop(self) -> None:
         """Signal the watcher to exit and cancel any pending timer."""
+        with self._timer_lock:
+            timer_active = self._timer is not None
+        decision = self._project_typescript_watcher_stop_decision(
+            timer_active=timer_active,
+        )
+        if decision is not None:
+            if decision["set_stop_event"]:
+                self._stop_event.set()
+            if decision["cancel_timer"]:
+                self._cancel_timer()
+            return
+
         self._stop_event.set()
         self._cancel_timer()
 
@@ -141,7 +168,22 @@ class GoalsScheduler:
 
     def _watch_loop(self) -> None:
         """Poll goals directory and manage timer lifecycle."""
-        while not self._stop_event.is_set():
+        while True:
+            decision = self._project_typescript_watch_loop_decision(
+                stop_requested=self._stop_event.is_set(),
+            )
+            if decision is not None:
+                if decision["action"] == "stop":
+                    break
+                try:
+                    self._sync_timer()
+                except Exception as exc:  # pragma: no cover
+                    self._log(f"goals scheduler: watcher error: {exc}")
+                self._stop_event.wait(timeout=decision["wait_seconds"])
+                continue
+
+            if self._stop_event.is_set():
+                break
             try:
                 self._sync_timer()
             except Exception as exc:  # pragma: no cover
@@ -884,6 +926,89 @@ class GoalsScheduler:
         if action not in {"write", "skip"}:
             return None
         return {"action": action}
+
+    def _project_typescript_watcher_start_decision(
+        self,
+        *,
+        watcher_active: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "goals_watcher_start_decision",
+            "watcher_active": watcher_active,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        action = result.get("action")
+        thread_name = result.get("threadName")
+        daemon = result.get("daemon")
+        if action != "start":
+            return None
+        if not isinstance(thread_name, str) or not thread_name:
+            return None
+        if not isinstance(daemon, bool):
+            return None
+        return {
+            "action": action,
+            "thread_name": thread_name,
+            "daemon": daemon,
+        }
+
+    def _project_typescript_watcher_stop_decision(
+        self,
+        *,
+        timer_active: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "goals_watcher_stop_decision",
+            "timer_active": timer_active,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        action = result.get("action")
+        set_stop_event = result.get("setStopEvent")
+        cancel_timer = result.get("cancelTimer")
+        if action != "stop":
+            return None
+        if not isinstance(set_stop_event, bool):
+            return None
+        if not isinstance(cancel_timer, bool):
+            return None
+        return {
+            "action": action,
+            "set_stop_event": set_stop_event,
+            "cancel_timer": cancel_timer,
+        }
+
+    def _project_typescript_watch_loop_decision(
+        self,
+        *,
+        stop_requested: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "goals_watch_loop_decision",
+            "stop_requested": stop_requested,
+            "poll_seconds": _WATCHER_POLL_SECONDS,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        action = result.get("action")
+        wait_seconds = result.get("waitSeconds")
+        if action not in {"sync", "stop"}:
+            return None
+        if action == "sync":
+            if not isinstance(wait_seconds, (int, float)):
+                return None
+            if wait_seconds < 0:
+                return None
+        else:
+            wait_seconds = 0
+        return {
+            "action": action,
+            "wait_seconds": wait_seconds,
+        }
 
     def _run_typescript_runner_payload(
         self,

@@ -6,7 +6,10 @@ import {
   goalsSingleGoalDecision,
   goalsTimerDecision,
   goalsTimerFiredDecision,
-  goalsTriggerDecision
+  goalsTriggerDecision,
+  goalsWatcherStartDecision,
+  goalsWatcherStopDecision,
+  goalsWatchLoopDecision
 } from "./scheduler.js";
 
 test("goalsTimerDecision schedules when goals exist without a timer", () => {
@@ -202,6 +205,59 @@ test("goalsSingleGoalDecision skips existing queued prompts", () => {
     {
       action: "skip",
       reason: "queued_prompt_exists"
+    }
+  );
+});
+
+test("goalsWatcherStartDecision projects Python watcher thread metadata", () => {
+  assert.deepEqual(
+    goalsWatcherStartDecision({
+      watcherActive: false
+    }),
+    {
+      action: "start",
+      threadName: "dormammu-goals-watcher",
+      daemon: true,
+      reason: "watcher_start_requested"
+    }
+  );
+});
+
+test("goalsWatcherStopDecision requests stop event and timer cancellation", () => {
+  assert.deepEqual(
+    goalsWatcherStopDecision({
+      timerActive: true
+    }),
+    {
+      action: "stop",
+      setStopEvent: true,
+      cancelTimer: true,
+      reason: "stop_requested_with_active_timer"
+    }
+  );
+});
+
+test("goalsWatchLoopDecision syncs or stops watcher iterations", () => {
+  assert.deepEqual(
+    goalsWatchLoopDecision({
+      stopRequested: false,
+      pollSeconds: 30
+    }),
+    {
+      action: "sync",
+      waitSeconds: 30,
+      reason: "watcher_poll"
+    }
+  );
+  assert.deepEqual(
+    goalsWatchLoopDecision({
+      stopRequested: true,
+      pollSeconds: 30
+    }),
+    {
+      action: "stop",
+      waitSeconds: null,
+      reason: "stop_requested"
     }
   );
 });

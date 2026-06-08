@@ -19,7 +19,7 @@ from dormammu.agent.profiles import resolve_agent_profile
 from dormammu.config import AppConfig
 from dormammu.daemon.cli_output import model_args
 from dormammu.daemon.goals_config import GoalsConfig
-from dormammu.daemon.goals_scheduler import GoalsScheduler
+from dormammu.daemon.goals_scheduler import GoalsScheduler, _WATCHER_POLL_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +138,41 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                         "fake_single_goal_exists"
                         if action == "skip"
                         else "fake_single_goal_missing"
+                    ),
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
+            if payload.get("entrypoint") == "goals_watcher_start_decision":
+                print(json.dumps({{
+                    "entrypoint": "goals_watcher_start_decision",
+                    "action": "start",
+                    "threadName": "dormammu-goals-watcher",
+                    "daemon": True,
+                    "reason": "fake_watcher_start",
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
+            if payload.get("entrypoint") == "goals_watcher_stop_decision":
+                print(json.dumps({{
+                    "entrypoint": "goals_watcher_stop_decision",
+                    "action": "stop",
+                    "setStopEvent": True,
+                    "cancelTimer": True,
+                    "reason": (
+                        "fake_stop_active_timer"
+                        if payload["timer_active"]
+                        else "fake_stop_without_timer"
+                    ),
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
+            if payload.get("entrypoint") == "goals_watch_loop_decision":
+                action = "stop" if payload["stop_requested"] else "sync"
+                print(json.dumps({{
+                    "entrypoint": "goals_watch_loop_decision",
+                    "action": action,
+                    "waitSeconds": None if action == "stop" else 0.01,
+                    "reason": (
+                        "fake_watch_stop"
+                        if action == "stop"
+                        else "fake_watch_sync"
                     ),
                 }}, ensure_ascii=True))
                 raise SystemExit(0)
@@ -1193,6 +1228,145 @@ class TestStartStop:
     def test_stop_without_start_is_safe(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path)
         sched.stop()  # should not raise
+
+    def test_start_can_use_typescript_watcher_start_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        prompt_path = tmp_path / "prompts"
+        goals_dir.mkdir()
+        prompt_path.mkdir()
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            prompt_path,
+            app,
+        )
+
+        sched.start()
+        try:
+            assert sched._watcher_thread is not None
+            assert sched._watcher_thread.name == "dormammu-goals-watcher"
+            assert sched._watcher_thread.daemon is True
+            captured_payloads = [
+                json.loads(line)
+                for line in (tmp_path / "captured-runner-payloads.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            assert captured_payloads[0] == {
+                "entrypoint": "goals_watcher_start_decision",
+                "watcher_active": False,
+            }
+        finally:
+            sched.stop()
+
+    def test_stop_can_use_typescript_watcher_stop_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        prompt_path = tmp_path / "prompts"
+        goals_dir.mkdir()
+        prompt_path.mkdir()
+        (goals_dir / "goal.md").write_text("content", encoding="utf-8")
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            prompt_path,
+            app,
+        )
+        sched._sync_timer()
+        with sched._timer_lock:
+            assert sched._timer is not None
+
+        sched.stop()
+
+        assert sched._stop_event.is_set()
+        with sched._timer_lock:
+            assert sched._timer is None
+        captured_payloads = [
+            json.loads(line)
+            for line in (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert captured_payloads[-1] == {
+            "entrypoint": "goals_watcher_stop_decision",
+            "timer_active": True,
+        }
+
+    def test_watch_loop_can_use_typescript_decision_bridge_to_stop(
+        self, tmp_path: Path
+    ) -> None:
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        prompt_path = tmp_path / "prompts"
+        goals_dir.mkdir()
+        prompt_path.mkdir()
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            prompt_path,
+            app,
+        )
+        sched._stop_event.set()
+
+        sched._watch_loop()
+
+        captured_payloads = [
+            json.loads(line)
+            for line in (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert captured_payloads == [
+            {
+                "entrypoint": "goals_watch_loop_decision",
+                "stop_requested": True,
+                "poll_seconds": _WATCHER_POLL_SECONDS,
+            }
+        ]
 
     def test_timer_fires_and_generates_prompt(self, tmp_path: Path) -> None:
         """End-to-end: timer fires quickly and writes a prompt file."""
