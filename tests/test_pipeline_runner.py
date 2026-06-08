@@ -52,16 +52,88 @@ def _make_loop_result(status: str = "completed") -> LoopRunResult:
 def _make_app_config(tmp_path: Path, *, agents: AgentsConfig | None = None) -> Any:
     mock = MagicMock()
     mock.repo_root = tmp_path
+    mock.repo_dev_dir = tmp_path / ".dev"
     mock.base_dev_dir = tmp_path / ".dev"
+    mock.workspace_root = tmp_path / ".dormammu" / "workspace"
+    mock.workspace_project_root = mock.workspace_root / "repo"
+    mock.workspace_tmp_dir = mock.workspace_project_root / ".tmp"
+    mock.results_dir = tmp_path / ".dormammu" / "results"
+    mock.sessions_dir = tmp_path / ".dev" / "sessions"
+    mock.home_dir = tmp_path / "home"
     mock.active_agent_cli = Path("claude")
     mock.agents_dir = Path(__file__).resolve().parents[1] / ".agents"
     mock.agents = agents
+    mock.typescript_agent_runner_cli = None
     mock.runtime_path_prompt.return_value = ""
     mock.resolve_agent_profile.side_effect = lambda role: resolve_agent_profile(
         role,
         agents_config=agents,
     )
     return mock
+
+
+def _runtime_paths_text(app: Any) -> str:
+    return "\n".join(
+        [
+            f"- Real project root: `{app.repo_root}`",
+            f"- Repository-local project docs root: `{app.repo_dev_dir}`",
+            (
+                "- Operational state directory (`.dev` in workflow docs): "
+                f"`{app.base_dev_dir}`"
+            ),
+            f"- Managed temporary directory (`.tmp`): `{app.workspace_tmp_dir}`",
+            f"- Result reports directory: `{app.results_dir}`",
+            (
+                "Interpret any `.dev/...` reference in prompts and workflow "
+                "guidance as relative to the operational state directory "
+                "above, not to the real project root."
+            ),
+        ]
+    )
+
+
+def _write_runtime_path_projection_runner(root: Path) -> tuple[Path, Path]:
+    script = root / "fake-runtime-path-runner"
+    captured = root / "captured-runtime-path-payload.json"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            #!{sys.executable}
+            import json
+            import sys
+            from pathlib import Path
+
+            captured = Path({str(captured)!r})
+            payload = json.loads(sys.stdin.read())
+            captured.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
+                encoding="utf-8",
+            )
+            if payload.get("entrypoint") != "runtime_path_prompt_projection":
+                raise SystemExit(2)
+            runtime_paths_text = "\\n".join([
+                "- Real project root: `" + payload["repo_root"] + "`",
+                "- Repository-local project docs root: `" + payload["repo_dev_dir"] + "`",
+                "- Operational state directory (`.dev` in workflow docs): `" + payload["base_dev_dir"] + "`",
+                "- Managed temporary directory (`.tmp`): `" + payload["tmp_dir"] + "`",
+                "- Result reports directory: `" + payload["results_dir"] + "`",
+                (
+                    "Interpret any `.dev/...` reference in prompts and workflow guidance as "
+                    "relative to the operational state directory above, not to the real "
+                    "project root."
+                ),
+            ])
+            print(json.dumps({{
+                "entrypoint": "runtime_path_prompt_projection",
+                "runtimePathsText": runtime_paths_text,
+                "reason": "runtime_path_prompt_projected",
+            }}, ensure_ascii=True))
+            """
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script, captured
 
 
 def _make_runner(
@@ -563,6 +635,29 @@ class TestTesterStage:
 
         assert "npx -y agent-browser" in prompt
         assert "OVERALL: MANUAL_REVIEW_NEEDED" in prompt
+
+    def test_tester_prompt_can_use_typescript_runtime_path_projection(
+        self, tmp_path: Path
+    ) -> None:
+        app = _make_app_config(tmp_path)
+        ts_runner, captured_path = _write_runtime_path_projection_runner(tmp_path)
+        app.typescript_agent_runner_cli = ts_runner
+        app.runtime_path_prompt.return_value = _runtime_paths_text(app)
+        runner = PipelineRunner(app, AgentsConfig(), progress_stream=io.StringIO())
+        runner._repository.read_workflow_state = MagicMock(  # type: ignore[method-assign]
+            return_value={"intake": {"request_class": "full_workflow"}}
+        )
+
+        prompt = runner._tester_prompt("goal", stem="g", date_str="20260412")
+
+        captured = json.loads(captured_path.read_text(encoding="utf-8"))
+        assert captured["entrypoint"] == "runtime_path_prompt_projection"
+        assert captured["repo_root"] == str(app.repo_root)
+        assert captured["repo_dev_dir"] == str(app.repo_dev_dir)
+        assert captured["base_dev_dir"] == str(app.base_dev_dir)
+        assert captured["tmp_dir"] == str(app.workspace_tmp_dir)
+        assert captured["results_dir"] == str(app.results_dir)
+        assert app.runtime_path_prompt.return_value in prompt
 
 
 # ---------------------------------------------------------------------------

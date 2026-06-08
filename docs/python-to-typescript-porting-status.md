@@ -415,6 +415,16 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/reports.py`
+- TypeScript-owned runtime path prompt projection reuse in
+  `PipelineRunner`, with Python bridge consumption for refiner, planner,
+  plan evaluator, tester, reviewer, committer, and post-commit evaluator rule
+  prompt Runtime Paths text while Python retains `AppConfig` path resolution,
+  rule prompt assembly, configured CLI execution, and malformed-bridge fallback
+  behavior
+  -> `runtime/src/workspace.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/pipeline_runner.py`
 - TypeScript-owned daemon result report authored output decision helper, plus
   runner entrypoint and Python `ResultReportAuthor.render()` bridge
   consumption for stdout/stderr selection, empty-output errors, generated-at
@@ -776,8 +786,8 @@ Port the remaining daemon and goals orchestration surface:
   authoring request decisions for configured authoring action, prompt envelope,
   repo/workdir, run label, and generated-at metadata. TypeScript also owns
   Runtime Paths text projection for configured result-report authoring
-  prompts. TypeScript also owns daemon result report authored output decisions
-  for stdout/stderr selection,
+  prompts and PipelineRunner rule prompts. TypeScript also owns daemon result
+  report authored output decisions for stdout/stderr selection,
   empty-output errors, generated-at preservation errors, and accepted Markdown.
   TypeScript also owns daemon result report artifact reference decisions for
   existing report lifecycle refs. TypeScript also owns

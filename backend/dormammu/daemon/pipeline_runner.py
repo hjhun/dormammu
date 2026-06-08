@@ -42,6 +42,9 @@ result-handling logic.
 """
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import sys
 import threading
 from datetime import datetime, timezone
@@ -170,6 +173,10 @@ def _mapping_int(payload: Mapping[str, Any] | None, key: str, default: int) -> i
     return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
+def _pathlike_value(value: object) -> Path | str | None:
+    return value if isinstance(value, (str, os.PathLike)) else None
+
+
 def _stage_should_retry_developer(stage: StageResult) -> bool:
     action = _typescript_loop_action(stage)
     if action is not None:
@@ -246,6 +253,109 @@ class PipelineRunner:
 
     def _profile_for_role(self, role: str) -> AgentProfile:
         return self._app_config.resolve_agent_profile(role)
+
+    def _typescript_runner_cli(self) -> Path | str | None:
+        return _pathlike_value(
+            getattr(self._app_config, "typescript_agent_runner_cli", None)
+        )
+
+    def _typescript_runner_env(self) -> dict[str, str]:
+        env = dict(os.environ)
+        path_env_fields = (
+            ("HOME", "home_dir"),
+            ("DORMAMMU_SESSIONS_DIR", "sessions_dir"),
+            ("DORMAMMU_BASE_DEV_DIR", "base_dev_dir"),
+            ("DORMAMMU_WORKSPACE_ROOT", "workspace_root"),
+            ("DORMAMMU_WORKSPACE_PROJECT_ROOT", "workspace_project_root"),
+            ("DORMAMMU_TMP_DIR", "workspace_tmp_dir"),
+            ("DORMAMMU_RESULTS_DIR", "results_dir"),
+        )
+        for env_name, attr_name in path_env_fields:
+            value = _pathlike_value(getattr(self._app_config, attr_name, None))
+            if value is not None:
+                env[env_name] = str(value)
+        return env
+
+    def _run_typescript_runner_payload(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        runner_cli = self._typescript_runner_cli()
+        if runner_cli is None:
+            return None
+        try:
+            completed = subprocess.run(
+                [str(runner_cli)],
+                input=json.dumps(payload, ensure_ascii=True),
+                text=True,
+                capture_output=True,
+                check=False,
+                env=self._typescript_runner_env(),
+            )
+        except Exception as exc:
+            print(
+                f"pipeline TypeScript bridge failed: {exc}",
+                file=self._progress_stream,
+            )
+            return None
+        if completed.returncode != 0:
+            detail = completed.stderr.strip()
+            suffix = f": {detail}" if detail else ""
+            print(
+                f"pipeline TypeScript bridge exited {completed.returncode}{suffix}",
+                file=self._progress_stream,
+            )
+            return None
+        try:
+            result = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            print(
+                "pipeline TypeScript bridge returned invalid JSON",
+                file=self._progress_stream,
+            )
+            return None
+        return result if isinstance(result, dict) else None
+
+    def _runtime_path_prompt_expectations(self) -> dict[str, object]:
+        return {
+            "runtimePathsText": self._app_config.runtime_path_prompt(),
+            "reason": "runtime_path_prompt_projected",
+        }
+
+    def _project_typescript_runtime_path_prompt_decision(
+        self,
+    ) -> dict[str, object] | None:
+        if self._typescript_runner_cli() is None:
+            return None
+        path_fields = (
+            ("repo_root", "repo_root"),
+            ("repo_dev_dir", "repo_dev_dir"),
+            ("base_dev_dir", "base_dev_dir"),
+            ("tmp_dir", "workspace_tmp_dir"),
+            ("results_dir", "results_dir"),
+        )
+        payload: dict[str, object] = {
+            "entrypoint": "runtime_path_prompt_projection",
+        }
+        for payload_name, attr_name in path_fields:
+            value = _pathlike_value(getattr(self._app_config, attr_name, None))
+            if value is None:
+                return None
+            payload[payload_name] = str(value)
+        bridge_result = self._run_typescript_runner_payload(payload)
+        if bridge_result is None:
+            return None
+        expected = self._runtime_path_prompt_expectations()
+        for field_name, expected_value in expected.items():
+            if bridge_result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    def _runtime_path_prompt(self) -> str:
+        decision = self._project_typescript_runtime_path_prompt_decision()
+        if decision is None:
+            return self._app_config.runtime_path_prompt()
+        return str(decision["runtimePathsText"])
 
     def _stage_iteration_limit(self) -> int:
         return _DEFAULT_MAX_RETRIES + 1
@@ -1561,7 +1671,7 @@ class PipelineRunner:
             dev_dir=self._app_config.base_dev_dir,
             tmp_dir=self._app_config.workspace_tmp_dir,
             agents_dir=self._app_config.agents_dir,
-            runtime_paths_text=self._app_config.runtime_path_prompt(),
+            runtime_paths_text=self._runtime_path_prompt(),
             next_goal_strategy=effective_config.next_goal_strategy,
             stem=stem,
             date_str=date_str,
@@ -1706,7 +1816,7 @@ class PipelineRunner:
         rule_text = self._load_rule("refiner-runtime.md")
         return build_rule_prompt(
             rule_text,
-            runtime_paths_text=self._app_config.runtime_path_prompt(),
+            runtime_paths_text=self._runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
                 (
@@ -1728,7 +1838,7 @@ class PipelineRunner:
         rule_text = self._load_rule("planner-runtime.md")
         return build_rule_prompt(
             rule_text,
-            runtime_paths_text=self._app_config.runtime_path_prompt(),
+            runtime_paths_text=self._runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
                 ("Refined Requirements", requirements_text),
@@ -1763,7 +1873,7 @@ class PipelineRunner:
         )
         return build_rule_prompt(
             rule_text,
-            runtime_paths_text=self._app_config.runtime_path_prompt(),
+            runtime_paths_text=self._runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
                 ("Refined Requirements", requirements_text),
@@ -1776,7 +1886,7 @@ class PipelineRunner:
         report_path = self._stage_doc_path("tester", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
-            runtime_paths_text=self._app_config.runtime_path_prompt(),
+            runtime_paths_text=self._runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
                 ("Expected Output Path", str(report_path)),
@@ -1795,7 +1905,7 @@ class PipelineRunner:
         report_path = self._stage_doc_path("reviewer", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
-            runtime_paths_text=self._app_config.runtime_path_prompt(),
+            runtime_paths_text=self._runtime_path_prompt(),
             sections=(
                 ("Goal", goal_text),
                 ("Designer Document", design_text),
@@ -1808,7 +1918,7 @@ class PipelineRunner:
         report_path = self._stage_doc_path("committer", stem=stem, date_str=date_str)
         return build_rule_prompt(
             rule_text,
-            runtime_paths_text=self._app_config.runtime_path_prompt(),
+            runtime_paths_text=self._runtime_path_prompt(),
             sections=(
                 ("Implementation Scope", stem),
                 ("Expected Output Path", str(report_path)),
