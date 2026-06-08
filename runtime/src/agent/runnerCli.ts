@@ -20,6 +20,7 @@ import {
   runDaemonPromptInterruptionEntrypoint,
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptPathEntrypoint,
+  runDaemonPromptProcessingMetadataEntrypoint,
   runDaemonPromptRouteEntrypoint,
   runDaemonPromptSessionEntrypoint,
   runDaemonPromptSettleEntrypoint,
@@ -72,6 +73,7 @@ import {
   type DaemonPromptInterruptionEntrypointPayload,
   type DaemonPromptLifecycleEntrypointPayload,
   type DaemonPromptPathEntrypointPayload,
+  type DaemonPromptProcessingMetadataEntrypointPayload,
   type DaemonPromptRouteEntrypointPayload,
   type DaemonPromptSessionEntrypointPayload,
   type DaemonPromptSettleEntrypointPayload,
@@ -212,6 +214,9 @@ async function runWithSignalHandlers(
   if (isDaemonPromptPathPayload(payload)) {
     return runDaemonPromptPathEntrypoint(payload);
   }
+  if (isDaemonPromptProcessingMetadataPayload(payload)) {
+    return runDaemonPromptProcessingMetadataEntrypoint(payload);
+  }
   if (isDaemonPromptSessionPayload(payload)) {
     return runDaemonPromptSessionEntrypoint(payload);
   }
@@ -347,6 +352,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_plan_state_decision" &&
       payload.entrypoint !== "daemon_prompt_lifecycle_decision" &&
       payload.entrypoint !== "daemon_prompt_path_decision" &&
+      payload.entrypoint !== "daemon_prompt_processing_metadata_decision" &&
       payload.entrypoint !== "daemon_prompt_route_decision" &&
       payload.entrypoint !== "daemon_prompt_session_decision" &&
       payload.entrypoint !== "daemon_prompt_settle_decision" &&
@@ -498,6 +504,15 @@ function isDaemonPromptPathPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_prompt_path_decision"
+  );
+}
+
+function isDaemonPromptProcessingMetadataPayload(
+  payload: RunnerCliPayload
+): payload is DaemonPromptProcessingMetadataEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_prompt_processing_metadata_decision"
   );
 }
 

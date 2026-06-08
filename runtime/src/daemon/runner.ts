@@ -86,6 +86,23 @@ export type DaemonPromptSessionDecision = {
   reason: "daemon_prompt_session_projected";
 };
 
+export type DaemonPromptProcessingMetadataDecisionInput = {
+  promptName: string;
+  promptText: string;
+  watcherBackend: string;
+  resultPath: string;
+};
+
+export type DaemonPromptSortKey = [number, number | string, string];
+
+export type DaemonPromptProcessingMetadataDecision = {
+  sortKey: DaemonPromptSortKey;
+  promptSummary: string;
+  detectedLogMessage: string;
+  summaryLogMessage: string;
+  reason: "daemon_prompt_processing_metadata_projected";
+};
+
 export type DaemonResultReportAction = "publish" | "skip";
 
 export type DaemonResultReportDecisionInput = {
@@ -770,6 +787,25 @@ export function daemonPromptSessionDecision(
       }) ?? "phase_4"
     ],
     reason: "daemon_prompt_session_projected"
+  };
+}
+
+export function daemonPromptProcessingMetadataDecision(
+  input: DaemonPromptProcessingMetadataDecisionInput
+): DaemonPromptProcessingMetadataDecision {
+  const promptName = nonEmpty(input.promptName) ?? "unknown-prompt";
+  const watcherBackend = nonEmpty(input.watcherBackend) ?? "unknown";
+  const resultName = basename(input.resultPath);
+  const sortKey = promptSortKey(promptName);
+  const promptSummary = summarizePromptGoal(input.promptText, promptName);
+  return {
+    sortKey,
+    promptSummary,
+    detectedLogMessage:
+      `daemon prompt detected: ${promptName} ` +
+      `(sort_key=${tupleDisplay(sortKey)}, watcher=${watcherBackend}, result=${resultName})`,
+    summaryLogMessage: `daemon prompt summary: ${promptSummary}`,
+    reason: "daemon_prompt_processing_metadata_projected"
   };
 }
 
@@ -1839,6 +1875,19 @@ function stem(path: string): string {
   const name = basename(path);
   const dotIndex = name.lastIndexOf(".");
   return dotIndex > 0 ? name.slice(0, dotIndex) : name;
+}
+
+function promptSortKey(filename: string): DaemonPromptSortKey {
+  const numericMatch = /^(\d+)/.exec(filename);
+  const folded = filename.toLocaleLowerCase();
+  if (numericMatch !== null) {
+    return [0, Number.parseInt(numericMatch[1] ?? "0", 10), folded];
+  }
+  const alphaMatch = /^([A-Za-z]+)/.exec(filename);
+  if (alphaMatch !== null) {
+    return [1, (alphaMatch[1] ?? "").toLocaleLowerCase(), folded];
+  }
+  return [2, folded, folded];
 }
 
 function nonEmpty(value: string | null): string | null {

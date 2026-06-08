@@ -18,6 +18,7 @@ import {
   daemonPromptInterruptionDecision,
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
+  daemonPromptProcessingMetadataDecision,
   daemonPromptRouteDecision,
   daemonPromptSessionDecision,
   daemonPromptSettleDecision,
@@ -218,6 +219,26 @@ test("daemonPromptSessionDecision projects goal and roadmap phase", () => {
       goal: "Phase 6 release alignment",
       activeRoadmapPhaseIds: ["phase_6"],
       reason: "daemon_prompt_session_projected"
+    }
+  );
+});
+
+test("daemonPromptProcessingMetadataDecision projects sort key and logs", () => {
+  assert.deepEqual(
+    daemonPromptProcessingMetadataDecision({
+      promptName: "001-first.md",
+      promptText: "# Ship the feature\n\nBody.",
+      watcherBackend: "polling",
+      resultPath: "/repo/results/001-first_RESULT.md"
+    }),
+    {
+      sortKey: [0, 1, "001-first.md"],
+      promptSummary: "Ship the feature",
+      detectedLogMessage:
+        "daemon prompt detected: 001-first.md " +
+        "(sort_key=(0, 1, '001-first.md'), watcher=polling, result=001-first_RESULT.md)",
+      summaryLogMessage: "daemon prompt summary: Ship the feature",
+      reason: "daemon_prompt_processing_metadata_projected"
     }
   );
 });

@@ -22,6 +22,7 @@ import {
   runDaemonPromptInterruptionEntrypoint,
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptPathEntrypoint,
+  runDaemonPromptProcessingMetadataEntrypoint,
   runDaemonPromptRouteEntrypoint,
   runDaemonPromptSessionEntrypoint,
   runDaemonPromptSettleEntrypoint,
@@ -495,6 +496,28 @@ test("runDaemonPromptSessionEntrypoint projects session start inputs", () => {
       goal: "Phase 7 hardening",
       activeRoadmapPhaseIds: ["phase_7"],
       reason: "daemon_prompt_session_projected"
+    }
+  );
+});
+
+test("runDaemonPromptProcessingMetadataEntrypoint projects prompt metadata", () => {
+  assert.deepEqual(
+    runDaemonPromptProcessingMetadataEntrypoint({
+      entrypoint: "daemon_prompt_processing_metadata_decision",
+      prompt_name: "source-goal.md",
+      prompt_text: "- Review the logs\n",
+      watcher_backend: "inotify",
+      result_path: "/repo/results/source-goal_RESULT.md"
+    }),
+    {
+      entrypoint: "daemon_prompt_processing_metadata_decision",
+      sortKey: [1, "source", "source-goal.md"],
+      promptSummary: "Review the logs",
+      detectedLogMessage:
+        "daemon prompt detected: source-goal.md " +
+        "(sort_key=(1, 'source', 'source-goal.md'), watcher=inotify, result=source-goal_RESULT.md)",
+      summaryLogMessage: "daemon prompt summary: Review the logs",
+      reason: "daemon_prompt_processing_metadata_projected"
     }
   );
 });

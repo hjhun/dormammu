@@ -1032,6 +1032,53 @@ class DaemonRunnerTests(unittest.TestCase):
                 .read_text(encoding="utf-8")
                 .splitlines()
             ]
+            metadata_payloads = [
+                payload
+                for payload in captured_payloads
+                if (
+                    payload["entrypoint"]
+                    == "daemon_prompt_processing_metadata_decision"
+                )
+            ]
+            self.assertEqual(
+                metadata_payloads,
+                [
+                    {
+                        "entrypoint": (
+                            "daemon_prompt_processing_metadata_decision"
+                        ),
+                        "prompt_name": "001-first.md",
+                        "prompt_text": "",
+                        "watcher_backend": "polling",
+                        "result_path": str(
+                            daemon_config.result_path / "001-first_RESULT.md"
+                        ),
+                    },
+                    {
+                        "entrypoint": (
+                            "daemon_prompt_processing_metadata_decision"
+                        ),
+                        "prompt_name": "001-first.md",
+                        "prompt_text": "First prompt\n",
+                        "watcher_backend": "polling",
+                        "result_path": str(
+                            daemon_config.result_path / "001-first_RESULT.md"
+                        ),
+                    },
+                ],
+            )
+            self.assertIn(
+                (
+                    "daemon prompt detected: 001-first.md "
+                    "(sort_key=(0, 1, '001-first.md'), watcher=polling, "
+                    "result=001-first_RESULT.md)"
+                ),
+                progress.getvalue(),
+            )
+            self.assertIn(
+                "daemon prompt summary: First prompt",
+                progress.getvalue(),
+            )
             run_finished_payload = next(
                 payload
                 for payload in captured_payloads
@@ -2779,6 +2826,81 @@ class DaemonRunnerTests(unittest.TestCase):
                         "goal": goal,
                         "activeRoadmapPhaseIds": [phase_id],
                         "reason": "daemon_prompt_session_projected",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_prompt_processing_metadata_decision":
+                    prompt_name = (
+                        (payload.get("prompt_name") or "").strip()
+                        or "unknown-prompt"
+                    )
+                    folded = prompt_name.casefold()
+                    numeric_match = re.match(r"^(\\d+)", prompt_name)
+                    alpha_match = re.match(r"^([A-Za-z]+)", prompt_name)
+                    if numeric_match is not None:
+                        sort_key = [0, int(numeric_match.group(1)), folded]
+                    elif alpha_match is not None:
+                        sort_key = [1, alpha_match.group(1).casefold(), folded]
+                    else:
+                        sort_key = [2, folded, folded]
+
+                    def py_repr(value):
+                        if isinstance(value, str):
+                            escaped = value.replace("\\\\", "\\\\\\\\").replace(
+                                "'",
+                                "\\\\'",
+                            )
+                            return "'" + escaped + "'"
+                        if value is None:
+                            return "None"
+                        if value is True:
+                            return "True"
+                        if value is False:
+                            return "False"
+                        return str(value)
+
+                    prompt_summary = prompt_name
+                    for raw_line in payload["prompt_text"].splitlines():
+                        stripped = raw_line.strip()
+                        if not stripped or stripped == "```":
+                            continue
+                        normalized = re.sub(r"^#+\\s*", "", stripped)
+                        normalized = re.sub(r"^[-*+]\\s+", "", normalized)
+                        normalized = re.sub(r"^\\d+[.)]\\s+", "", normalized)
+                        normalized = " ".join(normalized.split())
+                        if normalized:
+                            prompt_summary = (
+                                normalized[:117].rstrip() + "..."
+                                if len(normalized) > 120
+                                else normalized
+                            )
+                            break
+                    sort_key_display = (
+                        "(" + ", ".join(py_repr(item) for item in sort_key) + ")"
+                    )
+                    result_name = Path(payload["result_path"]).name
+                    watcher_backend = (
+                        (payload.get("watcher_backend") or "").strip()
+                        or "unknown"
+                    )
+                    print(json.dumps({{
+                        "entrypoint": "daemon_prompt_processing_metadata_decision",
+                        "sortKey": sort_key,
+                        "promptSummary": prompt_summary,
+                        "detectedLogMessage": (
+                            "daemon prompt detected: "
+                            + prompt_name
+                            + " (sort_key="
+                            + sort_key_display
+                            + ", watcher="
+                            + watcher_backend
+                            + ", result="
+                            + result_name
+                            + ")"
+                        ),
+                        "summaryLogMessage": (
+                            "daemon prompt summary: " + prompt_summary
+                        ),
+                        "reason": "daemon_prompt_processing_metadata_projected",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_plan_state_decision":

@@ -538,6 +538,58 @@ class DaemonRunner:
                 return None
         return expected
 
+    def _prompt_processing_metadata_decision(
+        self,
+        *,
+        prompt_path: Path,
+        prompt_text: str,
+        watcher_backend: str,
+        result_path: Path,
+    ) -> dict[str, object]:
+        decision = self._project_typescript_prompt_processing_metadata_decision(
+            prompt_path=prompt_path,
+            prompt_text=prompt_text,
+            watcher_backend=watcher_backend,
+            result_path=result_path,
+        )
+        if decision is not None:
+            return decision
+        return self._prompt_processing_metadata_expectations(
+            prompt_path=prompt_path,
+            prompt_text=prompt_text,
+            watcher_backend=watcher_backend,
+            result_path=result_path,
+        )
+
+    def _project_typescript_prompt_processing_metadata_decision(
+        self,
+        *,
+        prompt_path: Path,
+        prompt_text: str,
+        watcher_backend: str,
+        result_path: Path,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_prompt_processing_metadata_decision",
+            "prompt_name": prompt_path.name,
+            "prompt_text": prompt_text,
+            "watcher_backend": watcher_backend,
+            "result_path": str(result_path),
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._prompt_processing_metadata_expectations(
+            prompt_path=prompt_path,
+            prompt_text=prompt_text,
+            watcher_backend=watcher_backend,
+            result_path=result_path,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
     def _project_typescript_existing_result_decision(
         self,
         *,
@@ -751,6 +803,31 @@ class DaemonRunner:
             "goal": goal,
             "activeRoadmapPhaseIds": [roadmap_phase_id],
             "reason": "daemon_prompt_session_projected",
+        }
+
+    @staticmethod
+    def _prompt_processing_metadata_expectations(
+        *,
+        prompt_path: Path,
+        prompt_text: str,
+        watcher_backend: str,
+        result_path: Path,
+    ) -> dict[str, object]:
+        sort_key = prompt_sort_key(prompt_path.name)
+        prompt_summary = summarize_prompt_goal(
+            prompt_text,
+            fallback=prompt_path.name,
+        )
+        return {
+            "sortKey": list(sort_key),
+            "promptSummary": prompt_summary,
+            "detectedLogMessage": (
+                f"daemon prompt detected: {prompt_path.name} "
+                f"(sort_key={sort_key}, watcher={watcher_backend}, "
+                f"result={result_path.name})"
+            ),
+            "summaryLogMessage": f"daemon prompt summary: {prompt_summary}",
+            "reason": "daemon_prompt_processing_metadata_projected",
         }
 
     def _project_typescript_result_report_decision(
@@ -2535,12 +2612,15 @@ class DaemonRunner:
         with self._in_progress_lock:
             self._in_progress.add(prompt_path)
         started_at = _iso_now()
-        sort_key = prompt_sort_key(prompt_path.name)
         result_path = self._result_path_for_prompt(prompt_path)
-        self._log(
-            "daemon prompt detected: "
-            f"{prompt_path.name} (sort_key={sort_key}, watcher={watcher_backend}, result={result_path.name})"
+        processing_metadata = self._prompt_processing_metadata_decision(
+            prompt_path=prompt_path,
+            prompt_text="",
+            watcher_backend=watcher_backend,
+            result_path=result_path,
         )
+        sort_key = tuple(processing_metadata["sortKey"])
+        self._log(str(processing_metadata["detectedLogMessage"]))
         status = "failed"
         error: str | None = None
         session_id: str | None = None
@@ -2596,10 +2676,13 @@ class DaemonRunner:
                 error = "Prompt file was deleted before processing."
                 # Jump to finally by re-raising a sentinel; handled as non-interrupted exit
                 raise _PromptSkipped()
-            self._log(
-                "daemon prompt summary: "
-                f"{summarize_prompt_goal(prompt_text, fallback=prompt_path.name)}"
+            prompt_summary_metadata = self._prompt_processing_metadata_decision(
+                prompt_path=prompt_path,
+                prompt_text=prompt_text,
+                watcher_backend=watcher_backend,
+                result_path=result_path,
             )
+            self._log(str(prompt_summary_metadata["summaryLogMessage"]))
             session_repository, scoped_config, session_id = self._start_prompt_session(
                 prompt_path=prompt_path,
                 prompt_text=prompt_text,

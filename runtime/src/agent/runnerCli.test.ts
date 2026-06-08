@@ -530,6 +530,32 @@ test("dormammu-agent-runner can project daemon prompt session decisions", () => 
   });
 });
 
+test("dormammu-agent-runner can project daemon prompt processing metadata", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_prompt_processing_metadata_decision",
+      prompt_name: "002-second.md",
+      prompt_text: "1. Continue migration\n",
+      watcher_backend: "polling",
+      result_path: "/repo/results/002-second_RESULT.md"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_prompt_processing_metadata_decision",
+    sortKey: [0, 2, "002-second.md"],
+    promptSummary: "Continue migration",
+    detectedLogMessage:
+      "daemon prompt detected: 002-second.md " +
+      "(sort_key=(0, 2, '002-second.md'), watcher=polling, result=002-second_RESULT.md)",
+    summaryLogMessage: "daemon prompt summary: Continue migration",
+    reason: "daemon_prompt_processing_metadata_projected"
+  });
+});
+
 test("dormammu-agent-runner can project daemon plan-state decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

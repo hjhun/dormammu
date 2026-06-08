@@ -58,6 +58,7 @@ import {
   daemonPromptInterruptionDecision,
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
+  daemonPromptProcessingMetadataDecision,
   daemonPromptRouteDecision,
   daemonPromptSessionDecision,
   daemonPromptSettleDecision,
@@ -97,6 +98,7 @@ import {
   type DaemonPromptInterruptionDecision,
   type DaemonPromptLifecycleDecision,
   type DaemonPromptPathDecision,
+  type DaemonPromptProcessingMetadataDecision,
   type DaemonPromptRouteDecision,
   type DaemonPromptSessionDecision,
   type DaemonPromptSettleDecision,
@@ -398,6 +400,19 @@ export type DaemonPromptSessionEntrypointPayload = {
 export type DaemonPromptSessionEntrypointResultPayload =
   DaemonPromptSessionDecision & {
     entrypoint: "daemon_prompt_session_decision";
+  };
+
+export type DaemonPromptProcessingMetadataEntrypointPayload = {
+  entrypoint: "daemon_prompt_processing_metadata_decision";
+  prompt_name: string;
+  prompt_text: string;
+  watcher_backend: string;
+  result_path: string;
+};
+
+export type DaemonPromptProcessingMetadataEntrypointResultPayload =
+  DaemonPromptProcessingMetadataDecision & {
+    entrypoint: "daemon_prompt_processing_metadata_decision";
   };
 
 export type DaemonPlanStateEntrypointPayload = {
@@ -815,6 +830,7 @@ export type RunnerCliPayload =
   | DaemonPlanStateEntrypointPayload
   | DaemonPromptLifecycleEntrypointPayload
   | DaemonPromptPathEntrypointPayload
+  | DaemonPromptProcessingMetadataEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
   | DaemonPromptSessionEntrypointPayload
   | DaemonPromptSettleEntrypointPayload
@@ -867,6 +883,7 @@ export type RunnerCliResultPayload =
   | DaemonPlanStateEntrypointResultPayload
   | DaemonPromptLifecycleEntrypointResultPayload
   | DaemonPromptPathEntrypointResultPayload
+  | DaemonPromptProcessingMetadataEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
   | DaemonPromptSessionEntrypointResultPayload
   | DaemonPromptSettleEntrypointResultPayload
@@ -1024,6 +1041,23 @@ export function runDaemonPromptSessionEntrypoint(
     ...daemonPromptSessionDecision({
       promptName: parseRequiredString(payload.prompt_name, "prompt_name"),
       promptText: parseString(payload.prompt_text, "prompt_text")
+    })
+  };
+}
+
+export function runDaemonPromptProcessingMetadataEntrypoint(
+  payload: DaemonPromptProcessingMetadataEntrypointPayload
+): DaemonPromptProcessingMetadataEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_prompt_processing_metadata_decision",
+    ...daemonPromptProcessingMetadataDecision({
+      promptName: parseRequiredString(payload.prompt_name, "prompt_name"),
+      promptText: parseString(payload.prompt_text, "prompt_text"),
+      watcherBackend: parseRequiredString(
+        payload.watcher_backend,
+        "watcher_backend"
+      ),
+      resultPath: parseRequiredString(payload.result_path, "result_path")
     })
   };
 }
