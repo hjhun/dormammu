@@ -727,6 +727,9 @@ class CliAdapterTests(unittest.TestCase):
                     input_mode="stdin",
                     run_label="typescript-bridge",
                     agent_role="planner",
+                    pipeline_stage_kind="tester",
+                    pipeline_stage_report_path=root / "tester-report.md",
+                    pipeline_stage_attempt=2,
                 )
             )
 
@@ -790,6 +793,26 @@ class CliAdapterTests(unittest.TestCase):
             self.assertEqual(captured["request"]["cli_path"], str(fake_cli))
             self.assertEqual(captured["request"]["prompt_text"], "Run through TypeScript.")
             self.assertEqual(captured["request"]["input_mode"], "stdin")
+            self.assertEqual(
+                captured["pipeline_stage"],
+                {
+                    "kind": "tester",
+                    "report_path": str(root / "tester-report.md"),
+                    "attempt": 2,
+                    "artifacts": [],
+                    "metadata": {},
+                },
+            )
+            self.assertIsNotNone(result.stage_result)
+            assert result.stage_result is not None
+            self.assertEqual(result.stage_result.role, "tester")
+            self.assertEqual(result.stage_result.stage_name, "tester")
+            self.assertEqual(result.stage_result.status, "completed")
+            self.assertEqual(result.stage_result.verdict, "pass")
+            self.assertEqual(result.stage_result.report_path, root / "tester-report.md")
+            self.assertIsNotNone(result.stage_result.retry)
+            assert result.stage_result.retry is not None
+            self.assertEqual(result.stage_result.retry.attempt, 2)
 
     def test_run_once_uses_typescript_events_for_started_callback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1072,6 +1095,26 @@ class CliAdapterTests(unittest.TestCase):
                         }},
                     }},
                 }}
+                stage_payload = payload.get("pipeline_stage")
+                if stage_payload:
+                    result["stage_result"] = {{
+                        "role": stage_payload["kind"],
+                        "stage_name": stage_payload["kind"],
+                        "status": "completed",
+                        "verdict": "pass",
+                        "summary": None,
+                        "report_path": stage_payload.get("report_path"),
+                        "artifacts": stage_payload.get("artifacts", []),
+                        "retry": {{
+                            "attempt": stage_payload.get("attempt"),
+                            "next_attempt": None,
+                            "retries_used": None,
+                            "max_retries": None,
+                            "max_iterations": None,
+                        }},
+                        "timing": None,
+                        "metadata": stage_payload.get("metadata", {{}}),
+                    }}
                 if payload.get("event_stream"):
                     started = dict(result)
                     started.pop("exit_code")

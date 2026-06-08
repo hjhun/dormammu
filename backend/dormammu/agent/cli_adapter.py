@@ -29,8 +29,9 @@ from dormammu.agent.models import (
 )
 from dormammu.agent.prompt_identity import prepend_cli_identity
 from dormammu.agent.presets import preset_for_executable_name
-from dormammu.artifacts import ArtifactWriter
+from dormammu.artifacts import ArtifactRef, ArtifactWriter
 from dormammu.config import AppConfig, CliInvocationConfig, FallbackCliConfig
+from dormammu.results import RetryMetadata, StageResult, TimingMetadata
 
 
 def _safe_label(text: str | None) -> str:
@@ -965,6 +966,7 @@ def _agent_run_result_from_payload(payload: object) -> AgentRunResult:
         ),
         fallback_trigger=_optional_str_field(payload, "fallback_trigger"),
         timed_out=bool(payload.get("timed_out", False)),
+        stage_result=_stage_result_from_payload(payload.get("stage_result")),
     )
 
 
@@ -984,6 +986,75 @@ def _capabilities_from_payload(payload: dict[str, object]) -> CliCapabilities:
         preset_label=_optional_str_field(preset_payload, "label"),
         preset_source=_optional_str_field(preset_payload, "source"),
         auto_approve=_auto_approve_from_payload(payload.get("auto_approve")),
+    )
+
+
+def _stage_result_from_payload(payload: object) -> StageResult | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise RuntimeError("TypeScript agent runner result field 'stage_result' must be an object")
+    artifacts_payload = payload.get("artifacts", [])
+    if not isinstance(artifacts_payload, list):
+        raise RuntimeError(
+            "TypeScript agent runner result field 'stage_result.artifacts' must be a list"
+        )
+    artifacts = tuple(
+        artifact
+        for item in artifacts_payload
+        if isinstance(item, dict)
+        if (artifact := ArtifactRef.from_dict(item)) is not None
+    )
+    metadata = payload.get("metadata")
+    return StageResult(
+        role=_str_field(payload, "role"),
+        stage_name=_optional_str_field(payload, "stage_name"),
+        status=_optional_str_field(payload, "status") or "completed",
+        verdict=_optional_str_field(payload, "verdict"),
+        summary=_optional_str_field(payload, "summary"),
+        report_path=(
+            Path(report_path)
+            if (report_path := _optional_str_field(payload, "report_path")) is not None
+            else None
+        ),
+        artifacts=artifacts,
+        retry=_retry_metadata_from_payload(payload.get("retry")),
+        timing=_timing_metadata_from_payload(payload.get("timing")),
+        metadata=metadata if isinstance(metadata, dict) else {},
+    )
+
+
+def _retry_metadata_from_payload(payload: object) -> RetryMetadata | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise RuntimeError("TypeScript agent runner result field 'stage_result.retry' must be an object")
+    return RetryMetadata(
+        attempt=_optional_int_field(payload, "attempt"),
+        next_attempt=_optional_int_field(payload, "next_attempt"),
+        retries_used=_optional_int_field(payload, "retries_used"),
+        max_retries=_optional_int_field(payload, "max_retries"),
+        max_iterations=_optional_int_field(payload, "max_iterations"),
+    )
+
+
+def _timing_metadata_from_payload(payload: object) -> TimingMetadata | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise RuntimeError("TypeScript agent runner result field 'stage_result.timing' must be an object")
+    duration = payload.get("duration_seconds")
+    if duration is not None and (
+        isinstance(duration, bool) or not isinstance(duration, int | float)
+    ):
+        raise RuntimeError(
+            "TypeScript agent runner result field "
+            "'stage_result.timing.duration_seconds' must be a number or null"
+        )
+    return TimingMetadata(
+        started_at=_optional_str_field(payload, "started_at"),
+        completed_at=_optional_str_field(payload, "completed_at"),
+        duration_seconds=float(duration) if duration is not None else None,
     )
 
 
@@ -1042,8 +1113,19 @@ def _optional_str_field(payload: dict[str, object], key: str) -> str | None:
 
 def _int_field(payload: dict[str, object], key: str) -> int:
     value = payload.get(key)
-    if not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise RuntimeError(f"TypeScript agent runner result field {key!r} must be an integer")
+    return value
+
+
+def _optional_int_field(payload: dict[str, object], key: str) -> int | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RuntimeError(
+            f"TypeScript agent runner result field {key!r} must be an integer or null"
+        )
     return value
 
 

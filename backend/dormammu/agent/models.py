@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from dormammu.artifacts import ArtifactRef
+
+if TYPE_CHECKING:
+    from dormammu.results import StageResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +210,7 @@ class AgentRunResult:
     attempted_cli_paths: Sequence[Path] = ()
     fallback_trigger: str | None = None
     timed_out: bool = False
+    stage_result: StageResult | None = None
 
     @property
     def artifact_refs(self) -> tuple[ArtifactRef, ...]:

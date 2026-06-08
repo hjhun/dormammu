@@ -469,6 +469,36 @@ class TestTesterStage:
             stage = runner._run_tester("goal", stem="g", date_str="20260412")
         assert stage is not None and stage.verdict == "pass"
 
+    def test_uses_typescript_stage_result_when_bridge_returns_it(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "AGENTS.md").write_text("pipeline test\n", encoding="utf-8")
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        agents = AgentsConfig(tester=RoleAgentConfig(cli=Path("pipeline-agent")))
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        ).with_overrides(agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+
+        stage = runner._run_tester("goal", stem="typescript-stage", date_str="20260412")
+
+        assert stage is not None
+        assert stage.status == ResultStatus.COMPLETED
+        assert stage.verdict == ResultVerdict.PASS
+        assert stage.output == "PIPELINE_TS_OUTPUT\n"
+        assert stage.report_path == app.logs_dir / "20260412_tester_typescript-stage.md"
+
     def test_fail_verdict_on_overall_fail(self, tmp_path: Path) -> None:
         agents = AgentsConfig(tester=RoleAgentConfig(cli=Path("echo")))
         runner = _make_runner(tmp_path, agents=agents)
@@ -1591,6 +1621,33 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                     "timed_out": False,
                 }}
             )
+            stage_payload = payload.get("pipeline_stage")
+            if stage_payload:
+                stage_kind = stage_payload["kind"]
+                role = "evaluator" if stage_kind.endswith("evaluator") else stage_kind
+                result["stage_result"] = {{
+                    "role": role,
+                    "stage_name": stage_kind,
+                    "status": "completed",
+                    "verdict": {{
+                        "tester": "pass",
+                        "reviewer": "approved",
+                        "committer": "committed",
+                        "plan_evaluator": "proceed",
+                    }}.get(stage_kind, "unknown"),
+                    "summary": None,
+                    "report_path": stage_payload.get("report_path"),
+                    "artifacts": stage_payload.get("artifacts", []),
+                    "retry": {{
+                        "attempt": stage_payload.get("attempt"),
+                        "next_attempt": None,
+                        "retries_used": None,
+                        "max_retries": None,
+                        "max_iterations": None,
+                    }},
+                    "timing": None,
+                    "metadata": stage_payload.get("metadata", {{}}),
+                }}
             metadata_path.write_text(
                 json.dumps(result, indent=2, ensure_ascii=True) + "\\n",
                 encoding="utf-8",

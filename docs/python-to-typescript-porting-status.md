@@ -82,6 +82,12 @@ Ported modules:
   -> `backend/dormammu/agent/models.py`,
   `backend/dormammu/agent/cli_adapter.py`,
   `backend/dormammu/daemon/pipeline_runner.py`
+- Python bridge parsing and pipeline consumption of TypeScript runner
+  `stage_result` payloads while preserving existing Python stdout/stderr
+  fallback parsing
+  -> `backend/dormammu/agent/models.py`,
+  `backend/dormammu/agent/cli_adapter.py`,
+  `backend/dormammu/daemon/pipeline_runner.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -266,6 +272,5 @@ Port the remaining runtime orchestration surface:
 
 The next slice should use the accumulated contract coverage to start replacing
 remaining Python runtime fallback internals with TypeScript-owned
-implementations, beginning with consuming TypeScript runner `stage_result`
-payloads in Python pipeline stage recording without changing existing fallback
-parsing semantics.
+implementations, beginning with TypeScript-owned tester/reviewer retry and
+pipeline role loop orchestration helpers.

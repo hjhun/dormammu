@@ -140,6 +140,7 @@ class PipelineRunner:
         self._lifecycle: LifecycleRecorder | None = None
         self._current_stage_results: list[StageResult] | None = None
         self._last_written_artifact_ref: ArtifactRef | None = None
+        self._last_typescript_stage_result: StageResult | None = None
 
     def _profile_for_role(self, role: str) -> AgentProfile:
         return self._app_config.resolve_agent_profile(role)
@@ -219,6 +220,44 @@ class PipelineRunner:
                 max_iterations=result.max_iterations,
             ),
             metadata={"latest_run_id": result.latest_run_id},
+        )
+
+    def _stage_from_typescript_result(
+        self,
+        *,
+        role: str,
+        stage_name: str,
+        output: str,
+        report_ref: ArtifactRef | None,
+        fallback_report_path: Path | None,
+        retry_attempt: int | None = None,
+    ) -> StageResult | None:
+        stage = self._last_typescript_stage_result
+        self._last_typescript_stage_result = None
+        if stage is None:
+            return None
+        if stage.role != role or (stage.stage_name or stage.role) != stage_name:
+            return None
+        return StageResult(
+            role=role,
+            stage_name=stage_name,
+            status=stage.status,
+            verdict=stage.verdict,
+            output=output,
+            report_path=(
+                report_ref.path
+                if report_ref is not None
+                else stage.report_path or fallback_report_path
+            ),
+            artifacts=(report_ref,) if report_ref is not None else stage.artifacts,
+            summary=stage.summary,
+            retry=stage.retry or (
+                RetryMetadata(attempt=retry_attempt)
+                if retry_attempt is not None
+                else None
+            ),
+            timing=stage.timing,
+            metadata=stage.metadata,
         )
 
     # ------------------------------------------------------------------
@@ -729,6 +768,7 @@ class PipelineRunner:
             args=[str(cli)] + list(_model_args(cli.name, profile.model_override)),
             cwd=self._app_config.repo_root,
         )
+        self._last_typescript_stage_result = None
         result = adapter.run_once(request)
         self._repository.record_latest_run(result)
 
@@ -984,17 +1024,26 @@ class PipelineRunner:
         )
         report_ref = self._last_written_artifact_ref
 
-        verdict = parse_plan_evaluator_verdict(output)
-        stage = StageResult(
+        stage = self._stage_from_typescript_result(
             role="evaluator",
             stage_name="plan_evaluator",
-            status=ResultStatus.COMPLETED,
-            verdict=verdict,
             output=output,
-            report_path=report_ref.path if report_ref is not None else report_path,
-            artifacts=(report_ref,) if report_ref is not None else (),
-            retry=RetryMetadata(attempt=attempt),
+            report_ref=report_ref,
+            fallback_report_path=report_path,
+            retry_attempt=attempt,
         )
+        if stage is None:
+            verdict = parse_plan_evaluator_verdict(output)
+            stage = StageResult(
+                role="evaluator",
+                stage_name="plan_evaluator",
+                status=ResultStatus.COMPLETED,
+                verdict=verdict,
+                output=output,
+                report_path=report_ref.path if report_ref is not None else report_path,
+                artifacts=(report_ref,) if report_ref is not None else (),
+                retry=RetryMetadata(attempt=attempt),
+            )
         if self._lifecycle is not None:
             self._lifecycle.emit(
                 event_type=LifecycleEventType.EVALUATOR_CHECKPOINT_DECISION,
@@ -1095,33 +1144,46 @@ class PipelineRunner:
         )
         report_ref = self._last_written_artifact_ref
 
-        verdict = parse_tester_verdict(output)
-        if verdict == ResultVerdict.MANUAL_REVIEW_NEEDED:
-            status = ResultStatus.MANUAL_REVIEW_NEEDED
-            summary = (
-                "Tester could not complete executable validation and requested manual review."
-            )
-        elif verdict is not None:
-            status = ResultStatus.COMPLETED
-            summary = None
-        else:
-            status = ResultStatus.FAILED
-            summary = "Tester output did not include a valid 'OVERALL:' verdict."
-        stage = StageResult(
+        stage = self._stage_from_typescript_result(
             role="tester",
             stage_name="tester",
-            status=status,
-            verdict=verdict,
             output=output,
-            report_path=(
-                report_ref.path
-                if report_ref is not None
-                else self._default_doc_path(role="tester", stem=stem, date_str=date_str)
+            report_ref=report_ref,
+            fallback_report_path=self._default_doc_path(
+                role="tester",
+                stem=stem,
+                date_str=date_str,
             ),
-            artifacts=(report_ref,) if report_ref is not None else (),
-            summary=summary,
-            retry=RetryMetadata(attempt=attempt),
+            retry_attempt=attempt,
         )
+        if stage is None:
+            verdict = parse_tester_verdict(output)
+            if verdict == ResultVerdict.MANUAL_REVIEW_NEEDED:
+                status = ResultStatus.MANUAL_REVIEW_NEEDED
+                summary = (
+                    "Tester could not complete executable validation and requested manual review."
+                )
+            elif verdict is not None:
+                status = ResultStatus.COMPLETED
+                summary = None
+            else:
+                status = ResultStatus.FAILED
+                summary = "Tester output did not include a valid 'OVERALL:' verdict."
+            stage = StageResult(
+                role="tester",
+                stage_name="tester",
+                status=status,
+                verdict=verdict,
+                output=output,
+                report_path=(
+                    report_ref.path
+                    if report_ref is not None
+                    else self._default_doc_path(role="tester", stem=stem, date_str=date_str)
+                ),
+                artifacts=(report_ref,) if report_ref is not None else (),
+                summary=summary,
+                retry=RetryMetadata(attempt=attempt),
+            )
         self._emit_stage_complete(stage=stage)
         self._record_stage_result(stage)
         return stage
@@ -1160,26 +1222,39 @@ class PipelineRunner:
         )
         report_ref = self._last_written_artifact_ref
 
-        verdict = parse_reviewer_verdict(output)
-        stage = StageResult(
+        stage = self._stage_from_typescript_result(
             role="reviewer",
             stage_name="reviewer",
-            status=ResultStatus.COMPLETED if verdict is not None else ResultStatus.FAILED,
-            verdict=verdict,
             output=output,
-            report_path=(
-                report_ref.path
-                if report_ref is not None
-                else self._default_doc_path(role="reviewer", stem=stem, date_str=date_str)
+            report_ref=report_ref,
+            fallback_report_path=self._default_doc_path(
+                role="reviewer",
+                stem=stem,
+                date_str=date_str,
             ),
-            artifacts=(report_ref,) if report_ref is not None else (),
-            summary=(
-                None
-                if verdict is not None
-                else "Reviewer output did not include a valid 'VERDICT:' line."
-            ),
-            retry=RetryMetadata(attempt=attempt),
+            retry_attempt=attempt,
         )
+        if stage is None:
+            verdict = parse_reviewer_verdict(output)
+            stage = StageResult(
+                role="reviewer",
+                stage_name="reviewer",
+                status=ResultStatus.COMPLETED if verdict is not None else ResultStatus.FAILED,
+                verdict=verdict,
+                output=output,
+                report_path=(
+                    report_ref.path
+                    if report_ref is not None
+                    else self._default_doc_path(role="reviewer", stem=stem, date_str=date_str)
+                ),
+                artifacts=(report_ref,) if report_ref is not None else (),
+                summary=(
+                    None
+                    if verdict is not None
+                    else "Reviewer output did not include a valid 'VERDICT:' line."
+                ),
+                retry=RetryMetadata(attempt=attempt),
+            )
         self._emit_stage_complete(stage=stage)
         self._record_stage_result(stage)
         return stage
@@ -1209,19 +1284,31 @@ class PipelineRunner:
             date_str=date_str,
         )
         report_ref = self._last_written_artifact_ref
-        stage = StageResult(
+        stage = self._stage_from_typescript_result(
             role="committer",
             stage_name="committer",
-            status=ResultStatus.COMPLETED,
-            verdict=ResultVerdict.COMMITTED,
             output=output,
-            report_path=(
-                report_ref.path
-                if report_ref is not None
-                else self._default_doc_path(role="committer", stem=stem, date_str=date_str)
+            report_ref=report_ref,
+            fallback_report_path=self._default_doc_path(
+                role="committer",
+                stem=stem,
+                date_str=date_str,
             ),
-            artifacts=(report_ref,) if report_ref is not None else (),
         )
+        if stage is None:
+            stage = StageResult(
+                role="committer",
+                stage_name="committer",
+                status=ResultStatus.COMPLETED,
+                verdict=ResultVerdict.COMMITTED,
+                output=output,
+                report_path=(
+                    report_ref.path
+                    if report_ref is not None
+                    else self._default_doc_path(role="committer", stem=stem, date_str=date_str)
+                ),
+                artifacts=(report_ref,) if report_ref is not None else (),
+            )
         self._emit_stage_complete(stage=stage)
         self._record_stage_result(stage)
         return stage
@@ -1385,6 +1472,7 @@ class PipelineRunner:
         output = select_agent_output(stdout_text, stderr_text)
         artifact_ref: ArtifactRef | None = None
 
+        self._last_typescript_stage_result = result.stage_result
         if save_doc:
             if target_path is None:
                 raise RuntimeError("stage document path was not resolved")
