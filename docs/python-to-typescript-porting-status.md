@@ -213,6 +213,16 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon startup and shutdown lifecycle decision helpers,
+  plus runner entrypoints and Python `DaemonRunner.run_forever()` bridge
+  consumption for initial heartbeat, goals/autonomous scheduler start/trigger,
+  scheduler stop, watcher close, heartbeat removal, and progress log cleanup
+  decisions with Python fallback retained when the bridge is unavailable or
+  malformed
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -395,12 +405,13 @@ Port the remaining daemon and goals orchestration surface:
   can consume goal file listing, prompt writes, role output document writes,
   role sequencing, timer decisions, immediate-run decisions, goal batch
   processing decisions, timer callback decisions, queued-prompt skip/write
-  decisions, watcher lifecycle decisions, daemon pending queue decisions, and
-  daemon prompt route decisions through the TypeScript runner bridge. TypeScript
-  also owns daemon loop iteration decisions for heartbeat status and watcher
-  wait/continue/stop handling. Python fallbacks are retained.
-- The next slice should move from the goals scheduler facade to the remaining
-  daemon orchestration surface, continuing with daemon startup/shutdown
-  lifecycle decisions that can be exposed as deterministic TypeScript runner
-  contracts after queue dispatch, prompt route selection, and loop iteration
-  handling.
+  decisions, watcher lifecycle decisions, daemon pending queue decisions,
+  daemon prompt route decisions, daemon loop iteration decisions, and daemon
+  startup/shutdown lifecycle decisions through the TypeScript runner bridge.
+  Python fallbacks are retained.
+- The next slice should continue the remaining daemon lifecycle and recovery
+  surface after queue dispatch, prompt route selection, loop iteration, and
+  startup/shutdown handling, with priority on deterministic daemon startup
+  guards, heartbeat/instance-lock recovery, or watcher lifecycle hardening that
+  can be exposed as TypeScript runner contracts without removing Python
+  compatibility.

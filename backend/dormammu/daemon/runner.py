@@ -213,15 +213,37 @@ class DaemonRunner:
             self._active_watcher = watcher
             watcher.start()
             self._emit_startup_banner(watcher_backend=watcher.backend_name)
-            self._write_heartbeat(status="idle")
-            if self._goals_scheduler is not None:
-                self._goals_scheduler.start()
-                self._log("goals scheduler: started")
-                self._goals_scheduler.trigger_now()
-            if self._autonomous_scheduler is not None:
-                self._autonomous_scheduler.start()
-                self._log("autonomous scheduler: started")
-                self._autonomous_scheduler.trigger_now()
+            startup_decision = self._project_typescript_startup_decision()
+            if startup_decision is None:
+                self._write_heartbeat(status="idle")
+                if self._goals_scheduler is not None:
+                    self._goals_scheduler.start()
+                    self._log("goals scheduler: started")
+                    self._goals_scheduler.trigger_now()
+                if self._autonomous_scheduler is not None:
+                    self._autonomous_scheduler.start()
+                    self._log("autonomous scheduler: started")
+                    self._autonomous_scheduler.trigger_now()
+            else:
+                self._write_heartbeat(status=startup_decision["initial_heartbeat_status"])
+                goals_scheduler = self._goals_scheduler
+                if startup_decision["start_goals_scheduler"] and goals_scheduler is not None:
+                    goals_scheduler.start()
+                    self._log("goals scheduler: started")
+                if startup_decision["trigger_goals_scheduler"] and goals_scheduler is not None:
+                    goals_scheduler.trigger_now()
+                autonomous_scheduler = self._autonomous_scheduler
+                if (
+                    startup_decision["start_autonomous_scheduler"]
+                    and autonomous_scheduler is not None
+                ):
+                    autonomous_scheduler.start()
+                    self._log("autonomous scheduler: started")
+                if (
+                    startup_decision["trigger_autonomous_scheduler"]
+                    and autonomous_scheduler is not None
+                ):
+                    autonomous_scheduler.trigger_now()
             try:
                 while not self._shutdown_requested.is_set():
                     processed = self.run_pending_once(watcher_backend=watcher.backend_name)
@@ -247,16 +269,39 @@ class DaemonRunner:
                             break
                         watcher.wait_for_changes()
             finally:
-                if self._goals_scheduler is not None:
-                    self._goals_scheduler.stop()
-                    self._log("goals scheduler: stopped")
-                if self._autonomous_scheduler is not None:
-                    self._autonomous_scheduler.stop()
-                    self._log("autonomous scheduler: stopped")
-                watcher.close()
-                self._remove_heartbeat()
-                if hasattr(self.progress_stream, "close_log"):
-                    self.progress_stream.close_log()
+                shutdown_decision = self._project_typescript_shutdown_decision()
+                if shutdown_decision is None:
+                    if self._goals_scheduler is not None:
+                        self._goals_scheduler.stop()
+                        self._log("goals scheduler: stopped")
+                    if self._autonomous_scheduler is not None:
+                        self._autonomous_scheduler.stop()
+                        self._log("autonomous scheduler: stopped")
+                    watcher.close()
+                    self._remove_heartbeat()
+                    if hasattr(self.progress_stream, "close_log"):
+                        self.progress_stream.close_log()
+                else:
+                    goals_scheduler = self._goals_scheduler
+                    if shutdown_decision["stop_goals_scheduler"] and goals_scheduler is not None:
+                        goals_scheduler.stop()
+                        self._log("goals scheduler: stopped")
+                    autonomous_scheduler = self._autonomous_scheduler
+                    if (
+                        shutdown_decision["stop_autonomous_scheduler"]
+                        and autonomous_scheduler is not None
+                    ):
+                        autonomous_scheduler.stop()
+                        self._log("autonomous scheduler: stopped")
+                    if shutdown_decision["close_watcher"]:
+                        watcher.close()
+                    if shutdown_decision["remove_heartbeat"]:
+                        self._remove_heartbeat()
+                    if shutdown_decision["close_progress_log"] and hasattr(
+                        self.progress_stream,
+                        "close_log",
+                    ):
+                        self.progress_stream.close_log()
             self._log("daemon shutdown complete.")
 
     def run_pending_once(self, *, watcher_backend: str | None = None) -> int:
@@ -436,6 +481,76 @@ class DaemonRunner:
             "action": expected["action"],
             "heartbeat_status": expected["heartbeatStatus"],
             "wait_for_changes": expected["waitForChanges"],
+        }
+
+    def _project_typescript_startup_decision(self) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_startup_decision",
+            "goals_scheduler_configured": self._goals_scheduler is not None,
+            "autonomous_scheduler_configured": self._autonomous_scheduler is not None,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._startup_expectations()
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "initial_heartbeat_status": expected["initialHeartbeatStatus"],
+            "start_goals_scheduler": expected["startGoalsScheduler"],
+            "trigger_goals_scheduler": expected["triggerGoalsScheduler"],
+            "start_autonomous_scheduler": expected["startAutonomousScheduler"],
+            "trigger_autonomous_scheduler": expected["triggerAutonomousScheduler"],
+        }
+
+    def _startup_expectations(self) -> dict[str, object]:
+        has_goals = self._goals_scheduler is not None
+        has_autonomous = self._autonomous_scheduler is not None
+        return {
+            "action": "start",
+            "initialHeartbeatStatus": "idle",
+            "startGoalsScheduler": has_goals,
+            "triggerGoalsScheduler": has_goals,
+            "startAutonomousScheduler": has_autonomous,
+            "triggerAutonomousScheduler": has_autonomous,
+        }
+
+    def _project_typescript_shutdown_decision(self) -> dict[str, object] | None:
+        has_progress_log = hasattr(self.progress_stream, "close_log")
+        payload = {
+            "entrypoint": "daemon_shutdown_decision",
+            "goals_scheduler_configured": self._goals_scheduler is not None,
+            "autonomous_scheduler_configured": self._autonomous_scheduler is not None,
+            "progress_log_active": has_progress_log,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._shutdown_expectations(progress_log_active=has_progress_log)
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "stop_goals_scheduler": expected["stopGoalsScheduler"],
+            "stop_autonomous_scheduler": expected["stopAutonomousScheduler"],
+            "close_watcher": expected["closeWatcher"],
+            "remove_heartbeat": expected["removeHeartbeat"],
+            "close_progress_log": expected["closeProgressLog"],
+        }
+
+    def _shutdown_expectations(
+        self,
+        *,
+        progress_log_active: bool,
+    ) -> dict[str, object]:
+        return {
+            "action": "shutdown",
+            "stopGoalsScheduler": self._goals_scheduler is not None,
+            "stopAutonomousScheduler": self._autonomous_scheduler is not None,
+            "closeWatcher": True,
+            "removeHeartbeat": True,
+            "closeProgressLog": progress_log_active,
         }
 
     def _loop_iteration_expectations(

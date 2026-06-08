@@ -9,6 +9,8 @@ import {
   runDaemonLoopIterationEntrypoint,
   runDaemonPendingDecisionEntrypoint,
   runDaemonPromptRouteEntrypoint,
+  runDaemonShutdownEntrypoint,
+  runDaemonStartupEntrypoint,
   runAgentRunnerEntrypoint,
   runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
@@ -423,6 +425,47 @@ test("runDaemonLoopIterationEntrypoint projects daemon loop decisions", () => {
       heartbeatStatus: "idle",
       waitForChanges: true,
       reason: "no_prompt_processed"
+    }
+  );
+});
+
+test("runDaemonStartupEntrypoint projects daemon startup decisions", () => {
+  assert.deepEqual(
+    runDaemonStartupEntrypoint({
+      entrypoint: "daemon_startup_decision",
+      goals_scheduler_configured: true,
+      autonomous_scheduler_configured: false
+    }),
+    {
+      entrypoint: "daemon_startup_decision",
+      action: "start",
+      initialHeartbeatStatus: "idle",
+      startGoalsScheduler: true,
+      triggerGoalsScheduler: true,
+      startAutonomousScheduler: false,
+      triggerAutonomousScheduler: false,
+      reason: "daemon_startup"
+    }
+  );
+});
+
+test("runDaemonShutdownEntrypoint projects daemon shutdown decisions", () => {
+  assert.deepEqual(
+    runDaemonShutdownEntrypoint({
+      entrypoint: "daemon_shutdown_decision",
+      goals_scheduler_configured: false,
+      autonomous_scheduler_configured: true,
+      progress_log_active: true
+    }),
+    {
+      entrypoint: "daemon_shutdown_decision",
+      action: "shutdown",
+      stopGoalsScheduler: false,
+      stopAutonomousScheduler: true,
+      closeWatcher: true,
+      removeHeartbeat: true,
+      closeProgressLog: true,
+      reason: "daemon_shutdown"
     }
   );
 });

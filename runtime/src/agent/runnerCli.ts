@@ -7,6 +7,8 @@ import {
   runDaemonLoopIterationEntrypoint,
   runDaemonPendingDecisionEntrypoint,
   runDaemonPromptRouteEntrypoint,
+  runDaemonShutdownEntrypoint,
+  runDaemonStartupEntrypoint,
   runAgentRunnerEntrypoint,
   runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
@@ -24,6 +26,8 @@ import {
   type DaemonLoopIterationEntrypointPayload,
   type DaemonPendingDecisionEntrypointPayload,
   type DaemonPromptRouteEntrypointPayload,
+  type DaemonShutdownEntrypointPayload,
+  type DaemonStartupEntrypointPayload,
   type GoalsProcessDecisionEntrypointPayload,
   type GoalsPromptProjectionEntrypointPayload,
   type GoalsRoleDocumentProjectionEntrypointPayload,
@@ -109,6 +113,12 @@ async function runWithSignalHandlers(
   if (isDaemonLoopIterationPayload(payload)) {
     return runDaemonLoopIterationEntrypoint(payload);
   }
+  if (isDaemonStartupPayload(payload)) {
+    return runDaemonStartupEntrypoint(payload);
+  }
+  if (isDaemonShutdownPayload(payload)) {
+    return runDaemonShutdownEntrypoint(payload);
+  }
   if (isDaemonPendingDecisionPayload(payload)) {
     return runDaemonPendingDecisionEntrypoint(payload);
   }
@@ -165,6 +175,8 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
     (payload.entrypoint !== "daemon_loop_iteration_decision" &&
       payload.entrypoint !== "daemon_pending_decision" &&
       payload.entrypoint !== "daemon_prompt_route_decision" &&
+      payload.entrypoint !== "daemon_shutdown_decision" &&
+      payload.entrypoint !== "daemon_startup_decision" &&
       payload.entrypoint !== "goals_queue" &&
       payload.entrypoint !== "goals_prompt_projection" &&
       payload.entrypoint !== "goals_role_document_projection" &&
@@ -194,6 +206,22 @@ function isDaemonLoopIterationPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_loop_iteration_decision"
+  );
+}
+
+function isDaemonStartupPayload(
+  payload: RunnerCliPayload
+): payload is DaemonStartupEntrypointPayload {
+  return (
+    "entrypoint" in payload && payload.entrypoint === "daemon_startup_decision"
+  );
+}
+
+function isDaemonShutdownPayload(
+  payload: RunnerCliPayload
+): payload is DaemonShutdownEntrypointPayload {
+  return (
+    "entrypoint" in payload && payload.entrypoint === "daemon_shutdown_decision"
   );
 }
 

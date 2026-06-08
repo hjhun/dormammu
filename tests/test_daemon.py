@@ -756,13 +756,106 @@ class DaemonRunnerTests(unittest.TestCase):
 
             self.assertEqual(watcher.wait_count, 1)
             self.assertEqual(heartbeat_statuses, ["idle", "idle"])
-            captured = json.loads(
-                (root / "captured-runner-payload.json").read_text(encoding="utf-8")
+            captured = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_loop_iteration_decision"
             )
             self.assertEqual(captured["entrypoint"], "daemon_loop_iteration_decision")
             self.assertEqual(captured["processed_count"], 0)
             self.assertEqual(captured["in_progress_count"], 0)
             self.assertFalse(captured["shutdown_requested"])
+
+    def test_run_forever_can_use_typescript_startup_shutdown_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            progress_stream = io.StringIO()
+
+            class RecordingWatcher:
+                backend_name = "polling"
+
+                def __init__(self, owner: DaemonRunner) -> None:
+                    self._owner = owner
+                    self.close_count = 0
+
+                def start(self) -> None:
+                    return None
+
+                def close(self) -> None:
+                    self.close_count += 1
+
+                def wait_for_changes(self) -> list[Path]:
+                    self._owner.request_shutdown()
+                    return []
+
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=progress_stream)
+            watcher = RecordingWatcher(runner)
+            runner.watcher = watcher
+            goals_scheduler = mock.MagicMock()
+            autonomous_scheduler = mock.MagicMock()
+            runner._goals_scheduler = goals_scheduler
+            runner._autonomous_scheduler = autonomous_scheduler
+            heartbeat_statuses: list[str] = []
+
+            with (
+                mock.patch.object(
+                    runner,
+                    "_write_heartbeat",
+                    side_effect=lambda *, status: heartbeat_statuses.append(status),
+                ),
+                mock.patch.object(runner, "_remove_heartbeat") as remove_heartbeat,
+                mock.patch.object(runner, "run_pending_once", return_value=0),
+            ):
+                self.assertIsNone(runner.run_forever())
+
+            self.assertEqual(heartbeat_statuses, ["idle", "idle"])
+            goals_scheduler.start.assert_called_once()
+            goals_scheduler.trigger_now.assert_called_once()
+            goals_scheduler.stop.assert_called_once()
+            autonomous_scheduler.start.assert_called_once()
+            autonomous_scheduler.trigger_now.assert_called_once()
+            autonomous_scheduler.stop.assert_called_once()
+            self.assertEqual(watcher.close_count, 1)
+            remove_heartbeat.assert_called_once()
+            payloads = [
+                json.loads(line)
+                for line in (root / "captured-runner-payloads.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            payloads_by_entrypoint = {
+                payload["entrypoint"]: payload for payload in payloads
+            }
+            self.assertEqual(
+                payloads_by_entrypoint["daemon_startup_decision"],
+                {
+                    "entrypoint": "daemon_startup_decision",
+                    "goals_scheduler_configured": True,
+                    "autonomous_scheduler_configured": True,
+                },
+            )
+            self.assertEqual(
+                payloads_by_entrypoint["daemon_shutdown_decision"],
+                {
+                    "entrypoint": "daemon_shutdown_decision",
+                    "goals_scheduler_configured": True,
+                    "autonomous_scheduler_configured": True,
+                    "progress_log_active": False,
+                },
+            )
 
     @unittest.skipUnless(InotifyWatcher.is_available(), "inotify is only available on Linux")
     def test_daemonize_cli_smoke_processes_prompt_via_inotify(self) -> None:
@@ -1026,6 +1119,11 @@ class DaemonRunnerTests(unittest.TestCase):
                     json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
                     encoding="utf-8",
                 )
+                with (ROOT / "captured-runner-payloads.jsonl").open(
+                    "a",
+                    encoding="utf-8",
+                ) as stream:
+                    stream.write(json.dumps(payload, ensure_ascii=True) + "\\n")
                 if payload.get("entrypoint") == "daemon_pending_decision":
                     ready = [
                         item
@@ -1134,6 +1232,36 @@ class DaemonRunnerTests(unittest.TestCase):
                         "heartbeatStatus": heartbeat_status,
                         "waitForChanges": wait,
                         "reason": reason,
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_startup_decision":
+                    print(json.dumps({{
+                        "entrypoint": "daemon_startup_decision",
+                        "action": "start",
+                        "initialHeartbeatStatus": "idle",
+                        "startGoalsScheduler": payload["goals_scheduler_configured"],
+                        "triggerGoalsScheduler": payload["goals_scheduler_configured"],
+                        "startAutonomousScheduler": (
+                            payload["autonomous_scheduler_configured"]
+                        ),
+                        "triggerAutonomousScheduler": (
+                            payload["autonomous_scheduler_configured"]
+                        ),
+                        "reason": "fake_daemon_startup",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_shutdown_decision":
+                    print(json.dumps({{
+                        "entrypoint": "daemon_shutdown_decision",
+                        "action": "shutdown",
+                        "stopGoalsScheduler": payload["goals_scheduler_configured"],
+                        "stopAutonomousScheduler": (
+                            payload["autonomous_scheduler_configured"]
+                        ),
+                        "closeWatcher": True,
+                        "removeHeartbeat": True,
+                        "closeProgressLog": payload["progress_log_active"],
+                        "reason": "fake_daemon_shutdown",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 raise SystemExit(2)

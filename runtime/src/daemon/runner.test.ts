@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   daemonLoopIterationDecision,
   daemonPendingDecision,
-  daemonPromptRouteDecision
+  daemonPromptRouteDecision,
+  daemonShutdownDecision,
+  daemonStartupDecision
 } from "./runner.js";
 
 test("daemonPendingDecision processes the first ready prompt", () => {
@@ -158,5 +160,42 @@ test("daemonLoopIterationDecision stops when shutdown is requested", () => {
       shutdownRequested: true
     }).action,
     "stop"
+  );
+});
+
+test("daemonStartupDecision starts configured schedulers", () => {
+  assert.deepEqual(
+    daemonStartupDecision({
+      goalsSchedulerConfigured: true,
+      autonomousSchedulerConfigured: false
+    }),
+    {
+      action: "start",
+      initialHeartbeatStatus: "idle",
+      startGoalsScheduler: true,
+      triggerGoalsScheduler: true,
+      startAutonomousScheduler: false,
+      triggerAutonomousScheduler: false,
+      reason: "daemon_startup"
+    }
+  );
+});
+
+test("daemonShutdownDecision projects cleanup actions", () => {
+  assert.deepEqual(
+    daemonShutdownDecision({
+      goalsSchedulerConfigured: true,
+      autonomousSchedulerConfigured: true,
+      progressLogActive: true
+    }),
+    {
+      action: "shutdown",
+      stopGoalsScheduler: true,
+      stopAutonomousScheduler: true,
+      closeWatcher: true,
+      removeHeartbeat: true,
+      closeProgressLog: true,
+      reason: "daemon_shutdown"
+    }
   );
 });

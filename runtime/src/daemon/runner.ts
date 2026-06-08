@@ -53,6 +53,37 @@ export type DaemonLoopIterationDecision = {
   reason: string;
 };
 
+export type DaemonStartupDecisionInput = {
+  goalsSchedulerConfigured: boolean;
+  autonomousSchedulerConfigured: boolean;
+};
+
+export type DaemonStartupDecision = {
+  action: "start";
+  initialHeartbeatStatus: "idle";
+  startGoalsScheduler: boolean;
+  triggerGoalsScheduler: boolean;
+  startAutonomousScheduler: boolean;
+  triggerAutonomousScheduler: boolean;
+  reason: string;
+};
+
+export type DaemonShutdownDecisionInput = {
+  goalsSchedulerConfigured: boolean;
+  autonomousSchedulerConfigured: boolean;
+  progressLogActive: boolean;
+};
+
+export type DaemonShutdownDecision = {
+  action: "shutdown";
+  stopGoalsScheduler: boolean;
+  stopAutonomousScheduler: boolean;
+  closeWatcher: boolean;
+  removeHeartbeat: boolean;
+  closeProgressLog: boolean;
+  reason: string;
+};
+
 export function daemonPendingDecision(
   input: DaemonPendingDecisionInput
 ): DaemonPendingDecision {
@@ -167,6 +198,34 @@ export function daemonLoopIterationDecision(
     heartbeatStatus,
     waitForChanges: false,
     reason: "prompt_processed"
+  };
+}
+
+export function daemonStartupDecision(
+  input: DaemonStartupDecisionInput
+): DaemonStartupDecision {
+  return {
+    action: "start",
+    initialHeartbeatStatus: "idle",
+    startGoalsScheduler: input.goalsSchedulerConfigured,
+    triggerGoalsScheduler: input.goalsSchedulerConfigured,
+    startAutonomousScheduler: input.autonomousSchedulerConfigured,
+    triggerAutonomousScheduler: input.autonomousSchedulerConfigured,
+    reason: "daemon_startup"
+  };
+}
+
+export function daemonShutdownDecision(
+  input: DaemonShutdownDecisionInput
+): DaemonShutdownDecision {
+  return {
+    action: "shutdown",
+    stopGoalsScheduler: input.goalsSchedulerConfigured,
+    stopAutonomousScheduler: input.autonomousSchedulerConfigured,
+    closeWatcher: true,
+    removeHeartbeat: true,
+    closeProgressLog: input.progressLogActive,
+    reason: "daemon_shutdown"
   };
 }
 

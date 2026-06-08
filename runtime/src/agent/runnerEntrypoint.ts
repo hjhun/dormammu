@@ -45,9 +45,13 @@ import {
   daemonLoopIterationDecision,
   daemonPendingDecision,
   daemonPromptRouteDecision,
+  daemonShutdownDecision,
+  daemonStartupDecision,
   type DaemonLoopIterationDecision,
   type DaemonPendingDecision,
-  type DaemonPromptRouteDecision
+  type DaemonPromptRouteDecision,
+  type DaemonShutdownDecision,
+  type DaemonStartupDecision
 } from "../daemon/runner.js";
 import {
   projectQueuedGoalPrompt,
@@ -306,11 +310,34 @@ export type DaemonLoopIterationEntrypointResultPayload =
     entrypoint: "daemon_loop_iteration_decision";
   };
 
+export type DaemonStartupEntrypointPayload = {
+  entrypoint: "daemon_startup_decision";
+  goals_scheduler_configured: boolean;
+  autonomous_scheduler_configured: boolean;
+};
+
+export type DaemonStartupEntrypointResultPayload = DaemonStartupDecision & {
+  entrypoint: "daemon_startup_decision";
+};
+
+export type DaemonShutdownEntrypointPayload = {
+  entrypoint: "daemon_shutdown_decision";
+  goals_scheduler_configured: boolean;
+  autonomous_scheduler_configured: boolean;
+  progress_log_active: boolean;
+};
+
+export type DaemonShutdownEntrypointResultPayload = DaemonShutdownDecision & {
+  entrypoint: "daemon_shutdown_decision";
+};
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
   | DaemonLoopIterationEntrypointPayload
   | DaemonPendingDecisionEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
+  | DaemonShutdownEntrypointPayload
+  | DaemonStartupEntrypointPayload
   | GoalsQueueEntrypointPayload
   | GoalsPromptProjectionEntrypointPayload
   | GoalsRoleDocumentProjectionEntrypointPayload
@@ -328,6 +355,8 @@ export type RunnerCliResultPayload =
   | DaemonLoopIterationEntrypointResultPayload
   | DaemonPendingDecisionEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
+  | DaemonShutdownEntrypointResultPayload
+  | DaemonStartupEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
   | GoalsPromptProjectionEntrypointResultPayload
   | GoalsRoleDocumentProjectionEntrypointResultPayload
@@ -437,6 +466,46 @@ export function runDaemonLoopIterationEntrypoint(
       shutdownRequested: parseBoolean(
         payload.shutdown_requested,
         "shutdown_requested"
+      )
+    })
+  };
+}
+
+export function runDaemonStartupEntrypoint(
+  payload: DaemonStartupEntrypointPayload
+): DaemonStartupEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_startup_decision",
+    ...daemonStartupDecision({
+      goalsSchedulerConfigured: parseBoolean(
+        payload.goals_scheduler_configured,
+        "goals_scheduler_configured"
+      ),
+      autonomousSchedulerConfigured: parseBoolean(
+        payload.autonomous_scheduler_configured,
+        "autonomous_scheduler_configured"
+      )
+    })
+  };
+}
+
+export function runDaemonShutdownEntrypoint(
+  payload: DaemonShutdownEntrypointPayload
+): DaemonShutdownEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_shutdown_decision",
+    ...daemonShutdownDecision({
+      goalsSchedulerConfigured: parseBoolean(
+        payload.goals_scheduler_configured,
+        "goals_scheduler_configured"
+      ),
+      autonomousSchedulerConfigured: parseBoolean(
+        payload.autonomous_scheduler_configured,
+        "autonomous_scheduler_configured"
+      ),
+      progressLogActive: parseBoolean(
+        payload.progress_log_active,
+        "progress_log_active"
       )
     })
   };

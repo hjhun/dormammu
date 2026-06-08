@@ -485,6 +485,55 @@ test("dormammu-agent-runner can project daemon loop iteration decisions", () => 
   });
 });
 
+test("dormammu-agent-runner can project daemon startup decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_startup_decision",
+      goals_scheduler_configured: true,
+      autonomous_scheduler_configured: true
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_startup_decision",
+    action: "start",
+    initialHeartbeatStatus: "idle",
+    startGoalsScheduler: true,
+    triggerGoalsScheduler: true,
+    startAutonomousScheduler: true,
+    triggerAutonomousScheduler: true,
+    reason: "daemon_startup"
+  });
+});
+
+test("dormammu-agent-runner can project daemon shutdown decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_shutdown_decision",
+      goals_scheduler_configured: true,
+      autonomous_scheduler_configured: false,
+      progress_log_active: false
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_shutdown_decision",
+    action: "shutdown",
+    stopGoalsScheduler: true,
+    stopAutonomousScheduler: false,
+    closeWatcher: true,
+    removeHeartbeat: true,
+    closeProgressLog: false,
+    reason: "daemon_shutdown"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",
