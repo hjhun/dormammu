@@ -13,8 +13,10 @@ import {
   parseAgentsConfig,
   profileFromRoleConfig,
   profileNameForRole,
+  requestedManifestProfileNames,
   resolveProfileCli,
   resolveRuntimeRoleProfile,
+  roleRequiresManifestResolution,
   ROLE_NAMES,
   type AgentProfile
 } from "./profiles.js";
@@ -153,6 +155,22 @@ test("role config can select an available manifest-backed profile", () => {
     model: false,
     permission_policy: false
   });
+});
+
+test("requestedManifestProfileNames deduplicates non built-in profile requests", () => {
+  const agents = parseAgentsConfig({
+    planner: { profile: "shared-custom" },
+    reviewer: { profile: "shared-custom" },
+    developer: { profile: "developer-custom" },
+    tester: { profile: "tester" }
+  });
+
+  assert.deepEqual(requestedManifestProfileNames(agents), [
+    "shared-custom",
+    "developer-custom"
+  ]);
+  assert.equal(roleRequiresManifestResolution("planner", { agentsConfig: agents }), true);
+  assert.equal(roleRequiresManifestResolution("tester", { agentsConfig: agents }), false);
 });
 
 test("availableProfileCatalog rejects manifest profiles that shadow built-ins", () => {

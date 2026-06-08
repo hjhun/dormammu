@@ -110,6 +110,11 @@ export type RoleAgentConfig = {
 
 export type AgentsConfig = Record<RoleName, RoleAgentConfig>;
 
+export type ManifestProfileRuntimeMetadata = {
+  manifest_scope: string;
+  manifest_path: string;
+};
+
 export function defaultRoleAgentConfig(): RoleAgentConfig {
   return {
     profile: null,
@@ -139,12 +144,44 @@ export function builtInProfiles(): AgentProfile[] {
   }));
 }
 
+export function isBuiltInProfileName(profileName: string): boolean {
+  return ROLE_NAMES.includes(profileName as RoleName);
+}
+
 export function profileNameForRole(
   role: string,
   roleConfig: RoleAgentConfig | null = null
 ): string {
   assertRoleName(role);
   return roleConfig?.profile ?? role;
+}
+
+export function roleRequiresManifestResolution(
+  role: string,
+  options: { agentsConfig?: AgentsConfig | null } = {}
+): boolean {
+  assertRoleName(role);
+  const roleName = role as RoleName;
+  return !isBuiltInProfileName(profileNameForRole(roleName, options.agentsConfig?.[roleName] ?? null));
+}
+
+export function requestedManifestProfileNames(
+  agentsConfig: AgentsConfig | null | undefined
+): string[] {
+  if (!agentsConfig) {
+    return [];
+  }
+  const names: string[] = [];
+  for (const role of ROLE_NAMES) {
+    if (!roleRequiresManifestResolution(role, { agentsConfig })) {
+      continue;
+    }
+    const profileName = profileNameForRole(role, agentsConfig[role]);
+    if (!names.includes(profileName)) {
+      names.push(profileName);
+    }
+  }
+  return names;
 }
 
 export function builtInProfileForRole(role: string): AgentProfile {
@@ -182,6 +219,7 @@ export function profileFromRoleConfig(
   options: {
     availableProfiles?: Record<string, AgentProfile> | null;
     manifestProfiles?: readonly AgentProfile[];
+    manifestProfileMetadata?: Record<string, ManifestProfileRuntimeMetadata>;
   } = {}
 ): AgentProfile {
   const baseProfileName = profileNameForRole(role, roleConfig);
@@ -213,7 +251,8 @@ export function profileFromRoleConfig(
       [PROFILE_RUNTIME_METADATA_KEY]: runtimeResolutionMetadata({
         role,
         baseProfile,
-        roleConfig
+        roleConfig,
+        manifestMetadata: options.manifestProfileMetadata?.[baseProfile.name]
       })
     }
   };
@@ -223,6 +262,7 @@ export function normalizeAgentProfiles(
   options: {
     agentsConfig?: AgentsConfig | null;
     manifestProfiles?: readonly AgentProfile[];
+    manifestProfileMetadata?: Record<string, ManifestProfileRuntimeMetadata>;
   } = {}
 ): Record<RoleName, AgentProfile> {
   const catalog = availableProfileCatalog(options.manifestProfiles ?? []);
@@ -231,7 +271,8 @@ export function normalizeAgentProfiles(
       role,
       profileFromRoleConfig(role, options.agentsConfig?.[role] ?? null, {
         availableProfiles: catalog,
-        manifestProfiles: options.manifestProfiles ?? []
+        manifestProfiles: options.manifestProfiles ?? [],
+        manifestProfileMetadata: options.manifestProfileMetadata
       })
     ])
   ) as Record<RoleName, AgentProfile>;
@@ -243,6 +284,7 @@ export function resolveRuntimeRoleProfile(
     agentsConfig?: AgentsConfig | null;
     normalizedProfiles?: Partial<Record<RoleName, AgentProfile>> | null;
     manifestProfiles?: readonly AgentProfile[];
+    manifestProfileMetadata?: Record<string, ManifestProfileRuntimeMetadata>;
   } = {}
 ): AgentProfile {
   assertRoleName(role);
@@ -259,7 +301,8 @@ export function resolveRuntimeRoleProfile(
     return cloneAgentProfile(profile);
   }
   return profileFromRoleConfig(role, options.agentsConfig?.[roleName] ?? null, {
-    manifestProfiles: options.manifestProfiles ?? []
+    manifestProfiles: options.manifestProfiles ?? [],
+    manifestProfileMetadata: options.manifestProfileMetadata
   });
 }
 
@@ -384,6 +427,7 @@ function runtimeResolutionMetadata(options: {
   role: string;
   baseProfile: AgentProfile;
   roleConfig: RoleAgentConfig | null;
+  manifestMetadata?: ManifestProfileRuntimeMetadata;
 }): Record<string, unknown> {
   const roleConfig = options.roleConfig;
   return {
@@ -396,7 +440,8 @@ function runtimeResolutionMetadata(options: {
       model: roleConfig?.model !== null && roleConfig?.model !== undefined,
       permission_policy:
         roleConfig?.permission_policy !== null && roleConfig?.permission_policy !== undefined
-    }
+    },
+    ...(options.manifestMetadata ?? {})
   };
 }
 

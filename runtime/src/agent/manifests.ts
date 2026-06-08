@@ -10,9 +10,14 @@ import {
 } from "./permissions.js";
 import {
   BUILTIN_PROFILE_SOURCE,
+  normalizeAgentProfiles,
   PROJECT_PROFILE_SOURCE,
+  requestedManifestProfileNames,
   USER_PROFILE_SOURCE,
-  type AgentProfile
+  type AgentProfile,
+  type AgentsConfig,
+  type ManifestProfileRuntimeMetadata,
+  type RoleName
 } from "./profiles.js";
 
 export const AGENT_MANIFEST_SCHEMA_VERSION = 1;
@@ -107,6 +112,12 @@ export type LoadedAgentDefinition = {
 export type AgentManifestLoadResult = {
   discovery: AgentManifestDiscovery;
   definitions: LoadedAgentDefinition[];
+};
+
+export type ManifestBackedAgentProfileResolution = {
+  requested_names: string[];
+  manifest_load_result: AgentManifestLoadResult | null;
+  profiles: Record<RoleName, AgentProfile>;
 };
 
 export async function loadAgentManifest(manifestPath: string): Promise<AgentManifest> {
@@ -300,6 +311,29 @@ export async function loadAgentManifestDefinitions(
   }
 }
 
+export async function normalizeManifestBackedAgentProfiles(
+  searchRoots: AgentManifestSearchRoot[],
+  options: { agentsConfig?: AgentsConfig | null } = {}
+): Promise<ManifestBackedAgentProfileResolution> {
+  const requestedNames = requestedManifestProfileNames(options.agentsConfig);
+  const manifestLoadResult = requestedNames.length
+    ? await loadAgentManifestDefinitions(searchRoots, { names: requestedNames })
+    : null;
+  const definitions = manifestLoadResult?.definitions ?? [];
+  const manifestProfiles = definitions.map(loadedAgentDefinitionToProfile);
+  const manifestProfileMetadata = manifestProfileMetadataByName(definitions);
+  const profiles = normalizeAgentProfiles({
+    agentsConfig: options.agentsConfig,
+    manifestProfiles,
+    manifestProfileMetadata
+  });
+  return {
+    requested_names: requestedNames,
+    manifest_load_result: manifestLoadResult,
+    profiles
+  };
+}
+
 export function loadedAgentDefinitionToProfile(definition: LoadedAgentDefinition): AgentProfile {
   return {
     name: definition.name,
@@ -312,6 +346,20 @@ export function loadedAgentDefinitionToProfile(definition: LoadedAgentDefinition
     preloaded_skills: [...definition.preloaded_skills],
     metadata: { ...definition.metadata }
   };
+}
+
+export function manifestProfileMetadataByName(
+  definitions: readonly LoadedAgentDefinition[]
+): Record<string, ManifestProfileRuntimeMetadata> {
+  return Object.fromEntries(
+    definitions.map((definition) => [
+      definition.name,
+      {
+        manifest_scope: definition.manifest_scope,
+        manifest_path: definition.manifest_path
+      }
+    ])
+  );
 }
 
 export function selectedAgentManifestsByName(

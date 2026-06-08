@@ -15,8 +15,10 @@ import {
   loadAgentManifest,
   loadAgentManifestDefinitions,
   loadedAgentDefinitionToProfile,
+  normalizeManifestBackedAgentProfiles,
   parseAgentManifestPayload,
   parseAgentManifestText,
+  parseAgentsConfig,
   selectedAgentManifestsByName,
   type AgentManifestSearchRoot
 } from "../index.js";
@@ -303,6 +305,106 @@ test("selected manifest discovery reports malformed requested manifests", async 
 
   await assert.rejects(
     () => loadAgentManifestDefinitions(searchRoots(root), { names: ["planner-custom"] }),
+    new RegExp(`Failed to parse agent manifest JSON in ${projectManifestPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: .*line 1 column`)
+  );
+});
+
+test("manifest-backed profile normalization skips unrequested malformed manifests", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-manifests-"));
+  const [, userRoot] = searchRoots(root);
+  await mkdir(userRoot.path, { recursive: true });
+  await writeFile(path.join(userRoot.path, "broken.agent.json"), "{", "utf8");
+
+  const result = await normalizeManifestBackedAgentProfiles(searchRoots(root), {
+    agentsConfig: parseAgentsConfig({})
+  });
+
+  assert.deepEqual(result.requested_names, []);
+  assert.equal(result.manifest_load_result, null);
+  assert.equal(result.profiles.planner.name, "planner");
+  assert.equal(result.profiles.planner.source, "built_in");
+});
+
+test("manifest-backed profile normalization resolves selected project profiles", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-manifests-"));
+  const [projectRoot] = searchRoots(root);
+  const manifestPath = path.join(projectRoot.path, "planner.agent.json");
+  await writeManifest(manifestPath, {
+    name: "planner-custom",
+    source: "project",
+    description: "Project planner",
+    prompt: "Plan from the project manifest."
+  });
+
+  const result = await normalizeManifestBackedAgentProfiles(searchRoots(root), {
+    agentsConfig: parseAgentsConfig({
+      planner: {
+        profile: "planner-custom",
+        model: "gpt-5.4"
+      }
+    })
+  });
+  const profile = result.profiles.planner;
+  const runtimeMetadata = profile.metadata.dormammu_runtime as Record<string, unknown>;
+
+  assert.deepEqual(result.requested_names, ["planner-custom"]);
+  assert.equal(result.manifest_load_result?.definitions[0].name, "planner-custom");
+  assert.equal(profile.name, "planner-custom");
+  assert.equal(profile.source, "configured");
+  assert.equal(profile.prompt_body, "Plan from the project manifest.");
+  assert.equal(profile.model_override, "gpt-5.4");
+  assert.equal(runtimeMetadata.manifest_scope, "project");
+  assert.equal(runtimeMetadata.manifest_path, manifestPath);
+});
+
+test("manifest-backed profile normalization prefers project over user profiles", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-manifests-"));
+  const [projectRoot, userRoot] = searchRoots(root);
+  await writeManifest(path.join(userRoot.path, "planner.agent.json"), {
+    name: "planner-custom",
+    source: "user",
+    prompt: "Plan from the user manifest."
+  });
+  await writeManifest(path.join(projectRoot.path, "planner.agent.json"), {
+    name: "planner-custom",
+    source: "project",
+    prompt: "Plan from the project manifest."
+  });
+
+  const result = await normalizeManifestBackedAgentProfiles(searchRoots(root), {
+    agentsConfig: parseAgentsConfig({ planner: { profile: "planner-custom" } })
+  });
+  const profile = result.profiles.planner;
+  const runtimeMetadata = profile.metadata.dormammu_runtime as Record<string, unknown>;
+
+  assert.equal(profile.name, "planner-custom");
+  assert.equal(profile.source, "project");
+  assert.equal(profile.prompt_body, "Plan from the project manifest.");
+  assert.equal(runtimeMetadata.manifest_scope, "project");
+  assert.equal(result.manifest_load_result?.discovery.shadowed[0].scope, "user");
+});
+
+test("manifest-backed profile normalization reports malformed requested profiles", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-manifests-"));
+  const [projectRoot, userRoot] = searchRoots(root);
+  await mkdir(projectRoot.path, { recursive: true });
+  const projectManifestPath = path.join(projectRoot.path, "planner.agent.json");
+  await writeFile(
+    projectManifestPath,
+    '{"schema_version": 1, "name": "planner-custom", "description": "Broken", "prompt": ',
+    "utf8"
+  );
+  await writeManifest(path.join(userRoot.path, "planner.agent.json"), {
+    name: "planner-custom",
+    source: "user",
+    prompt: "Plan from the user manifest."
+  });
+
+  await assert.rejects(
+    () =>
+      normalizeManifestBackedAgentProfiles(searchRoots(root), {
+        agentsConfig: parseAgentsConfig({ planner: { profile: "planner-custom" } })
+      }),
     new RegExp(`Failed to parse agent manifest JSON in ${projectManifestPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: .*line 1 column`)
   );
 });
