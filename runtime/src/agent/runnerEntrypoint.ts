@@ -32,6 +32,7 @@ import {
 } from "../pipeline/roleStages.js";
 import {
   pipelineRoleLoopDecision,
+  pipelineRoleLoopTransition,
   type PipelineRetryRole
 } from "../pipeline/roleLoops.js";
 import { stageResultToDict, type StageResult } from "../results.js";
@@ -82,6 +83,7 @@ export type AgentRunnerEntrypointResultPayload = AgentRunResultPayload & {
   runtime_skills?: RuntimeSkillResolution;
   stage_result?: Record<string, unknown>;
   loop_decision?: Record<string, unknown>;
+  loop_transition?: Record<string, unknown>;
 };
 
 export type AgentRunnerEntrypointOptions = Omit<
@@ -122,6 +124,10 @@ export async function runAgentRunnerEntrypoint(
     const loopDecision = resolveEntrypointLoopDecision(pipelineStage, stageResult);
     if (loopDecision !== null) {
       resultPayload.loop_decision = loopDecision;
+    }
+    const loopTransition = resolveEntrypointLoopTransition(pipelineStage, stageResult);
+    if (loopTransition !== null) {
+      resultPayload.loop_transition = loopTransition;
     }
   }
   return resultPayload;
@@ -227,6 +233,27 @@ function resolveEntrypointLoopDecision(
   }
   const attempt = stagePayload.attempt ?? 1;
   return pipelineRoleLoopDecision({
+    role: stagePayload.kind,
+    stage,
+    iteration: Math.max(0, attempt - 1),
+    maxIterations: stagePayload.max_iterations
+  });
+}
+
+function resolveEntrypointLoopTransition(
+  stagePayload: PipelineStageEntrypointPayload | null,
+  stage: StageResult
+): Record<string, unknown> | null {
+  if (
+    stagePayload === null ||
+    stagePayload.max_iterations === undefined ||
+    stagePayload.max_iterations === null ||
+    !isRetryRole(stagePayload.kind)
+  ) {
+    return null;
+  }
+  const attempt = stagePayload.attempt ?? 1;
+  return pipelineRoleLoopTransition({
     role: stagePayload.kind,
     stage,
     iteration: Math.max(0, attempt - 1),

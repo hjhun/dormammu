@@ -100,6 +100,15 @@ Ported modules:
   `backend/dormammu/agent/models.py`,
   `backend/dormammu/agent/cli_adapter.py`,
   `backend/dormammu/daemon/pipeline_runner.py`
+- TypeScript-owned tester/reviewer loop transition payloads, including retry
+  lifecycle event metadata, supervisor handoff metadata, exhausted-stage
+  projection, runner entrypoint `loop_transition` output, and Python pipeline
+  consumption of transition action/attempt/reason values
+  -> `runtime/src/pipeline/roleLoops.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `backend/dormammu/agent/models.py`,
+  `backend/dormammu/agent/cli_adapter.py`,
+  `backend/dormammu/daemon/pipeline_runner.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -282,7 +291,7 @@ Port the remaining runtime orchestration surface:
   TypeScript runner bridge, but still own daemon, supervisor, and pipeline
   orchestration while TypeScript parity surfaces are assembled
 
-The next slice should use the accumulated contract coverage to move beyond
-one-shot stage projection and start replacing a larger runtime executor surface:
-either lift the tester/reviewer retry loop executor itself into TypeScript or
-port the daemon/goals orchestration contracts that feed pipeline execution.
+The next slice should use the accumulated decision and transition contracts to
+lift more of the tester/reviewer retry loop executor itself into TypeScript, or
+start porting the daemon/goals orchestration contracts that feed pipeline
+execution.

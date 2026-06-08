@@ -115,21 +115,59 @@ def _typescript_loop_decision(stage: StageResult) -> Mapping[str, Any] | None:
     return decision if isinstance(decision, Mapping) else None
 
 
+def _typescript_loop_transition(stage: StageResult) -> Mapping[str, Any] | None:
+    transition = stage.metadata.get("typescript_loop_transition")
+    return transition if isinstance(transition, Mapping) else None
+
+
 def _typescript_loop_action(stage: StageResult) -> str | None:
-    decision = _typescript_loop_decision(stage)
-    if decision is None:
-        return None
-    action = decision.get("action")
+    transition = _typescript_loop_transition(stage)
+    decision = transition if transition is not None else _typescript_loop_decision(stage)
+    action = decision.get("action") if decision is not None else None
     if action in {"proceed", "fail", "manual_review_needed", "retry_developer"}:
         return action
     return None
 
 
 def _typescript_loop_exhausted(stage: StageResult) -> bool:
-    decision = _typescript_loop_decision(stage)
+    transition = _typescript_loop_transition(stage)
+    decision = transition if transition is not None else _typescript_loop_decision(stage)
     if decision is None:
         return False
     return bool(decision.get("exhausted"))
+
+
+def _typescript_loop_str(stage: StageResult, key: str, default: str) -> str:
+    transition = _typescript_loop_transition(stage)
+    value = transition.get(key) if transition is not None else None
+    return value if isinstance(value, str) else default
+
+
+def _typescript_loop_int(stage: StageResult, key: str, default: int) -> int:
+    transition = _typescript_loop_transition(stage)
+    value = transition.get(key) if transition is not None else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+def _typescript_handoff_payload(stage: StageResult) -> Mapping[str, Any] | None:
+    transition = _typescript_loop_transition(stage)
+    if transition is None:
+        return None
+    handoff = transition.get("handoffEvent")
+    if not isinstance(handoff, Mapping):
+        return None
+    payload = handoff.get("payload")
+    return payload if isinstance(payload, Mapping) else None
+
+
+def _mapping_str(payload: Mapping[str, Any] | None, key: str, default: str) -> str:
+    value = payload.get(key) if payload is not None else None
+    return value if isinstance(value, str) else default
+
+
+def _mapping_int(payload: Mapping[str, Any] | None, key: str, default: int) -> int:
+    value = payload.get(key) if payload is not None else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
 def _stage_should_retry_developer(stage: StageResult) -> bool:
@@ -204,6 +242,7 @@ class PipelineRunner:
         self._last_written_artifact_ref: ArtifactRef | None = None
         self._last_typescript_stage_result: StageResult | None = None
         self._last_typescript_loop_decision: Mapping[str, Any] | None = None
+        self._last_typescript_loop_transition: Mapping[str, Any] | None = None
 
     def _profile_for_role(self, role: str) -> AgentProfile:
         return self._app_config.resolve_agent_profile(role)
@@ -299,6 +338,8 @@ class PipelineRunner:
         self._last_typescript_stage_result = None
         loop_decision = self._last_typescript_loop_decision
         self._last_typescript_loop_decision = None
+        loop_transition = self._last_typescript_loop_transition
+        self._last_typescript_loop_transition = None
         if stage is None:
             return None
         if stage.role != role or (stage.stage_name or stage.role) != stage_name:
@@ -306,6 +347,8 @@ class PipelineRunner:
         metadata = dict(stage.metadata)
         if loop_decision is not None:
             metadata["typescript_loop_decision"] = dict(loop_decision)
+        if loop_transition is not None:
+            metadata["typescript_loop_transition"] = dict(loop_transition)
         return StageResult(
             role=role,
             stage_name=stage_name,
@@ -580,6 +623,32 @@ class PipelineRunner:
                     self._log(f"pipeline: tester PASS (iteration {tester_iter + 1})")
                     break
                 if tester_iter < stage_iteration_limit - 1:
+                    retry_attempt = _typescript_loop_int(
+                        tester_stage,
+                        "attempt",
+                        tester_iter + 1,
+                    )
+                    next_attempt = _typescript_loop_int(
+                        tester_stage,
+                        "nextAttempt",
+                        tester_iter + 2,
+                    )
+                    retry_reason = _typescript_loop_str(
+                        tester_stage,
+                        "reason",
+                        "Tester requested another developer pass.",
+                    )
+                    handoff_payload = _typescript_handoff_payload(tester_stage)
+                    handoff_reason = _mapping_str(
+                        handoff_payload,
+                        "reason",
+                        "Tester reported FAIL and handed the slice back to developer.",
+                    )
+                    handoff_attempt = _mapping_int(
+                        handoff_payload,
+                        "attempt",
+                        next_attempt,
+                    )
                     self._log(
                         f"pipeline: tester FAIL (iteration {tester_iter + 1}) "
                         "— re-entering developer"
@@ -591,11 +660,11 @@ class PipelineRunner:
                             stage="developer",
                             status="retried",
                             payload=StageEventPayload(
-                                attempt=tester_iter + 1,
-                                next_attempt=tester_iter + 2,
+                                attempt=retry_attempt,
+                                next_attempt=next_attempt,
                                 source_stage="tester",
                                 target_stage="developer",
-                                reason="Tester requested another developer pass.",
+                                reason=retry_reason,
                             ),
                         )
                         self._lifecycle.emit(
@@ -606,8 +675,8 @@ class PipelineRunner:
                             payload=SupervisorHandoffPayload(
                                 from_role="tester",
                                 to_role="developer",
-                                reason="Tester reported FAIL and handed the slice back to developer.",
-                                attempt=tester_iter + 2,
+                                reason=handoff_reason,
+                                attempt=handoff_attempt,
                             ),
                         )
                     dev_prompt = self._append_feedback(
@@ -682,6 +751,32 @@ class PipelineRunner:
                     self._log(f"pipeline: reviewer APPROVED (iteration {reviewer_iter + 1})")
                     break
                 if reviewer_iter < stage_iteration_limit - 1:
+                    retry_attempt = _typescript_loop_int(
+                        reviewer_stage,
+                        "attempt",
+                        reviewer_iter + 1,
+                    )
+                    next_attempt = _typescript_loop_int(
+                        reviewer_stage,
+                        "nextAttempt",
+                        reviewer_iter + 2,
+                    )
+                    retry_reason = _typescript_loop_str(
+                        reviewer_stage,
+                        "reason",
+                        "Reviewer requested another developer pass.",
+                    )
+                    handoff_payload = _typescript_handoff_payload(reviewer_stage)
+                    handoff_reason = _mapping_str(
+                        handoff_payload,
+                        "reason",
+                        "Reviewer reported NEEDS_WORK and handed the slice back to developer.",
+                    )
+                    handoff_attempt = _mapping_int(
+                        handoff_payload,
+                        "attempt",
+                        next_attempt,
+                    )
                     self._log(
                         f"pipeline: reviewer NEEDS_WORK (iteration {reviewer_iter + 1}) "
                         "— re-entering developer"
@@ -693,11 +788,11 @@ class PipelineRunner:
                             stage="developer",
                             status="retried",
                             payload=StageEventPayload(
-                                attempt=reviewer_iter + 1,
-                                next_attempt=reviewer_iter + 2,
+                                attempt=retry_attempt,
+                                next_attempt=next_attempt,
                                 source_stage="reviewer",
                                 target_stage="developer",
-                                reason="Reviewer requested another developer pass.",
+                                reason=retry_reason,
                             ),
                         )
                         self._lifecycle.emit(
@@ -708,8 +803,8 @@ class PipelineRunner:
                             payload=SupervisorHandoffPayload(
                                 from_role="reviewer",
                                 to_role="developer",
-                                reason="Reviewer reported NEEDS_WORK and handed the slice back to developer.",
-                                attempt=reviewer_iter + 2,
+                                reason=handoff_reason,
+                                attempt=handoff_attempt,
                             ),
                         )
                     dev_prompt = self._append_feedback(
@@ -1577,6 +1672,7 @@ class PipelineRunner:
 
         self._last_typescript_stage_result = result.stage_result
         self._last_typescript_loop_decision = result.loop_decision
+        self._last_typescript_loop_transition = result.loop_transition
         if save_doc:
             if target_path is None:
                 raise RuntimeError("stage document path was not resolved")

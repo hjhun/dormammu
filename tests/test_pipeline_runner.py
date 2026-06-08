@@ -505,6 +505,7 @@ class TestTesterStage:
         assert stage.output == "PIPELINE_TS_OUTPUT\n"
         assert stage.report_path == app.logs_dir / "20260412_tester_typescript-stage.md"
         assert stage.metadata["typescript_loop_decision"] == {"action": "proceed"}
+        assert stage.metadata["typescript_loop_transition"] == {"action": "proceed"}
         captured = json.loads(
             (tmp_path / "captured-runner-payload.json").read_text(encoding="utf-8")
         )
@@ -955,6 +956,8 @@ class TestPipelineRun:
         )
         app = _make_app_config(tmp_path, agents=agents)
         runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+        recorder = MagicMock()
+        recorder.run_id = "pipeline:test"
 
         tester_responses = [
             StageResult(
@@ -962,13 +965,19 @@ class TestPipelineRun:
                 verdict="pass",
                 output="OVERALL: PASS",
                 metadata={
-                    "typescript_loop_decision": {
+                    "typescript_loop_transition": {
                         "action": "retry_developer",
                         "sourceStage": "tester",
                         "targetStage": "developer",
-                        "attempt": 1,
-                        "nextAttempt": 2,
-                        "reason": "Tester requested another developer pass.",
+                        "attempt": 8,
+                        "nextAttempt": 9,
+                        "reason": "TypeScript transition retry.",
+                        "handoffEvent": {
+                            "payload": {
+                                "reason": "TypeScript transition handoff.",
+                                "attempt": 9,
+                            }
+                        },
                     }
                 },
             ),
@@ -976,11 +985,15 @@ class TestPipelineRun:
                 role="tester",
                 verdict="pass",
                 output="OVERALL: PASS",
-                metadata={"typescript_loop_decision": {"action": "proceed"}},
+                metadata={"typescript_loop_transition": {"action": "proceed"}},
             ),
         ]
 
         with (
+            patch(
+                "dormammu.daemon.pipeline_runner.LifecycleRecorder.for_execution",
+                return_value=recorder,
+            ),
             patch.object(runner, "run_refine_and_plan"),
             patch.object(
                 runner, "_run_developer", return_value=_make_loop_result("completed")
@@ -996,6 +1009,22 @@ class TestPipelineRun:
         assert result.status == "completed"
         assert mock_dev.call_count == 2
         assert mock_tester.call_count == 2
+        retried_event = next(
+            call.kwargs
+            for call in recorder.emit.call_args_list
+            if call.kwargs["event_type"].value == "stage.retried"
+        )
+        assert retried_event["payload"].attempt == 8
+        assert retried_event["payload"].next_attempt == 9
+        assert retried_event["payload"].reason == "TypeScript transition retry."
+        handoff_event = next(
+            call.kwargs
+            for call in recorder.emit.call_args_list
+            if call.kwargs["event_type"].value == "supervisor.handoff"
+            and call.kwargs["payload"].from_role == "tester"
+        )
+        assert handoff_event["payload"].attempt == 9
+        assert handoff_event["payload"].reason == "TypeScript transition handoff."
 
     def test_reviewer_needs_work_triggers_developer_reentry(
         self, tmp_path: Path
@@ -1727,6 +1756,7 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                     "reviewer",
                 ):
                     result["loop_decision"] = {{"action": "proceed"}}
+                    result["loop_transition"] = {{"action": "proceed"}}
             metadata_path.write_text(
                 json.dumps(result, indent=2, ensure_ascii=True) + "\\n",
                 encoding="utf-8",

@@ -19,6 +19,39 @@ export type PipelineRoleLoopDecision =
       reason: string;
     };
 
+export type PipelineRoleLoopRetryEvent = {
+  eventType: "stage.retried";
+  role: "developer";
+  stage: "developer";
+  status: "retried";
+  payload: {
+    attempt: number;
+    nextAttempt: number;
+    sourceStage: PipelineRetryRole;
+    targetStage: "developer";
+    reason: string;
+  };
+};
+
+export type PipelineRoleLoopHandoffEvent = {
+  eventType: "supervisor.handoff";
+  role: PipelineRetryRole;
+  stage: "developer";
+  status: "handoff";
+  payload: {
+    fromRole: PipelineRetryRole;
+    toRole: "developer";
+    reason: string;
+    attempt: number;
+  };
+};
+
+export type PipelineRoleLoopTransition = PipelineRoleLoopDecision & {
+  retryEvent?: PipelineRoleLoopRetryEvent;
+  handoffEvent?: PipelineRoleLoopHandoffEvent;
+  exhaustedStage?: StageResult;
+};
+
 export type PipelineRoleLoopDecisionInput = {
   role: PipelineRetryRole;
   stage: StageResult | null;
@@ -61,6 +94,53 @@ export function pipelineRoleLoopDecision(
   return { action: "manual_review_needed", exhausted: true };
 }
 
+export function pipelineRoleLoopTransition(
+  input: PipelineRoleLoopDecisionInput
+): PipelineRoleLoopTransition {
+  const decision = pipelineRoleLoopDecision(input);
+  if (decision.action === "retry_developer") {
+    return {
+      ...decision,
+      retryEvent: {
+        eventType: "stage.retried",
+        role: "developer",
+        stage: "developer",
+        status: "retried",
+        payload: {
+          attempt: decision.attempt,
+          nextAttempt: decision.nextAttempt,
+          sourceStage: input.role,
+          targetStage: "developer",
+          reason: decision.reason
+        }
+      },
+      handoffEvent: {
+        eventType: "supervisor.handoff",
+        role: input.role,
+        stage: "developer",
+        status: "handoff",
+        payload: {
+          fromRole: input.role,
+          toRole: "developer",
+          reason: handoffReason(input.role),
+          attempt: decision.nextAttempt
+        }
+      }
+    };
+  }
+  if (decision.action === "manual_review_needed" && decision.exhausted && input.stage !== null) {
+    return {
+      ...decision,
+      exhaustedStage: pipelineRoleLoopExhaustedStage({
+        role: input.role,
+        stage: input.stage,
+        maxIterations: input.maxIterations
+      })
+    };
+  }
+  return decision;
+}
+
 export function pipelineRoleLoopExhaustedStage(
   input: PipelineRoleLoopExhaustedStageInput
 ): StageResult {
@@ -83,6 +163,12 @@ function retryReason(role: PipelineRetryRole): string {
   return role === "tester"
     ? "Tester requested another developer pass."
     : "Reviewer requested another developer pass.";
+}
+
+function handoffReason(role: PipelineRetryRole): string {
+  return role === "tester"
+    ? "Tester reported FAIL and handed the slice back to developer."
+    : "Reviewer reported NEEDS_WORK and handed the slice back to developer.";
 }
 
 function exhaustedSummary(role: PipelineRetryRole, maxIterations: number): string {

@@ -969,6 +969,10 @@ def _agent_run_result_from_payload(payload: object) -> AgentRunResult:
         timed_out=bool(payload.get("timed_out", False)),
         stage_result=_stage_result_from_payload(payload.get("stage_result")),
         loop_decision=_loop_decision_from_payload(payload.get("loop_decision")),
+        loop_transition=_loop_payload_from_payload(
+            payload.get("loop_transition"),
+            field_name="loop_transition",
+        ),
     )
 
 
@@ -1027,16 +1031,24 @@ def _stage_result_from_payload(payload: object) -> StageResult | None:
 
 
 def _loop_decision_from_payload(payload: object) -> dict[str, object] | None:
+    return _loop_payload_from_payload(payload, field_name="loop_decision")
+
+
+def _loop_payload_from_payload(
+    payload: object,
+    *,
+    field_name: str,
+) -> dict[str, object] | None:
     if payload is None:
         return None
     if not isinstance(payload, dict):
         raise RuntimeError(
-            "TypeScript agent runner result field 'loop_decision' must be an object"
+            f"TypeScript agent runner result field '{field_name}' must be an object"
         )
     action = payload.get("action")
     if not isinstance(action, str) or not action:
         raise RuntimeError(
-            "TypeScript agent runner result field 'loop_decision.action' "
+            f"TypeScript agent runner result field '{field_name}.action' "
             "must be a non-empty string"
         )
     return dict(payload)

@@ -4,7 +4,8 @@ import test from "node:test";
 import { stageResultToDict } from "../results.js";
 import {
   pipelineRoleLoopDecision,
-  pipelineRoleLoopExhaustedStage
+  pipelineRoleLoopExhaustedStage,
+  pipelineRoleLoopTransition
 } from "./roleLoops.js";
 
 test("tester loop decisions match Python retry semantics", () => {
@@ -100,6 +101,50 @@ test("reviewer loop decisions use reviewer-specific handoff metadata", () => {
   );
 });
 
+test("role loop transitions project retry lifecycle handoff payloads", () => {
+  assert.deepEqual(
+    pipelineRoleLoopTransition({
+      role: "tester",
+      stage: { role: "tester", stageName: "tester", status: "completed", verdict: "fail" },
+      iteration: 0,
+      maxIterations: 3
+    }),
+    {
+      action: "retry_developer",
+      sourceStage: "tester",
+      targetStage: "developer",
+      attempt: 1,
+      nextAttempt: 2,
+      reason: "Tester requested another developer pass.",
+      retryEvent: {
+        eventType: "stage.retried",
+        role: "developer",
+        stage: "developer",
+        status: "retried",
+        payload: {
+          attempt: 1,
+          nextAttempt: 2,
+          sourceStage: "tester",
+          targetStage: "developer",
+          reason: "Tester requested another developer pass."
+        }
+      },
+      handoffEvent: {
+        eventType: "supervisor.handoff",
+        role: "tester",
+        stage: "developer",
+        status: "handoff",
+        payload: {
+          fromRole: "tester",
+          toRole: "developer",
+          reason: "Tester reported FAIL and handed the slice back to developer.",
+          attempt: 2
+        }
+      }
+    }
+  );
+});
+
 test("retry exhaustion produces manual-review stage payloads", () => {
   const testerStage = { role: "tester", stageName: "tester", verdict: "fail", output: "OVERALL: FAIL" };
   assert.deepEqual(
@@ -149,5 +194,18 @@ test("retry exhaustion produces manual-review stage payloads", () => {
       maxIterations: 2
     }).summary,
     "Reviewer still reported NEEDS_WORK after 2 attempts. Manual review is required before the pipeline can continue safely."
+  );
+  assert.deepEqual(
+    pipelineRoleLoopTransition({
+      role: "reviewer",
+      stage: reviewerStage,
+      iteration: 1,
+      maxIterations: 2
+    }).exhaustedStage,
+    pipelineRoleLoopExhaustedStage({
+      role: "reviewer",
+      stage: reviewerStage,
+      maxIterations: 2
+    })
   );
 });

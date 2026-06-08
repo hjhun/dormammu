@@ -213,6 +213,7 @@ class AgentRunResult:
     timed_out: bool = False
     stage_result: StageResult | None = None
     loop_decision: Mapping[str, Any] | None = None
+    loop_transition: Mapping[str, Any] | None = None
 
     @property
     def artifact_refs(self) -> tuple[ArtifactRef, ...]:
@@ -282,4 +283,6 @@ class AgentRunResult:
             payload["stage_result"] = self.stage_result.to_dict()
         if self.loop_decision is not None:
             payload["loop_decision"] = dict(self.loop_decision)
+        if self.loop_transition is not None:
+            payload["loop_transition"] = dict(self.loop_transition)
         return payload

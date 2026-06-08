@@ -275,6 +275,39 @@ test("runAgentRunnerEntrypoint can project pipeline stage results from stdout", 
     nextAttempt: 3,
     reason: "Tester requested another developer pass."
   });
+  assert.deepEqual(payload.loop_transition, {
+    action: "retry_developer",
+    sourceStage: "tester",
+    targetStage: "developer",
+    attempt: 2,
+    nextAttempt: 3,
+    reason: "Tester requested another developer pass.",
+    retryEvent: {
+      eventType: "stage.retried",
+      role: "developer",
+      stage: "developer",
+      status: "retried",
+      payload: {
+        attempt: 2,
+        nextAttempt: 3,
+        sourceStage: "tester",
+        targetStage: "developer",
+        reason: "Tester requested another developer pass."
+      }
+    },
+    handoffEvent: {
+      eventType: "supervisor.handoff",
+      role: "tester",
+      stage: "developer",
+      status: "handoff",
+      payload: {
+        fromRole: "tester",
+        toRole: "developer",
+        reason: "Tester reported FAIL and handed the slice back to developer.",
+        attempt: 3
+      }
+    }
+  });
 });
 
 test("runAgentRunnerEntrypoint validates request payloads", async () => {
