@@ -488,6 +488,27 @@ test("dormammu-agent-runner can project daemon prompt lifecycle decisions", () =
   });
 });
 
+test("dormammu-agent-runner can project daemon prompt path decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_prompt_path_decision",
+      prompt_path: "/repo/prompts/001-first.md",
+      result_path_root: "/repo/results"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_prompt_path_decision",
+    promptStem: "001-first",
+    resultPath: "/repo/results/001-first_RESULT.md",
+    progressLogPath: "/repo/progress/001-first_progress.log",
+    reason: "prompt_paths_projected"
+  });
+});
+
 test("dormammu-agent-runner can project daemon result report decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

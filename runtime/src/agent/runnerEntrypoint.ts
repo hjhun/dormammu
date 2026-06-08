@@ -50,6 +50,7 @@ import {
   daemonLoopIterationDecision,
   daemonPendingDecision,
   daemonPromptLifecycleDecision,
+  daemonPromptPathDecision,
   daemonPromptRouteDecision,
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
@@ -71,6 +72,7 @@ import {
   type DaemonLoopIterationDecision,
   type DaemonPendingDecision,
   type DaemonPromptLifecycleDecision,
+  type DaemonPromptPathDecision,
   type DaemonPromptRouteDecision,
   type DaemonPromptSettleDecision,
   type DaemonQueueFileDecision,
@@ -342,6 +344,17 @@ export type DaemonPromptLifecycleEntrypointResultPayload =
     entrypoint: "daemon_prompt_lifecycle_decision";
   };
 
+export type DaemonPromptPathEntrypointPayload = {
+  entrypoint: "daemon_prompt_path_decision";
+  prompt_path: string;
+  result_path_root: string;
+};
+
+export type DaemonPromptPathEntrypointResultPayload =
+  DaemonPromptPathDecision & {
+    entrypoint: "daemon_prompt_path_decision";
+  };
+
 export type DaemonResultReportEntrypointPayload = {
   entrypoint: "daemon_result_report_decision";
   prompt_path: string;
@@ -555,6 +568,7 @@ export type RunnerCliPayload =
   | DaemonLoopIterationEntrypointPayload
   | DaemonPendingDecisionEntrypointPayload
   | DaemonPromptLifecycleEntrypointPayload
+  | DaemonPromptPathEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
   | DaemonPromptSettleEntrypointPayload
   | DaemonQueueFileEntrypointPayload
@@ -589,6 +603,7 @@ export type RunnerCliResultPayload =
   | DaemonLoopIterationEntrypointResultPayload
   | DaemonPendingDecisionEntrypointResultPayload
   | DaemonPromptLifecycleEntrypointResultPayload
+  | DaemonPromptPathEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
   | DaemonPromptSettleEntrypointResultPayload
   | DaemonQueueFileEntrypointResultPayload
@@ -705,6 +720,21 @@ export function runDaemonPromptLifecycleEntrypoint(
       promptPath: parseRequiredString(payload.prompt_path, "prompt_path"),
       resultPath: parseRequiredString(payload.result_path, "result_path"),
       promptExists: parseBoolean(payload.prompt_exists, "prompt_exists")
+    })
+  };
+}
+
+export function runDaemonPromptPathEntrypoint(
+  payload: DaemonPromptPathEntrypointPayload
+): DaemonPromptPathEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_prompt_path_decision",
+    ...daemonPromptPathDecision({
+      promptPath: parseRequiredString(payload.prompt_path, "prompt_path"),
+      resultPathRoot: parseRequiredString(
+        payload.result_path_root,
+        "result_path_root"
+      )
     })
   };
 }

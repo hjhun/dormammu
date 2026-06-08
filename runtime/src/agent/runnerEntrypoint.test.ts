@@ -14,6 +14,7 @@ import {
   runDaemonLoopIterationEntrypoint,
   runDaemonPendingDecisionEntrypoint,
   runDaemonPromptLifecycleEntrypoint,
+  runDaemonPromptPathEntrypoint,
   runDaemonPromptRouteEntrypoint,
   runDaemonPromptSettleEntrypoint,
   runDaemonQueueFileEntrypoint,
@@ -443,6 +444,23 @@ test("runDaemonPromptLifecycleEntrypoint projects prompt lifecycle decisions", (
       removeExistingResult: true,
       errorMessage: null,
       reason: "prompt_ready"
+    }
+  );
+});
+
+test("runDaemonPromptPathEntrypoint projects prompt result paths", () => {
+  assert.deepEqual(
+    runDaemonPromptPathEntrypoint({
+      entrypoint: "daemon_prompt_path_decision",
+      prompt_path: "/repo/prompts/001-first.md",
+      result_path_root: "/repo/results"
+    }),
+    {
+      entrypoint: "daemon_prompt_path_decision",
+      promptStem: "001-first",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      progressLogPath: "/repo/progress/001-first_progress.log",
+      reason: "prompt_paths_projected"
     }
   );
 });

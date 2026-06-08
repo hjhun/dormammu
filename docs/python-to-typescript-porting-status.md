@@ -269,6 +269,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon prompt path projection decision helper, plus runner
+  entrypoint and Python `DaemonRunner._result_path_for_prompt()` /
+  `_session_progress_log_path()` bridge consumption for prompt result path and
+  progress log path projection while Python retains daemon config, filesystem
+  IO, and fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon result report publication decision helper, plus
   runner entrypoint and Python `DaemonRunner._publish_result_report()` bridge
   consumption for result report write intent, prompt cleanup intent, and
@@ -531,7 +540,9 @@ Port the remaining daemon and goals orchestration surface:
   daemon watcher backend selection for polling, inotify, and auto fallback,
   daemon watcher wait decisions for wait/skip orchestration, and daemon prompt
   lifecycle decisions for missing-prompt skip and process-start cleanup
-  intent. TypeScript also owns daemon result report publication decisions for
+  intent. TypeScript also owns daemon prompt path projection decisions for
+  prompt result and progress log paths. TypeScript also owns daemon result
+  report publication decisions for
   report write intent, prompt cleanup intent, and artifact metadata
   projection, plus daemon run-finished lifecycle metadata projection for
   attempts, retries, supervisor verdict, outcome, and error. TypeScript also

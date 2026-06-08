@@ -10,6 +10,7 @@ import {
   daemonLoopIterationDecision,
   daemonPendingDecision,
   daemonPromptLifecycleDecision,
+  daemonPromptPathDecision,
   daemonPromptRouteDecision,
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
@@ -169,6 +170,21 @@ test("daemonPromptLifecycleDecision skips missing prompt files", () => {
       removeExistingResult: false,
       errorMessage: "Prompt file was deleted before processing.",
       reason: "prompt_missing"
+    }
+  );
+});
+
+test("daemonPromptPathDecision projects result and progress paths", () => {
+  assert.deepEqual(
+    daemonPromptPathDecision({
+      promptPath: "/repo/prompts/001-first.prompt.md",
+      resultPathRoot: "/repo/results"
+    }),
+    {
+      promptStem: "001-first.prompt",
+      resultPath: "/repo/results/001-first.prompt_RESULT.md",
+      progressLogPath: "/repo/progress/001-first.prompt_progress.log",
+      reason: "prompt_paths_projected"
     }
   );
 });

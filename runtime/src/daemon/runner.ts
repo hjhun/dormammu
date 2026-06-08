@@ -58,6 +58,18 @@ export type DaemonPromptLifecycleDecision = {
   reason: string;
 };
 
+export type DaemonPromptPathDecisionInput = {
+  promptPath: string;
+  resultPathRoot: string;
+};
+
+export type DaemonPromptPathDecision = {
+  promptStem: string;
+  resultPath: string;
+  progressLogPath: string;
+  reason: string;
+};
+
 export type DaemonResultReportAction = "publish" | "skip";
 
 export type DaemonResultReportDecisionInput = {
@@ -438,6 +450,19 @@ export function daemonPromptLifecycleDecision(
     removeExistingResult: true,
     errorMessage: null,
     reason: "prompt_ready"
+  };
+}
+
+export function daemonPromptPathDecision(
+  input: DaemonPromptPathDecisionInput
+): DaemonPromptPathDecision {
+  const promptStem = stem(input.promptPath);
+  const resultPath = joinPath(input.resultPathRoot, `${promptStem}_RESULT.md`);
+  return {
+    promptStem,
+    resultPath,
+    progressLogPath: joinPath(dirname(input.resultPathRoot), "progress", `${promptStem}_progress.log`),
+    reason: "prompt_paths_projected"
   };
 }
 
@@ -878,6 +903,38 @@ function basename(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   const slashIndex = normalized.lastIndexOf("/");
   return slashIndex >= 0 ? normalized.slice(slashIndex + 1) : normalized;
+}
+
+function dirname(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const slashIndex = normalized.lastIndexOf("/");
+  if (slashIndex > 0) {
+    return normalized.slice(0, slashIndex);
+  }
+  if (slashIndex === 0) {
+    return "/";
+  }
+  return ".";
+}
+
+function joinPath(base: string, ...parts: string[]): string {
+  const normalizedBase = base.replace(/\\/g, "/").replace(/\/+$/, "");
+  const filteredParts = parts
+    .map((part) => part.replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""))
+    .filter((part) => part.length > 0);
+  if (normalizedBase === "" || normalizedBase === ".") {
+    return filteredParts.join("/");
+  }
+  if (normalizedBase === "/") {
+    return `/${filteredParts.join("/")}`;
+  }
+  return [normalizedBase, ...filteredParts].join("/");
+}
+
+function stem(path: string): string {
+  const name = basename(path);
+  const dotIndex = name.lastIndexOf(".");
+  return dotIndex > 0 ? name.slice(0, dotIndex) : name;
 }
 
 function nonEmpty(value: string | null): string | null {

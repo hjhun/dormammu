@@ -472,6 +472,31 @@ class DaemonRunner:
             "error_message": expected["errorMessage"],
         }
 
+    def _project_typescript_prompt_path_decision(
+        self,
+        *,
+        prompt_path: Path,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_prompt_path_decision",
+            "prompt_path": str(prompt_path),
+            "result_path_root": str(self.daemon_config.result_path),
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._prompt_path_expectations(
+            prompt_path=prompt_path,
+            result_path_root=self.daemon_config.result_path,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "result_path": Path(str(expected["resultPath"])),
+            "progress_log_path": Path(str(expected["progressLogPath"])),
+        }
+
     def _project_typescript_existing_result_decision(
         self,
         *,
@@ -642,6 +667,22 @@ class DaemonRunner:
             "resultPath": str(result_path),
             "removeExistingResult": True,
             "errorMessage": None,
+        }
+
+    @staticmethod
+    def _prompt_path_expectations(
+        *,
+        prompt_path: Path,
+        result_path_root: Path,
+    ) -> dict[str, object]:
+        prompt_stem = prompt_path.stem
+        return {
+            "promptStem": prompt_stem,
+            "resultPath": str(result_path_root / f"{prompt_stem}_RESULT.md"),
+            "progressLogPath": str(
+                result_path_root.parent / "progress" / f"{prompt_stem}_progress.log"
+            ),
+            "reason": "prompt_paths_projected",
         }
 
     def _project_typescript_result_report_decision(
@@ -2501,7 +2542,21 @@ class DaemonRunner:
         return match.group(1).strip()
 
     def _result_path_for_prompt(self, prompt_path: Path) -> Path:
+        prompt_path_decision = self._project_typescript_prompt_path_decision(
+            prompt_path=prompt_path,
+        )
+        if prompt_path_decision is not None:
+            return Path(str(prompt_path_decision["result_path"]))
         return self.daemon_config.result_path / f"{prompt_path.stem}_RESULT.md"
 
     def _session_progress_log_path(self, prompt_path: Path) -> Path:
-        return self.daemon_config.result_path.parent / "progress" / f"{prompt_path.stem}_progress.log"
+        prompt_path_decision = self._project_typescript_prompt_path_decision(
+            prompt_path=prompt_path,
+        )
+        if prompt_path_decision is not None:
+            return Path(str(prompt_path_decision["progress_log_path"]))
+        return (
+            self.daemon_config.result_path.parent
+            / "progress"
+            / f"{prompt_path.stem}_progress.log"
+        )

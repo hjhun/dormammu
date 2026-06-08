@@ -991,6 +991,50 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_prompt_paths_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            prompt_path = daemon_config.prompt_path / "001-first.md"
+            runner = DaemonRunner(app_config, daemon_config)
+
+            result_path = runner._result_path_for_prompt(prompt_path)
+            progress_log_path = runner._session_progress_log_path(prompt_path)
+
+            self.assertEqual(
+                result_path,
+                daemon_config.result_path / "001-first_RESULT.md",
+            )
+            self.assertEqual(
+                progress_log_path,
+                daemon_config.result_path.parent
+                / "progress"
+                / "001-first_progress.log",
+            )
+            prompt_path_payloads = [
+                json.loads(line)
+                for line in (root / "captured-runner-payloads.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if json.loads(line)["entrypoint"] == "daemon_prompt_path_decision"
+            ]
+            self.assertEqual(len(prompt_path_payloads), 2)
+            self.assertEqual(
+                prompt_path_payloads[0],
+                {
+                    "entrypoint": "daemon_prompt_path_decision",
+                    "prompt_path": str(prompt_path),
+                    "result_path_root": str(daemon_config.result_path),
+                },
+            )
+
     def test_daemon_prompt_result_omits_result_report_artifact_when_file_was_not_written(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1958,6 +2002,26 @@ class DaemonRunnerTests(unittest.TestCase):
                             "reason": "fake_prompt_missing",
                         }}
                     print(json.dumps(response, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_prompt_path_decision":
+                    prompt_name = Path(payload["prompt_path"]).name
+                    prompt_stem = (
+                        prompt_name.rsplit(".", 1)[0]
+                        if "." in prompt_name and not prompt_name.startswith(".")
+                        else prompt_name
+                    )
+                    result_root = Path(payload["result_path_root"])
+                    print(json.dumps({{
+                        "entrypoint": "daemon_prompt_path_decision",
+                        "promptStem": prompt_stem,
+                        "resultPath": str(result_root / (prompt_stem + "_RESULT.md")),
+                        "progressLogPath": str(
+                            result_root.parent
+                            / "progress"
+                            / (prompt_stem + "_progress.log")
+                        ),
+                        "reason": "prompt_paths_projected",
+                    }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_existing_result_decision":
                     status = (
