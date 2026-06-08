@@ -14,6 +14,7 @@ import {
   runDaemonInstanceLockEntrypoint,
   runDaemonInstanceUnlockEntrypoint,
   runDaemonLoopIterationEntrypoint,
+  runDaemonPlanStateEntrypoint,
   runDaemonPendingDecisionEntrypoint,
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptPathEntrypoint,
@@ -468,6 +469,25 @@ test("runDaemonPromptPathEntrypoint projects prompt result paths", () => {
       resultPath: "/repo/results/001-first_RESULT.md",
       progressLogPath: "/repo/progress/001-first_progress.log",
       reason: "prompt_paths_projected"
+    }
+  );
+});
+
+test("runDaemonPlanStateEntrypoint projects synced PLAN state", () => {
+  assert.deepEqual(
+    runDaemonPlanStateEntrypoint({
+      entrypoint: "daemon_plan_state_decision",
+      request_class: "full_workflow",
+      task_sync: {
+        all_completed: "yes",
+        next_pending_task: " Phase 4. Review "
+      }
+    }),
+    {
+      entrypoint: "daemon_plan_state_decision",
+      planAllCompleted: true,
+      nextPendingTask: "Phase 4. Review",
+      reason: "task_sync_normalized"
     }
   );
 });

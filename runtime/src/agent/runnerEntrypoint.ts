@@ -50,6 +50,7 @@ import {
   daemonInstanceLockDecision,
   daemonInstanceUnlockDecision,
   daemonLoopIterationDecision,
+  daemonPlanStateDecision,
   daemonPendingDecision,
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
@@ -79,6 +80,7 @@ import {
   type DaemonInstanceLockDecision,
   type DaemonInstanceUnlockDecision,
   type DaemonLoopIterationDecision,
+  type DaemonPlanStateDecision,
   type DaemonPendingDecision,
   type DaemonPromptLifecycleDecision,
   type DaemonPromptPathDecision,
@@ -367,6 +369,17 @@ export type DaemonPromptPathEntrypointPayload = {
 export type DaemonPromptPathEntrypointResultPayload =
   DaemonPromptPathDecision & {
     entrypoint: "daemon_prompt_path_decision";
+  };
+
+export type DaemonPlanStateEntrypointPayload = {
+  entrypoint: "daemon_plan_state_decision";
+  request_class: string;
+  task_sync?: Record<string, unknown> | null;
+};
+
+export type DaemonPlanStateEntrypointResultPayload =
+  DaemonPlanStateDecision & {
+    entrypoint: "daemon_plan_state_decision";
   };
 
 export type DaemonResultReportEntrypointPayload = {
@@ -673,6 +686,7 @@ export type RunnerCliPayload =
   | DaemonInstanceUnlockEntrypointPayload
   | DaemonLoopIterationEntrypointPayload
   | DaemonPendingDecisionEntrypointPayload
+  | DaemonPlanStateEntrypointPayload
   | DaemonPromptLifecycleEntrypointPayload
   | DaemonPromptPathEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
@@ -715,6 +729,7 @@ export type RunnerCliResultPayload =
   | DaemonInstanceUnlockEntrypointResultPayload
   | DaemonLoopIterationEntrypointResultPayload
   | DaemonPendingDecisionEntrypointResultPayload
+  | DaemonPlanStateEntrypointResultPayload
   | DaemonPromptLifecycleEntrypointResultPayload
   | DaemonPromptPathEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
@@ -855,6 +870,21 @@ export function runDaemonPromptPathEntrypoint(
         payload.result_path_root,
         "result_path_root"
       )
+    })
+  };
+}
+
+export function runDaemonPlanStateEntrypoint(
+  payload: DaemonPlanStateEntrypointPayload
+): DaemonPlanStateEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_plan_state_decision",
+    ...daemonPlanStateDecision({
+      requestClass: parseRequiredString(payload.request_class, "request_class"),
+      taskSync:
+        payload.task_sync === null || payload.task_sync === undefined
+          ? null
+          : parseRecord(payload.task_sync, "task_sync")
     })
   };
 }

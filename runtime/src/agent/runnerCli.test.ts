@@ -509,6 +509,29 @@ test("dormammu-agent-runner can project daemon prompt path decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon plan-state decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_plan_state_decision",
+      request_class: "full_workflow",
+      task_sync: {
+        all_completed: false,
+        next_pending_task: " Phase 2. Validate "
+      }
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_plan_state_decision",
+    planAllCompleted: false,
+    nextPendingTask: "Phase 2. Validate",
+    reason: "task_sync_normalized"
+  });
+});
+
 test("dormammu-agent-runner can project daemon result report decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

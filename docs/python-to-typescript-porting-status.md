@@ -287,6 +287,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon plan-state synchronization decision helper, plus
+  runner entrypoint and Python `DaemonRunner._sync_plan_state()` bridge
+  consumption for `direct_response`, missing `task_sync`, PLAN completion, and
+  next pending task normalization while Python retains repository sync/read IO
+  and malformed-bridge fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon result report publication decision helper, plus
   runner entrypoint and Python `DaemonRunner._publish_result_report()` bridge
   consumption for result report write intent, prompt cleanup intent, and
@@ -607,9 +616,11 @@ Port the remaining daemon and goals orchestration surface:
   daemon watcher wait decisions for wait/skip orchestration, and daemon prompt
   lifecycle decisions for missing-prompt skip and process-start cleanup
   intent. TypeScript also owns daemon prompt path projection decisions for
-  prompt result and progress log paths. TypeScript also owns daemon result
-  report publication decisions for report write intent, prompt cleanup intent,
-  and artifact metadata projection, plus daemon result report fallback
+  prompt result and progress log paths. TypeScript also owns daemon plan-state
+  synchronization decisions for `direct_response`, missing task sync, PLAN
+  completion, and next-pending-task normalization. TypeScript also owns daemon
+  result report publication decisions for report write intent, prompt cleanup
+  intent, and artifact metadata projection, plus daemon result report fallback
   decisions for configured-authoring failure log/error text. TypeScript also
   owns daemon result Markdown projection for deterministic fallback report
   body rendering. TypeScript also owns daemon result report artifact reference

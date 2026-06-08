@@ -1203,6 +1203,56 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_sync_plan_state_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+            session_repository = mock.MagicMock()
+            session_repository.read_workflow_state.return_value = {
+                "intake": {
+                    "request_class": "full_workflow",
+                    "confidence": 1.0,
+                }
+            }
+            session_repository.read_session_state.return_value = {
+                "task_sync": {
+                    "all_completed": 0,
+                    "next_pending_task": " Phase 2. Validate ",
+                }
+            }
+
+            plan_all_completed, next_pending_task = runner._sync_plan_state(
+                session_repository,
+            )
+
+            session_repository.sync_operator_state.assert_called_once_with()
+            self.assertFalse(plan_all_completed)
+            self.assertEqual(next_pending_task, "Phase 2. Validate")
+            payload = json.loads(
+                (root / "captured-runner-payload.json").read_text(
+                    encoding="utf-8",
+                )
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_plan_state_decision",
+                    "request_class": "full_workflow",
+                    "task_sync": {
+                        "all_completed": 0,
+                        "next_pending_task": " Phase 2. Validate ",
+                    },
+                },
+            )
+
     def test_daemon_prompt_result_omits_result_report_artifact_when_file_was_not_written(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2395,6 +2445,41 @@ class DaemonRunnerTests(unittest.TestCase):
                             / (prompt_stem + "_progress.log")
                         ),
                         "reason": "prompt_paths_projected",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_plan_state_decision":
+                    if payload["request_class"] == "direct_response":
+                        print(json.dumps({{
+                            "entrypoint": "daemon_plan_state_decision",
+                            "planAllCompleted": True,
+                            "nextPendingTask": None,
+                            "reason": "direct_response_plan_complete",
+                        }}, ensure_ascii=True))
+                        raise SystemExit(0)
+                    task_sync = payload.get("task_sync")
+                    if not isinstance(task_sync, dict):
+                        print(json.dumps({{
+                            "entrypoint": "daemon_plan_state_decision",
+                            "planAllCompleted": None,
+                            "nextPendingTask": None,
+                            "reason": "task_sync_missing",
+                        }}, ensure_ascii=True))
+                        raise SystemExit(0)
+                    next_pending_task = (
+                        task_sync.get("next_pending_task").strip()
+                        if isinstance(task_sync.get("next_pending_task"), str)
+                        and task_sync.get("next_pending_task").strip()
+                        else None
+                    )
+                    print(json.dumps({{
+                        "entrypoint": "daemon_plan_state_decision",
+                        "planAllCompleted": (
+                            bool(task_sync["all_completed"])
+                            if task_sync.get("all_completed") is not None
+                            else None
+                        ),
+                        "nextPendingTask": next_pending_task,
+                        "reason": "task_sync_normalized",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_existing_result_decision":

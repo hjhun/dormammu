@@ -2892,16 +2892,81 @@ class DaemonRunner:
         session_repository.sync_operator_state()
         session_state = session_repository.read_session_state()
         workflow_state = session_repository.read_workflow_state()
-        if resolve_request_class("", workflow_state=workflow_state) == "direct_response":
-            return True, None
         task_sync = session_state.get("task_sync")
-        if not isinstance(task_sync, Mapping):
-            return None, None
+        task_sync_mapping = task_sync if isinstance(task_sync, Mapping) else None
+        request_class = resolve_request_class("", workflow_state=workflow_state)
+        plan_state_decision = self._project_typescript_plan_state_decision(
+            request_class=request_class,
+            task_sync=task_sync_mapping,
+        )
+        if plan_state_decision is None:
+            plan_state_decision = self._plan_state_expectations(
+                request_class=request_class,
+                task_sync=task_sync_mapping,
+            )
+        return (
+            plan_state_decision["planAllCompleted"],
+            plan_state_decision["nextPendingTask"],
+        )
+
+    def _project_typescript_plan_state_decision(
+        self,
+        *,
+        request_class: str,
+        task_sync: Mapping[str, object] | None,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_plan_state_decision",
+            "request_class": request_class,
+            "task_sync": dict(task_sync) if task_sync is not None else None,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._plan_state_expectations(
+            request_class=request_class,
+            task_sync=task_sync,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
+    @staticmethod
+    def _plan_state_expectations(
+        *,
+        request_class: str,
+        task_sync: Mapping[str, object] | None,
+    ) -> dict[str, object]:
+        if request_class == "direct_response":
+            return {
+                "planAllCompleted": True,
+                "nextPendingTask": None,
+                "reason": "direct_response_plan_complete",
+            }
+        if task_sync is None:
+            return {
+                "planAllCompleted": None,
+                "nextPendingTask": None,
+                "reason": "task_sync_missing",
+            }
         all_completed_raw = task_sync.get("all_completed")
         next_pending_raw = task_sync.get("next_pending_task")
-        all_completed = bool(all_completed_raw) if all_completed_raw is not None else None
-        next_pending_task = next_pending_raw.strip() if isinstance(next_pending_raw, str) and next_pending_raw.strip() else None
-        return all_completed, next_pending_task
+        all_completed = (
+            bool(all_completed_raw)
+            if all_completed_raw is not None
+            else None
+        )
+        next_pending_task = (
+            next_pending_raw.strip()
+            if isinstance(next_pending_raw, str) and next_pending_raw.strip()
+            else None
+        )
+        return {
+            "planAllCompleted": all_completed,
+            "nextPendingTask": next_pending_task,
+            "reason": "task_sync_normalized",
+        }
 
     def _existing_result_status(self, result_path: Path) -> str | None:
         try:

@@ -10,6 +10,7 @@ import {
   daemonInstanceLockDecision,
   daemonInstanceUnlockDecision,
   daemonLoopIterationDecision,
+  daemonPlanStateDecision,
   daemonPendingDecision,
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
@@ -192,6 +193,45 @@ test("daemonPromptPathDecision projects result and progress paths", () => {
       resultPath: "/repo/results/001-first.prompt_RESULT.md",
       progressLogPath: "/repo/progress/001-first.prompt_progress.log",
       reason: "prompt_paths_projected"
+    }
+  );
+});
+
+test("daemonPlanStateDecision normalizes direct responses and task sync", () => {
+  assert.deepEqual(
+    daemonPlanStateDecision({
+      requestClass: "direct_response",
+      taskSync: null
+    }),
+    {
+      planAllCompleted: true,
+      nextPendingTask: null,
+      reason: "direct_response_plan_complete"
+    }
+  );
+  assert.deepEqual(
+    daemonPlanStateDecision({
+      requestClass: "full_workflow",
+      taskSync: {
+        all_completed: 0,
+        next_pending_task: " Phase 2. Validate "
+      }
+    }),
+    {
+      planAllCompleted: false,
+      nextPendingTask: "Phase 2. Validate",
+      reason: "task_sync_normalized"
+    }
+  );
+  assert.deepEqual(
+    daemonPlanStateDecision({
+      requestClass: "full_workflow",
+      taskSync: null
+    }),
+    {
+      planAllCompleted: null,
+      nextPendingTask: null,
+      reason: "task_sync_missing"
     }
   );
 });

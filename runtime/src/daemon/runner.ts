@@ -120,6 +120,20 @@ export type DaemonResultMarkdownProjection = {
   reason: "result_markdown_projected";
 };
 
+export type DaemonPlanStateDecisionInput = {
+  requestClass: string;
+  taskSync: Readonly<Record<string, unknown>> | null;
+};
+
+export type DaemonPlanStateDecision = {
+  planAllCompleted: boolean | null;
+  nextPendingTask: string | null;
+  reason:
+    | "direct_response_plan_complete"
+    | "task_sync_missing"
+    | "task_sync_normalized";
+};
+
 export type DaemonResultArtifactRefAction = "reference" | "skip";
 
 export type DaemonResultArtifactRefDecisionInput = {
@@ -773,6 +787,39 @@ export function daemonResultMarkdownProjection(
   return {
     markdown: `${lines.join("\n").trimEnd()}\n`,
     reason: "result_markdown_projected"
+  };
+}
+
+export function daemonPlanStateDecision(
+  input: DaemonPlanStateDecisionInput
+): DaemonPlanStateDecision {
+  if (input.requestClass === "direct_response") {
+    return {
+      planAllCompleted: true,
+      nextPendingTask: null,
+      reason: "direct_response_plan_complete"
+    };
+  }
+
+  if (input.taskSync === null) {
+    return {
+      planAllCompleted: null,
+      nextPendingTask: null,
+      reason: "task_sync_missing"
+    };
+  }
+
+  const allCompletedRaw = input.taskSync.all_completed;
+  const nextPendingRaw = input.taskSync.next_pending_task;
+  const nextPendingText =
+    typeof nextPendingRaw === "string" ? nextPendingRaw.trim() : "";
+  return {
+    planAllCompleted:
+      allCompletedRaw === null || allCompletedRaw === undefined
+        ? null
+        : Boolean(allCompletedRaw),
+    nextPendingTask: nextPendingText.length > 0 ? nextPendingText : null,
+    reason: "task_sync_normalized"
   };
 }
 
