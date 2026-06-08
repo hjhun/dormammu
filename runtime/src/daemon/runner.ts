@@ -1,3 +1,7 @@
+import {
+  inferPrimaryRoadmapPhaseId,
+  summarizePromptGoal
+} from "../state/models.js";
 import type { RequestClass } from "../workflowPolicy.js";
 
 export type DaemonPendingDecisionAction = "idle" | "wait" | "process";
@@ -69,6 +73,17 @@ export type DaemonPromptPathDecision = {
   resultPath: string;
   progressLogPath: string;
   reason: string;
+};
+
+export type DaemonPromptSessionDecisionInput = {
+  promptName: string;
+  promptText: string;
+};
+
+export type DaemonPromptSessionDecision = {
+  goal: string;
+  activeRoadmapPhaseIds: string[];
+  reason: "daemon_prompt_session_projected";
 };
 
 export type DaemonResultReportAction = "publish" | "skip";
@@ -735,6 +750,26 @@ export function daemonPromptPathDecision(
     resultPath,
     progressLogPath: joinPath(dirname(input.resultPathRoot), "progress", `${promptStem}_progress.log`),
     reason: "prompt_paths_projected"
+  };
+}
+
+export function daemonPromptSessionDecision(
+  input: DaemonPromptSessionDecisionInput
+): DaemonPromptSessionDecision {
+  const promptName = nonEmpty(input.promptName) ?? "unknown-prompt";
+  const goal = summarizePromptGoal(
+    input.promptText,
+    `Process daemon prompt ${promptName}`
+  );
+  return {
+    goal,
+    activeRoadmapPhaseIds: [
+      inferPrimaryRoadmapPhaseId({
+        goal,
+        promptText: input.promptText
+      }) ?? "phase_4"
+    ],
+    reason: "daemon_prompt_session_projected"
   };
 }
 

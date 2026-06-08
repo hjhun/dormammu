@@ -23,6 +23,7 @@ import {
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptPathEntrypoint,
   runDaemonPromptRouteEntrypoint,
+  runDaemonPromptSessionEntrypoint,
   runDaemonPromptSettleEntrypoint,
   runDaemonQueueFileEntrypoint,
   runDaemonResultArtifactRefEntrypoint,
@@ -478,6 +479,22 @@ test("runDaemonPromptPathEntrypoint projects prompt result paths", () => {
       resultPath: "/repo/results/001-first_RESULT.md",
       progressLogPath: "/repo/progress/001-first_progress.log",
       reason: "prompt_paths_projected"
+    }
+  );
+});
+
+test("runDaemonPromptSessionEntrypoint projects session start inputs", () => {
+  assert.deepEqual(
+    runDaemonPromptSessionEntrypoint({
+      entrypoint: "daemon_prompt_session_decision",
+      prompt_name: "001-phase-7.md",
+      prompt_text: "# Phase 7 hardening\n\nTighten tests."
+    }),
+    {
+      entrypoint: "daemon_prompt_session_decision",
+      goal: "Phase 7 hardening",
+      activeRoadmapPhaseIds: ["phase_7"],
+      reason: "daemon_prompt_session_projected"
     }
   );
 });

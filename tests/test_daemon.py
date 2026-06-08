@@ -292,10 +292,38 @@ class DaemonRunnerTests(unittest.TestCase):
             progress = io.StringIO()
             runner = DaemonRunner(app_config, daemon_config, progress_stream=progress)
             prompt_path = daemon_config.prompt_path / "001-plan.md"
-            prompt_text = "DORMAMMU_REQUEST_CLASS: planning_only\n\nPlan the next step."
+            prompt_text = (
+                "# Phase 5 planning only\n\n"
+                "DORMAMMU_REQUEST_CLASS: planning_only\n\n"
+                "Plan the next step."
+            )
             session_repository, scoped_config, _ = runner._start_prompt_session(
                 prompt_path=prompt_path,
                 prompt_text=prompt_text,
+            )
+            session_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_prompt_session_decision"
+            )
+            self.assertEqual(
+                session_payload,
+                {
+                    "entrypoint": "daemon_prompt_session_decision",
+                    "prompt_name": "001-plan.md",
+                    "prompt_text": prompt_text,
+                },
+            )
+            self.assertEqual(
+                session_repository.read_workflow_state()["roadmap"][
+                    "active_phase_ids"
+                ],
+                ["phase_5"],
             )
             loop_result = LoopRunResult(
                 status="completed",
@@ -2713,6 +2741,44 @@ class DaemonRunnerTests(unittest.TestCase):
                             / (prompt_stem + "_progress.log")
                         ),
                         "reason": "prompt_paths_projected",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_prompt_session_decision":
+                    prompt_name = (
+                        (payload.get("prompt_name") or "").strip()
+                        or "unknown-prompt"
+                    )
+                    goal = "Process daemon prompt " + prompt_name
+                    for raw_line in payload["prompt_text"].splitlines():
+                        stripped = raw_line.strip()
+                        if not stripped or stripped == "```":
+                            continue
+                        normalized = re.sub(r"^#+\\s*", "", stripped)
+                        normalized = re.sub(r"^[-*+]\\s+", "", normalized)
+                        normalized = re.sub(r"^\\d+[.)]\\s+", "", normalized)
+                        normalized = " ".join(normalized.split())
+                        if normalized:
+                            goal = (
+                                normalized[:117].rstrip() + "..."
+                                if len(normalized) > 120
+                                else normalized
+                            )
+                            break
+                    phase_match = re.search(
+                        r"\\bphase(?:\\s+|[_-])0*([1-7])\\b",
+                        goal,
+                        re.IGNORECASE,
+                    )
+                    phase_id = (
+                        "phase_" + phase_match.group(1)
+                        if phase_match is not None
+                        else "phase_4"
+                    )
+                    print(json.dumps({{
+                        "entrypoint": "daemon_prompt_session_decision",
+                        "goal": goal,
+                        "activeRoadmapPhaseIds": [phase_id],
+                        "reason": "daemon_prompt_session_projected",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_plan_state_decision":

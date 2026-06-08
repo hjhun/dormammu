@@ -19,6 +19,7 @@ import {
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
   daemonPromptRouteDecision,
+  daemonPromptSessionDecision,
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
@@ -203,6 +204,20 @@ test("daemonPromptPathDecision projects result and progress paths", () => {
       resultPath: "/repo/results/001-first.prompt_RESULT.md",
       progressLogPath: "/repo/progress/001-first.prompt_progress.log",
       reason: "prompt_paths_projected"
+    }
+  );
+});
+
+test("daemonPromptSessionDecision projects goal and roadmap phase", () => {
+  assert.deepEqual(
+    daemonPromptSessionDecision({
+      promptName: "001-phase-6.md",
+      promptText: "# Phase 6 release alignment\n\nShip packaging checks."
+    }),
+    {
+      goal: "Phase 6 release alignment",
+      activeRoadmapPhaseIds: ["phase_6"],
+      reason: "daemon_prompt_session_projected"
     }
   );
 });

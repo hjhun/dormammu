@@ -498,6 +498,46 @@ class DaemonRunner:
             "progress_log_path": Path(str(expected["progressLogPath"])),
         }
 
+    def _prompt_session_decision(
+        self,
+        *,
+        prompt_path: Path,
+        prompt_text: str,
+    ) -> dict[str, object]:
+        decision = self._project_typescript_prompt_session_decision(
+            prompt_path=prompt_path,
+            prompt_text=prompt_text,
+        )
+        if decision is not None:
+            return decision
+        return self._prompt_session_expectations(
+            prompt_path=prompt_path,
+            prompt_text=prompt_text,
+        )
+
+    def _project_typescript_prompt_session_decision(
+        self,
+        *,
+        prompt_path: Path,
+        prompt_text: str,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_prompt_session_decision",
+            "prompt_name": prompt_path.name,
+            "prompt_text": prompt_text,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._prompt_session_expectations(
+            prompt_path=prompt_path,
+            prompt_text=prompt_text,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return expected
+
     def _project_typescript_existing_result_decision(
         self,
         *,
@@ -689,6 +729,28 @@ class DaemonRunner:
                 result_path_root.parent / "progress" / f"{prompt_stem}_progress.log"
             ),
             "reason": "prompt_paths_projected",
+        }
+
+    @classmethod
+    def _prompt_session_expectations(
+        cls,
+        *,
+        prompt_path: Path,
+        prompt_text: str,
+    ) -> dict[str, object]:
+        prompt_name = cls._normalize_optional_text(prompt_path.name) or "unknown-prompt"
+        goal = summarize_prompt_goal(
+            prompt_text,
+            fallback=f"Process daemon prompt {prompt_name}",
+        )
+        roadmap_phase_id = (
+            infer_primary_roadmap_phase_id(goal=goal, prompt_text=prompt_text)
+            or "phase_4"
+        )
+        return {
+            "goal": goal,
+            "activeRoadmapPhaseIds": [roadmap_phase_id],
+            "reason": "daemon_prompt_session_projected",
         }
 
     def _project_typescript_result_report_decision(
@@ -2754,12 +2816,21 @@ class DaemonRunner:
         prompt_path: Path,
         prompt_text: str,
     ) -> tuple[StateRepository, AppConfig, str]:
-        goal = summarize_prompt_goal(prompt_text, fallback=f"Process daemon prompt {prompt_path.name}")
-        roadmap_phase_id = infer_primary_roadmap_phase_id(goal=goal, prompt_text=prompt_text) or "phase_4"
+        prompt_session_decision = self._prompt_session_decision(
+            prompt_path=prompt_path,
+            prompt_text=prompt_text,
+        )
+        goal = str(prompt_session_decision["goal"])
+        active_phase_ids = prompt_session_decision.get("activeRoadmapPhaseIds")
+        active_roadmap_phase_ids = (
+            [str(phase_id) for phase_id in active_phase_ids]
+            if isinstance(active_phase_ids, list)
+            else ["phase_4"]
+        )
         self.repository.start_new_session(
             goal=goal,
             prompt_text=prompt_text,
-            active_roadmap_phase_ids=[roadmap_phase_id],
+            active_roadmap_phase_ids=active_roadmap_phase_ids,
         )
         session_state = self.repository.read_session_state()
         session_id = str(session_state.get("active_session_id") or session_state.get("session_id") or "").strip()

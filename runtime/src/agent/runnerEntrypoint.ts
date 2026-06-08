@@ -59,6 +59,7 @@ import {
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
   daemonPromptRouteDecision,
+  daemonPromptSessionDecision,
   daemonPromptSettleDecision,
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
@@ -97,6 +98,7 @@ import {
   type DaemonPromptLifecycleDecision,
   type DaemonPromptPathDecision,
   type DaemonPromptRouteDecision,
+  type DaemonPromptSessionDecision,
   type DaemonPromptSettleDecision,
   type DaemonQueueFileDecision,
   type DaemonResultArtifactRefDecision,
@@ -385,6 +387,17 @@ export type DaemonPromptPathEntrypointPayload = {
 export type DaemonPromptPathEntrypointResultPayload =
   DaemonPromptPathDecision & {
     entrypoint: "daemon_prompt_path_decision";
+  };
+
+export type DaemonPromptSessionEntrypointPayload = {
+  entrypoint: "daemon_prompt_session_decision";
+  prompt_name: string;
+  prompt_text: string;
+};
+
+export type DaemonPromptSessionEntrypointResultPayload =
+  DaemonPromptSessionDecision & {
+    entrypoint: "daemon_prompt_session_decision";
   };
 
 export type DaemonPlanStateEntrypointPayload = {
@@ -803,6 +816,7 @@ export type RunnerCliPayload =
   | DaemonPromptLifecycleEntrypointPayload
   | DaemonPromptPathEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
+  | DaemonPromptSessionEntrypointPayload
   | DaemonPromptSettleEntrypointPayload
   | DaemonQueueFileEntrypointPayload
   | DaemonResultArtifactRefEntrypointPayload
@@ -854,6 +868,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptLifecycleEntrypointResultPayload
   | DaemonPromptPathEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
+  | DaemonPromptSessionEntrypointResultPayload
   | DaemonPromptSettleEntrypointResultPayload
   | DaemonQueueFileEntrypointResultPayload
   | DaemonResultArtifactRefEntrypointResultPayload
@@ -997,6 +1012,18 @@ export function runDaemonPromptPathEntrypoint(
         payload.result_path_root,
         "result_path_root"
       )
+    })
+  };
+}
+
+export function runDaemonPromptSessionEntrypoint(
+  payload: DaemonPromptSessionEntrypointPayload
+): DaemonPromptSessionEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_prompt_session_decision",
+    ...daemonPromptSessionDecision({
+      promptName: parseRequiredString(payload.prompt_name, "prompt_name"),
+      promptText: parseString(payload.prompt_text, "prompt_text")
     })
   };
 }

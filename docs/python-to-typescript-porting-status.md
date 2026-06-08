@@ -288,6 +288,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon prompt session-start decision helper, plus runner
+  entrypoint and Python `DaemonRunner._start_prompt_session()` bridge
+  consumption for prompt goal summary and active roadmap phase projection
+  while Python retains session creation, scoped config construction, input
+  prompt persistence, repository IO, and fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon plan-state synchronization decision helper, plus
   runner entrypoint and Python `DaemonRunner._sync_plan_state()` bridge
   consumption for `direct_response`, missing `task_sync`, PLAN completion, and
@@ -696,7 +705,9 @@ Port the remaining daemon and goals orchestration surface:
   lifecycle decisions for missing-prompt skip and process-start cleanup
   intent, including the missing-prompt operator log message. TypeScript also
   owns daemon prompt path projection decisions for prompt result and progress
-  log paths. TypeScript also owns daemon plan-state synchronization decisions
+  log paths. TypeScript also owns daemon prompt session-start projection for
+  prompt goal summaries and active roadmap phase ids. TypeScript also owns
+  daemon plan-state synchronization decisions
   for `direct_response`, missing task sync, PLAN completion, and
   next-pending-task normalization. TypeScript also owns daemon artifact writer
   binding decisions for base/log/run/session/role/stage

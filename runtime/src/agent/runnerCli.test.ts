@@ -510,6 +510,26 @@ test("dormammu-agent-runner can project daemon prompt path decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon prompt session decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_prompt_session_decision",
+      prompt_name: "001-phase-5.md",
+      prompt_text: "# Phase 5 operator experience\n\nImprove progress."
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_prompt_session_decision",
+    goal: "Phase 5 operator experience",
+    activeRoadmapPhaseIds: ["phase_5"],
+    reason: "daemon_prompt_session_projected"
+  });
+});
+
 test("dormammu-agent-runner can project daemon plan-state decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({
