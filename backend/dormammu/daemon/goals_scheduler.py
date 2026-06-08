@@ -93,9 +93,35 @@ class GoalsScheduler:
         This runs synchronously so callers can rely on prompt generation
         and timer re-arming having completed before the method returns.
         """
+        has_goals = self._has_goal_files()
+        decision = self._project_typescript_trigger_decision(
+            stop_requested=self._stop_event.is_set(),
+            has_goal_files=has_goals,
+        )
+        if decision is not None:
+            if decision["action"] == "skip":
+                return
+            self._log(
+                "goals scheduler: goal files detected — "
+                "triggering immediate run on init"
+            )
+            if decision["cancel_timer_before_process"]:
+                self._cancel_timer()
+            try:
+                self._process_goals()
+            except Exception as exc:
+                self._log(f"goals scheduler: initial trigger error: {exc}")
+            finally:
+                if (
+                    decision["sync_timer_after_process"]
+                    and not self._stop_event.is_set()
+                ):
+                    self._sync_timer()
+            return
+
         if self._stop_event.is_set():
             return
-        if not self._has_goal_files():
+        if not has_goals:
             return
         self._log("goals scheduler: goal files detected — triggering immediate run on init")
         # Cancel any timer that the watcher thread may have already armed
@@ -191,7 +217,14 @@ class GoalsScheduler:
 
     def _process_goals(self) -> None:
         goal_files = self._list_goal_files()
-        if not goal_files:
+        decision = self._project_typescript_process_decision(
+            stop_requested=self._stop_event.is_set(),
+            goal_file_count=len(goal_files),
+        )
+        if decision is not None:
+            if decision["action"] == "skip":
+                return
+        elif not goal_files:
             return
         self._log(f"goals scheduler: processing {len(goal_files)} goal file(s)")
         for goal_file in goal_files:
@@ -721,6 +754,66 @@ class GoalsScheduler:
         return {
             "action": action,
             "interval_seconds": interval_seconds,
+        }
+
+    def _project_typescript_trigger_decision(
+        self,
+        *,
+        stop_requested: bool,
+        has_goal_files: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "goals_trigger_decision",
+            "stop_requested": stop_requested,
+            "has_goal_files": has_goal_files,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        action = result.get("action")
+        cancel_before = result.get("cancelTimerBeforeProcess")
+        sync_after = result.get("syncTimerAfterProcess")
+        if action not in {"process", "skip"}:
+            return None
+        if not isinstance(cancel_before, bool):
+            return None
+        if not isinstance(sync_after, bool):
+            return None
+        return {
+            "action": action,
+            "cancel_timer_before_process": cancel_before,
+            "sync_timer_after_process": sync_after,
+        }
+
+    def _project_typescript_process_decision(
+        self,
+        *,
+        stop_requested: bool,
+        goal_file_count: int,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "goals_process_decision",
+            "stop_requested": stop_requested,
+            "goal_file_count": goal_file_count,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        action = result.get("action")
+        projected_count = result.get("goalFileCount")
+        if action not in {"process", "skip"}:
+            return None
+        if not isinstance(projected_count, int):
+            return None
+        if projected_count < 0:
+            return None
+        if projected_count != goal_file_count:
+            return None
+        if action == "process" and projected_count == 0:
+            return None
+        return {
+            "action": action,
+            "goal_file_count": projected_count,
         }
 
     def _run_typescript_runner_payload(

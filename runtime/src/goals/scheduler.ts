@@ -1,4 +1,6 @@
 export type GoalsTimerDecisionAction = "schedule" | "cancel" | "none";
+export type GoalsTriggerDecisionAction = "process" | "skip";
+export type GoalsProcessDecisionAction = "process" | "skip";
 
 export type GoalsTimerDecisionInput = {
   hasGoalFiles: boolean;
@@ -6,9 +8,32 @@ export type GoalsTimerDecisionInput = {
   intervalMinutes: number;
 };
 
+export type GoalsTriggerDecisionInput = {
+  stopRequested: boolean;
+  hasGoalFiles: boolean;
+};
+
+export type GoalsProcessDecisionInput = {
+  stopRequested: boolean;
+  goalFileCount: number;
+};
+
 export type GoalsTimerDecision = {
   action: GoalsTimerDecisionAction;
   intervalSeconds: number | null;
+  reason: string;
+};
+
+export type GoalsTriggerDecision = {
+  action: GoalsTriggerDecisionAction;
+  cancelTimerBeforeProcess: boolean;
+  syncTimerAfterProcess: boolean;
+  reason: string;
+};
+
+export type GoalsProcessDecision = {
+  action: GoalsProcessDecisionAction;
+  goalFileCount: number;
   reason: string;
 };
 
@@ -36,5 +61,57 @@ export function goalsTimerDecision(
     reason: input.hasGoalFiles
       ? "goal_files_present_with_active_timer"
       : "no_goal_files_without_active_timer"
+  };
+}
+
+export function goalsTriggerDecision(
+  input: GoalsTriggerDecisionInput
+): GoalsTriggerDecision {
+  if (input.stopRequested) {
+    return {
+      action: "skip",
+      cancelTimerBeforeProcess: false,
+      syncTimerAfterProcess: false,
+      reason: "stop_requested"
+    };
+  }
+  if (!input.hasGoalFiles) {
+    return {
+      action: "skip",
+      cancelTimerBeforeProcess: false,
+      syncTimerAfterProcess: false,
+      reason: "no_goal_files"
+    };
+  }
+  return {
+    action: "process",
+    cancelTimerBeforeProcess: true,
+    syncTimerAfterProcess: true,
+    reason: "goal_files_present"
+  };
+}
+
+export function goalsProcessDecision(
+  input: GoalsProcessDecisionInput
+): GoalsProcessDecision {
+  const goalFileCount = Math.max(0, Math.trunc(input.goalFileCount));
+  if (input.stopRequested) {
+    return {
+      action: "skip",
+      goalFileCount,
+      reason: "stop_requested"
+    };
+  }
+  if (goalFileCount === 0) {
+    return {
+      action: "skip",
+      goalFileCount,
+      reason: "no_goal_files"
+    };
+  }
+  return {
+    action: "process",
+    goalFileCount,
+    reason: "goal_files_present"
   };
 }

@@ -7,11 +7,13 @@ import test from "node:test";
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
   runAgentRunnerEntrypoint,
+  runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
   runGoalsQueueEntrypoint,
   runGoalsRoleDocumentProjectionEntrypoint,
   runGoalsRoleSequenceEntrypoint,
-  runGoalsTimerDecisionEntrypoint
+  runGoalsTimerDecisionEntrypoint,
+  runGoalsTriggerDecisionEntrypoint
 } from "./runnerEntrypoint.js";
 
 test("runAgentRunnerEntrypoint runs configured agent payloads and returns dicts", async () => {
@@ -414,6 +416,39 @@ test("runGoalsTimerDecisionEntrypoint projects timer decisions", () => {
       action: "schedule",
       intervalSeconds: 180,
       reason: "goal_files_present_without_active_timer"
+    }
+  );
+});
+
+test("runGoalsTriggerDecisionEntrypoint projects immediate run decisions", () => {
+  assert.deepEqual(
+    runGoalsTriggerDecisionEntrypoint({
+      entrypoint: "goals_trigger_decision",
+      stop_requested: false,
+      has_goal_files: true
+    }),
+    {
+      entrypoint: "goals_trigger_decision",
+      action: "process",
+      cancelTimerBeforeProcess: true,
+      syncTimerAfterProcess: true,
+      reason: "goal_files_present"
+    }
+  );
+});
+
+test("runGoalsProcessDecisionEntrypoint projects batch decisions", () => {
+  assert.deepEqual(
+    runGoalsProcessDecisionEntrypoint({
+      entrypoint: "goals_process_decision",
+      stop_requested: false,
+      goal_file_count: 2
+    }),
+    {
+      entrypoint: "goals_process_decision",
+      action: "process",
+      goalFileCount: 2,
+      reason: "goal_files_present"
     }
   );
 });

@@ -81,6 +81,40 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                 encoding="utf-8",
             ) as handle:
                 handle.write(json.dumps(payload, ensure_ascii=True) + "\\n")
+            if payload.get("entrypoint") == "goals_trigger_decision":
+                action = "skip"
+                cancel_before = False
+                sync_after = False
+                if not payload["stop_requested"] and payload["has_goal_files"]:
+                    action = "process"
+                    cancel_before = True
+                    sync_after = True
+                reason = (
+                    "fake_trigger_process"
+                    if action == "process"
+                    else "fake_trigger_skip"
+                )
+                print(json.dumps({{
+                    "entrypoint": "goals_trigger_decision",
+                    "action": action,
+                    "cancelTimerBeforeProcess": cancel_before,
+                    "syncTimerAfterProcess": sync_after,
+                    "reason": reason,
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
+            if payload.get("entrypoint") == "goals_process_decision":
+                action = "process"
+                reason = "fake_process_batch"
+                if payload["stop_requested"] or payload["goal_file_count"] == 0:
+                    action = "skip"
+                    reason = "fake_process_skip"
+                print(json.dumps({{
+                    "entrypoint": "goals_process_decision",
+                    "action": action,
+                    "goalFileCount": payload["goal_file_count"],
+                    "reason": reason,
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
             if payload.get("entrypoint") == "goals_timer_decision":
                 action = "none"
                 interval_seconds = None
@@ -671,6 +705,53 @@ class TestProcessGoals:
         # None should be generated because stop_event was set
         assert list(prompt_path.glob("*.md")) == []
 
+    def test_process_goals_can_use_typescript_decision_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        prompt_path = tmp_path / "prompts"
+        goals_dir.mkdir()
+        prompt_path.mkdir()
+        (goals_dir / "feature.md").write_text("Build something", encoding="utf-8")
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            prompt_path,
+            app,
+        )
+
+        with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value.strftime.return_value = "20260412"
+            sched._process_goals()
+
+        assert (prompt_path / "20260412_feature.md").exists()
+        captured_payloads = [
+            json.loads(line)
+            for line in (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert captured_payloads[0]["entrypoint"] == "goals_queue"
+        assert captured_payloads[1] == {
+            "entrypoint": "goals_process_decision",
+            "stop_requested": False,
+            "goal_file_count": 1,
+        }
+
 
 # ---------------------------------------------------------------------------
 # _generate_prompt with agents
@@ -961,6 +1042,55 @@ class TestTriggerNow:
         sched.stop()
         sched.trigger_now()
         assert list(prompt_path.glob("*.md")) == []
+
+    def test_trigger_now_can_use_typescript_decision_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        prompt_path = tmp_path / "prompts"
+        goals_dir.mkdir()
+        prompt_path.mkdir()
+        (goals_dir / "feature.md").write_text("Build something", encoding="utf-8")
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            prompt_path,
+            app,
+        )
+
+        with patch("dormammu.daemon.goals_scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value.strftime.return_value = "20260412"
+            sched.trigger_now()
+
+        assert (prompt_path / "20260412_feature.md").exists()
+        captured_payloads = [
+            json.loads(line)
+            for line in (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        entrypoints = [payload["entrypoint"] for payload in captured_payloads]
+        assert entrypoints[0] == "goals_trigger_decision"
+        assert "goals_process_decision" in entrypoints
+        assert entrypoints[-1] == "goals_timer_decision"
+        trigger_payload = captured_payloads[0]
+        assert trigger_payload["stop_requested"] is False
+        assert trigger_payload["has_goal_files"] is True
+        sched._cancel_timer()
 
 
 # ---------------------------------------------------------------------------

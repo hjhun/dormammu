@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { goalsTimerDecision } from "./scheduler.js";
+import {
+  goalsProcessDecision,
+  goalsTimerDecision,
+  goalsTriggerDecision
+} from "./scheduler.js";
 
 test("goalsTimerDecision schedules when goals exist without a timer", () => {
   assert.deepEqual(
@@ -60,5 +64,90 @@ test("goalsTimerDecision clamps negative intervals to zero seconds", () => {
       intervalMinutes: -1
     }).intervalSeconds,
     0
+  );
+});
+
+test("goalsTriggerDecision processes immediate runs when goals exist", () => {
+  assert.deepEqual(
+    goalsTriggerDecision({
+      stopRequested: false,
+      hasGoalFiles: true
+    }),
+    {
+      action: "process",
+      cancelTimerBeforeProcess: true,
+      syncTimerAfterProcess: true,
+      reason: "goal_files_present"
+    }
+  );
+});
+
+test("goalsTriggerDecision skips stopped or empty immediate runs", () => {
+  assert.equal(
+    goalsTriggerDecision({
+      stopRequested: true,
+      hasGoalFiles: true
+    }).reason,
+    "stop_requested"
+  );
+  assert.equal(
+    goalsTriggerDecision({
+      stopRequested: false,
+      hasGoalFiles: false
+    }).reason,
+    "no_goal_files"
+  );
+});
+
+test("goalsProcessDecision processes non-empty batches", () => {
+  assert.deepEqual(
+    goalsProcessDecision({
+      stopRequested: false,
+      goalFileCount: 2
+    }),
+    {
+      action: "process",
+      goalFileCount: 2,
+      reason: "goal_files_present"
+    }
+  );
+});
+
+test("goalsProcessDecision skips stopped or empty batches", () => {
+  assert.deepEqual(
+    goalsProcessDecision({
+      stopRequested: true,
+      goalFileCount: 3
+    }),
+    {
+      action: "skip",
+      goalFileCount: 3,
+      reason: "stop_requested"
+    }
+  );
+  assert.deepEqual(
+    goalsProcessDecision({
+      stopRequested: false,
+      goalFileCount: 0
+    }),
+    {
+      action: "skip",
+      goalFileCount: 0,
+      reason: "no_goal_files"
+    }
+  );
+});
+
+test("goalsProcessDecision clamps negative goal file counts", () => {
+  assert.deepEqual(
+    goalsProcessDecision({
+      stopRequested: false,
+      goalFileCount: -4
+    }),
+    {
+      action: "skip",
+      goalFileCount: 0,
+      reason: "no_goal_files"
+    }
   );
 });

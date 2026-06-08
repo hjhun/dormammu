@@ -5,16 +5,20 @@ import { Writable } from "node:stream";
 
 import {
   runAgentRunnerEntrypoint,
+  runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
   runGoalsQueueEntrypoint,
   runGoalsRoleDocumentProjectionEntrypoint,
   runGoalsRoleSequenceEntrypoint,
   runGoalsTimerDecisionEntrypoint,
+  runGoalsTriggerDecisionEntrypoint,
   type AgentRunnerEntrypointPayload,
+  type GoalsProcessDecisionEntrypointPayload,
   type GoalsPromptProjectionEntrypointPayload,
   type GoalsRoleDocumentProjectionEntrypointPayload,
   type GoalsRoleSequenceEntrypointPayload,
   type GoalsTimerDecisionEntrypointPayload,
+  type GoalsTriggerDecisionEntrypointPayload,
   type RunnerCliPayload,
   type RunnerCliResultPayload
 } from "./runnerEntrypoint.js";
@@ -64,6 +68,12 @@ async function runWithSignalHandlers(
   }
   if (isGoalsTimerDecisionPayload(payload)) {
     return runGoalsTimerDecisionEntrypoint(payload);
+  }
+  if (isGoalsTriggerDecisionPayload(payload)) {
+    return runGoalsTriggerDecisionEntrypoint(payload);
+  }
+  if (isGoalsProcessDecisionPayload(payload)) {
+    return runGoalsProcessDecisionEntrypoint(payload);
   }
   if (!isAgentRunPayload(payload)) {
     return runGoalsQueueEntrypoint(payload);
@@ -116,7 +126,9 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "goals_prompt_projection" &&
       payload.entrypoint !== "goals_role_document_projection" &&
       payload.entrypoint !== "goals_role_sequence" &&
-      payload.entrypoint !== "goals_timer_decision")
+      payload.entrypoint !== "goals_timer_decision" &&
+      payload.entrypoint !== "goals_trigger_decision" &&
+      payload.entrypoint !== "goals_process_decision")
   );
 }
 
@@ -145,6 +157,18 @@ function isGoalsTimerDecisionPayload(
   payload: RunnerCliPayload
 ): payload is GoalsTimerDecisionEntrypointPayload {
   return "entrypoint" in payload && payload.entrypoint === "goals_timer_decision";
+}
+
+function isGoalsTriggerDecisionPayload(
+  payload: RunnerCliPayload
+): payload is GoalsTriggerDecisionEntrypointPayload {
+  return "entrypoint" in payload && payload.entrypoint === "goals_trigger_decision";
+}
+
+function isGoalsProcessDecisionPayload(
+  payload: RunnerCliPayload
+): payload is GoalsProcessDecisionEntrypointPayload {
+  return "entrypoint" in payload && payload.entrypoint === "goals_process_decision";
 }
 
 async function readStdin(): Promise<string> {

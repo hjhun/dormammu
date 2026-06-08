@@ -162,6 +162,14 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/goals_scheduler.py`
+- TypeScript-owned goals scheduler trigger-now and process-goals lifecycle
+  decision helpers, plus runner entrypoints and Python `GoalsScheduler`
+  bridge consumption for immediate-run and goal batch processing decisions
+  with Python fallbacks retained when the bridge is unavailable or malformed
+  -> `runtime/src/goals/scheduler.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/goals_scheduler.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -339,10 +347,11 @@ Port the remaining daemon and goals orchestration surface:
   projection contracts, goal file discovery and queue candidate listing, and
   role output document projection. TypeScript also owns the analyzer /
   planner / designer next-role sequencing decision and prompt projection, plus
-  scheduler timer schedule/cancel decisions. Python can consume goal file
-  listing, prompt writes, role output document writes, role sequencing, and
-  timer decisions through the TypeScript runner bridge, with Python fallbacks
-  retained.
-- The next slice should lift more goals automation lifecycle state into a
-  TypeScript scheduler facade, starting with trigger-now and process-goals
-  orchestration around the deterministic goals helpers.
+  scheduler timer, trigger-now, and process-goals lifecycle decisions. Python
+  can consume goal file listing, prompt writes, role output document writes,
+  role sequencing, timer decisions, immediate-run decisions, and goal batch
+  processing decisions through the TypeScript runner bridge, with Python
+  fallbacks retained.
+- The next slice should continue the goals scheduler facade by lifting
+  timer-fired and single-goal prompt-write orchestration decisions around the
+  existing deterministic goals helpers.
