@@ -221,6 +221,37 @@ test("dormammu-agent-runner can project goals role document payloads", () => {
   });
 });
 
+test("dormammu-agent-runner can project goals role sequence payloads", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "goals_role_sequence",
+      goal_text: "Ship it",
+      analysis_text: "Analysis output",
+      roles: {
+        planner: { cli: "planner-cli", model: "careful" }
+      }
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  const result = JSON.parse(completed.stdout) as {
+    entrypoint: string;
+    next_step: {
+      role: string;
+      cli: string;
+      model: string;
+      prompt: string;
+    };
+  };
+  assert.equal(result.entrypoint, "goals_role_sequence");
+  assert.equal(result.next_step.role, "planner");
+  assert.equal(result.next_step.cli, "planner-cli");
+  assert.equal(result.next_step.model, "careful");
+  assert.match(result.next_step.prompt, /# Requirements Analysis/);
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

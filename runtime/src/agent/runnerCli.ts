@@ -8,9 +8,11 @@ import {
   runGoalsPromptProjectionEntrypoint,
   runGoalsQueueEntrypoint,
   runGoalsRoleDocumentProjectionEntrypoint,
+  runGoalsRoleSequenceEntrypoint,
   type AgentRunnerEntrypointPayload,
   type GoalsPromptProjectionEntrypointPayload,
   type GoalsRoleDocumentProjectionEntrypointPayload,
+  type GoalsRoleSequenceEntrypointPayload,
   type RunnerCliPayload,
   type RunnerCliResultPayload
 } from "./runnerEntrypoint.js";
@@ -54,6 +56,9 @@ async function runWithSignalHandlers(
   }
   if (isGoalsRoleDocumentProjectionPayload(payload)) {
     return runGoalsRoleDocumentProjectionEntrypoint(payload);
+  }
+  if (isGoalsRoleSequencePayload(payload)) {
+    return runGoalsRoleSequenceEntrypoint(payload);
   }
   if (!isAgentRunPayload(payload)) {
     return runGoalsQueueEntrypoint(payload);
@@ -104,7 +109,8 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
     !("entrypoint" in payload) ||
     (payload.entrypoint !== "goals_queue" &&
       payload.entrypoint !== "goals_prompt_projection" &&
-      payload.entrypoint !== "goals_role_document_projection")
+      payload.entrypoint !== "goals_role_document_projection" &&
+      payload.entrypoint !== "goals_role_sequence")
   );
 }
 
@@ -121,6 +127,12 @@ function isGoalsRoleDocumentProjectionPayload(
     "entrypoint" in payload &&
     payload.entrypoint === "goals_role_document_projection"
   );
+}
+
+function isGoalsRoleSequencePayload(
+  payload: RunnerCliPayload
+): payload is GoalsRoleSequenceEntrypointPayload {
+  return "entrypoint" in payload && payload.entrypoint === "goals_role_sequence";
 }
 
 async function readStdin(): Promise<string> {

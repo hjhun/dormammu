@@ -146,6 +146,14 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/goals_scheduler.py`
+- TypeScript-owned goals analyzer / planner / designer role sequencing
+  decision helpers, plus runner entrypoint and Python `GoalsScheduler`
+  consumption for next-role prompt projection with Python fallback retained
+  for bridge failures or unavailable runners
+  -> `runtime/src/goals/roleSequence.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/goals_scheduler.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -321,9 +329,11 @@ Port the remaining daemon and goals orchestration surface:
 
 - TypeScript now owns deterministic goals prompt construction and queue prompt
   projection contracts, goal file discovery and queue candidate listing, and
-  role output document projection. Python can consume goal file listing,
-  prompt writes, and role output document writes through the TypeScript runner
-  bridge, with Python fallbacks retained.
-- The next slice should move analyzer / planner / designer execution
-  sequencing itself toward TypeScript, or port the scheduler loop/timer
-  orchestration around the deterministic goals helpers.
+  role output document projection. TypeScript also owns the analyzer /
+  planner / designer next-role sequencing decision and prompt projection.
+  Python can consume goal file listing, prompt writes, role output document
+  writes, and role sequencing through the TypeScript runner bridge, with
+  Python fallbacks retained.
+- The next slice should port the scheduler loop/timer orchestration around the
+  deterministic goals helpers, or lift more goals automation state into a
+  TypeScript scheduler facade.

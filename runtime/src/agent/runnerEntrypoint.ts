@@ -49,6 +49,11 @@ import {
   projectGoalsRoleDocument,
   type GoalsRoleDocumentProjection
 } from "../goals/roleDocuments.js";
+import {
+  nextGoalsRoleStep,
+  type GoalsPreludeRole,
+  type GoalsRoleStep
+} from "../goals/roleSequence.js";
 import { stageResultToDict, type StageResult } from "../results.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
@@ -138,16 +143,34 @@ export type GoalsRoleDocumentProjectionEntrypointResultPayload =
     entrypoint: "goals_role_document_projection";
   };
 
+export type GoalsRoleSequenceEntrypointPayload = {
+  entrypoint: "goals_role_sequence";
+  goal_text: string;
+  analysis_text?: string | null;
+  plan_text?: string | null;
+  design_text?: string | null;
+  roles?: Partial<
+    Record<GoalsPreludeRole, { cli?: string | null; model?: string | null }>
+  > | null;
+};
+
+export type GoalsRoleSequenceEntrypointResultPayload = {
+  entrypoint: "goals_role_sequence";
+  next_step: GoalsRoleStep | null;
+};
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
   | GoalsQueueEntrypointPayload
   | GoalsPromptProjectionEntrypointPayload
-  | GoalsRoleDocumentProjectionEntrypointPayload;
+  | GoalsRoleDocumentProjectionEntrypointPayload
+  | GoalsRoleSequenceEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
   | GoalsPromptProjectionEntrypointResultPayload
-  | GoalsRoleDocumentProjectionEntrypointResultPayload;
+  | GoalsRoleDocumentProjectionEntrypointResultPayload
+  | GoalsRoleSequenceEntrypointResultPayload;
 
 export type AgentRunnerEntrypointOptions = Omit<
   RunConfiguredAgentCommandOptions,
@@ -237,6 +260,21 @@ export function runGoalsRoleDocumentProjectionEntrypoint(
       role: parseRequiredString(payload.role, "role"),
       stem: parseRequiredString(payload.stem, "stem"),
       output: parseString(payload.output, "output")
+    })
+  };
+}
+
+export function runGoalsRoleSequenceEntrypoint(
+  payload: GoalsRoleSequenceEntrypointPayload
+): GoalsRoleSequenceEntrypointResultPayload {
+  return {
+    entrypoint: "goals_role_sequence",
+    next_step: nextGoalsRoleStep({
+      goalText: parseRequiredString(payload.goal_text, "goal_text"),
+      analysisText: parseOptionalString(payload.analysis_text, "analysis_text"),
+      planText: parseOptionalString(payload.plan_text, "plan_text"),
+      designText: parseOptionalString(payload.design_text, "design_text"),
+      roles: parseGoalsRoleAvailability(payload.roles ?? null)
     })
   };
 }
@@ -431,4 +469,47 @@ function parseString(value: unknown, fieldName: string): string {
     throw new Error(`${fieldName} must be a string`);
   }
   return value;
+}
+
+function parseOptionalString(
+  value: unknown,
+  fieldName: string
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${fieldName} must be a string or null`);
+  }
+  return value;
+}
+
+function parseGoalsRoleAvailability(
+  value: unknown
+): GoalsRoleSequenceEntrypointPayload["roles"] {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("roles must be a JSON object or null");
+  }
+  const roles: GoalsRoleSequenceEntrypointPayload["roles"] = {};
+  for (const role of ["analyzer", "planner", "designer"] as const) {
+    const item = (value as Record<string, unknown>)[role];
+    if (item === undefined || item === null) {
+      continue;
+    }
+    if (typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`roles.${role} must be a JSON object or null`);
+    }
+    const rolePayload = item as Record<string, unknown>;
+    roles[role] = {
+      cli: parseOptionalString(rolePayload.cli, `roles.${role}.cli`) ?? null,
+      model: parseOptionalString(rolePayload.model, `roles.${role}.model`) ?? null
+    };
+  }
+  return roles;
 }

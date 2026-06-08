@@ -143,6 +143,45 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                     ),
                 }}, ensure_ascii=True))
                 raise SystemExit(0)
+            if payload.get("entrypoint") == "goals_role_sequence":
+                roles = payload.get("roles") or {{}}
+                next_step = None
+                if (
+                    roles.get("analyzer", {{}}).get("cli")
+                    and not payload.get("analysis_text")
+                ):
+                    next_step = {{
+                        "role": "analyzer",
+                        "cli": roles["analyzer"]["cli"],
+                        "model": roles["analyzer"].get("model"),
+                        "prompt": "TS_SEQUENCE_ANALYZER\\n" + payload["goal_text"],
+                    }}
+                elif (
+                    roles.get("planner", {{}}).get("cli")
+                    and not payload.get("plan_text")
+                ):
+                    next_step = {{
+                        "role": "planner",
+                        "cli": roles["planner"]["cli"],
+                        "model": roles["planner"].get("model"),
+                        "prompt": "TS_SEQUENCE_PLANNER\\n" + payload["goal_text"],
+                    }}
+                elif (
+                    roles.get("designer", {{}}).get("cli")
+                    and payload.get("plan_text")
+                    and not payload.get("design_text")
+                ):
+                    next_step = {{
+                        "role": "designer",
+                        "cli": roles["designer"]["cli"],
+                        "model": roles["designer"].get("model"),
+                        "prompt": "TS_SEQUENCE_DESIGNER\\n" + payload["plan_text"],
+                    }}
+                print(json.dumps({{
+                    "entrypoint": "goals_role_sequence",
+                    "next_step": next_step,
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
             request = payload["request"]
             logs_dir = Path(payload["logs_dir"])
             logs_dir.mkdir(parents=True, exist_ok=True)
@@ -638,6 +677,59 @@ class TestGeneratePromptWithAgents:
         assert "# Goal" in result
         assert "Workflow Contract" in result
         assert "## Plan" not in result
+
+    def test_generate_prompt_can_use_typescript_role_sequence_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "AGENTS.md").write_text("goals sequence test\n", encoding="utf-8")
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps(
+                {
+                    "typescript_agent_runner_cli": str(runner_cli),
+                    "agents": {
+                        "planner": {
+                            "cli": "goals-agent",
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        goals_dir.mkdir()
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            tmp_path / "prompts",
+            app,
+        )
+
+        result = sched._generate_prompt("my goal", "stem", "20260412")
+
+        assert "## Plan" in result
+        assert "GOALS_TS_OUTPUT" in result
+        captured_payloads = [
+            json.loads(line)
+            for line in (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert captured_payloads[0]["entrypoint"] == "goals_role_sequence"
+        assert captured_payloads[1]["request"]["prompt_text"].startswith(
+            "TS_SEQUENCE_PLANNER"
+        )
+        assert captured_payloads[-1]["entrypoint"] == "goals_role_sequence"
+        assert captured_payloads[-1]["plan_text"] == "GOALS_TS_OUTPUT\n"
 
     def test_agents_with_no_resolvable_cli_returns_goal_only(
         self, tmp_path: Path

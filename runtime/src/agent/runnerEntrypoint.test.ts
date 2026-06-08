@@ -9,7 +9,8 @@ import {
   runAgentRunnerEntrypoint,
   runGoalsPromptProjectionEntrypoint,
   runGoalsQueueEntrypoint,
-  runGoalsRoleDocumentProjectionEntrypoint
+  runGoalsRoleDocumentProjectionEntrypoint,
+  runGoalsRoleSequenceEntrypoint
 } from "./runnerEntrypoint.js";
 
 test("runAgentRunnerEntrypoint runs configured agent payloads and returns dicts", async () => {
@@ -373,6 +374,29 @@ test("runGoalsRoleDocumentProjectionEntrypoint projects role documents", () => {
       path: "/repo/.dev/logs/20260412_planner_ship-it.md",
       content: "# Planner \u2014 ship-it\n\nPlan output"
     }
+  );
+});
+
+test("runGoalsRoleSequenceEntrypoint projects the next goals role step", () => {
+  const result = runGoalsRoleSequenceEntrypoint({
+    entrypoint: "goals_role_sequence",
+    goal_text: "Ship it",
+    analysis_text: "Analysis output",
+    roles: {
+      analyzer: { cli: "analyzer-cli" },
+      planner: { cli: "planner-cli", model: "careful" },
+      designer: { cli: "designer-cli" }
+    }
+  });
+
+  assert.equal(result.entrypoint, "goals_role_sequence");
+  assert.equal(result.next_step?.role, "planner");
+  assert.equal(result.next_step?.cli, "planner-cli");
+  assert.equal(result.next_step?.model, "careful");
+  assert.ok(
+    result.next_step?.prompt.includes(
+      "# Requirements Analysis\n\nAnalysis output"
+    )
   );
 });
 

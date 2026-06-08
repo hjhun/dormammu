@@ -225,10 +225,6 @@ class GoalsScheduler:
         """Generate an analysis+plan+design prompt from goal content."""
         active_cli = getattr(self._app_config, "active_agent_cli", None)
 
-        analysis_text: str | None = None
-        plan_text: str | None = None
-        design_text: str | None = None
-
         analyzer_profile = self._app_config.resolve_agent_profile("analyzer")
         planner_profile = self._app_config.resolve_agent_profile("planner")
         designer_profile = self._app_config.resolve_agent_profile("designer")
@@ -236,37 +232,139 @@ class GoalsScheduler:
         planner_cli = planner_profile.resolve_cli(active_cli)
         designer_cli = designer_profile.resolve_cli(active_cli)
 
-        if analyzer_cli is not None:
+        role_configs = {
+            "analyzer": (analyzer_cli, analyzer_profile.model_override),
+            "planner": (planner_cli, planner_profile.model_override),
+            "designer": (designer_cli, designer_profile.model_override),
+        }
+        analysis_text, plan_text, design_text = self._run_role_sequence(
+            goal_text=goal_text,
+            stem=stem,
+            date_str=date_str,
+            role_configs=role_configs,
+        )
+
+        return self._build_prompt(goal_text, analysis_text, plan_text, design_text)
+
+    def _run_role_sequence(
+        self,
+        *,
+        goal_text: str,
+        stem: str,
+        date_str: str,
+        role_configs: dict[str, tuple[Path | None, str | None]],
+    ) -> tuple[str | None, str | None, str | None]:
+        analysis_text: str | None = None
+        plan_text: str | None = None
+        design_text: str | None = None
+        attempted_roles: set[str] = set()
+
+        for _ in range(3):
+            step = self._next_typescript_role_step(
+                goal_text=goal_text,
+                analysis_text=analysis_text,
+                plan_text=plan_text,
+                design_text=design_text,
+                role_configs=role_configs,
+            )
+            if step is None:
+                break
+            role = step["role"]
+            if role in attempted_roles:
+                break
+            role_config = role_configs.get(role)
+            if role_config is None:
+                break
+            cli, configured_model = role_config
+            if cli is None:
+                break
+            attempted_roles.add(role)
+            output = self._call_role_agent(
+                role=role,
+                cli=cli,
+                model=step["model"] or configured_model,
+                prompt=step["prompt"],
+                stem=stem,
+                date_str=date_str,
+            )
+            if role == "analyzer":
+                analysis_text = output
+            elif role == "planner":
+                plan_text = output
+            elif role == "designer":
+                design_text = output
+
+        return self._complete_python_role_sequence(
+            goal_text=goal_text,
+            stem=stem,
+            date_str=date_str,
+            role_configs=role_configs,
+            analysis_text=analysis_text,
+            plan_text=plan_text,
+            design_text=design_text,
+            attempted_roles=attempted_roles,
+        )
+
+    def _complete_python_role_sequence(
+        self,
+        *,
+        goal_text: str,
+        stem: str,
+        date_str: str,
+        role_configs: dict[str, tuple[Path | None, str | None]],
+        analysis_text: str | None,
+        plan_text: str | None,
+        design_text: str | None,
+        attempted_roles: set[str],
+    ) -> tuple[str | None, str | None, str | None]:
+        analyzer_cli, analyzer_model = role_configs["analyzer"]
+        planner_cli, planner_model = role_configs["planner"]
+        designer_cli, designer_model = role_configs["designer"]
+
+        if (
+            analyzer_cli is not None
+            and analysis_text is None
+            and "analyzer" not in attempted_roles
+        ):
             analysis_text = self._call_role_agent(
                 role="analyzer",
                 cli=analyzer_cli,
-                model=analyzer_profile.model_override,
+                model=analyzer_model,
                 prompt=self._analyzer_prompt(goal_text),
                 stem=stem,
                 date_str=date_str,
             )
 
-        if planner_cli is not None:
+        if (
+            planner_cli is not None
+            and plan_text is None
+            and "planner" not in attempted_roles
+        ):
             plan_text = self._call_role_agent(
                 role="planner",
                 cli=planner_cli,
-                model=planner_profile.model_override,
+                model=planner_model,
                 prompt=self._planner_prompt(goal_text, analysis_text),
                 stem=stem,
                 date_str=date_str,
             )
 
-        if designer_cli is not None and plan_text is not None:
+        if (
+            designer_cli is not None
+            and plan_text is not None
+            and design_text is None
+            and "designer" not in attempted_roles
+        ):
             design_text = self._call_role_agent(
                 role="designer",
                 cli=designer_cli,
-                model=designer_profile.model_override,
+                model=designer_model,
                 prompt=self._designer_prompt(goal_text, analysis_text, plan_text),
                 stem=stem,
                 date_str=date_str,
             )
 
-        return self._build_prompt(goal_text, analysis_text, plan_text, design_text)
+        return analysis_text, plan_text, design_text
 
     def _analyzer_prompt(self, goal_text: str) -> str:
         return (
@@ -524,6 +622,57 @@ class GoalsScheduler:
         if isinstance(path, str) and isinstance(content, str):
             return {"path": path, "content": content}
         return None
+
+    def _next_typescript_role_step(
+        self,
+        *,
+        goal_text: str,
+        analysis_text: str | None,
+        plan_text: str | None,
+        design_text: str | None,
+        role_configs: dict[str, tuple[Path | None, str | None]],
+    ) -> dict[str, str | None] | None:
+        roles = {
+            role: {
+                "cli": str(cli) if cli is not None else None,
+                "model": model,
+            }
+            for role, (cli, model) in role_configs.items()
+        }
+        payload = {
+            "entrypoint": "goals_role_sequence",
+            "goal_text": goal_text,
+            "analysis_text": analysis_text,
+            "plan_text": plan_text,
+            "design_text": design_text,
+            "roles": roles,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        step = result.get("next_step")
+        if step is None:
+            return None
+        if not isinstance(step, dict):
+            return None
+        role = step.get("role")
+        prompt = step.get("prompt")
+        cli = step.get("cli")
+        model = step.get("model")
+        if role not in {"analyzer", "planner", "designer"}:
+            return None
+        if not isinstance(prompt, str):
+            return None
+        if not isinstance(cli, str):
+            return None
+        if model is not None and not isinstance(model, str):
+            return None
+        return {
+            "role": role,
+            "cli": cli,
+            "model": model,
+            "prompt": prompt,
+        }
 
     def _run_typescript_runner_payload(
         self,
