@@ -597,6 +597,27 @@ test("dormammu-agent-runner can project daemon prompt settle decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon queue file decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_queue_file_decision",
+      prompt_path: "/repo/prompts/readme.txt",
+      in_progress: false,
+      prompt_candidate: false
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_queue_file_decision",
+    action: "skip",
+    promptPath: "/repo/prompts/readme.txt",
+    reason: "not_prompt_candidate"
+  });
+});
+
 test("dormammu-agent-runner can project daemon loop iteration decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

@@ -305,6 +305,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon queue file decision helper, plus runner entrypoint
+  and Python `DaemonRunner._scan_prompt_queue()` bridge consumption for
+  in-progress skip, non-candidate skip, and prompt-candidate inspection
+  decisions while Python retains filesystem iteration, candidate predicate
+  evaluation, queue logging, and fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -502,11 +511,11 @@ Port the remaining daemon and goals orchestration surface:
   attempts, retries, supervisor verdict, outcome, and error. TypeScript also
   owns daemon existing-result recovery decisions for stale completed result
   removal before prompt reprocessing, plus daemon prompt settle-window
-  decisions for ready/defer and retry-after projection. Python fallbacks are
-  retained.
+  decisions for ready/defer and retry-after projection. TypeScript also owns
+  daemon queue file decisions for in-progress skip, non-candidate skip, and
+  candidate inspection. Python fallbacks are retained.
 - The next slice should continue the remaining daemon lifecycle and recovery
   surface after queue dispatch, prompt route selection, loop iteration, and
   startup/shutdown/instance-lock/heartbeat/watcher-backend handling, with
-  priority on queue scan candidate/in-progress skip contracts or other
-  deterministic daemon recovery contracts that can be exposed through
-  TypeScript without removing Python compatibility.
+  priority on remaining deterministic daemon recovery/status contracts that can
+  be exposed through TypeScript without removing Python compatibility.

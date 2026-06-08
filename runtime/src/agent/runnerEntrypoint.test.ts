@@ -16,6 +16,7 @@ import {
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptRouteEntrypoint,
   runDaemonPromptSettleEntrypoint,
+  runDaemonQueueFileEntrypoint,
   runDaemonResultReportEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
@@ -532,6 +533,23 @@ test("runDaemonPromptSettleEntrypoint projects settle-window decisions", () => {
       promptPath: "/repo/prompts/001-first.md",
       retryAfterSeconds: 1.5,
       reason: "settle_window_pending"
+    }
+  );
+});
+
+test("runDaemonQueueFileEntrypoint projects queue file skip decisions", () => {
+  assert.deepEqual(
+    runDaemonQueueFileEntrypoint({
+      entrypoint: "daemon_queue_file_decision",
+      prompt_path: "/repo/prompts/readme.txt",
+      in_progress: false,
+      prompt_candidate: false
+    }),
+    {
+      entrypoint: "daemon_queue_file_decision",
+      action: "skip",
+      promptPath: "/repo/prompts/readme.txt",
+      reason: "not_prompt_candidate"
     }
   );
 });

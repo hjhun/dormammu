@@ -137,6 +137,20 @@ export type DaemonPromptSettleDecision = {
   reason: string;
 };
 
+export type DaemonQueueFileAction = "inspect" | "skip";
+
+export type DaemonQueueFileDecisionInput = {
+  promptPath: string;
+  inProgress: boolean;
+  promptCandidate: boolean;
+};
+
+export type DaemonQueueFileDecision = {
+  action: DaemonQueueFileAction;
+  promptPath: string;
+  reason: string;
+};
+
 export type DaemonLoopIterationAction = "continue" | "wait" | "stop";
 
 export type DaemonLoopIterationInput = {
@@ -461,6 +475,30 @@ export function daemonPromptSettleDecision(
     promptPath: input.promptPath,
     retryAfterSeconds: shouldDefer ? remainingSeconds : null,
     reason: shouldDefer ? "settle_window_pending" : "settle_window_elapsed"
+  };
+}
+
+export function daemonQueueFileDecision(
+  input: DaemonQueueFileDecisionInput
+): DaemonQueueFileDecision {
+  if (input.inProgress) {
+    return {
+      action: "skip",
+      promptPath: input.promptPath,
+      reason: "prompt_in_progress"
+    };
+  }
+  if (!input.promptCandidate) {
+    return {
+      action: "skip",
+      promptPath: input.promptPath,
+      reason: "not_prompt_candidate"
+    };
+  }
+  return {
+    action: "inspect",
+    promptPath: input.promptPath,
+    reason: "prompt_ready_for_inspection"
   };
 }
 

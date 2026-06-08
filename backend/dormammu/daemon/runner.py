@@ -504,6 +504,57 @@ class DaemonRunner:
             "remove_existing_result": expected["removeExistingResult"],
         }
 
+    def _project_typescript_queue_file_decision(
+        self,
+        *,
+        prompt_path: Path,
+        in_progress: bool,
+        prompt_candidate: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_queue_file_decision",
+            "prompt_path": str(prompt_path),
+            "in_progress": in_progress,
+            "prompt_candidate": prompt_candidate,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._queue_file_expectations(
+            prompt_path=prompt_path,
+            in_progress=in_progress,
+            prompt_candidate=prompt_candidate,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "reason": expected["reason"],
+        }
+
+    @staticmethod
+    def _queue_file_expectations(
+        *,
+        prompt_path: Path,
+        in_progress: bool,
+        prompt_candidate: bool,
+    ) -> dict[str, object]:
+        if in_progress:
+            action = "skip"
+            reason = "prompt_in_progress"
+        elif not prompt_candidate:
+            action = "skip"
+            reason = "not_prompt_candidate"
+        else:
+            action = "inspect"
+            reason = "prompt_ready_for_inspection"
+        return {
+            "action": action,
+            "promptPath": str(prompt_path),
+            "reason": reason,
+        }
+
     @staticmethod
     def _existing_result_expectations(
         *,
@@ -1357,10 +1408,22 @@ class DaemonRunner:
         settle_seconds = self.daemon_config.watch.settle_seconds
         now = datetime.now(timezone.utc).timestamp()
         for path in sorted(self.daemon_config.prompt_path.iterdir(), key=lambda item: prompt_sort_key(item.name)):
-            if path in self.in_progress_snapshot():
-                continue
-            if not is_prompt_candidate(path, self.daemon_config.queue):
-                self._log(f"daemon queue scan: skipping non-candidate {path.name}")
+            in_progress = path in self.in_progress_snapshot()
+            prompt_candidate = is_prompt_candidate(path, self.daemon_config.queue)
+            queue_file_decision = self._project_typescript_queue_file_decision(
+                prompt_path=path,
+                in_progress=in_progress,
+                prompt_candidate=prompt_candidate,
+            )
+            if queue_file_decision is None:
+                if in_progress:
+                    continue
+                if not prompt_candidate:
+                    self._log(f"daemon queue scan: skipping non-candidate {path.name}")
+                    continue
+            elif queue_file_decision["action"] == "skip":
+                if queue_file_decision["reason"] == "not_prompt_candidate":
+                    self._log(f"daemon queue scan: skipping non-candidate {path.name}")
                 continue
             result_path = self._result_path_for_prompt(path)
             if result_path.exists():

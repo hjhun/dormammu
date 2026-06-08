@@ -52,6 +52,7 @@ import {
   daemonPromptLifecycleDecision,
   daemonPromptRouteDecision,
   daemonPromptSettleDecision,
+  daemonQueueFileDecision,
   daemonResultReportDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
@@ -69,6 +70,7 @@ import {
   type DaemonPromptLifecycleDecision,
   type DaemonPromptRouteDecision,
   type DaemonPromptSettleDecision,
+  type DaemonQueueFileDecision,
   type DaemonResultReportDecision,
   type DaemonRunFinishedDecision,
   type DaemonShutdownDecision,
@@ -388,6 +390,18 @@ export type DaemonPromptSettleEntrypointResultPayload =
     entrypoint: "daemon_prompt_settle_decision";
   };
 
+export type DaemonQueueFileEntrypointPayload = {
+  entrypoint: "daemon_queue_file_decision";
+  prompt_path: string;
+  in_progress: boolean;
+  prompt_candidate: boolean;
+};
+
+export type DaemonQueueFileEntrypointResultPayload =
+  DaemonQueueFileDecision & {
+    entrypoint: "daemon_queue_file_decision";
+  };
+
 export type DaemonLoopIterationEntrypointPayload = {
   entrypoint: "daemon_loop_iteration_decision";
   processed_count: number;
@@ -503,6 +517,7 @@ export type RunnerCliPayload =
   | DaemonPromptLifecycleEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
   | DaemonPromptSettleEntrypointPayload
+  | DaemonQueueFileEntrypointPayload
   | DaemonResultReportEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
   | DaemonShutdownEntrypointPayload
@@ -533,6 +548,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptLifecycleEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
   | DaemonPromptSettleEntrypointResultPayload
+  | DaemonQueueFileEntrypointResultPayload
   | DaemonResultReportEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
@@ -716,6 +732,19 @@ export function runDaemonPromptSettleEntrypoint(
       promptPath: parseRequiredString(payload.prompt_path, "prompt_path"),
       settleSeconds: parseNumber(payload.settle_seconds, "settle_seconds"),
       ageSeconds: parseNumber(payload.age_seconds, "age_seconds")
+    })
+  };
+}
+
+export function runDaemonQueueFileEntrypoint(
+  payload: DaemonQueueFileEntrypointPayload
+): DaemonQueueFileEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_queue_file_decision",
+    ...daemonQueueFileDecision({
+      promptPath: parseRequiredString(payload.prompt_path, "prompt_path"),
+      inProgress: parseBoolean(payload.in_progress, "in_progress"),
+      promptCandidate: parseBoolean(payload.prompt_candidate, "prompt_candidate")
     })
   };
 }

@@ -470,6 +470,48 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertEqual(settle_payload["settle_seconds"], 5)
             self.assertGreaterEqual(settle_payload["age_seconds"], 0)
 
+    def test_scan_prompt_queue_can_use_typescript_queue_file_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "notes.txt"
+            prompt_path.write_text("Not a markdown prompt\n", encoding="utf-8")
+
+            ready_prompt_paths, retry_after_seconds = DaemonRunner(
+                app_config,
+                daemon_config,
+            )._scan_prompt_queue()
+
+            self.assertEqual(ready_prompt_paths, [])
+            self.assertIsNone(retry_after_seconds)
+            queue_file_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_queue_file_decision"
+            )
+            self.assertEqual(
+                queue_file_payload,
+                {
+                    "entrypoint": "daemon_queue_file_decision",
+                    "prompt_path": str(prompt_path),
+                    "in_progress": False,
+                    "prompt_candidate": False,
+                },
+            )
+
     def test_run_pending_once_publishes_completed_result_only_after_prompt_removal(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1812,6 +1854,23 @@ class DaemonRunnerTests(unittest.TestCase):
                             if should_defer
                             else "fake_settle_window_elapsed"
                         ),
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_queue_file_decision":
+                    if payload["in_progress"]:
+                        action = "skip"
+                        reason = "prompt_in_progress"
+                    elif not payload["prompt_candidate"]:
+                        action = "skip"
+                        reason = "not_prompt_candidate"
+                    else:
+                        action = "inspect"
+                        reason = "prompt_ready_for_inspection"
+                    print(json.dumps({{
+                        "entrypoint": "daemon_queue_file_decision",
+                        "action": action,
+                        "promptPath": payload["prompt_path"],
+                        "reason": reason,
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_result_report_decision":

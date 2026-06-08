@@ -12,6 +12,7 @@ import {
   daemonPromptLifecycleDecision,
   daemonPromptRouteDecision,
   daemonPromptSettleDecision,
+  daemonQueueFileDecision,
   daemonResultReportDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
@@ -292,6 +293,51 @@ test("daemonPromptSettleDecision marks old prompts ready", () => {
       promptPath: "/repo/prompts/001-first.md",
       retryAfterSeconds: null,
       reason: "settle_window_elapsed"
+    }
+  );
+});
+
+test("daemonQueueFileDecision skips in-progress prompts first", () => {
+  assert.deepEqual(
+    daemonQueueFileDecision({
+      promptPath: "/repo/prompts/001-first.md",
+      inProgress: true,
+      promptCandidate: true
+    }),
+    {
+      action: "skip",
+      promptPath: "/repo/prompts/001-first.md",
+      reason: "prompt_in_progress"
+    }
+  );
+});
+
+test("daemonQueueFileDecision skips non-candidate files", () => {
+  assert.deepEqual(
+    daemonQueueFileDecision({
+      promptPath: "/repo/prompts/readme.txt",
+      inProgress: false,
+      promptCandidate: false
+    }),
+    {
+      action: "skip",
+      promptPath: "/repo/prompts/readme.txt",
+      reason: "not_prompt_candidate"
+    }
+  );
+});
+
+test("daemonQueueFileDecision inspects ready prompt candidates", () => {
+  assert.deepEqual(
+    daemonQueueFileDecision({
+      promptPath: "/repo/prompts/001-first.md",
+      inProgress: false,
+      promptCandidate: true
+    }),
+    {
+      action: "inspect",
+      promptPath: "/repo/prompts/001-first.md",
+      reason: "prompt_ready_for_inspection"
     }
   );
 });
