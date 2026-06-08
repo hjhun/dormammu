@@ -385,12 +385,21 @@ class GoalsScheduler:
 
         # Persist the agent's output as a role document.
         doc_dir = self._app_config.base_dev_dir / "logs"
-        doc_dir.mkdir(parents=True, exist_ok=True)
-        doc_path = doc_dir / f"{date_str}_{role}_{stem}.md"
-        doc_path.write_text(
-            f"# {role.capitalize()} — {stem}\n\n{output}",
-            encoding="utf-8",
+        projection = self._project_typescript_role_document(
+            logs_dir=doc_dir,
+            date_str=date_str,
+            role=role,
+            stem=stem,
+            output=output,
         )
+        if projection is not None:
+            doc_path = Path(projection["path"])
+            content = projection["content"]
+        else:
+            doc_path = doc_dir / f"{date_str}_{role}_{stem}.md"
+            content = f"# {role.capitalize()} — {stem}\n\n{output}"
+        doc_path.parent.mkdir(parents=True, exist_ok=True)
+        doc_path.write_text(content, encoding="utf-8")
         self._log(f"goals scheduler: [{role}] document written to {doc_path}")
         return output or None
 
@@ -488,6 +497,32 @@ class GoalsScheduler:
         content = result.get("content")
         if isinstance(filename, str) and isinstance(content, str):
             return {"filename": filename, "content": content}
+        return None
+
+    def _project_typescript_role_document(
+        self,
+        *,
+        logs_dir: Path,
+        date_str: str,
+        role: str,
+        stem: str,
+        output: str,
+    ) -> dict[str, str] | None:
+        payload = {
+            "entrypoint": "goals_role_document_projection",
+            "logs_dir": str(logs_dir),
+            "date_text": date_str,
+            "role": role,
+            "stem": stem,
+            "output": output,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        path = result.get("path")
+        content = result.get("content")
+        if isinstance(path, str) and isinstance(content, str):
+            return {"path": path, "content": content}
         return None
 
     def _run_typescript_runner_payload(

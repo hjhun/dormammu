@@ -76,6 +76,11 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                 json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
                 encoding="utf-8",
             )
+            with (Path({str(root)!r}) / "captured-runner-payloads.jsonl").open(
+                "a",
+                encoding="utf-8",
+            ) as handle:
+                handle.write(json.dumps(payload, ensure_ascii=True) + "\\n")
             if payload.get("entrypoint") == "goals_queue":
                 goals_path = Path(payload["goals_path"])
                 prompt_path = Path(payload["prompt_path"])
@@ -118,6 +123,23 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                     "content": (
                         f"<!-- dormammu:goal_source={{goal_file}} -->\\n\\n"
                         f"TS_PROJECTED\\n{{payload['generated_prompt']}}"
+                    ),
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
+            if payload.get("entrypoint") == "goals_role_document_projection":
+                logs_dir = Path(payload["logs_dir"])
+                filename = (
+                    f"{{payload['date_text']}}_"
+                    f"{{payload['role']}}_{{payload['stem']}}.md"
+                )
+                print(json.dumps({{
+                    "entrypoint": "goals_role_document_projection",
+                    "filename": filename,
+                    "path": str(logs_dir / filename),
+                    "content": (
+                        f"TS_ROLE_DOCUMENT\\n"
+                        f"# {{payload['role'].capitalize()}} — "
+                        f"{{payload['stem']}}\\n\\n{{payload['output']}}"
                     ),
                 }}, ensure_ascii=True))
                 raise SystemExit(0)
@@ -592,11 +614,23 @@ class TestGeneratePromptWithAgents:
         assert "goals scheduler: [planner] stdout:" in log_text
         assert "GOALS_TS_OUTPUT" in log_text
         captured = json.loads(
-            (tmp_path / "captured-runner-payload.json").read_text(encoding="utf-8")
+            (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
         )
         assert captured["event_stream"] is True
         assert captured["request"]["cli_path"] == "goals-agent"
         assert captured["request"]["prompt_text"] == "goals prompt"
+        document = app.base_dev_dir / "logs" / "20260412_planner_goal-stem.md"
+        assert "TS_ROLE_DOCUMENT" in document.read_text(encoding="utf-8")
+        captured_payloads = [
+            json.loads(line)
+            for line in (tmp_path / "captured-runner-payloads.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert captured_payloads[-1]["entrypoint"] == "goals_role_document_projection"
+        assert captured_payloads[-1]["output"] == "GOALS_TS_OUTPUT\n"
 
     def test_no_agents_returns_goal_only_prompt(self, tmp_path: Path) -> None:
         sched, _, _ = _make_scheduler(tmp_path, agents=None)

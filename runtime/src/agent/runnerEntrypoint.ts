@@ -45,6 +45,10 @@ import {
   projectQueuedGoalPrompt,
   type GoalQueueProjection
 } from "../goals/queue.js";
+import {
+  projectGoalsRoleDocument,
+  type GoalsRoleDocumentProjection
+} from "../goals/roleDocuments.js";
 import { stageResultToDict, type StageResult } from "../results.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
@@ -120,14 +124,30 @@ export type GoalsPromptProjectionEntrypointResultPayload = GoalQueueProjection &
   entrypoint: "goals_prompt_projection";
 };
 
+export type GoalsRoleDocumentProjectionEntrypointPayload = {
+  entrypoint: "goals_role_document_projection";
+  logs_dir: string;
+  date_text: string;
+  role: string;
+  stem: string;
+  output: string;
+};
+
+export type GoalsRoleDocumentProjectionEntrypointResultPayload =
+  GoalsRoleDocumentProjection & {
+    entrypoint: "goals_role_document_projection";
+  };
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
   | GoalsQueueEntrypointPayload
-  | GoalsPromptProjectionEntrypointPayload;
+  | GoalsPromptProjectionEntrypointPayload
+  | GoalsRoleDocumentProjectionEntrypointPayload;
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
-  | GoalsPromptProjectionEntrypointResultPayload;
+  | GoalsPromptProjectionEntrypointResultPayload
+  | GoalsRoleDocumentProjectionEntrypointResultPayload;
 
 export type AgentRunnerEntrypointOptions = Omit<
   RunConfiguredAgentCommandOptions,
@@ -202,6 +222,21 @@ export function runGoalsPromptProjectionEntrypoint(
       goalFilePath: parseRequiredString(payload.goal_file_path, "goal_file_path"),
       generatedPrompt: parseRequiredString(payload.generated_prompt, "generated_prompt"),
       dateText: parseRequiredString(payload.date_text, "date_text")
+    })
+  };
+}
+
+export function runGoalsRoleDocumentProjectionEntrypoint(
+  payload: GoalsRoleDocumentProjectionEntrypointPayload
+): GoalsRoleDocumentProjectionEntrypointResultPayload {
+  return {
+    entrypoint: "goals_role_document_projection",
+    ...projectGoalsRoleDocument({
+      logsDir: parseRequiredString(payload.logs_dir, "logs_dir"),
+      dateText: parseRequiredString(payload.date_text, "date_text"),
+      role: parseRequiredString(payload.role, "role"),
+      stem: parseRequiredString(payload.stem, "stem"),
+      output: parseString(payload.output, "output")
     })
   };
 }
@@ -387,6 +422,13 @@ function parsePipelineStagePayload(
 function parseRequiredString(value: unknown, fieldName: string): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${fieldName} must be a non-empty string`);
+  }
+  return value;
+}
+
+function parseString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`${fieldName} must be a string`);
   }
   return value;
 }

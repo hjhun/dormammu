@@ -8,7 +8,8 @@ import type { AgentRunResult } from "./runArtifacts.js";
 import {
   runAgentRunnerEntrypoint,
   runGoalsPromptProjectionEntrypoint,
-  runGoalsQueueEntrypoint
+  runGoalsQueueEntrypoint,
+  runGoalsRoleDocumentProjectionEntrypoint
 } from "./runnerEntrypoint.js";
 
 test("runAgentRunnerEntrypoint runs configured agent payloads and returns dicts", async () => {
@@ -353,6 +354,25 @@ test("runAgentRunnerEntrypoint validates request payloads", async () => {
       logs_dir: "/repo/.dev/logs"
     }),
     /Unsupported pipeline_stage.kind/
+  );
+});
+
+test("runGoalsRoleDocumentProjectionEntrypoint projects role documents", () => {
+  assert.deepEqual(
+    runGoalsRoleDocumentProjectionEntrypoint({
+      entrypoint: "goals_role_document_projection",
+      logs_dir: "/repo/.dev/logs",
+      date_text: "20260412",
+      role: "planner",
+      stem: "ship-it",
+      output: "Plan output"
+    }),
+    {
+      entrypoint: "goals_role_document_projection",
+      filename: "20260412_planner_ship-it.md",
+      path: "/repo/.dev/logs/20260412_planner_ship-it.md",
+      content: "# Planner \u2014 ship-it\n\nPlan output"
+    }
   );
 });
 
