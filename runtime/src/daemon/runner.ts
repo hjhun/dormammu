@@ -152,6 +152,22 @@ export type DaemonHeartbeatRemoveDecision = {
   reason: string;
 };
 
+export type DaemonWatcherBackend = "auto" | "inotify" | "polling";
+
+export type DaemonWatcherBackendDecisionAction = "error" | "use";
+
+export type DaemonWatcherBackendDecisionInput = {
+  requestedBackend: DaemonWatcherBackend;
+  inotifyAvailable: boolean;
+};
+
+export type DaemonWatcherBackendDecision = {
+  action: DaemonWatcherBackendDecisionAction;
+  backend: "inotify" | "polling" | null;
+  errorMessage: string | null;
+  reason: string;
+};
+
 export function daemonPendingDecision(
   input: DaemonPendingDecisionInput
 ): DaemonPendingDecision {
@@ -396,6 +412,52 @@ export function daemonHeartbeatRemoveDecision(
     action: "remove",
     removeHeartbeat: true,
     reason: "heartbeat_remove"
+  };
+}
+
+export function daemonWatcherBackendDecision(
+  input: DaemonWatcherBackendDecisionInput
+): DaemonWatcherBackendDecision {
+  if (input.requestedBackend === "polling") {
+    return {
+      action: "use",
+      backend: "polling",
+      errorMessage: null,
+      reason: "polling_requested"
+    };
+  }
+
+  if (input.requestedBackend === "inotify") {
+    if (!input.inotifyAvailable) {
+      return {
+        action: "error",
+        backend: null,
+        errorMessage: "Inotify backend is not available on this platform.",
+        reason: "inotify_unavailable"
+      };
+    }
+    return {
+      action: "use",
+      backend: "inotify",
+      errorMessage: null,
+      reason: "inotify_requested"
+    };
+  }
+
+  if (input.inotifyAvailable) {
+    return {
+      action: "use",
+      backend: "inotify",
+      errorMessage: null,
+      reason: "auto_prefers_inotify"
+    };
+  }
+
+  return {
+    action: "use",
+    backend: "polling",
+    errorMessage: null,
+    reason: "auto_falls_back_to_polling"
   };
 }
 

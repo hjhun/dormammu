@@ -243,6 +243,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon watcher backend selection decision helper, plus
+  runner entrypoint and Python `DaemonRunner.run_forever()` bridge consumption
+  for requested polling, requested inotify, auto-to-inotify, auto-to-polling,
+  and unavailable-inotify error decisions with Python fallback retained when
+  the bridge is unavailable or malformed
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -430,11 +439,12 @@ Port the remaining daemon and goals orchestration surface:
   startup/shutdown lifecycle decisions through the TypeScript runner bridge.
   TypeScript also owns daemon instance lock/unlock decisions for duplicate
   daemon rejection and PID lock cleanup intent, plus heartbeat write/remove
-  decisions for heartbeat payload and cleanup projection. Python fallbacks are
-  retained.
+  decisions for heartbeat payload and cleanup projection. TypeScript also owns
+  daemon watcher backend selection for polling, inotify, and auto fallback.
+  Python fallbacks are retained.
 - The next slice should continue the remaining daemon lifecycle and recovery
   surface after queue dispatch, prompt route selection, loop iteration, and
-  startup/shutdown/instance-lock/heartbeat handling, with priority on watcher
-  lifecycle hardening, prompt processing lifecycle projection, or other
-  deterministic daemon recovery contracts that can be exposed through
-  TypeScript without removing Python compatibility.
+  startup/shutdown/instance-lock/heartbeat/watcher-backend handling, with
+  priority on watcher wait event projection, prompt processing lifecycle
+  projection, or other deterministic daemon recovery contracts that can be
+  exposed through TypeScript without removing Python compatibility.

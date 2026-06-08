@@ -51,6 +51,7 @@ import {
   daemonPromptRouteDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
+  daemonWatcherBackendDecision,
   type DaemonHeartbeatRemoveDecision,
   type DaemonHeartbeatStatus,
   type DaemonHeartbeatWriteDecision,
@@ -60,7 +61,9 @@ import {
   type DaemonPendingDecision,
   type DaemonPromptRouteDecision,
   type DaemonShutdownDecision,
-  type DaemonStartupDecision
+  type DaemonStartupDecision,
+  type DaemonWatcherBackend,
+  type DaemonWatcherBackendDecision
 } from "../daemon/runner.js";
 import {
   projectQueuedGoalPrompt,
@@ -387,6 +390,17 @@ export type DaemonHeartbeatRemoveEntrypointResultPayload =
     entrypoint: "daemon_heartbeat_remove_decision";
   };
 
+export type DaemonWatcherBackendEntrypointPayload = {
+  entrypoint: "daemon_watcher_backend_decision";
+  requested_backend: DaemonWatcherBackend;
+  inotify_available: boolean;
+};
+
+export type DaemonWatcherBackendEntrypointResultPayload =
+  DaemonWatcherBackendDecision & {
+    entrypoint: "daemon_watcher_backend_decision";
+  };
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
   | DaemonHeartbeatRemoveEntrypointPayload
@@ -398,6 +412,7 @@ export type RunnerCliPayload =
   | DaemonPromptRouteEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupEntrypointPayload
+  | DaemonWatcherBackendEntrypointPayload
   | GoalsQueueEntrypointPayload
   | GoalsPromptProjectionEntrypointPayload
   | GoalsRoleDocumentProjectionEntrypointPayload
@@ -421,6 +436,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptRouteEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
+  | DaemonWatcherBackendEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
   | GoalsPromptProjectionEntrypointResultPayload
   | GoalsRoleDocumentProjectionEntrypointResultPayload
@@ -633,6 +649,21 @@ export function runDaemonHeartbeatRemoveEntrypoint(
       heartbeatPathConfigured: parseBoolean(
         payload.heartbeat_path_configured,
         "heartbeat_path_configured"
+      )
+    })
+  };
+}
+
+export function runDaemonWatcherBackendEntrypoint(
+  payload: DaemonWatcherBackendEntrypointPayload
+): DaemonWatcherBackendEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_watcher_backend_decision",
+    ...daemonWatcherBackendDecision({
+      requestedBackend: parseWatcherBackend(payload.requested_backend),
+      inotifyAvailable: parseBoolean(
+        payload.inotify_available,
+        "inotify_available"
       )
     })
   };
@@ -1019,6 +1050,13 @@ function parseRequestClass(value: unknown): RequestClass {
 function parseHeartbeatStatus(value: unknown): DaemonHeartbeatStatus {
   if (value !== "busy" && value !== "idle") {
     throw new Error("status must be busy or idle");
+  }
+  return value;
+}
+
+function parseWatcherBackend(value: unknown): DaemonWatcherBackend {
+  if (value !== "auto" && value !== "inotify" && value !== "polling") {
+    throw new Error("requested_backend must be auto, inotify, or polling");
   }
   return value;
 }

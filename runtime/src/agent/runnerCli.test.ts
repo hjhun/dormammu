@@ -630,6 +630,27 @@ test("dormammu-agent-runner can project daemon heartbeat remove decisions", () =
   });
 });
 
+test("dormammu-agent-runner can project daemon watcher backend decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_watcher_backend_decision",
+      requested_backend: "auto",
+      inotify_available: false
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_watcher_backend_decision",
+    action: "use",
+    backend: "polling",
+    errorMessage: null,
+    reason: "auto_falls_back_to_polling"
+  });
+});
+
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: "{",

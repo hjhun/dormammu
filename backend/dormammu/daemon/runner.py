@@ -49,7 +49,12 @@ from dormammu.daemon.models import DaemonConfig, DaemonPromptResult
 from dormammu.daemon.pipeline_runner import PipelineRunner
 from dormammu.daemon.queue import is_prompt_candidate, prompt_sort_key
 from dormammu.daemon.reports import ResultReportAuthor, render_result_markdown
-from dormammu.daemon.watchers import EFFECTIVE_POLL_INTERVAL_SECONDS, PromptWatcher, build_watcher
+from dormammu.daemon.watchers import (
+    EFFECTIVE_POLL_INTERVAL_SECONDS,
+    InotifyWatcher,
+    PromptWatcher,
+    build_watcher,
+)
 from dormammu.guidance import build_guidance_prompt
 from dormammu.artifacts import ArtifactWriter
 from dormammu.lifecycle import (
@@ -204,12 +209,25 @@ class DaemonRunner:
         self.daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
         self.daemon_config.result_path.mkdir(parents=True, exist_ok=True)
         with self._instance_lock():
-            watcher = self.watcher or build_watcher(
-                self.daemon_config.prompt_path,
-                self.daemon_config.watch,
-                event_logger=self._log,
-                stop_event=self._shutdown_requested,
-            )
+            if self.watcher is not None:
+                watcher = self.watcher
+            else:
+                watcher_decision = self._project_typescript_watcher_backend_decision()
+                if watcher_decision is None:
+                    watch_config = self.daemon_config.watch
+                elif watcher_decision["action"] == "error":
+                    raise RuntimeError(watcher_decision["error_message"])
+                else:
+                    watch_config = replace(
+                        self.daemon_config.watch,
+                        backend=watcher_decision["backend"],
+                    )
+                watcher = build_watcher(
+                    self.daemon_config.prompt_path,
+                    watch_config,
+                    event_logger=self._log,
+                    stop_event=self._shutdown_requested,
+                )
             self._active_watcher = watcher
             watcher.start()
             self._emit_startup_banner(watcher_backend=watcher.backend_name)
@@ -747,6 +765,66 @@ class DaemonRunner:
         return {
             "action": "remove",
             "removeHeartbeat": True,
+        }
+
+    def _project_typescript_watcher_backend_decision(self) -> dict[str, object] | None:
+        requested_backend = self.daemon_config.watch.backend
+        inotify_available = InotifyWatcher.is_available()
+        payload = {
+            "entrypoint": "daemon_watcher_backend_decision",
+            "requested_backend": requested_backend,
+            "inotify_available": inotify_available,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._watcher_backend_expectations(
+            requested_backend=requested_backend,
+            inotify_available=inotify_available,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "backend": expected["backend"],
+            "error_message": expected["errorMessage"],
+        }
+
+    def _watcher_backend_expectations(
+        self,
+        *,
+        requested_backend: str,
+        inotify_available: bool,
+    ) -> dict[str, object]:
+        if requested_backend == "polling":
+            return {
+                "action": "use",
+                "backend": "polling",
+                "errorMessage": None,
+            }
+        if requested_backend == "inotify":
+            if not inotify_available:
+                return {
+                    "action": "error",
+                    "backend": None,
+                    "errorMessage": "Inotify backend is not available on this platform.",
+                }
+            return {
+                "action": "use",
+                "backend": "inotify",
+                "errorMessage": None,
+            }
+        if inotify_available:
+            return {
+                "action": "use",
+                "backend": "inotify",
+                "errorMessage": None,
+            }
+        return {
+            "action": "use",
+            "backend": "polling",
+            "errorMessage": None,
         }
 
     def _loop_iteration_expectations(

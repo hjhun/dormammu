@@ -15,6 +15,7 @@ import {
   runDaemonPromptRouteEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
+  runDaemonWatcherBackendEntrypoint,
   runAgentRunnerEntrypoint,
   runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
@@ -550,6 +551,23 @@ test("runDaemonHeartbeatRemoveEntrypoint projects heartbeat removal", () => {
       action: "remove",
       removeHeartbeat: true,
       reason: "heartbeat_remove"
+    }
+  );
+});
+
+test("runDaemonWatcherBackendEntrypoint projects watcher backend selection", () => {
+  assert.deepEqual(
+    runDaemonWatcherBackendEntrypoint({
+      entrypoint: "daemon_watcher_backend_decision",
+      requested_backend: "auto",
+      inotify_available: false
+    }),
+    {
+      entrypoint: "daemon_watcher_backend_decision",
+      action: "use",
+      backend: "polling",
+      errorMessage: null,
+      reason: "auto_falls_back_to_polling"
     }
   );
 });

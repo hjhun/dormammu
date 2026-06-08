@@ -10,7 +10,8 @@ import {
   daemonPendingDecision,
   daemonPromptRouteDecision,
   daemonShutdownDecision,
-  daemonStartupDecision
+  daemonStartupDecision,
+  daemonWatcherBackendDecision
 } from "./runner.js";
 
 test("daemonPendingDecision processes the first ready prompt", () => {
@@ -323,6 +324,51 @@ test("daemonHeartbeatRemoveDecision removes configured heartbeat paths", () => {
       action: "remove",
       removeHeartbeat: true,
       reason: "heartbeat_remove"
+    }
+  );
+});
+
+test("daemonWatcherBackendDecision uses requested polling", () => {
+  assert.deepEqual(
+    daemonWatcherBackendDecision({
+      requestedBackend: "polling",
+      inotifyAvailable: true
+    }),
+    {
+      action: "use",
+      backend: "polling",
+      errorMessage: null,
+      reason: "polling_requested"
+    }
+  );
+});
+
+test("daemonWatcherBackendDecision maps auto to available inotify", () => {
+  assert.deepEqual(
+    daemonWatcherBackendDecision({
+      requestedBackend: "auto",
+      inotifyAvailable: true
+    }),
+    {
+      action: "use",
+      backend: "inotify",
+      errorMessage: null,
+      reason: "auto_prefers_inotify"
+    }
+  );
+});
+
+test("daemonWatcherBackendDecision rejects unavailable inotify", () => {
+  assert.deepEqual(
+    daemonWatcherBackendDecision({
+      requestedBackend: "inotify",
+      inotifyAvailable: false
+    }),
+    {
+      action: "error",
+      backend: null,
+      errorMessage: "Inotify backend is not available on this platform.",
+      reason: "inotify_unavailable"
     }
   );
 });

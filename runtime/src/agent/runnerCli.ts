@@ -13,6 +13,7 @@ import {
   runDaemonPromptRouteEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
+  runDaemonWatcherBackendEntrypoint,
   runAgentRunnerEntrypoint,
   runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
@@ -36,6 +37,7 @@ import {
   type DaemonPromptRouteEntrypointPayload,
   type DaemonShutdownEntrypointPayload,
   type DaemonStartupEntrypointPayload,
+  type DaemonWatcherBackendEntrypointPayload,
   type GoalsProcessDecisionEntrypointPayload,
   type GoalsPromptProjectionEntrypointPayload,
   type GoalsRoleDocumentProjectionEntrypointPayload,
@@ -124,6 +126,9 @@ async function runWithSignalHandlers(
   if (isDaemonHeartbeatRemovePayload(payload)) {
     return runDaemonHeartbeatRemoveEntrypoint(payload);
   }
+  if (isDaemonWatcherBackendPayload(payload)) {
+    return runDaemonWatcherBackendEntrypoint(payload);
+  }
   if (isDaemonInstanceLockPayload(payload)) {
     return runDaemonInstanceLockEntrypoint(payload);
   }
@@ -201,6 +206,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_prompt_route_decision" &&
       payload.entrypoint !== "daemon_shutdown_decision" &&
       payload.entrypoint !== "daemon_startup_decision" &&
+      payload.entrypoint !== "daemon_watcher_backend_decision" &&
       payload.entrypoint !== "goals_queue" &&
       payload.entrypoint !== "goals_prompt_projection" &&
       payload.entrypoint !== "goals_role_document_projection" &&
@@ -249,6 +255,15 @@ function isDaemonInstanceUnlockPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_instance_unlock_decision"
+  );
+}
+
+function isDaemonWatcherBackendPayload(
+  payload: RunnerCliPayload
+): payload is DaemonWatcherBackendEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_watcher_backend_decision"
   );
 }
 

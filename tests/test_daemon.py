@@ -862,6 +862,84 @@ class DaemonRunnerTests(unittest.TestCase):
                 },
             )
 
+    def test_run_forever_can_use_typescript_watcher_backend_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root, watch_backend="auto"),
+                app_config=app_config,
+            )
+            progress_stream = io.StringIO()
+            built_backends: list[str] = []
+
+            class RecordingWatcher:
+                def __init__(self, owner: DaemonRunner, backend_name: str) -> None:
+                    self._owner = owner
+                    self.backend_name = backend_name
+
+                def start(self) -> None:
+                    return None
+
+                def close(self) -> None:
+                    return None
+
+                def wait_for_changes(self) -> list[Path]:
+                    self._owner.request_shutdown()
+                    return []
+
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=progress_stream)
+
+            def fake_build_watcher(
+                _prompt_dir: Path,
+                watch_config: object,
+                **_kwargs: object,
+            ) -> RecordingWatcher:
+                backend_name = getattr(watch_config, "backend")
+                built_backends.append(backend_name)
+                return RecordingWatcher(runner, backend_name)
+
+            with (
+                mock.patch.object(
+                    daemon_runner_module.InotifyWatcher,
+                    "is_available",
+                    return_value=False,
+                ),
+                mock.patch.object(
+                    daemon_runner_module,
+                    "build_watcher",
+                    side_effect=fake_build_watcher,
+                ),
+                mock.patch.object(runner, "_write_heartbeat"),
+                mock.patch.object(runner, "_remove_heartbeat"),
+                mock.patch.object(runner, "run_pending_once", return_value=0),
+            ):
+                self.assertIsNone(runner.run_forever())
+
+            self.assertEqual(built_backends, ["polling"])
+            payloads = [
+                json.loads(line)
+                for line in (root / "captured-runner-payloads.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            watcher_payload = next(
+                payload
+                for payload in payloads
+                if payload["entrypoint"] == "daemon_watcher_backend_decision"
+            )
+            self.assertEqual(
+                watcher_payload,
+                {
+                    "entrypoint": "daemon_watcher_backend_decision",
+                    "requested_backend": "auto",
+                    "inotify_available": False,
+                },
+            )
+
     @unittest.skipUnless(daemon_runner_module._HAS_FCNTL, "fcntl is required")
     def test_instance_lock_can_use_typescript_conflict_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1531,6 +1609,41 @@ class DaemonRunnerTests(unittest.TestCase):
                         "removeHeartbeat": payload["heartbeat_path_configured"],
                         "reason": "fake_heartbeat_remove",
                     }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_watcher_backend_decision":
+                    requested = payload["requested_backend"]
+                    inotify_available = payload["inotify_available"]
+                    if requested == "polling":
+                        response = {{
+                            "entrypoint": "daemon_watcher_backend_decision",
+                            "action": "use",
+                            "backend": "polling",
+                            "errorMessage": None,
+                            "reason": "fake_polling_requested",
+                        }}
+                    elif requested == "inotify" and not inotify_available:
+                        response = {{
+                            "entrypoint": "daemon_watcher_backend_decision",
+                            "action": "error",
+                            "backend": None,
+                            "errorMessage": (
+                                "Inotify backend is not available on this platform."
+                            ),
+                            "reason": "fake_inotify_unavailable",
+                        }}
+                    else:
+                        response = {{
+                            "entrypoint": "daemon_watcher_backend_decision",
+                            "action": "use",
+                            "backend": (
+                                "inotify"
+                                if requested == "inotify" or inotify_available
+                                else "polling"
+                            ),
+                            "errorMessage": None,
+                            "reason": "fake_watcher_backend",
+                        }}
+                    print(json.dumps(response, ensure_ascii=True))
                     raise SystemExit(0)
                 raise SystemExit(2)
                 """
