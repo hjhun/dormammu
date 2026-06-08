@@ -207,6 +207,7 @@ test("runAgentRunnerEntrypoint can project pipeline stage results from stdout", 
       pipeline_stage: {
         kind: "tester",
         attempt: 2,
+        max_iterations: 4,
         report_path: path.join(logsDir, "tester-report.md")
       },
       request: {
@@ -265,6 +266,14 @@ test("runAgentRunnerEntrypoint can project pipeline stage results from stdout", 
     },
     timing: null,
     metadata: {}
+  });
+  assert.deepEqual(payload.loop_decision, {
+    action: "retry_developer",
+    sourceStage: "tester",
+    targetStage: "developer",
+    attempt: 2,
+    nextAttempt: 3,
+    reason: "Tester requested another developer pass."
   });
 });
 

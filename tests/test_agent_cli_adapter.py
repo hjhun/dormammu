@@ -730,6 +730,7 @@ class CliAdapterTests(unittest.TestCase):
                     pipeline_stage_kind="tester",
                     pipeline_stage_report_path=root / "tester-report.md",
                     pipeline_stage_attempt=2,
+                    pipeline_stage_max_iterations=4,
                 )
             )
 
@@ -799,6 +800,7 @@ class CliAdapterTests(unittest.TestCase):
                     "kind": "tester",
                     "report_path": str(root / "tester-report.md"),
                     "attempt": 2,
+                    "max_iterations": 4,
                     "artifacts": [],
                     "metadata": {},
                 },
@@ -813,6 +815,10 @@ class CliAdapterTests(unittest.TestCase):
             self.assertIsNotNone(result.stage_result.retry)
             assert result.stage_result.retry is not None
             self.assertEqual(result.stage_result.retry.attempt, 2)
+            self.assertEqual(
+                result.loop_decision,
+                {"action": "proceed"},
+            )
 
     def test_run_once_uses_typescript_events_for_started_callback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1115,6 +1121,9 @@ class CliAdapterTests(unittest.TestCase):
                         "timing": None,
                         "metadata": stage_payload.get("metadata", {{}}),
                     }}
+                    max_iterations = stage_payload.get("max_iterations")
+                    if max_iterations is not None:
+                        result["loop_decision"] = {{"action": "proceed"}}
                 if payload.get("event_stream"):
                     started = dict(result)
                     started.pop("exit_code")

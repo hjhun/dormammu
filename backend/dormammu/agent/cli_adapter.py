@@ -917,6 +917,7 @@ def _typescript_pipeline_stage_payload(
             else None
         ),
         "attempt": request.pipeline_stage_attempt,
+        "max_iterations": request.pipeline_stage_max_iterations,
         "artifacts": [],
         "metadata": {},
     }
@@ -967,6 +968,7 @@ def _agent_run_result_from_payload(payload: object) -> AgentRunResult:
         fallback_trigger=_optional_str_field(payload, "fallback_trigger"),
         timed_out=bool(payload.get("timed_out", False)),
         stage_result=_stage_result_from_payload(payload.get("stage_result")),
+        loop_decision=_loop_decision_from_payload(payload.get("loop_decision")),
     )
 
 
@@ -1022,6 +1024,22 @@ def _stage_result_from_payload(payload: object) -> StageResult | None:
         timing=_timing_metadata_from_payload(payload.get("timing")),
         metadata=metadata if isinstance(metadata, dict) else {},
     )
+
+
+def _loop_decision_from_payload(payload: object) -> dict[str, object] | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            "TypeScript agent runner result field 'loop_decision' must be an object"
+        )
+    action = payload.get("action")
+    if not isinstance(action, str) or not action:
+        raise RuntimeError(
+            "TypeScript agent runner result field 'loop_decision.action' "
+            "must be a non-empty string"
+        )
+    return dict(payload)
 
 
 def _retry_metadata_from_payload(payload: object) -> RetryMetadata | None:

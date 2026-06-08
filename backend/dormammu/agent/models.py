@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from dormammu.artifacts import ArtifactRef
 
@@ -105,6 +105,7 @@ class AgentRunRequest:
     pipeline_stage_kind: str | None = None
     pipeline_stage_report_path: Path | None = None
     pipeline_stage_attempt: int | None = None
+    pipeline_stage_max_iterations: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +212,7 @@ class AgentRunResult:
     fallback_trigger: str | None = None
     timed_out: bool = False
     stage_result: StageResult | None = None
+    loop_decision: Mapping[str, Any] | None = None
 
     @property
     def artifact_refs(self) -> tuple[ArtifactRef, ...]:
@@ -250,7 +252,7 @@ class AgentRunResult:
         )
 
     def to_dict(self, *, include_help_text: bool = False) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "run_id": self.run_id,
             "cli_path": str(self.cli_path),
             "requested_cli_path": (
@@ -276,3 +278,8 @@ class AgentRunResult:
             "artifact_refs": [artifact.to_dict() for artifact in self.artifact_refs],
             "capabilities": self.capabilities.to_dict(include_help_text=include_help_text),
         }
+        if self.stage_result is not None:
+            payload["stage_result"] = self.stage_result.to_dict()
+        if self.loop_decision is not None:
+            payload["loop_decision"] = dict(self.loop_decision)
+        return payload

@@ -30,7 +30,11 @@ import {
   buildPipelineRoleStageResult,
   type PipelineRoleStageKind
 } from "../pipeline/roleStages.js";
-import { stageResultToDict } from "../results.js";
+import {
+  pipelineRoleLoopDecision,
+  type PipelineRetryRole
+} from "../pipeline/roleLoops.js";
+import { stageResultToDict, type StageResult } from "../results.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
 const VALID_PIPELINE_STAGE_KINDS = new Set<string>([
@@ -45,6 +49,7 @@ export type PipelineStageEntrypointPayload = {
   kind: PipelineRoleStageKind;
   report_path?: string | null;
   attempt?: number | null;
+  max_iterations?: number | null;
   artifacts?: readonly unknown[] | null;
   metadata?: Readonly<Record<string, unknown>> | null;
 };
@@ -76,6 +81,7 @@ export type AgentRunnerEntrypointPayload = {
 export type AgentRunnerEntrypointResultPayload = AgentRunResultPayload & {
   runtime_skills?: RuntimeSkillResolution;
   stage_result?: Record<string, unknown>;
+  loop_decision?: Record<string, unknown>;
 };
 
 export type AgentRunnerEntrypointOptions = Omit<
@@ -112,7 +118,11 @@ export async function runAgentRunnerEntrypoint(
   }
   const stageResult = await resolveEntrypointStageResult(pipelineStage, result.stdoutPath);
   if (stageResult !== null) {
-    resultPayload.stage_result = stageResult;
+    resultPayload.stage_result = stageResultToDict(stageResult);
+    const loopDecision = resolveEntrypointLoopDecision(pipelineStage, stageResult);
+    if (loopDecision !== null) {
+      resultPayload.loop_decision = loopDecision;
+    }
   }
   return resultPayload;
 }
@@ -188,21 +198,44 @@ async function resolveEntrypointRuntimeSkills(
 async function resolveEntrypointStageResult(
   stagePayload: PipelineStageEntrypointPayload | null,
   stdoutPath: string
-): Promise<Record<string, unknown> | null> {
+): Promise<StageResult | null> {
   if (stagePayload === null) {
     return null;
   }
   const output = await readFile(stdoutPath, "utf8");
-  return stageResultToDict(
-    buildPipelineRoleStageResult({
-      kind: stagePayload.kind,
-      output,
-      reportPath: stagePayload.report_path ?? null,
-      artifacts: stagePayload.artifacts ?? [],
-      attempt: stagePayload.attempt ?? null,
-      metadata: stagePayload.metadata ?? {}
-    })
-  );
+  return buildPipelineRoleStageResult({
+    kind: stagePayload.kind,
+    output,
+    reportPath: stagePayload.report_path ?? null,
+    artifacts: stagePayload.artifacts ?? [],
+    attempt: stagePayload.attempt ?? null,
+    metadata: stagePayload.metadata ?? {}
+  });
+}
+
+function resolveEntrypointLoopDecision(
+  stagePayload: PipelineStageEntrypointPayload | null,
+  stage: StageResult
+): Record<string, unknown> | null {
+  if (
+    stagePayload === null ||
+    stagePayload.max_iterations === undefined ||
+    stagePayload.max_iterations === null ||
+    !isRetryRole(stagePayload.kind)
+  ) {
+    return null;
+  }
+  const attempt = stagePayload.attempt ?? 1;
+  return pipelineRoleLoopDecision({
+    role: stagePayload.kind,
+    stage,
+    iteration: Math.max(0, attempt - 1),
+    maxIterations: stagePayload.max_iterations
+  });
+}
+
+function isRetryRole(kind: PipelineRoleStageKind): kind is PipelineRetryRole {
+  return kind === "tester" || kind === "reviewer";
 }
 
 function parsePipelineStagePayload(
@@ -226,6 +259,13 @@ function parsePipelineStagePayload(
     (!Number.isInteger(payload.attempt) || payload.attempt < 0)
   ) {
     throw new Error("pipeline_stage.attempt must be a non-negative integer or null");
+  }
+  if (
+    payload.max_iterations !== undefined &&
+    payload.max_iterations !== null &&
+    (!Number.isInteger(payload.max_iterations) || payload.max_iterations <= 0)
+  ) {
+    throw new Error("pipeline_stage.max_iterations must be a positive integer or null");
   }
   if (
     payload.artifacts !== undefined &&

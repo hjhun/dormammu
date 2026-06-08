@@ -491,13 +491,25 @@ class TestTesterStage:
         ).with_overrides(agents=agents)
         runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
 
-        stage = runner._run_tester("goal", stem="typescript-stage", date_str="20260412")
+        stage = runner._run_tester(
+            "goal",
+            stem="typescript-stage",
+            date_str="20260412",
+            attempt=2,
+            max_iterations=4,
+        )
 
         assert stage is not None
         assert stage.status == ResultStatus.COMPLETED
         assert stage.verdict == ResultVerdict.PASS
         assert stage.output == "PIPELINE_TS_OUTPUT\n"
         assert stage.report_path == app.logs_dir / "20260412_tester_typescript-stage.md"
+        assert stage.metadata["typescript_loop_decision"] == {"action": "proceed"}
+        captured = json.loads(
+            (tmp_path / "captured-runner-payload.json").read_text(encoding="utf-8")
+        )
+        assert captured["pipeline_stage"]["attempt"] == 2
+        assert captured["pipeline_stage"]["max_iterations"] == 4
 
     def test_fail_verdict_on_overall_fail(self, tmp_path: Path) -> None:
         agents = AgentsConfig(tester=RoleAgentConfig(cli=Path("echo")))
@@ -603,7 +615,18 @@ class TestReviewerStage:
 
         captured: list[str] = []
 
-        def fake_call_once(*, role, cli, model, prompt, stem, date_str, doc_path=None, save_doc=True):
+        def fake_call_once(
+            *,
+            role,
+            cli,
+            model,
+            prompt,
+            stem,
+            date_str,
+            doc_path=None,
+            save_doc=True,
+            **_: Any,
+        ):
             captured.append(prompt)
             return "VERDICT: APPROVED"
 
@@ -922,6 +945,57 @@ class TestPipelineRun:
         finished_event = recorder.emit.call_args_list[-1].kwargs
         assert finished_event["event_type"].value == "run.finished"
         assert finished_event["payload"].supervisor_verdict == "pass"
+
+    def test_tester_uses_typescript_retry_decision_before_python_verdict(
+        self, tmp_path: Path
+    ) -> None:
+        agents = AgentsConfig(
+            developer=RoleAgentConfig(cli=Path("claude")),
+            tester=RoleAgentConfig(cli=Path("claude")),
+        )
+        app = _make_app_config(tmp_path, agents=agents)
+        runner = PipelineRunner(app, agents, progress_stream=io.StringIO())
+
+        tester_responses = [
+            StageResult(
+                role="tester",
+                verdict="pass",
+                output="OVERALL: PASS",
+                metadata={
+                    "typescript_loop_decision": {
+                        "action": "retry_developer",
+                        "sourceStage": "tester",
+                        "targetStage": "developer",
+                        "attempt": 1,
+                        "nextAttempt": 2,
+                        "reason": "Tester requested another developer pass.",
+                    }
+                },
+            ),
+            StageResult(
+                role="tester",
+                verdict="pass",
+                output="OVERALL: PASS",
+                metadata={"typescript_loop_decision": {"action": "proceed"}},
+            ),
+        ]
+
+        with (
+            patch.object(runner, "run_refine_and_plan"),
+            patch.object(
+                runner, "_run_developer", return_value=_make_loop_result("completed")
+            ) as mock_dev,
+            patch.object(
+                runner, "_run_tester", side_effect=tester_responses
+            ) as mock_tester,
+            patch.object(runner, "_run_reviewer", return_value=None),
+            patch.object(runner, "_run_committer", return_value=None),
+        ):
+            result = runner.run("goal", stem="s", date_str="20260412")
+
+        assert result.status == "completed"
+        assert mock_dev.call_count == 2
+        assert mock_tester.call_count == 2
 
     def test_reviewer_needs_work_triggers_developer_reentry(
         self, tmp_path: Path
@@ -1648,6 +1722,11 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                     "timing": None,
                     "metadata": stage_payload.get("metadata", {{}}),
                 }}
+                if stage_payload.get("max_iterations") is not None and stage_kind in (
+                    "tester",
+                    "reviewer",
+                ):
+                    result["loop_decision"] = {{"action": "proceed"}}
             metadata_path.write_text(
                 json.dumps(result, indent=2, ensure_ascii=True) + "\\n",
                 encoding="utf-8",
@@ -1707,6 +1786,7 @@ class TestDocumentWriting:
             "kind": "tester",
             "report_path": str(doc),
             "attempt": None,
+            "max_iterations": None,
             "artifacts": [],
             "metadata": {},
         }
