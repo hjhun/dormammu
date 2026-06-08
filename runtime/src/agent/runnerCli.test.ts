@@ -802,6 +802,36 @@ test("dormammu-agent-runner can project daemon startup decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon startup banner decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_startup_banner_decision",
+      repo_root: "/repo",
+      config_path: "/repo/daemonize.json",
+      prompt_path: "/repo/prompts",
+      result_path: "/repo/results",
+      watcher_backend: "polling",
+      requested_watcher_backend: "auto",
+      poll_interval_seconds: 30,
+      settle_seconds: 2,
+      ignore_hidden_files: true,
+      allowed_extensions: [".md"],
+      goals_path: "/repo/goals",
+      goals_interval_minutes: 10,
+      autonomous_enabled: false
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  const payload = JSON.parse(completed.stdout);
+  assert.equal(payload.entrypoint, "daemon_startup_banner_decision");
+  assert.equal(payload.allowedExtensionsDescription, ".md");
+  assert.equal(payload.lines.at(-2), "goals: /repo/goals (interval=10m, watching for .md files)");
+  assert.equal(payload.lines.at(-1), "autonomous: disabled");
+});
+
 test("dormammu-agent-runner can project daemon shutdown decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

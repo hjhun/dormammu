@@ -20,6 +20,7 @@ import {
   daemonRoadmapPhaseDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
+  daemonStartupBannerDecision,
   daemonStartupDecision,
   daemonTerminalErrorDecision,
   daemonTerminalStatusDecision,
@@ -610,6 +611,77 @@ test("daemonStartupDecision starts configured schedulers", () => {
       reason: "daemon_startup"
     }
   );
+});
+
+test("daemonStartupBannerDecision projects startup lines", () => {
+  assert.deepEqual(
+    daemonStartupBannerDecision({
+      repoRoot: "/repo",
+      configPath: "/repo/daemonize.json",
+      promptPath: "/repo/prompts",
+      resultPath: "/repo/results",
+      watcherBackend: "polling",
+      requestedWatcherBackend: "auto",
+      pollIntervalSeconds: 30,
+      settleSeconds: 2,
+      ignoreHiddenFiles: true,
+      allowedExtensions: [".md", ".txt"],
+      goalsPath: "/repo/goals",
+      goalsIntervalMinutes: 10,
+      autonomousEnabled: true,
+      autonomousIntervalMinutes: 60,
+      autonomousFocus: "tests",
+      autonomousMaxQueuedTasks: 2
+    }),
+    {
+      allowedExtensionsDescription: ".md,.txt",
+      lines: [
+        "=== dormammu daemonize ===",
+        "repo root: /repo",
+        "daemon config: /repo/daemonize.json",
+        "prompt path: /repo/prompts",
+        "result path: /repo/results",
+        "watcher: polling (requested=auto, poll_interval=30s, settle=2s)",
+        [
+          "prompt detection: hidden_files=ignore, extensions=.md,.txt, ",
+          "replace_completed_result_on_requeued_prompt=yes, ",
+          "order=numeric-prefix -> alpha-prefix -> remaining-name"
+        ].join(""),
+        [
+          "prompt lifecycle: each accepted prompt reuses the dormammu run loop ",
+          "and writes its result only after the loop reaches a terminal outcome"
+        ].join(""),
+        "goals: /repo/goals (interval=10m, watching for .md files)",
+        "autonomous: enabled (interval=60m, focus=tests, max_queued=2)"
+      ],
+      reason: "startup_banner_projected"
+    }
+  );
+});
+
+test("daemonStartupBannerDecision projects disabled optional services", () => {
+  const decision = daemonStartupBannerDecision({
+    repoRoot: "/repo",
+    configPath: "/repo/daemonize.json",
+    promptPath: "/repo/prompts",
+    resultPath: "/repo/results",
+    watcherBackend: "inotify",
+    requestedWatcherBackend: "inotify",
+    pollIntervalSeconds: 60,
+    settleSeconds: 3,
+    ignoreHiddenFiles: false,
+    allowedExtensions: [],
+    goalsPath: null,
+    goalsIntervalMinutes: null,
+    autonomousEnabled: false,
+    autonomousIntervalMinutes: null,
+    autonomousFocus: null,
+    autonomousMaxQueuedTasks: null
+  });
+
+  assert.equal(decision.allowedExtensionsDescription, "any");
+  assert.equal(decision.lines.at(-2), "goals: disabled");
+  assert.equal(decision.lines.at(-1), "autonomous: disabled");
 });
 
 test("daemonShutdownDecision projects cleanup actions", () => {

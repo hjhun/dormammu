@@ -1198,6 +1198,58 @@ class DaemonRunner:
             "trigger_autonomous_scheduler": expected["triggerAutonomousScheduler"],
         }
 
+    def _project_typescript_startup_banner_decision(
+        self,
+        *,
+        watcher_backend: str,
+    ) -> list[str] | None:
+        goals = self.daemon_config.goals
+        autonomous = self.daemon_config.autonomous
+        payload = {
+            "entrypoint": "daemon_startup_banner_decision",
+            "repo_root": str(self.app_config.repo_root.resolve()),
+            "config_path": str(self.daemon_config.config_path),
+            "prompt_path": str(self.daemon_config.prompt_path),
+            "result_path": str(self.daemon_config.result_path),
+            "watcher_backend": watcher_backend,
+            "requested_watcher_backend": self.daemon_config.watch.backend,
+            "poll_interval_seconds": self._watcher_poll_interval_seconds(
+                watcher_backend
+            ),
+            "settle_seconds": self.daemon_config.watch.settle_seconds,
+            "ignore_hidden_files": self.daemon_config.queue.ignore_hidden_files,
+            "allowed_extensions": list(self.daemon_config.queue.allowed_extensions),
+            "goals_path": str(goals.path) if goals is not None else None,
+            "goals_interval_minutes": (
+                goals.interval_minutes if goals is not None else None
+            ),
+            "autonomous_enabled": (
+                autonomous is not None and autonomous.enabled
+            ),
+            "autonomous_interval_minutes": (
+                autonomous.interval_minutes if autonomous is not None else None
+            ),
+            "autonomous_focus": autonomous.focus if autonomous is not None else None,
+            "autonomous_max_queued_tasks": (
+                autonomous.max_queued_tasks if autonomous is not None else None
+            ),
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._startup_banner_expectations(
+            watcher_backend=watcher_backend,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        lines = expected["lines"]
+        if not isinstance(lines, list) or not all(
+            isinstance(line, str) for line in lines
+        ):
+            return None
+        return list(lines)
+
     def _startup_expectations(self) -> dict[str, object]:
         has_goals = self._goals_scheduler is not None
         has_autonomous = self._autonomous_scheduler is not None
@@ -1787,6 +1839,23 @@ class DaemonRunner:
         self.progress_stream.flush()
 
     def _startup_banner_lines(self, *, watcher_backend: str) -> list[str]:
+        startup_banner_decision = self._project_typescript_startup_banner_decision(
+            watcher_backend=watcher_backend,
+        )
+        if startup_banner_decision is not None:
+            return startup_banner_decision
+        return list(
+            self._startup_banner_expectations(watcher_backend=watcher_backend)[
+                "lines"
+            ]
+        )
+
+    def _startup_banner_expectations(
+        self,
+        *,
+        watcher_backend: str,
+    ) -> dict[str, object]:
+        allowed_extensions_description = self._describe_allowed_extensions()
         lines: list[str] = [
             "=== dormammu daemonize ===",
             f"repo root: {self.app_config.repo_root.resolve()}",
@@ -1802,7 +1871,7 @@ class DaemonRunner:
             (
                 "prompt detection: "
                 f"hidden_files={'ignore' if self.daemon_config.queue.ignore_hidden_files else 'include'}, "
-                f"extensions={self._describe_allowed_extensions()}, "
+                f"extensions={allowed_extensions_description}, "
                 "replace_completed_result_on_requeued_prompt=yes, "
                 "order=numeric-prefix -> alpha-prefix -> remaining-name"
             ),
@@ -1829,7 +1898,11 @@ class DaemonRunner:
             )
         else:
             lines.append("autonomous: disabled")
-        return lines
+        return {
+            "allowedExtensionsDescription": allowed_extensions_description,
+            "lines": lines,
+            "reason": "startup_banner_projected",
+        }
 
     def _watcher_poll_interval_seconds(self, watcher_backend: str) -> int:
         if watcher_backend == "polling":

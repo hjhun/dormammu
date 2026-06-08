@@ -60,6 +60,7 @@ import {
   daemonRoadmapPhaseDecision,
   daemonRunFinishedDecision,
   daemonShutdownDecision,
+  daemonStartupBannerDecision,
   daemonStartupDecision,
   daemonTerminalErrorDecision,
   daemonTerminalStatusDecision,
@@ -84,6 +85,7 @@ import {
   type DaemonRoadmapPhaseDecision,
   type DaemonRunFinishedDecision,
   type DaemonShutdownDecision,
+  type DaemonStartupBannerDecision,
   type DaemonStartupDecision,
   type DaemonTerminalErrorDecision,
   type DaemonTerminalStatusDecision,
@@ -506,6 +508,31 @@ export type DaemonStartupEntrypointResultPayload = DaemonStartupDecision & {
   entrypoint: "daemon_startup_decision";
 };
 
+export type DaemonStartupBannerEntrypointPayload = {
+  entrypoint: "daemon_startup_banner_decision";
+  repo_root: string;
+  config_path: string;
+  prompt_path: string;
+  result_path: string;
+  watcher_backend: string;
+  requested_watcher_backend: string;
+  poll_interval_seconds: number;
+  settle_seconds: number;
+  ignore_hidden_files: boolean;
+  allowed_extensions?: readonly unknown[] | null;
+  goals_path?: string | null;
+  goals_interval_minutes?: number | null;
+  autonomous_enabled: boolean;
+  autonomous_interval_minutes?: number | null;
+  autonomous_focus?: string | null;
+  autonomous_max_queued_tasks?: number | null;
+};
+
+export type DaemonStartupBannerEntrypointResultPayload =
+  DaemonStartupBannerDecision & {
+    entrypoint: "daemon_startup_banner_decision";
+  };
+
 export type DaemonShutdownEntrypointPayload = {
   entrypoint: "daemon_shutdown_decision";
   goals_scheduler_configured: boolean;
@@ -607,6 +634,7 @@ export type RunnerCliPayload =
   | DaemonRoadmapPhaseEntrypointPayload
   | DaemonRunFinishedEntrypointPayload
   | DaemonShutdownEntrypointPayload
+  | DaemonStartupBannerEntrypointPayload
   | DaemonStartupEntrypointPayload
   | DaemonTerminalErrorEntrypointPayload
   | DaemonTerminalStatusEntrypointPayload
@@ -644,6 +672,7 @@ export type RunnerCliResultPayload =
   | DaemonRoadmapPhaseEntrypointResultPayload
   | DaemonRunFinishedEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
+  | DaemonStartupBannerEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
   | DaemonTerminalErrorEntrypointResultPayload
   | DaemonTerminalStatusEntrypointResultPayload
@@ -971,6 +1000,66 @@ export function runDaemonStartupEntrypoint(
         payload.autonomous_scheduler_configured,
         "autonomous_scheduler_configured"
       )
+    })
+  };
+}
+
+export function runDaemonStartupBannerEntrypoint(
+  payload: DaemonStartupBannerEntrypointPayload
+): DaemonStartupBannerEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_startup_banner_decision",
+    ...daemonStartupBannerDecision({
+      repoRoot: parseRequiredString(payload.repo_root, "repo_root"),
+      configPath: parseRequiredString(payload.config_path, "config_path"),
+      promptPath: parseRequiredString(payload.prompt_path, "prompt_path"),
+      resultPath: parseRequiredString(payload.result_path, "result_path"),
+      watcherBackend: parseRequiredString(
+        payload.watcher_backend,
+        "watcher_backend"
+      ),
+      requestedWatcherBackend: parseRequiredString(
+        payload.requested_watcher_backend,
+        "requested_watcher_backend"
+      ),
+      pollIntervalSeconds: parseNumber(
+        payload.poll_interval_seconds,
+        "poll_interval_seconds"
+      ),
+      settleSeconds: parseNumber(
+        payload.settle_seconds,
+        "settle_seconds"
+      ),
+      ignoreHiddenFiles: parseBoolean(
+        payload.ignore_hidden_files,
+        "ignore_hidden_files"
+      ),
+      allowedExtensions: Array.isArray(payload.allowed_extensions)
+        ? payload.allowed_extensions.filter(
+            (item): item is string => typeof item === "string"
+          )
+        : [],
+      goalsPath: parseOptionalString(payload.goals_path, "goals_path") ?? null,
+      goalsIntervalMinutes: parseOptionalNumber(
+        payload.goals_interval_minutes,
+        "goals_interval_minutes"
+      ) ?? null,
+      autonomousEnabled: parseBoolean(
+        payload.autonomous_enabled,
+        "autonomous_enabled"
+      ),
+      autonomousIntervalMinutes: parseOptionalNumber(
+        payload.autonomous_interval_minutes,
+        "autonomous_interval_minutes"
+      ) ?? null,
+      autonomousFocus: parseOptionalString(
+        payload.autonomous_focus,
+        "autonomous_focus"
+      ) ?? null,
+      autonomousMaxQueuedTasks: parseOptionalNumber(
+        payload.autonomous_max_queued_tasks,
+        "autonomous_max_queued_tasks"
+      ) ?? null
     })
   };
 }

@@ -24,6 +24,7 @@ import {
   runDaemonRoadmapPhaseEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
+  runDaemonStartupBannerEntrypoint,
   runDaemonStartupEntrypoint,
   runDaemonTerminalErrorEntrypoint,
   runDaemonTerminalStatusEntrypoint,
@@ -709,6 +710,31 @@ test("runDaemonStartupEntrypoint projects daemon startup decisions", () => {
       triggerAutonomousScheduler: false,
       reason: "daemon_startup"
     }
+  );
+});
+
+test("runDaemonStartupBannerEntrypoint projects startup banner decisions", () => {
+  assert.deepEqual(
+    runDaemonStartupBannerEntrypoint({
+      entrypoint: "daemon_startup_banner_decision",
+      repo_root: "/repo",
+      config_path: "/repo/daemonize.json",
+      prompt_path: "/repo/prompts",
+      result_path: "/repo/results",
+      watcher_backend: "polling",
+      requested_watcher_backend: "polling",
+      poll_interval_seconds: 15,
+      settle_seconds: 4,
+      ignore_hidden_files: false,
+      allowed_extensions: [".md"],
+      goals_path: null,
+      goals_interval_minutes: null,
+      autonomous_enabled: false,
+      autonomous_interval_minutes: null,
+      autonomous_focus: null,
+      autonomous_max_queued_tasks: null
+    }).lines.at(-2),
+    "goals: disabled"
   );
 });
 

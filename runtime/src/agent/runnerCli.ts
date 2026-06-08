@@ -22,6 +22,7 @@ import {
   runDaemonRoadmapPhaseEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonShutdownEntrypoint,
+  runDaemonStartupBannerEntrypoint,
   runDaemonStartupEntrypoint,
   runDaemonTerminalErrorEntrypoint,
   runDaemonTerminalStatusEntrypoint,
@@ -59,6 +60,7 @@ import {
   type DaemonRoadmapPhaseEntrypointPayload,
   type DaemonRunFinishedEntrypointPayload,
   type DaemonShutdownEntrypointPayload,
+  type DaemonStartupBannerEntrypointPayload,
   type DaemonStartupEntrypointPayload,
   type DaemonTerminalErrorEntrypointPayload,
   type DaemonTerminalStatusEntrypointPayload,
@@ -206,6 +208,9 @@ async function runWithSignalHandlers(
   if (isDaemonRunFinishedPayload(payload)) {
     return runDaemonRunFinishedEntrypoint(payload);
   }
+  if (isDaemonStartupBannerPayload(payload)) {
+    return runDaemonStartupBannerEntrypoint(payload);
+  }
   if (isDaemonTerminalErrorPayload(payload)) {
     return runDaemonTerminalErrorEntrypoint(payload);
   }
@@ -280,6 +285,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_roadmap_phase_decision" &&
       payload.entrypoint !== "daemon_run_finished_decision" &&
       payload.entrypoint !== "daemon_shutdown_decision" &&
+      payload.entrypoint !== "daemon_startup_banner_decision" &&
       payload.entrypoint !== "daemon_startup_decision" &&
       payload.entrypoint !== "daemon_terminal_error_decision" &&
       payload.entrypoint !== "daemon_terminal_status_decision" &&
@@ -438,6 +444,15 @@ function isDaemonRoadmapPhasePayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_roadmap_phase_decision"
+  );
+}
+
+function isDaemonStartupBannerPayload(
+  payload: RunnerCliPayload
+): payload is DaemonStartupBannerEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_startup_banner_decision"
   );
 }
 

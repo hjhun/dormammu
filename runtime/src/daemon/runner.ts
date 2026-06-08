@@ -264,6 +264,31 @@ export type DaemonStartupDecision = {
   reason: string;
 };
 
+export type DaemonStartupBannerDecisionInput = {
+  repoRoot: string;
+  configPath: string;
+  promptPath: string;
+  resultPath: string;
+  watcherBackend: string;
+  requestedWatcherBackend: string;
+  pollIntervalSeconds: number;
+  settleSeconds: number;
+  ignoreHiddenFiles: boolean;
+  allowedExtensions: readonly string[];
+  goalsPath: string | null;
+  goalsIntervalMinutes: number | null;
+  autonomousEnabled: boolean;
+  autonomousIntervalMinutes: number | null;
+  autonomousFocus: string | null;
+  autonomousMaxQueuedTasks: number | null;
+};
+
+export type DaemonStartupBannerDecision = {
+  allowedExtensionsDescription: string;
+  lines: string[];
+  reason: string;
+};
+
 export type DaemonShutdownDecisionInput = {
   goalsSchedulerConfigured: boolean;
   autonomousSchedulerConfigured: boolean;
@@ -787,6 +812,70 @@ export function daemonStartupDecision(
     startAutonomousScheduler: input.autonomousSchedulerConfigured,
     triggerAutonomousScheduler: input.autonomousSchedulerConfigured,
     reason: "daemon_startup"
+  };
+}
+
+export function daemonStartupBannerDecision(
+  input: DaemonStartupBannerDecisionInput
+): DaemonStartupBannerDecision {
+  const allowedExtensionsDescription =
+    input.allowedExtensions.length === 0
+      ? "any"
+      : input.allowedExtensions.join(",");
+  const lines = [
+    "=== dormammu daemonize ===",
+    `repo root: ${input.repoRoot}`,
+    `daemon config: ${input.configPath}`,
+    `prompt path: ${input.promptPath}`,
+    `result path: ${input.resultPath}`,
+    [
+      "watcher: ",
+      `${input.watcherBackend} (requested=${input.requestedWatcherBackend}, `,
+      `poll_interval=${input.pollIntervalSeconds}s, `,
+      `settle=${input.settleSeconds}s)`
+    ].join(""),
+    [
+      "prompt detection: ",
+      `hidden_files=${input.ignoreHiddenFiles ? "ignore" : "include"}, `,
+      `extensions=${allowedExtensionsDescription}, `,
+      "replace_completed_result_on_requeued_prompt=yes, ",
+      "order=numeric-prefix -> alpha-prefix -> remaining-name"
+    ].join(""),
+    [
+      "prompt lifecycle: each accepted prompt reuses the dormammu run loop ",
+      "and writes its result only after the loop reaches a terminal outcome"
+    ].join("")
+  ];
+
+  if (nonEmpty(input.goalsPath) !== null) {
+    lines.push(
+      [
+        `goals: ${input.goalsPath} `,
+        `(interval=${input.goalsIntervalMinutes ?? 0}m, `,
+        "watching for .md files)"
+      ].join("")
+    );
+  } else {
+    lines.push("goals: disabled");
+  }
+
+  if (input.autonomousEnabled) {
+    lines.push(
+      [
+        "autonomous: enabled ",
+        `(interval=${input.autonomousIntervalMinutes ?? 0}m, `,
+        `focus=${nonEmpty(input.autonomousFocus) ?? ""}, `,
+        `max_queued=${input.autonomousMaxQueuedTasks ?? 0})`
+      ].join("")
+    );
+  } else {
+    lines.push("autonomous: disabled");
+  }
+
+  return {
+    allowedExtensionsDescription,
+    lines,
+    reason: "startup_banner_projected"
   };
 }
 

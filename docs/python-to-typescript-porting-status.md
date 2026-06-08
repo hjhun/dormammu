@@ -223,6 +223,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon startup banner decision helper, plus runner
+  entrypoint and Python `DaemonRunner._startup_banner_lines()` bridge
+  consumption for startup banner lines and allowed-extension description
+  projection while Python retains config object access, watcher IO, progress
+  stream output, and malformed-bridge fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon instance lock and unlock decision helpers, plus
   runner entrypoints and Python `DaemonRunner._instance_lock()` bridge
   consumption for fcntl-unavailable skip, acquired-lock PID-file write,
@@ -552,6 +561,8 @@ Port the remaining daemon and goals orchestration surface:
   decisions, watcher lifecycle decisions, daemon pending queue decisions,
   daemon prompt route decisions, daemon loop iteration decisions, and daemon
   startup/shutdown lifecycle decisions through the TypeScript runner bridge.
+  TypeScript also owns daemon startup banner projection for operator-visible
+  startup text and allowed-extension descriptions.
   TypeScript also owns daemon instance lock/unlock decisions for duplicate
   daemon rejection and PID lock cleanup intent, plus heartbeat write/remove
   decisions for heartbeat payload and cleanup projection. TypeScript also owns

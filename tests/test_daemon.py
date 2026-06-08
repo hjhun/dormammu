@@ -1352,6 +1352,61 @@ class DaemonRunnerTests(unittest.TestCase):
                 "Watcher readiness must be established before the daemon advertises watcher startup.",
             )
 
+    def test_startup_banner_lines_can_use_typescript_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            runner = DaemonRunner(app_config, daemon_config)
+
+            projected = runner._project_typescript_startup_banner_decision(
+                watcher_backend="polling"
+            )
+            lines = runner._startup_banner_lines(watcher_backend="polling")
+
+            self.assertIsNotNone(projected)
+            self.assertEqual(projected, lines)
+            self.assertIn("extensions=.md", "\n".join(lines))
+            self.assertEqual(lines[-2:], ["goals: disabled", "autonomous: disabled"])
+            payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_startup_banner_decision"
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_startup_banner_decision",
+                    "repo_root": str(app_config.repo_root.resolve()),
+                    "config_path": str(daemon_config.config_path),
+                    "prompt_path": str(daemon_config.prompt_path),
+                    "result_path": str(daemon_config.result_path),
+                    "watcher_backend": "polling",
+                    "requested_watcher_backend": "polling",
+                    "poll_interval_seconds": 1,
+                    "settle_seconds": 0,
+                    "ignore_hidden_files": True,
+                    "allowed_extensions": [".md"],
+                    "goals_path": None,
+                    "goals_interval_minutes": None,
+                    "autonomous_enabled": False,
+                    "autonomous_interval_minutes": None,
+                    "autonomous_focus": None,
+                    "autonomous_max_queued_tasks": None,
+                },
+            )
+
     def test_run_forever_can_use_typescript_loop_iteration_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2523,6 +2578,77 @@ class DaemonRunnerTests(unittest.TestCase):
                             payload["autonomous_scheduler_configured"]
                         ),
                         "reason": "fake_daemon_startup",
+                    }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_startup_banner_decision":
+                    allowed_extensions = payload.get("allowed_extensions") or []
+                    extension_text = (
+                        ",".join(allowed_extensions)
+                        if allowed_extensions
+                        else "any"
+                    )
+                    lines = [
+                        "=== dormammu daemonize ===",
+                        "repo root: " + payload["repo_root"],
+                        "daemon config: " + payload["config_path"],
+                        "prompt path: " + payload["prompt_path"],
+                        "result path: " + payload["result_path"],
+                        (
+                            "watcher: "
+                            + payload["watcher_backend"]
+                            + " (requested="
+                            + payload["requested_watcher_backend"]
+                            + ", poll_interval="
+                            + str(payload["poll_interval_seconds"])
+                            + "s, settle="
+                            + str(payload["settle_seconds"])
+                            + "s)"
+                        ),
+                        (
+                            "prompt detection: hidden_files="
+                            + (
+                                "ignore"
+                                if payload["ignore_hidden_files"]
+                                else "include"
+                            )
+                            + ", extensions="
+                            + extension_text
+                            + ", replace_completed_result_on_requeued_prompt=yes, "
+                            + "order=numeric-prefix -> alpha-prefix -> remaining-name"
+                        ),
+                        (
+                            "prompt lifecycle: each accepted prompt reuses the "
+                            "dormammu run loop and writes its result only after "
+                            "the loop reaches a terminal outcome"
+                        ),
+                    ]
+                    if payload.get("goals_path"):
+                        lines.append(
+                            "goals: "
+                            + payload["goals_path"]
+                            + " (interval="
+                            + str(payload.get("goals_interval_minutes"))
+                            + "m, watching for .md files)"
+                        )
+                    else:
+                        lines.append("goals: disabled")
+                    if payload["autonomous_enabled"]:
+                        lines.append(
+                            "autonomous: enabled (interval="
+                            + str(payload.get("autonomous_interval_minutes"))
+                            + "m, focus="
+                            + str(payload.get("autonomous_focus"))
+                            + ", max_queued="
+                            + str(payload.get("autonomous_max_queued_tasks"))
+                            + ")"
+                        )
+                    else:
+                        lines.append("autonomous: disabled")
+                    print(json.dumps({{
+                        "entrypoint": "daemon_startup_banner_decision",
+                        "allowedExtensionsDescription": extension_text,
+                        "lines": lines,
+                        "reason": "startup_banner_projected",
                     }}, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_shutdown_decision":
