@@ -23,6 +23,7 @@ import {
   runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptPathEntrypoint,
   runDaemonPromptProcessingMetadataEntrypoint,
+  runDaemonRequestClassEntrypoint,
   runDaemonPromptRouteEntrypoint,
   runDaemonPromptSessionEntrypoint,
   runDaemonPromptSettleEntrypoint,
@@ -496,6 +497,28 @@ test("runDaemonPromptSessionEntrypoint projects session start inputs", () => {
       goal: "Phase 7 hardening",
       activeRoadmapPhaseIds: ["phase_7"],
       reason: "daemon_prompt_session_projected"
+    }
+  );
+});
+
+test("runDaemonRequestClassEntrypoint projects request classes", () => {
+  assert.deepEqual(
+    runDaemonRequestClassEntrypoint({
+      entrypoint: "daemon_request_class_decision",
+      prompt_text: "implement the API contract",
+      workflow_state: {
+        intake: {
+          request_class: "direct_response",
+          confidence: 0.4
+        }
+      }
+    }),
+    {
+      entrypoint: "daemon_request_class_decision",
+      requestClass: "full_workflow",
+      confidence: 0.4,
+      source: "workflow_state",
+      reason: "workflow_state_direct_response_low_confidence_promoted"
     }
   );
 });

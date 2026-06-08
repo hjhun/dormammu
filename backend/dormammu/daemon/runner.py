@@ -1671,6 +1671,35 @@ class DaemonRunner:
             "reason": reason if isinstance(reason, str) and reason else "typescript",
         }
 
+    def _project_typescript_request_class_decision(
+        self,
+        *,
+        prompt_text: str,
+        workflow_state: Mapping[str, object] | None,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_request_class_decision",
+            "prompt_text": prompt_text,
+            "workflow_state": (
+                dict(workflow_state) if workflow_state is not None else None
+            ),
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected_request_class = resolve_request_class(
+            prompt_text,
+            workflow_state=workflow_state,
+        )
+        request_class = result.get("requestClass")
+        if request_class != expected_request_class:
+            return None
+        reason = result.get("reason")
+        return {
+            "request_class": request_class,
+            "reason": reason if isinstance(reason, str) and reason else "typescript",
+        }
+
     def _project_typescript_loop_iteration_decision(
         self,
         *,
@@ -2944,10 +2973,18 @@ class DaemonRunner:
             runtime_paths_text=scoped_config.runtime_path_prompt(),
         )
         goal_file_path = self._extract_goal_file_path(prompt_text)
-        request_class = resolve_request_class(
-            prompt_text,
-            workflow_state=session_repository.read_workflow_state(),
+        workflow_state = session_repository.read_workflow_state()
+        request_class_decision = self._project_typescript_request_class_decision(
+            prompt_text=prompt_text,
+            workflow_state=workflow_state,
         )
+        if request_class_decision is None:
+            request_class = resolve_request_class(
+                prompt_text,
+                workflow_state=workflow_state,
+            )
+        else:
+            request_class = str(request_class_decision["request_class"])
         has_goal_file = goal_file_path is not None
         route_decision = self._project_typescript_prompt_route_decision(
             has_agents_config=scoped_config.agents is not None,

@@ -463,6 +463,27 @@ test("dormammu-agent-runner can project daemon prompt route decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon request classes", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_request_class_decision",
+      prompt_text: "DORMAMMU_REQUEST_CLASS: planning_only\n\nDiscuss structure.",
+      workflow_state: null
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_request_class_decision",
+    requestClass: "planning_only",
+    confidence: 1,
+    source: "classifier",
+    reason: "classifier_request_class"
+  });
+});
+
 test("dormammu-agent-runner can project daemon prompt lifecycle decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

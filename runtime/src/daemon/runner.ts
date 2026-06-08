@@ -2,7 +2,11 @@ import {
   inferPrimaryRoadmapPhaseId,
   summarizePromptGoal
 } from "../state/models.js";
-import type { RequestClass } from "../workflowPolicy.js";
+import {
+  resolveRequestClassDecision,
+  type RequestClass,
+  type RequestClassDecision
+} from "../workflowPolicy.js";
 
 export type DaemonPendingDecisionAction = "idle" | "wait" | "process";
 
@@ -30,6 +34,19 @@ export type DaemonPromptRouteInput = {
   hasAgentsConfig: boolean;
   requestClass: RequestClass;
   hasGoalFile: boolean;
+};
+
+export type DaemonRequestClassDecisionInput = {
+  promptText: string;
+  workflowState: Readonly<Record<string, unknown>> | null;
+};
+
+export type DaemonRequestClassDecision = RequestClassDecision & {
+  reason:
+    | "workflow_state_direct_response_low_confidence_promoted"
+    | "workflow_state_intake_request_class"
+    | "classifier_direct_response_low_confidence_promoted"
+    | "classifier_request_class";
 };
 
 export type DaemonPromptRouteDecision = {
@@ -677,6 +694,15 @@ export function daemonPendingDecision(
     retryAfterSeconds: null,
     reason: "ready_prompt_available"
   };
+}
+
+export function daemonRequestClassDecision(
+  input: DaemonRequestClassDecisionInput
+): DaemonRequestClassDecision {
+  return resolveRequestClassDecision({
+    promptText: input.promptText,
+    workflowState: input.workflowState
+  }) as DaemonRequestClassDecision;
 }
 
 export function daemonPromptRouteDecision(

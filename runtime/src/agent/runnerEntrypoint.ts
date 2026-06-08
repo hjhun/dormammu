@@ -59,6 +59,7 @@ import {
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
   daemonPromptProcessingMetadataDecision,
+  daemonRequestClassDecision,
   daemonPromptRouteDecision,
   daemonPromptSessionDecision,
   daemonPromptSettleDecision,
@@ -99,6 +100,7 @@ import {
   type DaemonPromptLifecycleDecision,
   type DaemonPromptPathDecision,
   type DaemonPromptProcessingMetadataDecision,
+  type DaemonRequestClassDecision,
   type DaemonPromptRouteDecision,
   type DaemonPromptSessionDecision,
   type DaemonPromptSettleDecision,
@@ -366,6 +368,17 @@ export type DaemonPromptRouteEntrypointPayload = {
 export type DaemonPromptRouteEntrypointResultPayload =
   DaemonPromptRouteDecision & {
     entrypoint: "daemon_prompt_route_decision";
+  };
+
+export type DaemonRequestClassEntrypointPayload = {
+  entrypoint: "daemon_request_class_decision";
+  prompt_text: string;
+  workflow_state?: Record<string, unknown> | null;
+};
+
+export type DaemonRequestClassEntrypointResultPayload =
+  DaemonRequestClassDecision & {
+    entrypoint: "daemon_request_class_decision";
   };
 
 export type DaemonPromptLifecycleEntrypointPayload = {
@@ -831,6 +844,7 @@ export type RunnerCliPayload =
   | DaemonPromptLifecycleEntrypointPayload
   | DaemonPromptPathEntrypointPayload
   | DaemonPromptProcessingMetadataEntrypointPayload
+  | DaemonRequestClassEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
   | DaemonPromptSessionEntrypointPayload
   | DaemonPromptSettleEntrypointPayload
@@ -884,6 +898,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptLifecycleEntrypointResultPayload
   | DaemonPromptPathEntrypointResultPayload
   | DaemonPromptProcessingMetadataEntrypointResultPayload
+  | DaemonRequestClassEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
   | DaemonPromptSessionEntrypointResultPayload
   | DaemonPromptSettleEntrypointResultPayload
@@ -1001,6 +1016,21 @@ export function runDaemonPromptRouteEntrypoint(
       ),
       requestClass: parseRequestClass(payload.request_class),
       hasGoalFile: parseBoolean(payload.has_goal_file, "has_goal_file")
+    })
+  };
+}
+
+export function runDaemonRequestClassEntrypoint(
+  payload: DaemonRequestClassEntrypointPayload
+): DaemonRequestClassEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_request_class_decision",
+    ...daemonRequestClassDecision({
+      promptText: parseString(payload.prompt_text, "prompt_text"),
+      workflowState:
+        payload.workflow_state === null || payload.workflow_state === undefined
+          ? null
+          : parseRecord(payload.workflow_state, "workflow_state")
     })
   };
 }

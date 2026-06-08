@@ -352,6 +352,25 @@ class DaemonRunnerTests(unittest.TestCase):
                 "source=typescript, reason=fake_planning_pipeline",
                 progress.getvalue(),
             )
+            request_class_payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_request_class_decision"
+            )
+            self.assertEqual(
+                request_class_payload["entrypoint"],
+                "daemon_request_class_decision",
+            )
+            self.assertEqual(request_class_payload["prompt_text"], prompt_text)
+            self.assertEqual(
+                request_class_payload["workflow_state"]["intake"]["request_class"],
+                "planning_only",
+            )
             captured = next(
                 payload
                 for payload in (
@@ -3449,6 +3468,65 @@ class DaemonRunnerTests(unittest.TestCase):
                             "reason": "terminal_error_status",
                         }}
                     response["entrypoint"] = "daemon_terminal_status_decision"
+                    print(json.dumps(response, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_request_class_decision":
+                    valid = {{
+                        "direct_response",
+                        "planning_only",
+                        "light_edit",
+                        "full_workflow",
+                    }}
+                    workflow_state = payload.get("workflow_state") or {{}}
+                    intake = workflow_state.get("intake", {{}})
+                    request_class = intake.get("request_class")
+                    confidence = intake.get("confidence")
+                    if request_class in valid:
+                        source = "workflow_state"
+                        if (
+                            request_class == "direct_response"
+                            and isinstance(confidence, (int, float))
+                            and float(confidence) < 0.5
+                        ):
+                            request_class = "full_workflow"
+                            reason = (
+                                "workflow_state_direct_response_low_confidence_"
+                                "promoted"
+                            )
+                        else:
+                            reason = "workflow_state_intake_request_class"
+                    else:
+                        source = "classifier"
+                        text = payload.get("prompt_text") or ""
+                        match = re.search(
+                            r"^\\s*DORMAMMU_REQUEST_CLASS\\s*:\\s*"
+                            r"(direct_response|planning_only|light_edit|full_workflow)"
+                            r"\\s*$",
+                            text,
+                            flags=re.IGNORECASE | re.MULTILINE,
+                        )
+                        if match:
+                            request_class = match.group(1).lower()
+                            confidence = 1.0
+                            reason = "classifier_request_class"
+                        elif not text.strip():
+                            request_class = "direct_response"
+                            confidence = 0.5
+                            reason = "classifier_request_class"
+                        else:
+                            request_class = "full_workflow"
+                            confidence = 0.4
+                            reason = (
+                                "classifier_direct_response_low_confidence_"
+                                "promoted"
+                            )
+                    response = {{
+                        "entrypoint": "daemon_request_class_decision",
+                        "requestClass": request_class,
+                        "confidence": confidence,
+                        "source": source,
+                        "reason": reason,
+                    }}
                     print(json.dumps(response, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_prompt_route_decision":

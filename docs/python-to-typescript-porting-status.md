@@ -205,6 +205,17 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon request-class resolution helper, plus runner
+  entrypoint and Python `DaemonRunner._run_prompt_loop()` bridge consumption
+  for workflow-state intake precedence, low-confidence `direct_response`
+  promotion, prompt directive parsing, and deterministic intake heuristic
+  classification while Python fallback validation is retained when the bridge
+  is unavailable or malformed
+  -> `runtime/src/workflowPolicy.ts`,
+  `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - TypeScript-owned daemon loop iteration decision helper, plus runner
   entrypoint and Python `DaemonRunner.run_forever()` bridge consumption for
   heartbeat status, watcher wait, continue, and stop decisions with Python
@@ -704,6 +715,9 @@ Port the remaining daemon and goals orchestration surface:
   decisions, watcher lifecycle decisions, daemon pending queue decisions,
   daemon prompt route decisions, daemon loop iteration decisions, and daemon
   startup/shutdown lifecycle decisions through the TypeScript runner bridge.
+  TypeScript also owns daemon request-class resolution for workflow-state
+  intake precedence, prompt directives, low-confidence direct-response
+  promotion, and deterministic prompt classification before route selection.
   TypeScript also owns daemon startup banner projection for operator-visible
   startup text and allowed-extension descriptions.
   TypeScript also owns daemon instance lock/unlock decisions for duplicate
@@ -767,7 +781,8 @@ Port the remaining daemon and goals orchestration surface:
   result status parsing for existing result Markdown recovery decisions.
   Python fallbacks are retained.
 - The next slice should continue the remaining daemon lifecycle and recovery
-  surface after queue dispatch, prompt route selection, loop iteration, and
+  surface after queue dispatch, request-class resolution, prompt route
+  selection, loop iteration, and
   startup/shutdown/instance-lock/heartbeat/watcher-backend handling, with
   priority on remaining deterministic daemon prompt/result finalization and
   recovery contracts that can be exposed through TypeScript without removing

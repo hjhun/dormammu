@@ -19,6 +19,7 @@ import {
   daemonPromptLifecycleDecision,
   daemonPromptPathDecision,
   daemonPromptProcessingMetadataDecision,
+  daemonRequestClassDecision,
   daemonPromptRouteDecision,
   daemonPromptSessionDecision,
   daemonPromptSettleDecision,
@@ -93,6 +94,87 @@ test("daemonPendingDecision idles when no prompt is ready after work", () => {
       queuedPromptNames: [],
       retryAfterSeconds: null,
       reason: "no_ready_prompts"
+    }
+  );
+});
+
+test("daemonRequestClassDecision prefers workflow state intake", () => {
+  assert.deepEqual(
+    daemonRequestClassDecision({
+      promptText: "implement a feature",
+      workflowState: {
+        intake: {
+          request_class: "planning_only",
+          confidence: 0.9
+        }
+      }
+    }),
+    {
+      requestClass: "planning_only",
+      confidence: 0.9,
+      source: "workflow_state",
+      reason: "workflow_state_intake_request_class"
+    }
+  );
+});
+
+test("daemonRequestClassDecision promotes low-confidence direct responses", () => {
+  assert.deepEqual(
+    daemonRequestClassDecision({
+      promptText: "ambiguous task",
+      workflowState: {
+        intake: {
+          request_class: "direct_response",
+          confidence: 0.4
+        }
+      }
+    }),
+    {
+      requestClass: "full_workflow",
+      confidence: 0.4,
+      source: "workflow_state",
+      reason: "workflow_state_direct_response_low_confidence_promoted"
+    }
+  );
+
+  assert.deepEqual(
+    daemonRequestClassDecision({
+      promptText: "no obvious signal",
+      workflowState: null
+    }),
+    {
+      requestClass: "full_workflow",
+      confidence: 0.4,
+      source: "classifier",
+      reason: "classifier_direct_response_low_confidence_promoted"
+    }
+  );
+});
+
+test("daemonRequestClassDecision classifies directives and broad edits", () => {
+  assert.deepEqual(
+    daemonRequestClassDecision({
+      promptText: "DORMAMMU_REQUEST_CLASS: light_edit\n\nUpdate README.md",
+      workflowState: null
+    }),
+    {
+      requestClass: "light_edit",
+      confidence: 1,
+      source: "classifier",
+      reason: "classifier_request_class"
+    }
+  );
+
+  assert.deepEqual(
+    daemonRequestClassDecision({
+      promptText: "Implement API tests across service.py model.py cli.py",
+      workflowState: null
+    }),
+    {
+      requestClass: "full_workflow",
+      confidence: 1,
+      source: "classifier",
+      reason: "classifier_request_class"
     }
   );
 });
