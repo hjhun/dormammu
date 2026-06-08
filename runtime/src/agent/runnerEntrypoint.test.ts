@@ -12,6 +12,7 @@ import {
   runDaemonInstanceUnlockEntrypoint,
   runDaemonLoopIterationEntrypoint,
   runDaemonPendingDecisionEntrypoint,
+  runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptRouteEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
@@ -413,6 +414,27 @@ test("runDaemonPromptRouteEntrypoint projects daemon route decisions", () => {
       enablePlanEvaluator: false,
       useGoalsEvaluatorConfig: false,
       reason: "planning_only_pipeline"
+    }
+  );
+});
+
+test("runDaemonPromptLifecycleEntrypoint projects prompt lifecycle decisions", () => {
+  assert.deepEqual(
+    runDaemonPromptLifecycleEntrypoint({
+      entrypoint: "daemon_prompt_lifecycle_decision",
+      prompt_path: "/repo/prompts/001-first.md",
+      result_path: "/repo/results/001-first_RESULT.md",
+      prompt_exists: true
+    }),
+    {
+      entrypoint: "daemon_prompt_lifecycle_decision",
+      action: "process",
+      status: "processing",
+      promptPath: "/repo/prompts/001-first.md",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      removeExistingResult: true,
+      errorMessage: null,
+      reason: "prompt_ready"
     }
   );
 });

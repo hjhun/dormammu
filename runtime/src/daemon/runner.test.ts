@@ -8,6 +8,7 @@ import {
   daemonInstanceUnlockDecision,
   daemonLoopIterationDecision,
   daemonPendingDecision,
+  daemonPromptLifecycleDecision,
   daemonPromptRouteDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
@@ -122,6 +123,44 @@ test("daemonPromptRouteDecision maps implementation requests to prelude loop", (
       enablePlanEvaluator: true,
       useGoalsEvaluatorConfig: false,
       reason: "full_workflow_requires_supervised_loop"
+    }
+  );
+});
+
+test("daemonPromptLifecycleDecision processes existing prompt files", () => {
+  assert.deepEqual(
+    daemonPromptLifecycleDecision({
+      promptPath: "/repo/prompts/001-first.md",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      promptExists: true
+    }),
+    {
+      action: "process",
+      status: "processing",
+      promptPath: "/repo/prompts/001-first.md",
+      resultPath: "/repo/results/001-first_RESULT.md",
+      removeExistingResult: true,
+      errorMessage: null,
+      reason: "prompt_ready"
+    }
+  );
+});
+
+test("daemonPromptLifecycleDecision skips missing prompt files", () => {
+  assert.deepEqual(
+    daemonPromptLifecycleDecision({
+      promptPath: "/repo/prompts/001-missing.md",
+      resultPath: "/repo/results/001-missing_RESULT.md",
+      promptExists: false
+    }),
+    {
+      action: "skip",
+      status: "skipped",
+      promptPath: "/repo/prompts/001-missing.md",
+      resultPath: "/repo/results/001-missing_RESULT.md",
+      removeExistingResult: false,
+      errorMessage: "Prompt file was deleted before processing.",
+      reason: "prompt_missing"
     }
   );
 });

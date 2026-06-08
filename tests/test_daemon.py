@@ -566,6 +566,52 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertIsNone(prompt_result.result_report_artifact)
             self.assertEqual(prompt_result.artifacts, ())
 
+    def test_process_prompt_can_use_typescript_lifecycle_skip_for_missing_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            self._write_typescript_runner_config(root, ts_runner)
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            daemon_config.prompt_path.mkdir(parents=True, exist_ok=True)
+            daemon_config.result_path.mkdir(parents=True, exist_ok=True)
+            prompt_path = daemon_config.prompt_path / "001-missing.md"
+
+            prompt_result = DaemonRunner(app_config, daemon_config)._process_prompt(
+                prompt_path,
+                watcher_backend="polling",
+            )
+
+            self.assertEqual(prompt_result.status, "skipped")
+            self.assertEqual(
+                prompt_result.error,
+                "Prompt file was deleted before processing.",
+            )
+            self.assertFalse(prompt_result.result_path.exists())
+            payload = next(
+                payload
+                for payload in (
+                    json.loads(line)
+                    for line in (root / "captured-runner-payloads.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                )
+                if payload["entrypoint"] == "daemon_prompt_lifecycle_decision"
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "entrypoint": "daemon_prompt_lifecycle_decision",
+                    "prompt_path": str(prompt_path),
+                    "result_path": str(prompt_result.result_path),
+                    "prompt_exists": False,
+                },
+            )
+
     def test_process_prompt_does_not_emit_missing_result_report_artifact_on_interrupt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1441,6 +1487,33 @@ class DaemonRunnerTests(unittest.TestCase):
                             "retryAfterSeconds": None,
                             "reason": "fake_no_ready_prompts",
                         }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_prompt_lifecycle_decision":
+                    if payload["prompt_exists"]:
+                        response = {{
+                            "entrypoint": "daemon_prompt_lifecycle_decision",
+                            "action": "process",
+                            "status": "processing",
+                            "promptPath": payload["prompt_path"],
+                            "resultPath": payload["result_path"],
+                            "removeExistingResult": True,
+                            "errorMessage": None,
+                            "reason": "fake_prompt_ready",
+                        }}
+                    else:
+                        response = {{
+                            "entrypoint": "daemon_prompt_lifecycle_decision",
+                            "action": "skip",
+                            "status": "skipped",
+                            "promptPath": payload["prompt_path"],
+                            "resultPath": payload["result_path"],
+                            "removeExistingResult": False,
+                            "errorMessage": (
+                                "Prompt file was deleted before processing."
+                            ),
+                            "reason": "fake_prompt_missing",
+                        }}
+                    print(json.dumps(response, ensure_ascii=True))
                     raise SystemExit(0)
                 if payload.get("entrypoint") == "daemon_prompt_route_decision":
                     if payload["has_agents_config"]:

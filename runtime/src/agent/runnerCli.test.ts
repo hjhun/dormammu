@@ -463,6 +463,31 @@ test("dormammu-agent-runner can project daemon prompt route decisions", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon prompt lifecycle decisions", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_prompt_lifecycle_decision",
+      prompt_path: "/repo/prompts/001-first.md",
+      result_path: "/repo/results/001-first_RESULT.md",
+      prompt_exists: false
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "daemon_prompt_lifecycle_decision",
+    action: "skip",
+    status: "skipped",
+    promptPath: "/repo/prompts/001-first.md",
+    resultPath: "/repo/results/001-first_RESULT.md",
+    removeExistingResult: false,
+    errorMessage: "Prompt file was deleted before processing.",
+    reason: "prompt_missing"
+  });
+});
+
 test("dormammu-agent-runner can project daemon loop iteration decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

@@ -48,6 +48,7 @@ import {
   daemonInstanceUnlockDecision,
   daemonLoopIterationDecision,
   daemonPendingDecision,
+  daemonPromptLifecycleDecision,
   daemonPromptRouteDecision,
   daemonShutdownDecision,
   daemonStartupDecision,
@@ -60,6 +61,7 @@ import {
   type DaemonInstanceUnlockDecision,
   type DaemonLoopIterationDecision,
   type DaemonPendingDecision,
+  type DaemonPromptLifecycleDecision,
   type DaemonPromptRouteDecision,
   type DaemonShutdownDecision,
   type DaemonStartupDecision,
@@ -312,6 +314,18 @@ export type DaemonPromptRouteEntrypointResultPayload =
     entrypoint: "daemon_prompt_route_decision";
   };
 
+export type DaemonPromptLifecycleEntrypointPayload = {
+  entrypoint: "daemon_prompt_lifecycle_decision";
+  prompt_path: string;
+  result_path: string;
+  prompt_exists: boolean;
+};
+
+export type DaemonPromptLifecycleEntrypointResultPayload =
+  DaemonPromptLifecycleDecision & {
+    entrypoint: "daemon_prompt_lifecycle_decision";
+  };
+
 export type DaemonLoopIterationEntrypointPayload = {
   entrypoint: "daemon_loop_iteration_decision";
   processed_count: number;
@@ -423,6 +437,7 @@ export type RunnerCliPayload =
   | DaemonInstanceUnlockEntrypointPayload
   | DaemonLoopIterationEntrypointPayload
   | DaemonPendingDecisionEntrypointPayload
+  | DaemonPromptLifecycleEntrypointPayload
   | DaemonPromptRouteEntrypointPayload
   | DaemonShutdownEntrypointPayload
   | DaemonStartupEntrypointPayload
@@ -448,6 +463,7 @@ export type RunnerCliResultPayload =
   | DaemonInstanceUnlockEntrypointResultPayload
   | DaemonLoopIterationEntrypointResultPayload
   | DaemonPendingDecisionEntrypointResultPayload
+  | DaemonPromptLifecycleEntrypointResultPayload
   | DaemonPromptRouteEntrypointResultPayload
   | DaemonShutdownEntrypointResultPayload
   | DaemonStartupEntrypointResultPayload
@@ -544,6 +560,19 @@ export function runDaemonPromptRouteEntrypoint(
       ),
       requestClass: parseRequestClass(payload.request_class),
       hasGoalFile: parseBoolean(payload.has_goal_file, "has_goal_file")
+    })
+  };
+}
+
+export function runDaemonPromptLifecycleEntrypoint(
+  payload: DaemonPromptLifecycleEntrypointPayload
+): DaemonPromptLifecycleEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_prompt_lifecycle_decision",
+    ...daemonPromptLifecycleDecision({
+      promptPath: parseRequiredString(payload.prompt_path, "prompt_path"),
+      resultPath: parseRequiredString(payload.result_path, "result_path"),
+      promptExists: parseBoolean(payload.prompt_exists, "prompt_exists")
     })
   };
 }

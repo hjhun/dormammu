@@ -38,6 +38,26 @@ export type DaemonPromptRouteDecision = {
   reason: string;
 };
 
+export type DaemonPromptLifecycleAction = "process" | "skip";
+
+export type DaemonPromptLifecycleStatus = "processing" | "skipped";
+
+export type DaemonPromptLifecycleDecisionInput = {
+  promptPath: string;
+  resultPath: string;
+  promptExists: boolean;
+};
+
+export type DaemonPromptLifecycleDecision = {
+  action: DaemonPromptLifecycleAction;
+  status: DaemonPromptLifecycleStatus;
+  promptPath: string;
+  resultPath: string;
+  removeExistingResult: boolean;
+  errorMessage: string | null;
+  reason: string;
+};
+
 export type DaemonLoopIterationAction = "continue" | "wait" | "stop";
 
 export type DaemonLoopIterationInput = {
@@ -264,6 +284,32 @@ export function daemonPromptRouteDecision(
     enablePlanEvaluator: input.hasGoalFile,
     useGoalsEvaluatorConfig: false,
     reason: `${input.requestClass}_requires_supervised_loop`
+  };
+}
+
+export function daemonPromptLifecycleDecision(
+  input: DaemonPromptLifecycleDecisionInput
+): DaemonPromptLifecycleDecision {
+  if (!input.promptExists) {
+    return {
+      action: "skip",
+      status: "skipped",
+      promptPath: input.promptPath,
+      resultPath: input.resultPath,
+      removeExistingResult: false,
+      errorMessage: "Prompt file was deleted before processing.",
+      reason: "prompt_missing"
+    };
+  }
+
+  return {
+    action: "process",
+    status: "processing",
+    promptPath: input.promptPath,
+    resultPath: input.resultPath,
+    removeExistingResult: true,
+    errorMessage: null,
+    reason: "prompt_ready"
   };
 }
 

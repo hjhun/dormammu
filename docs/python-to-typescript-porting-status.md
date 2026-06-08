@@ -260,6 +260,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon prompt lifecycle decision helper, plus runner
+  entrypoint and Python `DaemonRunner._process_prompt()` bridge consumption
+  for missing-prompt skip, process start, and stale result cleanup intent while
+  Python retains prompt IO, session creation, loop execution, lifecycle event
+  emission, and fallback behavior
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -449,11 +458,12 @@ Port the remaining daemon and goals orchestration surface:
   daemon rejection and PID lock cleanup intent, plus heartbeat write/remove
   decisions for heartbeat payload and cleanup projection. TypeScript also owns
   daemon watcher backend selection for polling, inotify, and auto fallback,
-  plus daemon watcher wait decisions for wait/skip orchestration. Python
-  fallbacks are retained.
+  daemon watcher wait decisions for wait/skip orchestration, and daemon prompt
+  lifecycle decisions for missing-prompt skip and process-start cleanup
+  intent. Python fallbacks are retained.
 - The next slice should continue the remaining daemon lifecycle and recovery
   surface after queue dispatch, prompt route selection, loop iteration, and
   startup/shutdown/instance-lock/heartbeat/watcher-backend handling, with
-  priority on prompt processing lifecycle projection or other deterministic
-  daemon recovery contracts that can be exposed through TypeScript without
-  removing Python compatibility.
+  priority on daemon result report lifecycle projection, run-finished lifecycle
+  metadata projection, or other deterministic daemon recovery contracts that
+  can be exposed through TypeScript without removing Python compatibility.

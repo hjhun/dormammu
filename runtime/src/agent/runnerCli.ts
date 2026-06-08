@@ -10,6 +10,7 @@ import {
   runDaemonInstanceUnlockEntrypoint,
   runDaemonLoopIterationEntrypoint,
   runDaemonPendingDecisionEntrypoint,
+  runDaemonPromptLifecycleEntrypoint,
   runDaemonPromptRouteEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupEntrypoint,
@@ -35,6 +36,7 @@ import {
   type DaemonInstanceUnlockEntrypointPayload,
   type DaemonLoopIterationEntrypointPayload,
   type DaemonPendingDecisionEntrypointPayload,
+  type DaemonPromptLifecycleEntrypointPayload,
   type DaemonPromptRouteEntrypointPayload,
   type DaemonShutdownEntrypointPayload,
   type DaemonStartupEntrypointPayload,
@@ -152,6 +154,9 @@ async function runWithSignalHandlers(
   if (isDaemonPendingDecisionPayload(payload)) {
     return runDaemonPendingDecisionEntrypoint(payload);
   }
+  if (isDaemonPromptLifecyclePayload(payload)) {
+    return runDaemonPromptLifecycleEntrypoint(payload);
+  }
   if (isDaemonPromptRoutePayload(payload)) {
     return runDaemonPromptRouteEntrypoint(payload);
   }
@@ -208,6 +213,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_instance_unlock_decision" &&
       payload.entrypoint !== "daemon_loop_iteration_decision" &&
       payload.entrypoint !== "daemon_pending_decision" &&
+      payload.entrypoint !== "daemon_prompt_lifecycle_decision" &&
       payload.entrypoint !== "daemon_prompt_route_decision" &&
       payload.entrypoint !== "daemon_shutdown_decision" &&
       payload.entrypoint !== "daemon_startup_decision" &&
@@ -321,6 +327,15 @@ function isDaemonPromptRoutePayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_prompt_route_decision"
+  );
+}
+
+function isDaemonPromptLifecyclePayload(
+  payload: RunnerCliPayload
+): payload is DaemonPromptLifecycleEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_prompt_lifecycle_decision"
   );
 }
 

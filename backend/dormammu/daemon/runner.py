@@ -441,6 +441,62 @@ class DaemonRunner:
             "queued_prompt_names": queued_prompt_names,
         }
 
+    def _project_typescript_prompt_lifecycle_decision(
+        self,
+        *,
+        prompt_path: Path,
+        result_path: Path,
+        prompt_exists: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_prompt_lifecycle_decision",
+            "prompt_path": str(prompt_path),
+            "result_path": str(result_path),
+            "prompt_exists": prompt_exists,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        expected = self._prompt_lifecycle_expectations(
+            prompt_path=prompt_path,
+            result_path=result_path,
+            prompt_exists=prompt_exists,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        return {
+            "action": expected["action"],
+            "status": expected["status"],
+            "remove_existing_result": expected["removeExistingResult"],
+            "error_message": expected["errorMessage"],
+        }
+
+    @staticmethod
+    def _prompt_lifecycle_expectations(
+        *,
+        prompt_path: Path,
+        result_path: Path,
+        prompt_exists: bool,
+    ) -> dict[str, object]:
+        if not prompt_exists:
+            return {
+                "action": "skip",
+                "status": "skipped",
+                "promptPath": str(prompt_path),
+                "resultPath": str(result_path),
+                "removeExistingResult": False,
+                "errorMessage": "Prompt file was deleted before processing.",
+            }
+        return {
+            "action": "process",
+            "status": "processing",
+            "promptPath": str(prompt_path),
+            "resultPath": str(result_path),
+            "removeExistingResult": True,
+            "errorMessage": None,
+        }
+
     def _project_typescript_prompt_route_decision(
         self,
         *,
@@ -1326,7 +1382,26 @@ class DaemonRunner:
 
         skipped = False
         try:
-            if result_path.exists():
+            prompt_lifecycle = self._project_typescript_prompt_lifecycle_decision(
+                prompt_path=prompt_path,
+                result_path=result_path,
+                prompt_exists=prompt_path.exists(),
+            )
+            if prompt_lifecycle is not None and prompt_lifecycle["action"] == "skip":
+                self._log(
+                    f"daemon prompt {prompt_path.name}: prompt file was deleted before processing; skipping"
+                )
+                skipped = True
+                status = str(prompt_lifecycle["status"])
+                error = str(prompt_lifecycle["error_message"])
+                raise _PromptSkipped()
+            if (
+                prompt_lifecycle is not None
+                and prompt_lifecycle["remove_existing_result"]
+                and result_path.exists()
+            ):
+                result_path.unlink()
+            elif prompt_lifecycle is None and result_path.exists():
                 result_path.unlink()
             try:
                 prompt_text = prompt_path.read_text(encoding="utf-8")
