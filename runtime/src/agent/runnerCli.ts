@@ -38,6 +38,7 @@ import {
   runDaemonRunLifecycleEventEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonPromptSummaryEntrypoint,
+  runRuntimePathPromptEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupBannerEntrypoint,
   runDaemonStartupEntrypoint,
@@ -94,6 +95,7 @@ import {
   type DaemonRunLifecycleEventEntrypointPayload,
   type DaemonRunFinishedEntrypointPayload,
   type DaemonPromptSummaryEntrypointPayload,
+  type RuntimePathPromptEntrypointPayload,
   type DaemonShutdownEntrypointPayload,
   type DaemonStartupBannerEntrypointPayload,
   type DaemonStartupEntrypointPayload,
@@ -262,6 +264,9 @@ async function runWithSignalHandlers(
   if (isDaemonResultMarkdownPayload(payload)) {
     return runDaemonResultMarkdownEntrypoint(payload);
   }
+  if (isRuntimePathPromptPayload(payload)) {
+    return runRuntimePathPromptEntrypoint(payload);
+  }
   if (isDaemonResultReportAuthoringPayload(payload)) {
     return runDaemonResultReportAuthoringEntrypoint(payload);
   }
@@ -375,6 +380,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
       payload.entrypoint !== "daemon_queue_file_decision" &&
       payload.entrypoint !== "daemon_result_artifact_ref_decision" &&
       payload.entrypoint !== "daemon_result_markdown_projection" &&
+      payload.entrypoint !== "runtime_path_prompt_projection" &&
       payload.entrypoint !== "daemon_result_report_fallback_decision" &&
       payload.entrypoint !== "daemon_result_report_decision" &&
       payload.entrypoint !== "daemon_result_status_decision" &&
@@ -630,6 +636,15 @@ function isDaemonResultMarkdownPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_result_markdown_projection"
+  );
+}
+
+function isRuntimePathPromptPayload(
+  payload: RunnerCliPayload
+): payload is RuntimePathPromptEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "runtime_path_prompt_projection"
   );
 }
 

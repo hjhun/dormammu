@@ -942,6 +942,42 @@ test("dormammu-agent-runner can project daemon result markdown", () => {
   });
 });
 
+test("dormammu-agent-runner can project runtime path prompts", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "runtime_path_prompt_projection",
+      repo_root: "/repo",
+      repo_dev_dir: "/repo/.dev",
+      base_dev_dir: "/state/repo/.dev",
+      tmp_dir: "/state/repo/.tmp",
+      results_dir: "/state/results"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  assert.deepEqual(JSON.parse(completed.stdout), {
+    entrypoint: "runtime_path_prompt_projection",
+    runtimePathsText: [
+      "- Real project root: `/repo`",
+      "- Repository-local project docs root: `/repo/.dev`",
+      (
+        "- Operational state directory (`.dev` in workflow docs): " +
+        "`/state/repo/.dev`"
+      ),
+      "- Managed temporary directory (`.tmp`): `/state/repo/.tmp`",
+      "- Result reports directory: `/state/results`",
+      (
+        "Interpret any `.dev/...` reference in prompts and workflow guidance " +
+        "as relative to the operational state directory above, not to the " +
+        "real project root."
+      )
+    ].join("\n"),
+    reason: "runtime_path_prompt_projected"
+  });
+});
+
 test("dormammu-agent-runner can project daemon run-finished decisions", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

@@ -190,6 +190,7 @@ def _write_invalid_result_report_cli(root: Path, name: str) -> Path:
 
 def _write_result_report_authoring_runner(root: Path) -> Path:
     script = root / "fake-ts-authoring-runner"
+    captured_runtime_paths = root / "captured-runtime-path-payload.json"
     captured_authoring = root / "captured-authoring-payload.json"
     captured_output = root / "captured-authored-output-payload.json"
     script.write_text(
@@ -200,9 +201,33 @@ def _write_result_report_authoring_runner(root: Path) -> Path:
             import sys
             from pathlib import Path
 
+            captured_runtime_paths = Path({str(captured_runtime_paths)!r})
             captured_authoring = Path({str(captured_authoring)!r})
             captured_output = Path({str(captured_output)!r})
             payload = json.loads(sys.stdin.read())
+            if payload.get("entrypoint") == "runtime_path_prompt_projection":
+                captured_runtime_paths.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
+                    encoding="utf-8",
+                )
+                runtime_paths_text = "\\n".join([
+                    "- Real project root: `" + payload["repo_root"] + "`",
+                    "- Repository-local project docs root: `" + payload["repo_dev_dir"] + "`",
+                    "- Operational state directory (`.dev` in workflow docs): `" + payload["base_dev_dir"] + "`",
+                    "- Managed temporary directory (`.tmp`): `" + payload["tmp_dir"] + "`",
+                    "- Result reports directory: `" + payload["results_dir"] + "`",
+                    (
+                        "Interpret any `.dev/...` reference in prompts and workflow guidance as "
+                        "relative to the operational state directory above, not to the real "
+                        "project root."
+                    ),
+                ])
+                print(json.dumps({{
+                    "entrypoint": "runtime_path_prompt_projection",
+                    "runtimePathsText": runtime_paths_text,
+                    "reason": "runtime_path_prompt_projected",
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
             if payload.get("entrypoint") == "daemon_result_report_authoring_decision":
                 captured_authoring.write_text(
                     json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
@@ -711,6 +736,16 @@ class ResultReportAuthorTests(unittest.TestCase):
 
             self.assertIn("# CLI Authored Result", authored)
             self.assertIn("Generated at:", authored)
+            captured_runtime_paths = json.loads(
+                (repo_root / "captured-runtime-path-payload.json").read_text(
+                    encoding="utf-8",
+                )
+            )
+            self.assertEqual(
+                captured_runtime_paths["entrypoint"],
+                "runtime_path_prompt_projection",
+            )
+            self.assertEqual(captured_runtime_paths["repo_root"], str(repo_root))
             captured_payload = json.loads(
                 (repo_root / "captured-authoring-payload.json").read_text(
                     encoding="utf-8",
@@ -722,6 +757,10 @@ class ResultReportAuthorTests(unittest.TestCase):
             )
             self.assertEqual(captured_payload["cli_path"], str(cli_path))
             self.assertEqual(captured_payload["repo_root"], str(repo_root))
+            self.assertEqual(
+                captured_payload["runtime_paths_text"],
+                config.runtime_path_prompt(),
+            )
             self.assertEqual(
                 captured_payload["result"]["prompt_path"],
                 str(result.prompt_path),

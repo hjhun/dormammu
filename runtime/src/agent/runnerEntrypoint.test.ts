@@ -40,6 +40,7 @@ import {
   runDaemonRunLifecycleEventEntrypoint,
   runDaemonRunFinishedEntrypoint,
   runDaemonPromptSummaryEntrypoint,
+  runRuntimePathPromptEntrypoint,
   runDaemonShutdownEntrypoint,
   runDaemonStartupBannerEntrypoint,
   runDaemonStartupEntrypoint,
@@ -767,6 +768,38 @@ test("runDaemonResultMarkdownEntrypoint projects fallback markdown", () => {
         "- PLAN complete: `yes`"
       ].join("\n") + "\n",
       reason: "result_markdown_projected"
+    }
+  );
+});
+
+test("runRuntimePathPromptEntrypoint projects runtime guidance text", () => {
+  assert.deepEqual(
+    runRuntimePathPromptEntrypoint({
+      entrypoint: "runtime_path_prompt_projection",
+      repo_root: "/repo",
+      repo_dev_dir: "/repo/.dev",
+      base_dev_dir: "/state/repo/.dev",
+      tmp_dir: "/state/repo/.tmp",
+      results_dir: "/state/results"
+    }),
+    {
+      entrypoint: "runtime_path_prompt_projection",
+      runtimePathsText: [
+        "- Real project root: `/repo`",
+        "- Repository-local project docs root: `/repo/.dev`",
+        (
+          "- Operational state directory (`.dev` in workflow docs): " +
+          "`/state/repo/.dev`"
+        ),
+        "- Managed temporary directory (`.tmp`): `/state/repo/.tmp`",
+        "- Result reports directory: `/state/results`",
+        (
+          "Interpret any `.dev/...` reference in prompts and workflow guidance " +
+          "as relative to the operational state directory above, not to the " +
+          "real project root."
+        )
+      ].join("\n"),
+      reason: "runtime_path_prompt_projected"
     }
   );
 });

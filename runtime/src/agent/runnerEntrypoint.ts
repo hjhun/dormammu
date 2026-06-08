@@ -165,6 +165,10 @@ import {
   type RunResult,
   type StageResult
 } from "../results.js";
+import {
+  runtimePathPromptDecision,
+  type RuntimePathPromptDecision
+} from "../workspace.js";
 import type { RequestClass } from "../workflowPolicy.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
@@ -555,6 +559,20 @@ export type DaemonResultReportAuthoringEntrypointResultPayload =
     entrypoint: "daemon_result_report_authoring_decision";
   };
 
+export type RuntimePathPromptEntrypointPayload = {
+  entrypoint: "runtime_path_prompt_projection";
+  repo_root: string;
+  repo_dev_dir: string;
+  base_dev_dir: string;
+  tmp_dir: string;
+  results_dir: string;
+};
+
+export type RuntimePathPromptEntrypointResultPayload =
+  RuntimePathPromptDecision & {
+    entrypoint: "runtime_path_prompt_projection";
+  };
+
 export type DaemonResultReportAuthoredOutputEntrypointPayload = {
   entrypoint: "daemon_result_report_authored_output_decision";
   stdout_text?: string | null;
@@ -880,6 +898,7 @@ export type RunnerCliPayload =
   | DaemonResultArtifactRefEntrypointPayload
   | DaemonResultReportAuthoredOutputEntrypointPayload
   | DaemonResultReportAuthoringEntrypointPayload
+  | RuntimePathPromptEntrypointPayload
   | DaemonResultMarkdownEntrypointPayload
   | DaemonResultReportFallbackEntrypointPayload
   | DaemonResultReportEntrypointPayload
@@ -936,6 +955,7 @@ export type RunnerCliResultPayload =
   | DaemonResultArtifactRefEntrypointResultPayload
   | DaemonResultReportAuthoredOutputEntrypointResultPayload
   | DaemonResultReportAuthoringEntrypointResultPayload
+  | RuntimePathPromptEntrypointResultPayload
   | DaemonResultMarkdownEntrypointResultPayload
   | DaemonResultReportFallbackEntrypointResultPayload
   | DaemonResultReportEntrypointResultPayload
@@ -1263,6 +1283,21 @@ export function runDaemonResultReportAuthoringEntrypoint(
       ),
       cliPath: parseOptionalString(payload.cli_path, "cli_path") ?? null,
       repoRoot: parseRequiredString(payload.repo_root, "repo_root")
+    })
+  };
+}
+
+export function runRuntimePathPromptEntrypoint(
+  payload: RuntimePathPromptEntrypointPayload
+): RuntimePathPromptEntrypointResultPayload {
+  return {
+    entrypoint: "runtime_path_prompt_projection",
+    ...runtimePathPromptDecision({
+      repoRoot: parseRequiredString(payload.repo_root, "repo_root"),
+      repoDevDir: parseRequiredString(payload.repo_dev_dir, "repo_dev_dir"),
+      baseDevDir: parseRequiredString(payload.base_dev_dir, "base_dev_dir"),
+      tmpDir: parseRequiredString(payload.tmp_dir, "tmp_dir"),
+      resultsDir: parseRequiredString(payload.results_dir, "results_dir")
     })
   };
 }

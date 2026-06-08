@@ -186,6 +186,40 @@ def _run_typescript_runner_payload(
     return result
 
 
+def _runtime_path_prompt_expectations(app_config: AppConfig) -> dict[str, object]:
+    return {
+        "runtimePathsText": app_config.runtime_path_prompt(),
+        "reason": "runtime_path_prompt_projected",
+    }
+
+
+def _project_typescript_runtime_path_prompt_decision(
+    app_config: AppConfig,
+    *,
+    progress_stream: TextIO,
+) -> dict[str, object] | None:
+    payload = {
+        "entrypoint": "runtime_path_prompt_projection",
+        "repo_root": str(app_config.repo_root),
+        "repo_dev_dir": str(app_config.repo_dev_dir),
+        "base_dev_dir": str(app_config.base_dev_dir),
+        "tmp_dir": str(app_config.workspace_tmp_dir),
+        "results_dir": str(app_config.results_dir),
+    }
+    bridge_result = _run_typescript_runner_payload(
+        app_config,
+        payload,
+        progress_stream=progress_stream,
+    )
+    if bridge_result is None:
+        return None
+    expected = _runtime_path_prompt_expectations(app_config)
+    for field_name, expected_value in expected.items():
+        if bridge_result.get(field_name) != expected_value:
+            return None
+    return expected
+
+
 def _result_report_authoring_expectations(
     app_config: AppConfig,
     result: DaemonPromptResult,
@@ -345,7 +379,15 @@ class ResultReportAuthor:
 
     def render(self, result: DaemonPromptResult) -> str:
         generated_at = _iso_now()
-        runtime_paths_text = self._app_config.runtime_path_prompt()
+        runtime_path_decision = _project_typescript_runtime_path_prompt_decision(
+            self._app_config,
+            progress_stream=self._progress_stream,
+        )
+        runtime_paths_text = (
+            self._app_config.runtime_path_prompt()
+            if runtime_path_decision is None
+            else str(runtime_path_decision["runtimePathsText"])
+        )
         authoring_decision = _project_typescript_result_report_authoring_decision(
             self._app_config,
             result,
