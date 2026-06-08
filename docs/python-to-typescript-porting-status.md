@@ -88,6 +88,10 @@ Ported modules:
   -> `backend/dormammu/agent/models.py`,
   `backend/dormammu/agent/cli_adapter.py`,
   `backend/dormammu/daemon/pipeline_runner.py`
+- TypeScript-owned tester/reviewer pipeline retry decision helpers, including
+  developer re-entry metadata and max-iteration manual-review exhaustion stage
+  projection
+  -> `runtime/src/pipeline/roleLoops.ts`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -272,5 +276,6 @@ Port the remaining runtime orchestration surface:
 
 The next slice should use the accumulated contract coverage to start replacing
 remaining Python runtime fallback internals with TypeScript-owned
-implementations, beginning with TypeScript-owned tester/reviewer retry and
-pipeline role loop orchestration helpers.
+implementations, beginning with using the TypeScript retry-loop contract from
+Python pipeline loop call sites or moving the loop executor itself into
+TypeScript.
