@@ -5,7 +5,10 @@ import { Writable } from "node:stream";
 
 import {
   runAgentRunnerEntrypoint,
-  type AgentRunnerEntrypointPayload
+  runGoalsQueueEntrypoint,
+  type AgentRunnerEntrypointPayload,
+  type RunnerCliPayload,
+  type RunnerCliResultPayload
 } from "./runnerEntrypoint.js";
 import type { AgentRunStarted } from "./runArtifacts.js";
 import { agentRunStartedToDict } from "./runArtifacts.js";
@@ -24,7 +27,9 @@ export async function runAgentRunnerCli(args: string[] = process.argv.slice(2)):
       return 0;
     }
     const payload = await readPayload(args);
-    const eventStream = payload.event_stream === true ? new RunnerEventStream() : null;
+    const eventStream = isAgentRunPayload(payload) && payload.event_stream === true
+      ? new RunnerEventStream()
+      : null;
     const abortController = new AbortController();
     const result = await runWithSignalHandlers(payload, eventStream, abortController);
     process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -36,10 +41,13 @@ export async function runAgentRunnerCli(args: string[] = process.argv.slice(2)):
 }
 
 async function runWithSignalHandlers(
-  payload: AgentRunnerEntrypointPayload,
+  payload: RunnerCliPayload,
   eventStream: RunnerEventStream | null,
   abortController: AbortController
-): Promise<Awaited<ReturnType<typeof runAgentRunnerEntrypoint>>> {
+): Promise<RunnerCliResultPayload> {
+  if (!isAgentRunPayload(payload)) {
+    return runGoalsQueueEntrypoint(payload);
+  }
   const shutdownHandler = (): void => {
     eventStream?.writeEvent({ type: "aborted" });
     abortController.abort();
@@ -67,7 +75,7 @@ async function runWithSignalHandlers(
   }
 }
 
-async function readPayload(args: string[]): Promise<AgentRunnerEntrypointPayload> {
+async function readPayload(args: string[]): Promise<RunnerCliPayload> {
   if (args.length > 1) {
     throw new Error("expected at most one payload path argument");
   }
@@ -75,10 +83,14 @@ async function readPayload(args: string[]): Promise<AgentRunnerEntrypointPayload
   const source = args[0] ?? "-";
   const text = source === "-" ? await readStdin() : await readFile(source, "utf8");
   try {
-    return JSON.parse(text) as AgentRunnerEntrypointPayload;
+    return JSON.parse(text) as RunnerCliPayload;
   } catch (error) {
     throw new Error(`Invalid JSON payload: ${formatError(error)}`);
   }
+}
+
+function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEntrypointPayload {
+  return !("entrypoint" in payload) || payload.entrypoint !== "goals_queue";
 }
 
 async function readStdin(): Promise<string> {

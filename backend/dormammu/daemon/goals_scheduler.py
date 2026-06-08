@@ -10,6 +10,9 @@ Thread safety
 """
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import sys
 import threading
 from datetime import datetime, timezone
@@ -433,6 +436,17 @@ class GoalsScheduler:
             return False
 
     def _list_goal_files(self) -> list[Path]:
+        if (typescript_payload := self._load_typescript_goals_queue()) is not None:
+            goal_files = typescript_payload.get("goal_files")
+            if isinstance(goal_files, list):
+                paths = [
+                    Path(path)
+                    for item in goal_files
+                    if isinstance(item, dict)
+                    if isinstance(path := item.get("path"), str)
+                ]
+                if len(paths) == len(goal_files):
+                    return paths
         try:
             return sorted(
                 p
@@ -441,6 +455,65 @@ class GoalsScheduler:
             )
         except (OSError, NotADirectoryError):
             return []
+
+    def _load_typescript_goals_queue(self) -> dict[str, object] | None:
+        runner_cli = getattr(self._app_config, "typescript_agent_runner_cli", None)
+        if not isinstance(runner_cli, (str, Path)):
+            return None
+
+        payload = {
+            "entrypoint": "goals_queue",
+            "goals_path": str(self._goals_config.path),
+            "prompt_path": str(self._prompt_path),
+            "date_text": datetime.now(timezone.utc).strftime("%Y%m%d"),
+        }
+        repo_root = getattr(self._app_config, "repo_root", None)
+        cwd = repo_root if isinstance(repo_root, Path) else Path.cwd()
+        try:
+            completed = subprocess.run(
+                [str(runner_cli)],
+                cwd=cwd,
+                env=self._typescript_runner_env(),
+                input=json.dumps(payload, ensure_ascii=True),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            self._log(f"goals scheduler: TypeScript goals queue bridge failed: {exc}")
+            return None
+
+        if completed.returncode != 0:
+            message = (completed.stderr or completed.stdout).strip()
+            detail = f": {message}" if message else ""
+            self._log(
+                "goals scheduler: TypeScript goals queue bridge exited "
+                f"with {completed.returncode}{detail}"
+            )
+            return None
+
+        try:
+            result = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            self._log("goals scheduler: TypeScript goals queue bridge returned invalid JSON")
+            return None
+        return result if isinstance(result, dict) else None
+
+    def _typescript_runner_env(self) -> dict[str, str]:
+        env = dict(os.environ)
+        for name, attr in (
+            ("HOME", "home_dir"),
+            ("DORMAMMU_SESSIONS_DIR", "sessions_dir"),
+            ("DORMAMMU_BASE_DEV_DIR", "base_dev_dir"),
+            ("DORMAMMU_WORKSPACE_ROOT", "workspace_root"),
+            ("DORMAMMU_WORKSPACE_PROJECT_ROOT", "workspace_project_root"),
+            ("DORMAMMU_TMP_DIR", "workspace_tmp_dir"),
+            ("DORMAMMU_RESULTS_DIR", "results_dir"),
+        ):
+            value = getattr(self._app_config, attr, None)
+            if isinstance(value, (str, Path)):
+                env[name] = str(value)
+        return env
 
     def _log(self, message: str) -> None:
         print(message, file=self._progress_stream)

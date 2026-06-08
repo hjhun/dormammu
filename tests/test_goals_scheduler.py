@@ -32,6 +32,7 @@ def _make_app_config(tmp_path: Path, *, agents=None) -> Any:
     mock.repo_root = tmp_path
     mock.base_dev_dir = tmp_path / ".dev"
     mock.active_agent_cli = None
+    mock.typescript_agent_runner_cli = None
     mock.agents = agents
     mock.resolve_agent_profile.side_effect = lambda role: resolve_agent_profile(
         role,
@@ -75,6 +76,39 @@ def _write_fake_typescript_runner(root: Path) -> Path:
                 json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
                 encoding="utf-8",
             )
+            if payload.get("entrypoint") == "goals_queue":
+                goals_path = Path(payload["goals_path"])
+                prompt_path = Path(payload["prompt_path"])
+                date_text = payload["date_text"]
+                goal_files = []
+                candidates = []
+                queued_names = {{
+                    item.name
+                    for item in prompt_path.iterdir()
+                    if item.is_file()
+                }} if prompt_path.exists() else set()
+                for goal_file in sorted(
+                    item for item in goals_path.iterdir()
+                    if item.is_file() and item.suffix == ".md"
+                ):
+                    queued_name = f"{{date_text}}_{{goal_file.stem}}.md"
+                    entry = {{
+                        "path": str(goal_file),
+                        "name": goal_file.name,
+                        "stem": goal_file.stem,
+                    }}
+                    goal_files.append(entry)
+                    candidates.append({{
+                        **entry,
+                        "queuedPromptName": queued_name,
+                        "alreadyQueued": queued_name in queued_names,
+                    }})
+                print(json.dumps({{
+                    "entrypoint": "goals_queue",
+                    "goal_files": goal_files,
+                    "candidates": candidates,
+                }}, ensure_ascii=True))
+                raise SystemExit(0)
             request = payload["request"]
             logs_dir = Path(payload["logs_dir"])
             logs_dir.mkdir(parents=True, exist_ok=True)
@@ -221,6 +255,48 @@ class TestGoalFileListing:
         sched = GoalsScheduler(cfg, prompt_path, app)
         assert sched._has_goal_files() is False
         assert sched._list_goal_files() == []
+
+    def test_list_goal_files_can_use_typescript_runner_bridge(
+        self, tmp_path: Path
+    ) -> None:
+        runner_cli = _write_fake_typescript_runner(tmp_path)
+        (tmp_path / "dormammu.json").write_text(
+            json.dumps({"typescript_agent_runner_cli": str(runner_cli)}),
+            encoding="utf-8",
+        )
+        home = tmp_path / "home"
+        home.mkdir()
+        app = AppConfig.load(
+            repo_root=tmp_path,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "DORMAMMU_SESSIONS_DIR": str(tmp_path / "sessions"),
+            },
+        )
+        goals_dir = tmp_path / "goals"
+        prompt_path = tmp_path / "prompts"
+        goals_dir.mkdir()
+        prompt_path.mkdir()
+        (goals_dir / "b.md").write_text("b", encoding="utf-8")
+        (goals_dir / "a.md").write_text("a", encoding="utf-8")
+        (goals_dir / "ignore.txt").write_text("ignore", encoding="utf-8")
+        (prompt_path / "20260412_a.md").write_text("queued", encoding="utf-8")
+        sched = GoalsScheduler(
+            GoalsConfig(path=goals_dir, interval_minutes=1),
+            prompt_path,
+            app,
+        )
+
+        files = sched._list_goal_files()
+
+        assert [file.name for file in files] == ["a.md", "b.md"]
+        captured = json.loads(
+            (tmp_path / "captured-runner-payload.json").read_text(encoding="utf-8")
+        )
+        assert captured["entrypoint"] == "goals_queue"
+        assert captured["goals_path"] == str(goals_dir)
+        assert captured["prompt_path"] == str(prompt_path)
 
 
 # ---------------------------------------------------------------------------

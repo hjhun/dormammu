@@ -35,6 +35,12 @@ import {
   pipelineRoleLoopTransition,
   type PipelineRetryRole
 } from "../pipeline/roleLoops.js";
+import {
+  listGoalFiles,
+  listGoalQueueCandidates,
+  type GoalFileEntry,
+  type GoalQueueCandidate
+} from "../goals/discovery.js";
 import { stageResultToDict, type StageResult } from "../results.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
@@ -86,6 +92,24 @@ export type AgentRunnerEntrypointResultPayload = AgentRunResultPayload & {
   loop_transition?: Record<string, unknown>;
 };
 
+export type GoalsQueueEntrypointPayload = {
+  entrypoint: "goals_queue";
+  goals_path: string;
+  prompt_path?: string | null;
+  date_text?: string | null;
+};
+
+export type GoalsQueueEntrypointResultPayload = {
+  entrypoint: "goals_queue";
+  goal_files: GoalFileEntry[];
+  candidates?: GoalQueueCandidate[];
+};
+
+export type RunnerCliPayload = AgentRunnerEntrypointPayload | GoalsQueueEntrypointPayload;
+export type RunnerCliResultPayload =
+  | AgentRunnerEntrypointResultPayload
+  | GoalsQueueEntrypointResultPayload;
+
 export type AgentRunnerEntrypointOptions = Omit<
   RunConfiguredAgentCommandOptions,
   "config" | "request" | "logsDir" | "timeoutMs"
@@ -131,6 +155,23 @@ export async function runAgentRunnerEntrypoint(
     }
   }
   return resultPayload;
+}
+
+export async function runGoalsQueueEntrypoint(
+  payload: GoalsQueueEntrypointPayload
+): Promise<GoalsQueueEntrypointResultPayload> {
+  const goalsPath = parseRequiredString(payload.goals_path, "goals_path");
+  const promptPath = payload.prompt_path ?? null;
+  const dateText = payload.date_text ?? null;
+  const goalFiles = await listGoalFiles(goalsPath);
+  const result: GoalsQueueEntrypointResultPayload = {
+    entrypoint: "goals_queue",
+    goal_files: goalFiles
+  };
+  if (promptPath !== null && dateText !== null) {
+    result.candidates = await listGoalQueueCandidates(goalsPath, promptPath, dateText);
+  }
+  return result;
 }
 
 function parseEntrypointRequest(

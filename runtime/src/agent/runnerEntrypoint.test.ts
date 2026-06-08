@@ -5,7 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import type { AgentRunResult } from "./runArtifacts.js";
-import { runAgentRunnerEntrypoint } from "./runnerEntrypoint.js";
+import {
+  runAgentRunnerEntrypoint,
+  runGoalsQueueEntrypoint
+} from "./runnerEntrypoint.js";
 
 test("runAgentRunnerEntrypoint runs configured agent payloads and returns dicts", async () => {
   const calls: unknown[] = [];
@@ -349,5 +352,45 @@ test("runAgentRunnerEntrypoint validates request payloads", async () => {
       logs_dir: "/repo/.dev/logs"
     }),
     /Unsupported pipeline_stage.kind/
+  );
+});
+
+test("runGoalsQueueEntrypoint projects discovery and queue candidates", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-goals-entrypoint-"));
+  const goalsPath = path.join(root, "goals");
+  const promptPath = path.join(root, "prompts");
+  await mkdir(goalsPath);
+  await mkdir(promptPath);
+  await writeFile(path.join(goalsPath, "b.md"), "b", "utf8");
+  await writeFile(path.join(goalsPath, "a.md"), "a", "utf8");
+  await writeFile(path.join(goalsPath, "ignore.txt"), "ignore", "utf8");
+  await writeFile(path.join(promptPath, "20260412_a.md"), "queued", "utf8");
+
+  const payload = await runGoalsQueueEntrypoint({
+    entrypoint: "goals_queue",
+    goals_path: goalsPath,
+    prompt_path: promptPath,
+    date_text: "20260412"
+  });
+
+  assert.deepEqual(payload.goal_files.map((file) => file.name), ["a.md", "b.md"]);
+  assert.deepEqual(
+    payload.candidates?.map((candidate) => ({
+      name: candidate.name,
+      queuedPromptName: candidate.queuedPromptName,
+      alreadyQueued: candidate.alreadyQueued
+    })),
+    [
+      {
+        name: "a.md",
+        queuedPromptName: "20260412_a.md",
+        alreadyQueued: true
+      },
+      {
+        name: "b.md",
+        queuedPromptName: "20260412_b.md",
+        alreadyQueued: false
+      }
+    ]
   );
 });

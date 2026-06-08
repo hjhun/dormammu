@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -130,6 +130,51 @@ test("dormammu-agent-runner can emit structured started and output events", asyn
   const result = JSON.parse(completed.stdout) as { run_id: string; exit_code: number };
   assert.equal(result.run_id, events[0].started?.run_id);
   assert.equal(result.exit_code, 0);
+});
+
+test("dormammu-agent-runner can project goals queue payloads", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dormammu-runner-goals-"));
+  const goalsPath = path.join(root, "goals");
+  const promptPath = path.join(root, "prompts");
+  await mkdir(goalsPath);
+  await mkdir(promptPath);
+  await writeFile(path.join(goalsPath, "goal.md"), "Goal", "utf8");
+  await writeFile(path.join(promptPath, "20260412_goal.md"), "queued", "utf8");
+
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "goals_queue",
+      goals_path: goalsPath,
+      prompt_path: promptPath,
+      date_text: "20260412"
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  const result = JSON.parse(completed.stdout) as {
+    entrypoint: string;
+    goal_files: Array<{ name: string }>;
+    candidates: Array<{ queuedPromptName: string; alreadyQueued: boolean }>;
+  };
+  assert.equal(result.entrypoint, "goals_queue");
+  assert.deepEqual(result.goal_files, [
+    {
+      path: path.join(goalsPath, "goal.md"),
+      name: "goal.md",
+      stem: "goal"
+    }
+  ]);
+  assert.deepEqual(result.candidates, [
+    {
+      path: path.join(goalsPath, "goal.md"),
+      name: "goal.md",
+      stem: "goal",
+      queuedPromptName: "20260412_goal.md",
+      alreadyQueued: true
+    }
+  ]);
 });
 
 test("dormammu-agent-runner reports malformed JSON payloads", () => {
