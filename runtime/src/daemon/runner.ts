@@ -120,6 +120,31 @@ export type DaemonResultMarkdownProjection = {
   reason: "result_markdown_projected";
 };
 
+export type DaemonResultReportAuthoringAction =
+  | "fallback_markdown"
+  | "run_configured_cli";
+
+export type DaemonResultReportAuthoringDecisionInput = {
+  result: Readonly<Record<string, unknown>>;
+  generatedAt: string;
+  runtimePathsText: string;
+  cliPath: string | null;
+  repoRoot: string;
+};
+
+export type DaemonResultReportAuthoringDecision = {
+  action: DaemonResultReportAuthoringAction;
+  promptText: string | null;
+  cliPath: string | null;
+  repoRoot: string;
+  workdir: string;
+  runLabel: string | null;
+  generatedAt: string;
+  reason:
+    | "active_agent_cli_missing"
+    | "configured_cli_authoring_requested";
+};
+
 export type DaemonPlanStateDecisionInput = {
   requestClass: string;
   taskSync: Readonly<Record<string, unknown>> | null;
@@ -804,6 +829,57 @@ export function daemonResultMarkdownProjection(
   return {
     markdown: `${lines.join("\n").trimEnd()}\n`,
     reason: "result_markdown_projected"
+  };
+}
+
+export function daemonResultReportAuthoringDecision(
+  input: DaemonResultReportAuthoringDecisionInput
+): DaemonResultReportAuthoringDecision {
+  const cliPath = nonEmpty(input.cliPath);
+  if (cliPath === null) {
+    return {
+      action: "fallback_markdown",
+      promptText: null,
+      cliPath: null,
+      repoRoot: input.repoRoot,
+      workdir: input.repoRoot,
+      runLabel: null,
+      generatedAt: input.generatedAt,
+      reason: "active_agent_cli_missing"
+    };
+  }
+
+  const facts = daemonResultMarkdownProjection({
+    result: input.result,
+    generatedAt: input.generatedAt
+  }).markdown.trim();
+  const promptText = [
+    "Write a deterministic operator-facing Markdown result report.",
+    "",
+    "Requirements:",
+    "- Preserve the exact factual content provided below.",
+    "- Include the explicit generation date and time exactly as given.",
+    "- Keep the output concise and structured with headings and bullet points.",
+    "- Do not invent facts that are not present in the supplied data.",
+    "",
+    "# Runtime Paths",
+    "",
+    input.runtimePathsText.trim(),
+    "",
+    "# Structured Facts",
+    "",
+    facts
+  ].join("\n") + "\n";
+
+  return {
+    action: "run_configured_cli",
+    promptText,
+    cliPath,
+    repoRoot: input.repoRoot,
+    workdir: input.repoRoot,
+    runLabel: `result-report-${stem(requiredText(input.result.prompt_path))}`,
+    generatedAt: input.generatedAt,
+    reason: "configured_cli_authoring_requested"
   };
 }
 

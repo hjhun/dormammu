@@ -627,6 +627,43 @@ test("dormammu-agent-runner can project daemon result report fallbacks", () => {
   });
 });
 
+test("dormammu-agent-runner can project daemon result authoring requests", () => {
+  const completed = spawnSync(process.execPath, [runnerCliPath], {
+    input: JSON.stringify({
+      entrypoint: "daemon_result_report_authoring_decision",
+      generated_at: "2026-06-08T03:00:02+00:00",
+      runtime_paths_text: "Runtime paths summary",
+      cli_path: "/usr/bin/codex",
+      repo_root: "/repo",
+      result: {
+        prompt_path: "/repo/prompts/001-first.md",
+        result_path: "/repo/results/001-first_RESULT.md",
+        status: "completed",
+        started_at: "2026-06-08T03:00:00+00:00",
+        completed_at: null,
+        watcher_backend: "polling",
+        sort_key: [0, "001-first.md", "001-first.md"],
+        session_id: null
+      }
+    }),
+    encoding: "utf8"
+  });
+
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(completed.stderr, "");
+  const result = JSON.parse(completed.stdout);
+  assert.equal(result.entrypoint, "daemon_result_report_authoring_decision");
+  assert.equal(result.action, "run_configured_cli");
+  assert.equal(result.cliPath, "/usr/bin/codex");
+  assert.equal(result.repoRoot, "/repo");
+  assert.equal(result.workdir, "/repo");
+  assert.equal(result.runLabel, "result-report-001-first");
+  assert.equal(result.generatedAt, "2026-06-08T03:00:02+00:00");
+  assert.equal(result.reason, "configured_cli_authoring_requested");
+  assert.match(result.promptText, /# Runtime Paths\n\nRuntime paths summary/);
+  assert.match(result.promptText, /# Structured Facts\n\n# Result: 001-first.md/);
+});
+
 test("dormammu-agent-runner can project daemon result artifact refs", () => {
   const completed = spawnSync(process.execPath, [runnerCliPath], {
     input: JSON.stringify({

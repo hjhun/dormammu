@@ -20,6 +20,7 @@ import {
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
   daemonResultMarkdownProjection,
+  daemonResultReportAuthoringDecision,
   daemonResultReportFallbackDecision,
   daemonResultReportDecision,
   daemonResultStatusDecision,
@@ -473,6 +474,99 @@ test("daemonResultMarkdownProjection renders deterministic fallback reports", ()
         "- Error: agent failed"
       ].join("\n") + "\n",
       reason: "result_markdown_projected"
+    }
+  );
+});
+
+test("daemonResultReportAuthoringDecision projects configured CLI requests", () => {
+  const decision = daemonResultReportAuthoringDecision({
+    generatedAt: "2026-06-08T03:00:02+00:00",
+    runtimePathsText: "Runtime paths summary",
+    cliPath: "/usr/bin/codex",
+    repoRoot: "/repo",
+    result: {
+      prompt_path: "/repo/prompts/001-first.md",
+      result_path: "/repo/results/001-first_RESULT.md",
+      status: "completed",
+      started_at: "2026-06-08T03:00:00+00:00",
+      completed_at: "2026-06-08T03:00:01+00:00",
+      watcher_backend: "polling",
+      sort_key: [0, "001-first.md", "001-first.md"],
+      session_id: "session-123",
+      stage_results: [],
+      artifacts: [],
+      phase_results: []
+    }
+  });
+
+  assert.equal(decision.action, "run_configured_cli");
+  assert.equal(decision.cliPath, "/usr/bin/codex");
+  assert.equal(decision.repoRoot, "/repo");
+  assert.equal(decision.workdir, "/repo");
+  assert.equal(decision.runLabel, "result-report-001-first");
+  assert.equal(decision.generatedAt, "2026-06-08T03:00:02+00:00");
+  assert.equal(decision.reason, "configured_cli_authoring_requested");
+  assert.equal(
+    decision.promptText,
+    [
+      "Write a deterministic operator-facing Markdown result report.",
+      "",
+      "Requirements:",
+      "- Preserve the exact factual content provided below.",
+      "- Include the explicit generation date and time exactly as given.",
+      "- Keep the output concise and structured with headings and bullet points.",
+      "- Do not invent facts that are not present in the supplied data.",
+      "",
+      "# Runtime Paths",
+      "",
+      "Runtime paths summary",
+      "",
+      "# Structured Facts",
+      "",
+      "# Result: 001-first.md",
+      "",
+      "## Summary",
+      "",
+      "- Generated at: `2026-06-08T03:00:02+00:00`",
+      "- Status: `completed`",
+      "- Prompt path: `/repo/prompts/001-first.md`",
+      "- Result path: `/repo/results/001-first_RESULT.md`",
+      "- Session id: `session-123`",
+      "- Watcher backend: `polling`",
+      "- Started at: `2026-06-08T03:00:00+00:00`",
+      "- Completed at: `2026-06-08T03:00:01+00:00`",
+      "- Queue sort key: `(0, '001-first.md', '001-first.md')`"
+    ].join("\n") + "\n"
+  );
+});
+
+test("daemonResultReportAuthoringDecision falls back without a CLI", () => {
+  assert.deepEqual(
+    daemonResultReportAuthoringDecision({
+      generatedAt: "2026-06-08T03:00:02+00:00",
+      runtimePathsText: "Runtime paths summary",
+      cliPath: null,
+      repoRoot: "/repo",
+      result: {
+        prompt_path: "/repo/prompts/001-first.md",
+        result_path: "/repo/results/001-first_RESULT.md",
+        status: "completed",
+        started_at: "2026-06-08T03:00:00+00:00",
+        completed_at: "2026-06-08T03:00:01+00:00",
+        watcher_backend: "polling",
+        sort_key: [0, "001-first.md", "001-first.md"],
+        session_id: "session-123"
+      }
+    }),
+    {
+      action: "fallback_markdown",
+      promptText: null,
+      cliPath: null,
+      repoRoot: "/repo",
+      workdir: "/repo",
+      runLabel: null,
+      generatedAt: "2026-06-08T03:00:02+00:00",
+      reason: "active_agent_cli_missing"
     }
   );
 });

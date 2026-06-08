@@ -22,6 +22,7 @@ import {
   runDaemonQueueFileEntrypoint,
   runDaemonResultArtifactRefEntrypoint,
   runDaemonResultMarkdownEntrypoint,
+  runDaemonResultReportAuthoringEntrypoint,
   runDaemonResultReportFallbackEntrypoint,
   runDaemonResultReportEntrypoint,
   runDaemonResultStatusEntrypoint,
@@ -66,6 +67,7 @@ import {
   type DaemonQueueFileEntrypointPayload,
   type DaemonResultArtifactRefEntrypointPayload,
   type DaemonResultMarkdownEntrypointPayload,
+  type DaemonResultReportAuthoringEntrypointPayload,
   type DaemonResultReportFallbackEntrypointPayload,
   type DaemonResultReportEntrypointPayload,
   type DaemonResultStatusEntrypointPayload,
@@ -216,6 +218,9 @@ async function runWithSignalHandlers(
   }
   if (isDaemonResultMarkdownPayload(payload)) {
     return runDaemonResultMarkdownEntrypoint(payload);
+  }
+  if (isDaemonResultReportAuthoringPayload(payload)) {
+    return runDaemonResultReportAuthoringEntrypoint(payload);
   }
   if (isDaemonResultReportFallbackPayload(payload)) {
     return runDaemonResultReportFallbackEntrypoint(payload);
@@ -497,6 +502,15 @@ function isDaemonResultMarkdownPayload(
   return (
     "entrypoint" in payload &&
     payload.entrypoint === "daemon_result_markdown_projection"
+  );
+}
+
+function isDaemonResultReportAuthoringPayload(
+  payload: RunnerCliPayload
+): payload is DaemonResultReportAuthoringEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_result_report_authoring_decision"
   );
 }
 

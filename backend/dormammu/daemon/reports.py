@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+import subprocess
 import sys
 from enum import Enum
-from typing import TextIO
+from typing import Mapping, TextIO
 
 from dormammu._utils import iso_now as _iso_now
 from dormammu.agent import AgentRunRequest, CliAdapter
@@ -130,6 +134,132 @@ def _build_result_report_prompt(
     )
 
 
+def _typescript_runner_env(app_config: AppConfig) -> dict[str, str]:
+    env = dict(os.environ)
+    env["HOME"] = str(app_config.home_dir)
+    env["DORMAMMU_SESSIONS_DIR"] = str(app_config.sessions_dir)
+    env["DORMAMMU_BASE_DEV_DIR"] = str(app_config.base_dev_dir)
+    env["DORMAMMU_WORKSPACE_ROOT"] = str(app_config.workspace_root)
+    env["DORMAMMU_WORKSPACE_PROJECT_ROOT"] = str(app_config.workspace_project_root)
+    env["DORMAMMU_TMP_DIR"] = str(app_config.workspace_tmp_dir)
+    env["DORMAMMU_RESULTS_DIR"] = str(app_config.results_dir)
+    return env
+
+
+def _run_typescript_runner_payload(
+    app_config: AppConfig,
+    payload: Mapping[str, object],
+    *,
+    progress_stream: TextIO,
+) -> dict[str, object] | None:
+    runner_cli = app_config.typescript_agent_runner_cli
+    if runner_cli is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [str(runner_cli)],
+            input=json.dumps(payload, ensure_ascii=True),
+            text=True,
+            capture_output=True,
+            check=False,
+            env=_typescript_runner_env(app_config),
+        )
+    except Exception as exc:
+        print(f"result report TypeScript bridge failed: {exc}", file=progress_stream)
+        return None
+    if completed.returncode != 0:
+        detail = completed.stderr.strip()
+        suffix = f": {detail}" if detail else ""
+        print(
+            "result report TypeScript bridge exited "
+            f"{completed.returncode}{suffix}",
+            file=progress_stream,
+        )
+        return None
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        print("result report TypeScript bridge returned invalid JSON", file=progress_stream)
+        return None
+    if not isinstance(result, dict):
+        return None
+    return result
+
+
+def _result_report_authoring_expectations(
+    app_config: AppConfig,
+    result: DaemonPromptResult,
+    *,
+    generated_at: str,
+    runtime_paths_text: str,
+) -> dict[str, object]:
+    cli = app_config.active_agent_cli
+    if cli is None:
+        return {
+            "action": "fallback_markdown",
+            "promptText": None,
+            "cliPath": None,
+            "repoRoot": str(app_config.repo_root),
+            "workdir": str(app_config.repo_root),
+            "runLabel": None,
+            "generatedAt": generated_at,
+            "reason": "active_agent_cli_missing",
+        }
+    return {
+        "action": "run_configured_cli",
+        "promptText": _build_result_report_prompt(
+            result,
+            generated_at=generated_at,
+            runtime_paths_text=runtime_paths_text,
+        ),
+        "cliPath": str(cli),
+        "repoRoot": str(app_config.repo_root),
+        "workdir": str(app_config.repo_root),
+        "runLabel": f"result-report-{result.prompt_path.stem}",
+        "generatedAt": generated_at,
+        "reason": "configured_cli_authoring_requested",
+    }
+
+
+def _project_typescript_result_report_authoring_decision(
+    app_config: AppConfig,
+    result: DaemonPromptResult,
+    *,
+    generated_at: str,
+    runtime_paths_text: str,
+    progress_stream: TextIO,
+) -> dict[str, object] | None:
+    payload = {
+        "entrypoint": "daemon_result_report_authoring_decision",
+        "result": result.to_dict(),
+        "generated_at": generated_at,
+        "runtime_paths_text": runtime_paths_text,
+        "cli_path": (
+            str(app_config.active_agent_cli)
+            if app_config.active_agent_cli is not None
+            else None
+        ),
+        "repo_root": str(app_config.repo_root),
+    }
+    bridge_result = _run_typescript_runner_payload(
+        app_config,
+        payload,
+        progress_stream=progress_stream,
+    )
+    if bridge_result is None:
+        return None
+    expected = _result_report_authoring_expectations(
+        app_config,
+        result,
+        generated_at=generated_at,
+        runtime_paths_text=runtime_paths_text,
+    )
+    for field_name, expected_value in expected.items():
+        if bridge_result.get(field_name) != expected_value:
+            return None
+    return expected
+
+
 class ResultReportAuthor:
     def __init__(
         self,
@@ -144,15 +274,24 @@ class ResultReportAuthor:
 
     def render(self, result: DaemonPromptResult) -> str:
         generated_at = _iso_now()
-        cli = self._app_config.active_agent_cli
-        if cli is None:
-            return render_result_markdown(result, generated_at=generated_at)
-
-        prompt = _build_result_report_prompt(
+        runtime_paths_text = self._app_config.runtime_path_prompt()
+        authoring_decision = _project_typescript_result_report_authoring_decision(
+            self._app_config,
             result,
             generated_at=generated_at,
-            runtime_paths_text=self._app_config.runtime_path_prompt(),
+            runtime_paths_text=runtime_paths_text,
+            progress_stream=self._progress_stream,
         )
+        if authoring_decision is None:
+            authoring_decision = _result_report_authoring_expectations(
+                self._app_config,
+                result,
+                generated_at=generated_at,
+                runtime_paths_text=runtime_paths_text,
+            )
+        if authoring_decision["action"] == "fallback_markdown":
+            return render_result_markdown(result, generated_at=generated_at)
+
         adapter = CliAdapter(
             self._app_config.with_overrides(fallback_agent_clis=()),
             live_output_stream=self._progress_stream,
@@ -161,11 +300,11 @@ class ResultReportAuthor:
         try:
             run = adapter.run_once(
                 AgentRunRequest(
-                    cli_path=cli,
-                    prompt_text=prompt,
-                    repo_root=self._app_config.repo_root,
-                    workdir=self._app_config.repo_root,
-                    run_label=f"result-report-{result.prompt_path.stem}",
+                    cli_path=Path(str(authoring_decision["cliPath"])),
+                    prompt_text=str(authoring_decision["promptText"]),
+                    repo_root=Path(str(authoring_decision["repoRoot"])),
+                    workdir=Path(str(authoring_decision["workdir"])),
+                    run_label=str(authoring_decision["runLabel"]),
                 )
             )
         except Exception as exc:

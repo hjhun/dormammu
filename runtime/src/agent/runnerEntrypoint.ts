@@ -60,6 +60,7 @@ import {
   daemonQueueFileDecision,
   daemonResultArtifactRefDecision,
   daemonResultMarkdownProjection,
+  daemonResultReportAuthoringDecision,
   daemonResultReportFallbackDecision,
   daemonResultReportDecision,
   daemonResultStatusDecision,
@@ -91,6 +92,7 @@ import {
   type DaemonQueueFileDecision,
   type DaemonResultArtifactRefDecision,
   type DaemonResultMarkdownProjection,
+  type DaemonResultReportAuthoringDecision,
   type DaemonResultReportFallbackDecision,
   type DaemonResultReportDecision,
   type DaemonResultStatusDecision,
@@ -435,6 +437,20 @@ export type DaemonResultMarkdownEntrypointResultPayload =
     entrypoint: "daemon_result_markdown_projection";
   };
 
+export type DaemonResultReportAuthoringEntrypointPayload = {
+  entrypoint: "daemon_result_report_authoring_decision";
+  result: Record<string, unknown>;
+  generated_at: string;
+  runtime_paths_text: string;
+  cli_path?: string | null;
+  repo_root: string;
+};
+
+export type DaemonResultReportAuthoringEntrypointResultPayload =
+  DaemonResultReportAuthoringDecision & {
+    entrypoint: "daemon_result_report_authoring_decision";
+  };
+
 export type DaemonResultArtifactRefEntrypointPayload = {
   entrypoint: "daemon_result_artifact_ref_decision";
   result_path: string;
@@ -709,6 +725,7 @@ export type RunnerCliPayload =
   | DaemonPromptSettleEntrypointPayload
   | DaemonQueueFileEntrypointPayload
   | DaemonResultArtifactRefEntrypointPayload
+  | DaemonResultReportAuthoringEntrypointPayload
   | DaemonResultMarkdownEntrypointPayload
   | DaemonResultReportFallbackEntrypointPayload
   | DaemonResultReportEntrypointPayload
@@ -753,6 +770,7 @@ export type RunnerCliResultPayload =
   | DaemonPromptSettleEntrypointResultPayload
   | DaemonQueueFileEntrypointResultPayload
   | DaemonResultArtifactRefEntrypointResultPayload
+  | DaemonResultReportAuthoringEntrypointResultPayload
   | DaemonResultMarkdownEntrypointResultPayload
   | DaemonResultReportFallbackEntrypointResultPayload
   | DaemonResultReportEntrypointResultPayload
@@ -964,6 +982,24 @@ export function runDaemonResultMarkdownEntrypoint(
     ...daemonResultMarkdownProjection({
       result: parseRecord(payload.result, "result"),
       generatedAt: parseRequiredString(payload.generated_at, "generated_at")
+    })
+  };
+}
+
+export function runDaemonResultReportAuthoringEntrypoint(
+  payload: DaemonResultReportAuthoringEntrypointPayload
+): DaemonResultReportAuthoringEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_result_report_authoring_decision",
+    ...daemonResultReportAuthoringDecision({
+      result: parseRecord(payload.result, "result"),
+      generatedAt: parseRequiredString(payload.generated_at, "generated_at"),
+      runtimePathsText: parseString(
+        payload.runtime_paths_text,
+        "runtime_paths_text"
+      ),
+      cliPath: parseOptionalString(payload.cli_path, "cli_path") ?? null,
+      repoRoot: parseRequiredString(payload.repo_root, "repo_root")
     })
   };
 }

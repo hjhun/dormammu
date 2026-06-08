@@ -36,14 +36,25 @@ def _seed_repo(root: Path) -> None:
     (templates / "patterns.md.tmpl").write_text("# PATTERNS\n", encoding="utf-8")
 
 
-def _app_config(repo_root: Path, home_dir: Path, *, active_agent_cli: Path | None = None) -> AppConfig:
+def _app_config(
+    repo_root: Path,
+    home_dir: Path,
+    *,
+    active_agent_cli: Path | None = None,
+    typescript_agent_runner_cli: Path | None = None,
+) -> AppConfig:
     env = {key: value for key, value in os.environ.items() if key != "DORMAMMU_SESSIONS_DIR"}
     env["HOME"] = str(home_dir)
     config = AppConfig.load(repo_root=repo_root, env=env)
-    if active_agent_cli is not None:
+    if active_agent_cli is not None or typescript_agent_runner_cli is not None:
+        payload = {}
+        if active_agent_cli is not None:
+            payload["active_agent_cli"] = str(active_agent_cli)
+        if typescript_agent_runner_cli is not None:
+            payload["typescript_agent_runner_cli"] = str(typescript_agent_runner_cli)
         config_path = repo_root / "dormammu.json"
         config_path.write_text(
-            json.dumps({"active_agent_cli": str(active_agent_cli)}, indent=2, ensure_ascii=True) + "\n",
+            json.dumps(payload, indent=2, ensure_ascii=True) + "\n",
             encoding="utf-8",
         )
         config = AppConfig.load(repo_root=repo_root, env=env)
@@ -169,6 +180,164 @@ def _write_invalid_result_report_cli(root: Path, name: str) -> Path:
 
             print("DONE::ok")
             sys.exit(0)
+            """
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
+
+
+def _write_result_report_authoring_runner(root: Path) -> Path:
+    script = root / "fake-ts-authoring-runner"
+    captured = root / "captured-authoring-payload.json"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            #!{sys.executable}
+            import json
+            import sys
+            from pathlib import Path
+
+            captured = Path({str(captured)!r})
+            payload = json.loads(sys.stdin.read())
+            if payload.get("entrypoint") == "daemon_result_report_authoring_decision":
+                captured.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=True) + "\\n",
+                    encoding="utf-8",
+                )
+            if "entrypoint" not in payload:
+                request = payload["request"]
+                logs_dir = Path(payload["logs_dir"])
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                run_id = "fake-result-report-run"
+                prompt_path = logs_dir / (run_id + ".prompt.txt")
+                stdout_path = logs_dir / (run_id + ".stdout.log")
+                stderr_path = logs_dir / (run_id + ".stderr.log")
+                metadata_path = logs_dir / (run_id + ".meta.json")
+                prompt = request["prompt_text"]
+                prompt_path.write_text(prompt, encoding="utf-8")
+                generated_at = "missing"
+                marker = "Generated at: `"
+                if marker in prompt:
+                    generated_at = prompt.split(marker, 1)[1].split("`", 1)[0]
+                stdout_path.write_text(
+                    "\\n".join([
+                        "# CLI Authored Result",
+                        "",
+                        "## Summary",
+                        "",
+                        "- Generated at: `" + generated_at + "`",
+                        "- Status: `completed`",
+                        "- Author: `configured-cli`",
+                    ]) + "\\n",
+                    encoding="utf-8",
+                )
+                stderr_path.write_text("", encoding="utf-8")
+                metadata_path.write_text("{{}}\\n", encoding="utf-8")
+                capabilities = {{
+                    "help_flag": "--help",
+                    "prompt_file_flag": "--prompt-file",
+                    "prompt_arg_flag": None,
+                    "workdir_flag": None,
+                    "help_text": "",
+                    "help_exit_code": 0,
+                    "command_prefix": [],
+                    "prompt_positional": False,
+                    "preset": None,
+                    "auto_approve": None,
+                }}
+                response = {{
+                    "run_id": run_id,
+                    "cli_path": request["cli_path"],
+                    "workdir": request["workdir"] or request["repo_root"],
+                    "prompt_mode": "file",
+                    "command": [request["cli_path"], "--prompt-file", str(prompt_path)],
+                    "exit_code": 0,
+                    "started_at": "2026-06-08T03:00:00+00:00",
+                    "completed_at": "2026-06-08T03:00:01+00:00",
+                    "artifacts": {{
+                        "prompt": str(prompt_path),
+                        "stdout": str(stdout_path),
+                        "stderr": str(stderr_path),
+                        "metadata": str(metadata_path),
+                    }},
+                    "capabilities": capabilities,
+                    "requested_cli_path": request["cli_path"],
+                    "attempted_cli_paths": [request["cli_path"]],
+                    "fallback_trigger": None,
+                    "timed_out": False,
+                    "stage_result": None,
+                    "loop_decision": None,
+                    "loop_transition": None,
+                }}
+                print(json.dumps(response, ensure_ascii=True))
+                raise SystemExit(0)
+            if payload.get("entrypoint") != "daemon_result_report_authoring_decision":
+                raise SystemExit(2)
+            result = payload["result"]
+            cli_path = payload.get("cli_path")
+            generated_at = payload["generated_at"]
+            if cli_path is None:
+                response = {{
+                    "entrypoint": "daemon_result_report_authoring_decision",
+                    "action": "fallback_markdown",
+                    "promptText": None,
+                    "cliPath": None,
+                    "repoRoot": payload["repo_root"],
+                    "workdir": payload["repo_root"],
+                    "runLabel": None,
+                    "generatedAt": generated_at,
+                    "reason": "active_agent_cli_missing",
+                }}
+            else:
+                facts = "\\n".join([
+                    "# Result: " + Path(result["prompt_path"]).name,
+                    "",
+                    "## Summary",
+                    "",
+                    "- Generated at: `" + generated_at + "`",
+                    "- Status: `" + result["status"] + "`",
+                    "- Prompt path: `" + result["prompt_path"] + "`",
+                    "- Result path: `" + result["result_path"] + "`",
+                    "- Session id: `" + (result.get("session_id") or "unknown") + "`",
+                    "- Watcher backend: `" + result["watcher_backend"] + "`",
+                    "- Started at: `" + result["started_at"] + "`",
+                    "- Completed at: `" + (result.get("completed_at") or "not completed") + "`",
+                    "- Queue sort key: `" + repr(tuple(result["sort_key"])) + "`",
+                ])
+                prompt_text = "\\n".join([
+                    "Write a deterministic operator-facing Markdown result report.",
+                    "",
+                    "Requirements:",
+                    "- Preserve the exact factual content provided below.",
+                    "- Include the explicit generation date and time exactly as given.",
+                    "- Keep the output concise and structured with headings and bullet points.",
+                    "- Do not invent facts that are not present in the supplied data.",
+                    "",
+                    "# Runtime Paths",
+                    "",
+                    payload["runtime_paths_text"].strip(),
+                    "",
+                    "# Structured Facts",
+                    "",
+                    facts,
+                ]) + "\\n"
+                response = {{
+                    "entrypoint": "daemon_result_report_authoring_decision",
+                    "action": "run_configured_cli",
+                    "promptText": prompt_text,
+                    "cliPath": cli_path,
+                    "repoRoot": payload["repo_root"],
+                    "workdir": payload["repo_root"],
+                    "runLabel": (
+                        "result-report-"
+                        + Path(result["prompt_path"]).stem
+                    ),
+                    "generatedAt": generated_at,
+                    "reason": "configured_cli_authoring_requested",
+                }}
+            print(json.dumps(response, ensure_ascii=True))
             """
         ),
         encoding="utf-8",
@@ -463,6 +632,54 @@ class ResultReportAuthorTests(unittest.TestCase):
 
             self.assertIn("# CLI Authored Result", authored)
             self.assertIn("Generated at:", authored)
+
+    def test_result_report_author_can_use_typescript_authoring_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            home_dir = root / "home"
+            repo_root = root / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            _seed_repo(repo_root)
+            cli_path = _write_workspace_cli(repo_root, "claude")
+            ts_runner = _write_result_report_authoring_runner(repo_root)
+            config = _app_config(
+                repo_root,
+                home_dir,
+                active_agent_cli=cli_path,
+                typescript_agent_runner_cli=ts_runner,
+            )
+            config.logs_dir.mkdir(parents=True, exist_ok=True)
+
+            result = DaemonPromptResult(
+                prompt_path=repo_root / "queue" / "001-shadow.md",
+                result_path=config.results_dir / "001-shadow_RESULT.md",
+                status="completed",
+                started_at="2026-04-19T00:00:00+00:00",
+                completed_at="2026-04-19T00:01:00+00:00",
+                watcher_backend="polling",
+                sort_key=(0, 1, "001-shadow.md"),
+                session_id="shadow-session",
+            )
+
+            authored = ResultReportAuthor(config).render(result)
+
+            self.assertIn("# CLI Authored Result", authored)
+            self.assertIn("Generated at:", authored)
+            captured_payload = json.loads(
+                (repo_root / "captured-authoring-payload.json").read_text(
+                    encoding="utf-8",
+                )
+            )
+            self.assertEqual(
+                captured_payload["entrypoint"],
+                "daemon_result_report_authoring_decision",
+            )
+            self.assertEqual(captured_payload["cli_path"], str(cli_path))
+            self.assertEqual(captured_payload["repo_root"], str(repo_root))
+            self.assertEqual(
+                captured_payload["result"]["prompt_path"],
+                str(result.prompt_path),
+            )
 
     def test_result_report_author_raises_when_cli_output_omits_generated_at(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
