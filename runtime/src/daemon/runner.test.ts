@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { daemonPendingDecision } from "./runner.js";
+import { daemonPendingDecision, daemonPromptRouteDecision } from "./runner.js";
 
 test("daemonPendingDecision processes the first ready prompt", () => {
   assert.deepEqual(
@@ -53,6 +53,63 @@ test("daemonPendingDecision idles when no prompt is ready after work", () => {
       queuedPromptNames: [],
       retryAfterSeconds: null,
       reason: "no_ready_prompts"
+    }
+  );
+});
+
+test("daemonPromptRouteDecision uses configured pipeline when agents exist", () => {
+  assert.deepEqual(
+    daemonPromptRouteDecision({
+      hasAgentsConfig: true,
+      requestClass: "full_workflow",
+      hasGoalFile: true
+    }),
+    {
+      action: "configured_pipeline",
+      runner: "pipeline",
+      requiresAgentCli: false,
+      runRefineAndPlanPrelude: false,
+      enablePlanEvaluator: false,
+      useGoalsEvaluatorConfig: true,
+      reason: "agents_config_present"
+    }
+  );
+});
+
+test("daemonPromptRouteDecision maps direct and planning requests to pipeline", () => {
+  assert.deepEqual(
+    daemonPromptRouteDecision({
+      hasAgentsConfig: false,
+      requestClass: "direct_response",
+      hasGoalFile: false
+    }).action,
+    "direct_pipeline"
+  );
+  assert.deepEqual(
+    daemonPromptRouteDecision({
+      hasAgentsConfig: false,
+      requestClass: "planning_only",
+      hasGoalFile: false
+    }).action,
+    "planning_pipeline"
+  );
+});
+
+test("daemonPromptRouteDecision maps implementation requests to prelude loop", () => {
+  assert.deepEqual(
+    daemonPromptRouteDecision({
+      hasAgentsConfig: false,
+      requestClass: "full_workflow",
+      hasGoalFile: true
+    }),
+    {
+      action: "prelude_then_loop",
+      runner: "loop",
+      requiresAgentCli: true,
+      runRefineAndPlanPrelude: true,
+      enablePlanEvaluator: true,
+      useGoalsEvaluatorConfig: false,
+      reason: "full_workflow_requires_supervised_loop"
     }
   );
 });

@@ -5,6 +5,7 @@ import { Writable } from "node:stream";
 
 import {
   runDaemonPendingDecisionEntrypoint,
+  runDaemonPromptRouteEntrypoint,
   runAgentRunnerEntrypoint,
   runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
@@ -20,6 +21,7 @@ import {
   runGoalsWatchLoopDecisionEntrypoint,
   type AgentRunnerEntrypointPayload,
   type DaemonPendingDecisionEntrypointPayload,
+  type DaemonPromptRouteEntrypointPayload,
   type GoalsProcessDecisionEntrypointPayload,
   type GoalsPromptProjectionEntrypointPayload,
   type GoalsRoleDocumentProjectionEntrypointPayload,
@@ -105,6 +107,9 @@ async function runWithSignalHandlers(
   if (isDaemonPendingDecisionPayload(payload)) {
     return runDaemonPendingDecisionEntrypoint(payload);
   }
+  if (isDaemonPromptRoutePayload(payload)) {
+    return runDaemonPromptRouteEntrypoint(payload);
+  }
   if (!isAgentRunPayload(payload)) {
     return runGoalsQueueEntrypoint(payload);
   }
@@ -153,6 +158,7 @@ function isAgentRunPayload(payload: RunnerCliPayload): payload is AgentRunnerEnt
   return (
     !("entrypoint" in payload) ||
     (payload.entrypoint !== "daemon_pending_decision" &&
+      payload.entrypoint !== "daemon_prompt_route_decision" &&
       payload.entrypoint !== "goals_queue" &&
       payload.entrypoint !== "goals_prompt_projection" &&
       payload.entrypoint !== "goals_role_document_projection" &&
@@ -173,6 +179,15 @@ function isDaemonPendingDecisionPayload(
 ): payload is DaemonPendingDecisionEntrypointPayload {
   return (
     "entrypoint" in payload && payload.entrypoint === "daemon_pending_decision"
+  );
+}
+
+function isDaemonPromptRoutePayload(
+  payload: RunnerCliPayload
+): payload is DaemonPromptRouteEntrypointPayload {
+  return (
+    "entrypoint" in payload &&
+    payload.entrypoint === "daemon_prompt_route_decision"
   );
 }
 

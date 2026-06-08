@@ -196,6 +196,15 @@ Ported modules:
   `runtime/src/agent/runnerEntrypoint.ts`,
   `runtime/src/agent/runnerCli.ts`,
   `backend/dormammu/daemon/runner.py`
+- TypeScript-owned daemon prompt route decision helper, plus runner entrypoint
+  and Python `DaemonRunner._run_prompt_loop()` bridge consumption for
+  configured-agent pipeline, direct-response pipeline, planning-only pipeline,
+  and refine/plan prelude plus LoopRunner handoff decisions with Python
+  fallback retained when the bridge is unavailable or malformed
+  -> `runtime/src/daemon/runner.ts`,
+  `runtime/src/agent/runnerEntrypoint.ts`,
+  `runtime/src/agent/runnerCli.ts`,
+  `backend/dormammu/daemon/runner.py`
 - agent runtime config fields from `backend/dormammu/config.py` including
   `active_agent_cli`, `fallback_agent_clis`, `cli_overrides`,
   `token_exhaustion_patterns`, `process_timeout_seconds`, and
@@ -378,9 +387,10 @@ Port the remaining daemon and goals orchestration surface:
   can consume goal file listing, prompt writes, role output document writes,
   role sequencing, timer decisions, immediate-run decisions, goal batch
   processing decisions, timer callback decisions, queued-prompt skip/write
-  decisions, watcher lifecycle decisions, and daemon pending queue decisions
-  through the TypeScript runner bridge, with Python fallbacks retained.
+  decisions, watcher lifecycle decisions, daemon pending queue decisions, and
+  daemon prompt route decisions through the TypeScript runner bridge, with
+  Python fallbacks retained.
 - The next slice should move from the goals scheduler facade to the remaining
-  daemon orchestration surface, continuing with daemon run-loop and pipeline
-  handoff decisions that can be exposed as deterministic TypeScript runner
-  contracts after queue dispatch.
+  daemon orchestration surface, continuing with daemon lifecycle/run-forever
+  decisions that can be exposed as deterministic TypeScript runner contracts
+  after queue dispatch and prompt route selection.

@@ -268,6 +268,65 @@ class DaemonRunnerTests(unittest.TestCase):
             self.assertEqual(captured["processed_count"], 0)
             self.assertEqual(captured["ready_prompt_paths"], [str(first), str(second)])
 
+    def test_run_prompt_loop_can_use_typescript_prompt_route_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._seed_repo(root)
+            ts_runner = self._write_fake_typescript_runner(root)
+            active_cli = root / "agent-cli"
+            self._write_typescript_runner_config(
+                root,
+                ts_runner,
+                active_agent_cli=active_cli,
+            )
+            app_config = self._app_config(root)
+            daemon_config = load_daemon_config(
+                self._write_daemon_config(root),
+                app_config=app_config,
+            )
+            progress = io.StringIO()
+            runner = DaemonRunner(app_config, daemon_config, progress_stream=progress)
+            prompt_path = daemon_config.prompt_path / "001-plan.md"
+            prompt_text = "DORMAMMU_REQUEST_CLASS: planning_only\n\nPlan the next step."
+            session_repository, scoped_config, _ = runner._start_prompt_session(
+                prompt_path=prompt_path,
+                prompt_text=prompt_text,
+            )
+            loop_result = LoopRunResult(
+                status="completed",
+                attempts_completed=1,
+                retries_used=0,
+                max_retries=1,
+                max_iterations=1,
+                latest_run_id="pipeline-planning",
+                supervisor_verdict="approved",
+                report_path=None,
+                continuation_prompt_path=None,
+            )
+
+            with mock.patch("dormammu.daemon.runner.PipelineRunner") as pipeline_cls:
+                pipeline_cls.return_value.run.return_value = loop_result
+                result = runner._run_prompt_loop(
+                    scoped_config=scoped_config,
+                    session_repository=session_repository,
+                    prompt_path=prompt_path,
+                    prompt_text=prompt_text,
+                )
+
+            self.assertIs(result, loop_result)
+            pipeline_cls.return_value.run.assert_called_once()
+            self.assertIn(
+                "source=typescript, reason=fake_planning_pipeline",
+                progress.getvalue(),
+            )
+            captured = json.loads(
+                (root / "captured-runner-payload.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(captured["entrypoint"], "daemon_prompt_route_decision")
+            self.assertFalse(captured["has_agents_config"])
+            self.assertEqual(captured["request_class"], "planning_only")
+            self.assertFalse(captured["has_goal_file"])
+
     def test_run_pending_once_writes_terminal_failed_result_when_loop_budget_is_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -879,13 +938,18 @@ class DaemonRunnerTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _write_typescript_runner_config(self, root: Path, runner_cli: Path) -> None:
+    def _write_typescript_runner_config(
+        self,
+        root: Path,
+        runner_cli: Path,
+        *,
+        active_agent_cli: Path | None = None,
+    ) -> None:
+        payload = {"typescript_agent_runner_cli": str(runner_cli)}
+        if active_agent_cli is not None:
+            payload["active_agent_cli"] = str(active_agent_cli)
         (root / "dormammu.json").write_text(
-            json.dumps(
-                {"typescript_agent_runner_cli": str(runner_cli)},
-                indent=2,
-                ensure_ascii=True,
-            )
+            json.dumps(payload, indent=2, ensure_ascii=True)
             + "\n",
             encoding="utf-8",
         )
@@ -943,6 +1007,53 @@ class DaemonRunnerTests(unittest.TestCase):
                             "retryAfterSeconds": None,
                             "reason": "fake_no_ready_prompts",
                         }}, ensure_ascii=True))
+                    raise SystemExit(0)
+                if payload.get("entrypoint") == "daemon_prompt_route_decision":
+                    if payload["has_agents_config"]:
+                        action = "configured_pipeline"
+                        response = {{
+                            "runner": "pipeline",
+                            "requiresAgentCli": False,
+                            "runRefineAndPlanPrelude": False,
+                            "enablePlanEvaluator": False,
+                            "useGoalsEvaluatorConfig": payload["has_goal_file"],
+                            "reason": "fake_configured_pipeline",
+                        }}
+                    elif payload["request_class"] == "direct_response":
+                        action = "direct_pipeline"
+                        response = {{
+                            "runner": "pipeline",
+                            "requiresAgentCli": False,
+                            "runRefineAndPlanPrelude": False,
+                            "enablePlanEvaluator": False,
+                            "useGoalsEvaluatorConfig": False,
+                            "reason": "fake_direct_pipeline",
+                        }}
+                    elif payload["request_class"] == "planning_only":
+                        action = "planning_pipeline"
+                        response = {{
+                            "runner": "pipeline",
+                            "requiresAgentCli": True,
+                            "runRefineAndPlanPrelude": False,
+                            "enablePlanEvaluator": False,
+                            "useGoalsEvaluatorConfig": False,
+                            "reason": "fake_planning_pipeline",
+                        }}
+                    else:
+                        action = "prelude_then_loop"
+                        response = {{
+                            "runner": "loop",
+                            "requiresAgentCli": True,
+                            "runRefineAndPlanPrelude": True,
+                            "enablePlanEvaluator": payload["has_goal_file"],
+                            "useGoalsEvaluatorConfig": False,
+                            "reason": "fake_prelude_then_loop",
+                        }}
+                    response.update({{
+                        "entrypoint": "daemon_prompt_route_decision",
+                        "action": action,
+                    }})
+                    print(json.dumps(response, ensure_ascii=True))
                     raise SystemExit(0)
                 raise SystemExit(2)
                 """

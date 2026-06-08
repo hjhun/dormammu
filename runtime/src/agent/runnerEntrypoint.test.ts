@@ -7,6 +7,7 @@ import test from "node:test";
 import type { AgentRunResult } from "./runArtifacts.js";
 import {
   runDaemonPendingDecisionEntrypoint,
+  runDaemonPromptRouteEntrypoint,
   runAgentRunnerEntrypoint,
   runGoalsProcessDecisionEntrypoint,
   runGoalsPromptProjectionEntrypoint,
@@ -382,6 +383,27 @@ test("runDaemonPendingDecisionEntrypoint projects daemon queue decisions", () =>
       queuedPromptNames: [],
       retryAfterSeconds: null,
       reason: "ready_prompt_available"
+    }
+  );
+});
+
+test("runDaemonPromptRouteEntrypoint projects daemon route decisions", () => {
+  assert.deepEqual(
+    runDaemonPromptRouteEntrypoint({
+      entrypoint: "daemon_prompt_route_decision",
+      has_agents_config: false,
+      request_class: "planning_only",
+      has_goal_file: false
+    }),
+    {
+      entrypoint: "daemon_prompt_route_decision",
+      action: "planning_pipeline",
+      runner: "pipeline",
+      requiresAgentCli: true,
+      runRefineAndPlanPrelude: false,
+      enablePlanEvaluator: false,
+      useGoalsEvaluatorConfig: false,
+      reason: "planning_only_pipeline"
     }
   );
 });

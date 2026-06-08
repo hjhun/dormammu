@@ -358,6 +358,94 @@ class DaemonRunner:
             "queued_prompt_names": queued_prompt_names,
         }
 
+    def _project_typescript_prompt_route_decision(
+        self,
+        *,
+        has_agents_config: bool,
+        request_class: str,
+        has_goal_file: bool,
+    ) -> dict[str, object] | None:
+        payload = {
+            "entrypoint": "daemon_prompt_route_decision",
+            "has_agents_config": has_agents_config,
+            "request_class": request_class,
+            "has_goal_file": has_goal_file,
+        }
+        result = self._run_typescript_runner_payload(payload)
+        if result is None:
+            return None
+        action = result.get("action")
+        expected_action = self._prompt_route_action(
+            has_agents_config=has_agents_config,
+            request_class=request_class,
+        )
+        if action != expected_action:
+            return None
+        expected = self._prompt_route_expectations(
+            expected_action,
+            has_goal_file=has_goal_file,
+        )
+        for field_name, expected_value in expected.items():
+            if result.get(field_name) != expected_value:
+                return None
+        reason = result.get("reason")
+        return {
+            "action": action,
+            "reason": reason if isinstance(reason, str) and reason else "typescript",
+        }
+
+    def _prompt_route_action(
+        self,
+        *,
+        has_agents_config: bool,
+        request_class: str,
+    ) -> str:
+        if has_agents_config:
+            return "configured_pipeline"
+        if request_class == "direct_response":
+            return "direct_pipeline"
+        if request_class == "planning_only":
+            return "planning_pipeline"
+        return "prelude_then_loop"
+
+    def _prompt_route_expectations(
+        self,
+        action: str,
+        *,
+        has_goal_file: bool,
+    ) -> dict[str, object]:
+        if action == "configured_pipeline":
+            return {
+                "runner": "pipeline",
+                "requiresAgentCli": False,
+                "runRefineAndPlanPrelude": False,
+                "enablePlanEvaluator": False,
+                "useGoalsEvaluatorConfig": has_goal_file,
+            }
+        if action == "direct_pipeline":
+            return {
+                "runner": "pipeline",
+                "requiresAgentCli": False,
+                "runRefineAndPlanPrelude": False,
+                "enablePlanEvaluator": False,
+                "useGoalsEvaluatorConfig": False,
+            }
+        if action == "planning_pipeline":
+            return {
+                "runner": "pipeline",
+                "requiresAgentCli": True,
+                "runRefineAndPlanPrelude": False,
+                "enablePlanEvaluator": False,
+                "useGoalsEvaluatorConfig": False,
+            }
+        return {
+            "runner": "loop",
+            "requiresAgentCli": True,
+            "runRefineAndPlanPrelude": True,
+            "enablePlanEvaluator": has_goal_file,
+            "useGoalsEvaluatorConfig": False,
+        }
+
     def _run_typescript_runner_payload(
         self,
         payload: dict[str, object],
@@ -835,9 +923,31 @@ class DaemonRunner:
             prompt_text,
             workflow_state=session_repository.read_workflow_state(),
         )
+        has_goal_file = goal_file_path is not None
+        route_decision = self._project_typescript_prompt_route_decision(
+            has_agents_config=scoped_config.agents is not None,
+            request_class=request_class,
+            has_goal_file=has_goal_file,
+        )
+        if route_decision is None:
+            route_action = self._prompt_route_action(
+                has_agents_config=scoped_config.agents is not None,
+                request_class=request_class,
+            )
+            route_source = "python"
+            route_reason = "fallback"
+        else:
+            route_action = str(route_decision["action"])
+            route_source = "typescript"
+            route_reason = str(route_decision["reason"])
+        self._log(
+            "daemon prompt route: "
+            f"{route_action} "
+            f"(request_class={request_class}, source={route_source}, reason={route_reason})"
+        )
 
         # When an agents config is present, use the full role-based pipeline.
-        if scoped_config.agents is not None:
+        if route_action == "configured_pipeline":
             evaluator_config = (
                 self.daemon_config.goals.evaluator
                 if self.daemon_config.goals is not None
@@ -856,7 +966,7 @@ class DaemonRunner:
                 evaluator_config=evaluator_config,
             )
 
-        if request_class == "direct_response":
+        if route_action == "direct_pipeline":
             direct_agents = AgentsConfig()
             return PipelineRunner(
                 scoped_config.with_overrides(agents=direct_agents),
@@ -870,7 +980,7 @@ class DaemonRunner:
                 goal_file_path=goal_file_path,
             )
 
-        if request_class == "planning_only":
+        if route_action == "planning_pipeline":
             planning_agents = AgentsConfig()
             agent_cli = self._resolve_agent_cli(scoped_config)
             return PipelineRunner(

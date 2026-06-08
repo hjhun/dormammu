@@ -43,7 +43,9 @@ import {
 } from "../goals/discovery.js";
 import {
   daemonPendingDecision,
-  type DaemonPendingDecision
+  daemonPromptRouteDecision,
+  type DaemonPendingDecision,
+  type DaemonPromptRouteDecision
 } from "../daemon/runner.js";
 import {
   projectQueuedGoalPrompt,
@@ -77,6 +79,7 @@ import {
   type GoalsWatchLoopDecision
 } from "../goals/scheduler.js";
 import { stageResultToDict, type StageResult } from "../results.js";
+import type { RequestClass } from "../workflowPolicy.js";
 
 const VALID_INPUT_MODES = new Set(["auto", "file", "arg", "stdin", "positional"]);
 const VALID_PIPELINE_STAGE_KINDS = new Set<string>([
@@ -277,9 +280,22 @@ export type DaemonPendingDecisionEntrypointResultPayload =
     entrypoint: "daemon_pending_decision";
   };
 
+export type DaemonPromptRouteEntrypointPayload = {
+  entrypoint: "daemon_prompt_route_decision";
+  has_agents_config: boolean;
+  request_class: RequestClass;
+  has_goal_file: boolean;
+};
+
+export type DaemonPromptRouteEntrypointResultPayload =
+  DaemonPromptRouteDecision & {
+    entrypoint: "daemon_prompt_route_decision";
+  };
+
 export type RunnerCliPayload =
   | AgentRunnerEntrypointPayload
   | DaemonPendingDecisionEntrypointPayload
+  | DaemonPromptRouteEntrypointPayload
   | GoalsQueueEntrypointPayload
   | GoalsPromptProjectionEntrypointPayload
   | GoalsRoleDocumentProjectionEntrypointPayload
@@ -295,6 +311,7 @@ export type RunnerCliPayload =
 export type RunnerCliResultPayload =
   | AgentRunnerEntrypointResultPayload
   | DaemonPendingDecisionEntrypointResultPayload
+  | DaemonPromptRouteEntrypointResultPayload
   | GoalsQueueEntrypointResultPayload
   | GoalsPromptProjectionEntrypointResultPayload
   | GoalsRoleDocumentProjectionEntrypointResultPayload
@@ -370,6 +387,22 @@ export function runDaemonPendingDecisionEntrypoint(
         payload.retry_after_seconds ?? null,
         "retry_after_seconds"
       )
+    })
+  };
+}
+
+export function runDaemonPromptRouteEntrypoint(
+  payload: DaemonPromptRouteEntrypointPayload
+): DaemonPromptRouteEntrypointResultPayload {
+  return {
+    entrypoint: "daemon_prompt_route_decision",
+    ...daemonPromptRouteDecision({
+      hasAgentsConfig: parseBoolean(
+        payload.has_agents_config,
+        "has_agents_config"
+      ),
+      requestClass: parseRequestClass(payload.request_class),
+      hasGoalFile: parseBoolean(payload.has_goal_file, "has_goal_file")
     })
   };
 }
@@ -738,6 +771,18 @@ function parseOptionalNumber(value: unknown, fieldName: string): number | null {
     return null;
   }
   return parseNumber(value, fieldName);
+}
+
+function parseRequestClass(value: unknown): RequestClass {
+  if (
+    value !== "direct_response" &&
+    value !== "planning_only" &&
+    value !== "light_edit" &&
+    value !== "full_workflow"
+  ) {
+    throw new Error("request_class must be a supported request class");
+  }
+  return value;
 }
 
 function parseStringArray(value: unknown, fieldName: string): string[] {
